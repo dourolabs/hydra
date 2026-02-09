@@ -3417,8 +3417,12 @@ fn issue_status_order(status: IssueStatus) -> usize {
 
 fn summarize_job(job: JobRecord, now: DateTime<Utc>) -> JobDisplay {
     let status = job.task.status;
-    let runtime = output::format_runtime(&status, job.task.status_last_updated, now);
-    let last_change = job.task.status_last_updated;
+    let runtime = output::format_runtime(&job.task, now);
+    let last_change = job
+        .task
+        .end_time
+        .or(job.task.start_time)
+        .or(job.task.creation_time);
     let note = note_or_error(&job);
 
     JobDisplay {

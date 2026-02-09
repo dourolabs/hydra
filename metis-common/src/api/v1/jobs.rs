@@ -35,7 +35,11 @@ pub struct Task {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status_last_updated: Option<DateTime<Utc>>,
+    pub creation_time: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<DateTime<Utc>>,
 }
 
 impl Task {
@@ -66,7 +70,9 @@ impl Task {
             last_message: None,
             error: None,
             deleted,
-            status_last_updated: None,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
         }
     }
 
@@ -100,13 +106,22 @@ impl Task {
             last_message,
             error,
             deleted,
-            status_last_updated: None,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
         }
     }
 
-    /// Sets the status_last_updated timestamp derived from the task version log.
-    pub fn with_status_last_updated(mut self, timestamp: Option<DateTime<Utc>>) -> Self {
-        self.status_last_updated = timestamp;
+    /// Sets timing fields derived from the task version history.
+    pub fn with_timing(
+        mut self,
+        creation_time: Option<DateTime<Utc>>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
+    ) -> Self {
+        self.creation_time = creation_time;
+        self.start_time = start_time;
+        self.end_time = end_time;
         self
     }
 }

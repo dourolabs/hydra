@@ -71,13 +71,24 @@ pub async fn list_jobs(
         ApiError::internal(format!("Failed to list tasks: {err}"))
     })?;
 
-    // Build job records using already-fetched task data, sorted by version timestamp
+    // Batch-fetch status logs to compute timing fields
+    let task_ids: Vec<TaskId> = tasks.iter().map(|(id, _)| id.clone()).collect();
+    let status_logs = state.get_status_logs(&task_ids).await.map_err(|err| {
+        error!(error = %err, "failed to fetch status logs for timing");
+        ApiError::internal(format!("Failed to fetch status logs: {err}"))
+    })?;
+
+    // Build job records with timing fields, sorted by version timestamp
     let mut records_with_times: Vec<(v1::jobs::JobRecord, DateTime<Utc>)> = tasks
         .into_iter()
         .map(|(task_id, versioned_task)| {
             let timestamp = versioned_task.timestamp;
             let api_task: v1::jobs::Task = versioned_task.item.into();
-            let api_task = api_task.with_status_last_updated(Some(timestamp));
+            let api_task = if let Some(log) = status_logs.get(&task_id) {
+                api_task.with_timing(log.creation_time(), log.start_time(), log.end_time())
+            } else {
+                api_task
+            };
             let record = v1::jobs::JobRecord::new(task_id, api_task);
             (record, timestamp)
         })
@@ -110,8 +121,8 @@ pub async fn get_job(
 ) -> Result<Json<v1::jobs::JobRecord>, ApiError> {
     info!(job_id = %job_id, "get_job invoked");
 
-    let versioned_task = state
-        .get_versioned_task(&job_id)
+    let versions = state
+        .get_task_versions(&job_id)
         .await
         .map_err(|err| match err {
             StoreError::TaskNotFound(_) => {
@@ -124,8 +135,18 @@ pub async fn get_job(
             }
         })?;
 
-    let api_task: v1::jobs::Task = versioned_task.item.into();
-    let api_task = api_task.with_status_last_updated(Some(versioned_task.timestamp));
+    let latest = versions.last().ok_or_else(|| {
+        error!(job_id = %job_id, "job has no versions");
+        ApiError::not_found(format!("job '{job_id}' not found"))
+    })?;
+
+    let status_log = crate::store::task_status_log_from_versions(&versions);
+    let api_task: v1::jobs::Task = latest.item.clone().into();
+    let api_task = if let Some(log) = &status_log {
+        api_task.with_timing(log.creation_time(), log.start_time(), log.end_time())
+    } else {
+        api_task
+    };
     let record = v1::jobs::JobRecord::new(job_id.clone(), api_task);
     info!(job_id = %record.id, "get_job completed successfully");
     Ok(Json(record))

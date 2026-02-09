@@ -7,7 +7,7 @@ use metis_common::{
     agents::AgentRecord,
     documents::DocumentRecord,
     issues::{Issue, IssueRecord},
-    jobs::JobRecord,
+    jobs::{JobRecord, Task},
     patches::{PatchRecord, PatchStatus},
     repositories::RepositoryRecord,
     task_status::{Status, TaskError},
@@ -316,8 +316,7 @@ fn render_job_records_pretty(jobs: &[JobRecord], writer: &mut impl Write) -> Res
     let now = Utc::now();
     for job in jobs {
         let status_display = format_status(&job.task.status);
-        let runtime = format_runtime(&job.task.status, job.task.status_last_updated, now)
-            .unwrap_or_else(|| "-".into());
+        let runtime = format_runtime(&job.task, now).unwrap_or_else(|| "-".into());
         let notes = job_note(job).unwrap_or_else(|| "-".into());
         let cells = job_row_cells(job.id.as_ref(), status_display, &runtime);
         let plain_prefix = job_row_prefix(&cells);
@@ -614,18 +613,36 @@ fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize) -> Vec<Str
     }
 }
 
-pub(crate) fn format_runtime(
-    status: &Status,
-    status_last_updated: Option<DateTime<Utc>>,
-    now: DateTime<Utc>,
-) -> Option<String> {
-    let updated_at = status_last_updated?;
-    match status {
-        Status::Running | Status::Pending => {
-            let duration = if now < updated_at {
+pub(crate) fn format_runtime(task: &Task, now: DateTime<Utc>) -> Option<String> {
+    match task.status {
+        Status::Running => {
+            // Running: elapsed = now - start_time (or creation_time as fallback)
+            let started = task.start_time.or(task.creation_time)?;
+            let duration = if now < started {
                 ChronoDuration::zero()
             } else {
-                now - updated_at
+                now - started
+            };
+            Some(format_duration(duration))
+        }
+        Status::Pending | Status::Created => {
+            // Pending/Created: elapsed = now - creation_time
+            let created = task.creation_time?;
+            let duration = if now < created {
+                ChronoDuration::zero()
+            } else {
+                now - created
+            };
+            Some(format_duration(duration))
+        }
+        Status::Complete | Status::Failed => {
+            // Completed/Failed: total runtime = end_time - start_time (or creation_time)
+            let started = task.start_time.or(task.creation_time)?;
+            let ended = task.end_time?;
+            let duration = if ended < started {
+                ChronoDuration::zero()
+            } else {
+                ended - started
             };
             Some(format_duration(duration))
         }
