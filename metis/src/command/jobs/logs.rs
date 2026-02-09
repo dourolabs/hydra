@@ -81,10 +81,7 @@ mod tests {
         command::output::{CommandContext, ResolvedOutputFormat},
     };
     use httpmock::prelude::*;
-    use metis_common::{
-        jobs::{JobRecord, ListJobsResponse, Task},
-        task_status::Status,
-    };
+    use metis_common::jobs::{JobRecord, ListJobsResponse, Task};
     use reqwest::Client as HttpClient;
     use std::{collections::HashMap, str::FromStr};
 

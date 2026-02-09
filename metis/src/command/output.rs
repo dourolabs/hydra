@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use anyhow::Result;
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::ValueEnum;
 use metis_common::{
     agents::AgentRecord,
@@ -312,9 +313,11 @@ fn render_job_records_pretty(jobs: &[JobRecord], writer: &mut impl Write) -> Res
     writeln!(writer, "{colored_header}")?;
     writeln!(writer, "{}", "-".repeat(plain_header.len()))?;
 
+    let now = Utc::now();
     for job in jobs {
         let status_display = format_status(&job.task.status);
-        let runtime = "-".to_string();
+        let runtime = format_runtime(&job.task.status, job.task.status_last_updated, now)
+            .unwrap_or_else(|| "-".into());
         let notes = job_note(job).unwrap_or_else(|| "-".into());
         let cells = job_row_cells(job.id.as_ref(), status_display, &runtime);
         let plain_prefix = job_row_prefix(&cells);
@@ -608,6 +611,44 @@ fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize) -> Vec<Str
                 }
             })
             .collect()
+    }
+}
+
+pub(crate) fn format_runtime(
+    status: &Status,
+    status_last_updated: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Option<String> {
+    let updated_at = status_last_updated?;
+    match status {
+        Status::Running | Status::Pending => {
+            let duration = if now < updated_at {
+                ChronoDuration::zero()
+            } else {
+                now - updated_at
+            };
+            Some(format_duration(duration))
+        }
+        _ => None,
+    }
+}
+
+fn format_duration(duration: ChronoDuration) -> String {
+    let total_seconds = duration.num_seconds();
+    if total_seconds <= 0 {
+        return "0s".to_string();
+    }
+
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{hours}h {minutes:02}m {seconds:02}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds:02}s")
+    } else {
+        format!("{seconds}s")
     }
 }
 

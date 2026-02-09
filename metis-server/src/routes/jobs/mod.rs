@@ -76,7 +76,9 @@ pub async fn list_jobs(
         .into_iter()
         .map(|(task_id, versioned_task)| {
             let timestamp = versioned_task.timestamp;
-            let record = v1::jobs::JobRecord::new(task_id, versioned_task.item.into());
+            let api_task: v1::jobs::Task = versioned_task.item.into();
+            let api_task = api_task.with_status_last_updated(Some(timestamp));
+            let record = v1::jobs::JobRecord::new(task_id, api_task);
             (record, timestamp)
         })
         .collect();
@@ -108,18 +110,23 @@ pub async fn get_job(
 ) -> Result<Json<v1::jobs::JobRecord>, ApiError> {
     info!(job_id = %job_id, "get_job invoked");
 
-    let task = state.get_task(&job_id).await.map_err(|err| match err {
-        StoreError::TaskNotFound(_) => {
-            error!(job_id = %job_id, "job not found");
-            ApiError::not_found(format!("job '{job_id}' not found"))
-        }
-        err => {
-            error!(job_id = %job_id, error = %err, "failed to load job");
-            ApiError::internal(format!("Failed to load job '{job_id}': {err}"))
-        }
-    })?;
+    let versioned_task = state
+        .get_versioned_task(&job_id)
+        .await
+        .map_err(|err| match err {
+            StoreError::TaskNotFound(_) => {
+                error!(job_id = %job_id, "job not found");
+                ApiError::not_found(format!("job '{job_id}' not found"))
+            }
+            err => {
+                error!(job_id = %job_id, error = %err, "failed to load job");
+                ApiError::internal(format!("Failed to load job '{job_id}': {err}"))
+            }
+        })?;
 
-    let record = v1::jobs::JobRecord::new(job_id.clone(), task.into());
+    let api_task: v1::jobs::Task = versioned_task.item.into();
+    let api_task = api_task.with_status_last_updated(Some(versioned_task.timestamp));
+    let record = v1::jobs::JobRecord::new(job_id.clone(), api_task);
     info!(job_id = %record.id, "get_job completed successfully");
     Ok(Json(record))
 }

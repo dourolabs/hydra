@@ -798,13 +798,3 @@ fn forward_todo_response(issue_id: &IssueId) -> Value {
         "note": "todos"
     })
 }
-
-trait StatusSummary {
-    fn is_failure(&self) -> bool;
-}
-
-impl StatusSummary for Status {
-    fn is_failure(&self) -> bool {
-        matches!(self, Status::Failed | Status::Unknown)
-    }
-}

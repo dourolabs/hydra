@@ -2122,6 +2122,14 @@ impl AppState {
         store.get_task(task_id, false).await.map(|task| task.item)
     }
 
+    pub async fn get_versioned_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Versioned<Task>, StoreError> {
+        let store = self.store.as_ref();
+        store.get_task(task_id, false).await
+    }
+
     pub async fn get_task_versions(
         &self,
         task_id: &TaskId,

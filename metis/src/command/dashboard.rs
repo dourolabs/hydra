@@ -36,7 +36,10 @@ use ratatui::{
 use tui_textarea::TextArea;
 use unicode_width::UnicodeWidthChar;
 
-use crate::{client::MetisClientInterface, command::output::CommandContext};
+use crate::{
+    client::MetisClientInterface,
+    command::output::{self, CommandContext},
+};
 
 pub mod panel;
 
@@ -3412,16 +3415,18 @@ fn issue_status_order(status: IssueStatus) -> usize {
     }
 }
 
-fn summarize_job(job: JobRecord, _now: DateTime<Utc>) -> JobDisplay {
+fn summarize_job(job: JobRecord, now: DateTime<Utc>) -> JobDisplay {
     let status = job.task.status;
+    let runtime = output::format_runtime(&status, job.task.status_last_updated, now);
+    let last_change = job.task.status_last_updated;
     let note = note_or_error(&job);
 
     JobDisplay {
         id: job.id,
         status,
-        runtime: None,
+        runtime,
         note,
-        last_change: None,
+        last_change,
     }
 }
 

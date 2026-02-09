@@ -34,6 +34,8 @@ pub struct Task {
     pub error: Option<TaskError>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_last_updated: Option<DateTime<Utc>>,
 }
 
 impl Task {
@@ -64,6 +66,7 @@ impl Task {
             last_message: None,
             error: None,
             deleted,
+            status_last_updated: None,
         }
     }
 
@@ -97,7 +100,14 @@ impl Task {
             last_message,
             error,
             deleted,
+            status_last_updated: None,
         }
+    }
+
+    /// Sets the status_last_updated timestamp derived from the task version log.
+    pub fn with_status_last_updated(mut self, timestamp: Option<DateTime<Utc>>) -> Self {
+        self.status_last_updated = timestamp;
+        self
     }
 }
 
