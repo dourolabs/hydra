@@ -1253,6 +1253,76 @@ impl AppState {
         }
     }
 
+    /// Cleans up tasks whose `spawned_from` issue has been soft-deleted.
+    ///
+    /// For each non-deleted task that references a `spawned_from` issue, checks
+    /// whether that issue still exists. If it does not (i.e., it has been
+    /// soft-deleted), the task is soft-deleted and any running/pending job is
+    /// killed in the engine.
+    pub async fn cleanup_orphaned_tasks(&self) {
+        let store = self.store.as_ref();
+        let tasks = match store.list_tasks(&SearchJobsQuery::default()).await {
+            Ok(tasks) => tasks,
+            Err(err) => {
+                error!(error = %err, "failed to list tasks for orphaned task cleanup");
+                return;
+            }
+        };
+
+        for (task_id, versioned_task) in tasks {
+            let issue_id = match &versioned_task.item.spawned_from {
+                Some(id) => id.clone(),
+                None => continue,
+            };
+
+            let issue_deleted = match store.get_issue(&issue_id, false).await {
+                Ok(_) => false,
+                Err(StoreError::IssueNotFound(_)) => true,
+                Err(err) => {
+                    warn!(
+                        metis_id = %task_id,
+                        issue_id = %issue_id,
+                        error = %err,
+                        "failed to check spawned_from issue for orphaned task cleanup"
+                    );
+                    continue;
+                }
+            };
+
+            if !issue_deleted {
+                continue;
+            }
+
+            info!(
+                metis_id = %task_id,
+                issue_id = %issue_id,
+                "soft-deleting orphaned task whose spawned_from issue was deleted"
+            );
+
+            if let Err(err) = store.delete_task(&task_id).await {
+                warn!(
+                    metis_id = %task_id,
+                    error = %err,
+                    "failed to soft-delete orphaned task"
+                );
+                continue;
+            }
+
+            if matches!(
+                versioned_task.item.status,
+                Status::Pending | Status::Running
+            ) {
+                if let Err(err) = self.job_engine.kill_job(&task_id).await {
+                    warn!(
+                        metis_id = %task_id,
+                        error = %err,
+                        "failed to kill job for orphaned task"
+                    );
+                }
+            }
+        }
+    }
+
     pub async fn reconcile_running_task(&self, task_id: TaskId) {
         let current_status = {
             let store = self.store.as_ref();
@@ -3461,5 +3531,117 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, UpsertIssueError::MissingCreator));
+    }
+
+    #[tokio::test]
+    async fn cleanup_orphaned_tasks_deletes_task_with_deleted_issue() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+        let store = state.store.as_ref();
+
+        let issue_id = store
+            .add_issue(issue_with_status("parent", IssueStatus::Open, vec![]))
+            .await
+            .unwrap();
+        let task_id = store
+            .add_task(task_for_issue(&issue_id), Utc::now())
+            .await
+            .unwrap();
+
+        store.delete_issue(&issue_id).await.unwrap();
+
+        state.cleanup_orphaned_tasks().await;
+
+        let result = store.get_task(&task_id, false).await;
+        assert!(
+            matches!(result, Err(StoreError::TaskNotFound(_))),
+            "orphaned task should be soft-deleted"
+        );
+
+        let deleted_task = store.get_task(&task_id, true).await.unwrap();
+        assert!(deleted_task.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn cleanup_orphaned_tasks_leaves_task_with_existing_issue() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+        let store = state.store.as_ref();
+
+        let issue_id = store
+            .add_issue(issue_with_status("parent", IssueStatus::Open, vec![]))
+            .await
+            .unwrap();
+        let task_id = store
+            .add_task(task_for_issue(&issue_id), Utc::now())
+            .await
+            .unwrap();
+
+        state.cleanup_orphaned_tasks().await;
+
+        let task = store.get_task(&task_id, false).await.unwrap();
+        assert!(
+            !task.item.deleted,
+            "task with existing issue should not be deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_orphaned_tasks_leaves_task_with_no_spawned_from() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+        let store = state.store.as_ref();
+
+        let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
+
+        state.cleanup_orphaned_tasks().await;
+
+        let task = store.get_task(&task_id, false).await.unwrap();
+        assert!(
+            !task.item.deleted,
+            "task without spawned_from should not be deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_orphaned_tasks_kills_running_job() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let store = state.store.as_ref();
+
+        let issue_id = store
+            .add_issue(issue_with_status("parent", IssueStatus::Open, vec![]))
+            .await
+            .unwrap();
+        let task_id = store
+            .add_task(task_for_issue(&issue_id), Utc::now())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_pending(&task_id)
+            .await
+            .expect("task should transition to pending");
+
+        job_engine.insert_job(&task_id, JobStatus::Running).await;
+
+        store.delete_issue(&issue_id).await.unwrap();
+
+        state.cleanup_orphaned_tasks().await;
+
+        let result = store.get_task(&task_id, false).await;
+        assert!(
+            matches!(result, Err(StoreError::TaskNotFound(_))),
+            "orphaned running task should be soft-deleted"
+        );
+
+        let job = job_engine
+            .find_job_by_metis_id(&task_id)
+            .await
+            .expect("job should still exist in engine");
+        assert_eq!(
+            job.status,
+            JobStatus::Failed,
+            "running job for orphaned task should be killed"
+        );
     }
 }
