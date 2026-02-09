@@ -169,7 +169,10 @@ If the issue is new / no patches have been created yet:
 
 If one or more patches have been created:
 - If the Patch is Merged, then this task may be complete. However, please look at the review feedback and see if there are any follow-up tasks
-   that should be created. You can add these to the issue tracker using "metis issues create". 
+   that should be created.
+   - Follow-up issues discovered during review are **independent work items** — create them as siblings (no child-of dependency):
+     "metis issues create \\"<description>\\" --assignee swe"
+   - Do NOT use --deps child-of:\$METIS_ISSUE_ID for follow-ups. Reserve child-of for sub-tasks that are part of completing the current issue.
 - If the patch_status is ChangesRequested (typically from a review left without closing the PR), after addressing all comments, run
   "metis patches update --patch-id <PATCH_ID> --status Open" to reopen the patch for review. This keeps the same patch id and
   reopens the existing patch for review (the previous merge-request issue is closed when ChangesRequested is set and a new merge-request
