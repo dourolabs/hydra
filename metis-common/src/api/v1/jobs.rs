@@ -316,17 +316,14 @@ impl ListJobsResponse {
 pub struct JobRecord {
     pub id: TaskId,
     pub task: Task,
-    #[serde(default)]
-    pub notes: Option<String>,
     pub status_log: TaskStatusLog,
 }
 
 impl JobRecord {
-    pub fn new(id: TaskId, task: Task, notes: Option<String>, status_log: TaskStatusLog) -> Self {
+    pub fn new(id: TaskId, task: Task, status_log: TaskStatusLog) -> Self {
         Self {
             id,
             task,
-            notes,
             status_log,
         }
     }
@@ -501,7 +498,7 @@ mod tests {
         ]);
 
         let task_id = crate::TaskId::new();
-        let mut record = JobRecord::new(task_id, task, Some("note".to_string()), status_log);
+        let mut record = JobRecord::new(task_id, task, status_log);
 
         record.strip_large_fields();
 
@@ -518,9 +515,6 @@ mod tests {
                 assert_eq!(*last_message, None);
             }
         }
-
-        // Notes should be preserved
-        assert_eq!(record.notes, Some("note".to_string()));
     }
 
     #[test]
@@ -549,7 +543,7 @@ mod tests {
         }]);
 
         let task_id = crate::TaskId::new();
-        let mut record = JobRecord::new(task_id, task, None, status_log);
+        let mut record = JobRecord::new(task_id, task, status_log);
 
         record.strip_large_fields();
 

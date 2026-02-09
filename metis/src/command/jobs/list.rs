@@ -81,7 +81,6 @@ mod tests {
                 None,
                 false,
             ),
-            None,
             TaskStatusLog::new(Status::Created, Utc::now()),
         )
     }
