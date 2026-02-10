@@ -419,6 +419,34 @@ pub fn resolve_commit_range_oids(repo_root: &Path, commit_range: &str) -> Result
     Ok((GitOid::new(base.id()), GitOid::new(head.id())))
 }
 
+/// Compute the merge-base between HEAD and the given base ref (e.g. "origin/main"),
+/// returning the (base, head) OID pair suitable for populating `CommitRange`.
+pub fn resolve_commit_range_from_merge_base(
+    repo_root: &Path,
+    base_ref: &str,
+) -> Result<(GitOid, GitOid)> {
+    let repo = repo_for_path(repo_root)?;
+    let head_oid = repo
+        .head()
+        .context("failed to resolve HEAD")?
+        .target()
+        .ok_or_else(|| anyhow!("HEAD does not point to a commit"))?;
+
+    let base_object = repo
+        .revparse_single(base_ref)
+        .with_context(|| format!("failed to resolve base ref '{base_ref}'"))?;
+    let base_commit_oid = base_object
+        .peel_to_commit()
+        .with_context(|| format!("failed to peel '{base_ref}' to a commit"))?
+        .id();
+
+    let merge_base = repo
+        .merge_base(base_commit_oid, head_oid)
+        .with_context(|| format!("failed to find merge-base between '{base_ref}' and HEAD"))?;
+
+    Ok((GitOid::new(merge_base), GitOid::new(head_oid)))
+}
+
 pub fn has_uncommitted_changes(repo_root: &Path) -> Result<bool> {
     let repo = repo_for_path(repo_root)?;
     let mut opts = StatusOptions::new();

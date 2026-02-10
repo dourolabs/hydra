@@ -23,7 +23,7 @@ use crate::git;
 use crate::git::{
     apply_patch, current_branch, diff_commit_range as git_diff_commit_range,
     has_uncommitted_changes as git_has_uncommitted_changes, push_branch,
-    resolve_commit_range_oids as git_resolve_commit_range_oids,
+    resolve_commit_range_from_merge_base as git_resolve_commit_range_from_merge_base,
 };
 use crate::{
     client::MetisClientInterface,
@@ -78,15 +78,11 @@ pub enum PatchesCommand {
         )]
         issue_id: IssueId,
 
-        /// Commit range to include in the patch (e.g., base..HEAD). Defaults to metis/<issue-id>/base..HEAD.
-        #[arg(long = "range", value_name = "COMMIT_RANGE")]
-        commit_range: Option<String>,
-
         /// Allow creating a patch even when the working directory has uncommitted changes.
         #[arg(long = "allow-uncommitted")]
         allow_uncommitted: bool,
 
-        /// Force push the branch to GitHub when using --github.
+        /// Force push the branch to the remote.
         #[arg(long = "force")]
         force: bool,
     },
@@ -138,18 +134,6 @@ pub enum PatchesCommand {
         /// Force push the branch to the remote.
         #[arg(long = "force")]
         force: bool,
-
-        /// Issue ID used to resolve the default commit range (metis/<issue-id>/base..HEAD).
-        #[arg(
-            long = "issue-id",
-            value_name = "ISSUE_ID",
-            env = ENV_METIS_ISSUE_ID
-        )]
-        issue_id: Option<IssueId>,
-
-        /// Commit range to include in the patch (e.g., base..HEAD).
-        #[arg(long = "range", value_name = "COMMIT_RANGE")]
-        commit_range: Option<String>,
     },
 
     /// Inspect or enqueue merge queue entries for a repository branch.
@@ -214,7 +198,6 @@ pub async fn run(
             github,
             assignee,
             issue_id,
-            commit_range,
             allow_uncommitted,
             force,
         } => {
@@ -226,7 +209,6 @@ pub async fn run(
                 github,
                 assignee,
                 issue_id,
-                commit_range,
                 allow_uncommitted,
                 force,
                 None,
@@ -252,20 +234,8 @@ pub async fn run(
             description,
             status,
             force,
-            issue_id,
-            commit_range,
         } => {
-            let patch = update_patch(
-                client,
-                id,
-                title,
-                description,
-                status,
-                force,
-                issue_id,
-                commit_range,
-            )
-            .await?;
+            let patch = update_patch(client, id, title, description, status, force).await?;
             write_patch_output(context.output_format, &patch, None)?;
             Ok(())
         }
@@ -454,7 +424,6 @@ async fn create_patch(
     create_github_pr: bool,
     assignee: Option<String>,
     issue_id: IssueId,
-    commit_range: Option<String>,
     allow_uncommitted: bool,
     force: bool,
     repo_root: Option<&Path>,
@@ -468,7 +437,7 @@ async fn create_patch(
         bail!("Working directory has uncommitted changes. Commit them before creating a patch or re-run with --allow-uncommitted.");
     }
 
-    let commit_range = resolve_commit_range(commit_range, &issue_id)?;
+    let commit_range = format!("metis/{}/base..HEAD", issue_id.as_ref());
     let diff = git_diff_commit_range(&repo_root, &commit_range)?;
     if diff.trim().is_empty() {
         bail!("No changes found in commit range '{commit_range}'.");
@@ -482,81 +451,19 @@ async fn create_patch(
             .unwrap_or_else(|| "<unknown>".to_string());
         anyhow!("job '{job_ref}' does not reference a service repository")
     })?;
-    let issue_record = client
-        .get_issue(&issue_id)
-        .await
-        .with_context(|| format!("failed to fetch issue '{issue_id}' to inspect patches"))?;
-    let existing_patch_id = (issue_record.issue.issue_type == IssueType::MergeRequest)
-        .then(|| issue_record.issue.patches.last().cloned())
-        .flatten();
 
-    // Resolve branch name and commit range SHAs for populating on the patch.
-    let branch_name = current_branch(&repo_root)?;
-    let (base_oid, head_oid) = git_resolve_commit_range_oids(&repo_root, &commit_range)?;
-    let commit_range_field = Some(metis_common::patches::CommitRange::new(base_oid, head_oid));
-
-    if let Some(existing_patch_id) = existing_patch_id {
-        let existing_patch = client
-            .get_patch(&existing_patch_id)
-            .await
-            .with_context(|| format!("failed to fetch patch '{existing_patch_id}'"))?;
-        if matches!(
-            existing_patch.patch.status,
-            PatchStatus::Open | PatchStatus::ChangesRequested
-        ) {
-            let mut updated_patch = existing_patch.patch;
-            updated_patch.title = title.clone();
-            updated_patch.description = description.clone();
-            updated_patch.diff = diff.clone();
-            updated_patch.branch_name = Some(branch_name.clone());
-            updated_patch.commit_range = commit_range_field.clone();
-
-            // Push the branch to remote.
-            push_branch(&repo_root, &branch_name, None, force)?;
-
-            let response = client
-                .update_patch(
-                    &existing_patch_id,
-                    &UpsertPatchRequest::new(updated_patch.clone()),
-                )
-                .await
-                .with_context(|| format!("failed to update patch '{existing_patch_id}'"))?;
-
-            let patch = PatchRecord::new(response.patch_id, updated_patch);
-            return Ok(CreatedPatch {
-                patch,
-                merge_request_issue: None,
-            });
-        }
-    }
-    let github_token = if create_github_pr {
-        Some(
-            client
-                .get_github_token()
-                .await
-                .context("failed to fetch GitHub token")?,
-        )
-    } else {
-        // Always push the branch to the remote, even without --github.
-        push_branch(&repo_root, &branch_name, None, force)?;
-        None
-    };
     let is_automatic_backup = false;
-    let patch_title = title.clone();
-    let patch_description = description.clone();
     let response = create_patch_artifact_from_repo(
         client,
         &repo_root,
         diff,
-        patch_title,
-        patch_description,
+        title.clone(),
+        description.clone(),
         job_id.clone(),
         create_github_pr,
-        github_token.as_deref(),
         is_automatic_backup,
         force,
         service_repo_name,
-        Some(&commit_range),
     )
     .await?;
 
@@ -602,18 +509,6 @@ fn write_patch_output(
     Ok(())
 }
 
-fn resolve_commit_range(commit_range: Option<String>, issue_id: &IssueId) -> Result<String> {
-    if let Some(range) = commit_range {
-        let trimmed = range.trim();
-        if trimmed.is_empty() {
-            bail!("commit range must not be empty");
-        }
-        return Ok(trimmed.to_string());
-    }
-
-    Ok(format!("metis/{}/base..HEAD", issue_id.as_ref()))
-}
-
 async fn update_patch(
     client: &dyn MetisClientInterface,
     patch_id: PatchId,
@@ -621,8 +516,18 @@ async fn update_patch(
     description: Option<String>,
     status: Option<PatchStatus>,
     force: bool,
-    issue_id: Option<IssueId>,
-    commit_range: Option<String>,
+) -> Result<PatchRecord> {
+    update_patch_inner(client, patch_id, title, description, status, force, None).await
+}
+
+async fn update_patch_inner(
+    client: &dyn MetisClientInterface,
+    patch_id: PatchId,
+    title: Option<String>,
+    description: Option<String>,
+    status: Option<PatchStatus>,
+    force: bool,
+    repo_root: Option<&Path>,
 ) -> Result<PatchRecord> {
     let description = match description {
         Some(value) => {
@@ -646,13 +551,14 @@ async fn update_patch(
         None => None,
     };
 
-    // Only re-read git state when --range or --issue-id is provided.
-    let update_git_state = commit_range.is_some() || issue_id.is_some();
+    let has_field_updates = title.is_some() || description.is_some() || status.is_some();
+    let in_git_repo = match repo_root {
+        Some(path) => git::repository_root(Some(path)).ok(),
+        None => git::repository_root(None).ok(),
+    };
 
-    let no_changes =
-        title.is_none() && description.is_none() && status.is_none() && !update_git_state;
-    if no_changes {
-        bail!("At least one field must be provided to update.");
+    if !has_field_updates && in_git_repo.is_none() {
+        bail!("At least one field must be provided to update when not inside a git repository.");
     }
 
     let current = client
@@ -671,26 +577,26 @@ async fn update_patch(
         updated_patch.status = status;
     }
 
-    // When --range or --issue-id is provided, re-read git state: diff, branch name,
+    // Always re-read git state when inside a git repo: diff, branch name,
     // commit range SHAs, and push the branch.
-    if update_git_state {
-        let repo_root = git::repository_root(None)?;
+    if let Some(repo_root) = in_git_repo {
         let branch_name = current_branch(&repo_root)?;
         updated_patch.branch_name = Some(branch_name.clone());
 
-        if let Some(range_str) = resolve_update_commit_range(commit_range, issue_id.as_ref())? {
-            let diff = git_diff_commit_range(&repo_root, &range_str)?;
-            if !diff.trim().is_empty() {
-                updated_patch.diff = diff;
-            }
-
-            let (base_oid, head_oid) = git_resolve_commit_range_oids(&repo_root, &range_str)?;
-            updated_patch.commit_range =
-                Some(metis_common::patches::CommitRange::new(base_oid, head_oid));
+        // Derive commit range from the merge-base of HEAD with origin/main.
+        let (base_oid, head_oid) =
+            git_resolve_commit_range_from_merge_base(&repo_root, "origin/main")?;
+        let range_str = format!("{base_oid}..{head_oid}");
+        let diff = git_diff_commit_range(&repo_root, &range_str)?;
+        if !diff.trim().is_empty() {
+            updated_patch.diff = diff;
         }
+        updated_patch.commit_range =
+            Some(metis_common::patches::CommitRange::new(base_oid, head_oid));
 
-        // Push the branch to the remote.
-        push_branch(&repo_root, &branch_name, None, force)?;
+        // Try to get a GitHub token for pushing; fall back to pushing without one.
+        let github_token = client.get_github_token().await.ok();
+        push_branch(&repo_root, &branch_name, github_token.as_deref(), force)?;
     }
 
     let response = client
@@ -699,27 +605,6 @@ async fn update_patch(
         .with_context(|| format!("failed to update patch '{patch_id}'"))?;
 
     Ok(PatchRecord::new(response.patch_id, updated_patch))
-}
-
-/// Resolve the commit range string for update: prefer explicit `--range`, then derive from
-/// `--issue-id` (metis/<issue-id>/base..HEAD), or return None if neither is available.
-fn resolve_update_commit_range(
-    commit_range: Option<String>,
-    issue_id: Option<&IssueId>,
-) -> Result<Option<String>> {
-    if let Some(range) = commit_range {
-        let trimmed = range.trim();
-        if trimmed.is_empty() {
-            bail!("commit range must not be empty");
-        }
-        return Ok(Some(trimmed.to_string()));
-    }
-
-    if let Some(issue_id) = issue_id {
-        return Ok(Some(format!("metis/{}/base..HEAD", issue_id.as_ref())));
-    }
-
-    Ok(None)
 }
 
 async fn merge_queue(
@@ -876,11 +761,9 @@ pub async fn create_patch_artifact_from_repo(
     description: String,
     job_id: Option<TaskId>,
     create_github_pr: bool,
-    github_token: Option<&str>,
     is_automatic_backup: bool,
     force: bool,
     service_repo_name: RepoName,
-    commit_range: Option<&str>,
 ) -> Result<UpsertPatchResponse> {
     let title = title.trim().to_string();
     let description = description.trim().to_string();
@@ -907,26 +790,36 @@ pub async fn create_patch_artifact_from_repo(
         false,
     );
 
-    // Resolve branch name and commit range SHAs when possible.
+    // Resolve branch name and commit range SHAs.
     let branch_name = current_branch(repo_root)?;
     patch_payload.branch_name = Some(branch_name.clone());
 
-    if let Some(range) = commit_range {
-        let (base_oid, head_oid) = git_resolve_commit_range_oids(repo_root, range)?;
+    // Derive commit range from merge-base with origin/main.
+    if let Ok((base_oid, head_oid)) =
+        git_resolve_commit_range_from_merge_base(repo_root, "origin/main")
+    {
         patch_payload.commit_range =
             Some(metis_common::patches::CommitRange::new(base_oid, head_oid));
     }
 
+    // Always try to get a GitHub token; fall back to pushing without one.
+    let github_token = client.get_github_token().await.ok();
+
     if create_github_pr {
-        let github_token = github_token
-            .ok_or_else(|| anyhow!("Creator GitHub token is required to push a GitHub branch"))?;
+        // GitHub PR creation requires a token.
+        let token = github_token.as_deref().ok_or_else(|| {
+            anyhow!("Creator GitHub token is required to create a GitHub pull request")
+        })?;
         if !branch_name.starts_with("metis/") {
             bail!(
                 "Cannot push to GitHub: current branch '{branch_name}' does not have the required 'metis/' prefix. \
                 Please checkout a branch named 'metis/<issue-id>/...' before creating a patch with --github."
             );
         }
-        push_branch(repo_root, &branch_name, Some(github_token), force)?;
+        push_branch(repo_root, &branch_name, Some(token), force)?;
+    } else {
+        // Push even without --github, using the token if available.
+        push_branch(repo_root, &branch_name, github_token.as_deref(), force)?;
     }
 
     let mut upsert_request = UpsertPatchRequest::new(patch_payload.clone());
@@ -1094,6 +987,22 @@ mod tests {
         })
     }
 
+    fn mock_get_github_token_failure(server: &MockServer) -> Mock {
+        server.mock(move |when, then| {
+            when.method(GET).path("/v1/github/token");
+            then.status(401);
+        })
+    }
+
+    fn mock_get_github_token<'a>(server: &'a MockServer, token: &'a str) -> Mock<'a> {
+        let token = token.to_string();
+        server.mock(move |when, then| {
+            when.method(GET).path("/v1/github/token");
+            then.status(200)
+                .json_body(serde_json::json!({"github_token": token}));
+        })
+    }
+
     fn mock_update_patch(
         server: &MockServer,
         patch_id: PatchId,
@@ -1118,6 +1027,9 @@ mod tests {
         // Create a bare remote so push_branch succeeds in tests.
         Repository::init_bare(&bare_path).context("failed to init bare remote for test")?;
         let repo = Repository::init(&repo_path).context("failed to init git repo for test")?;
+        // Ensure the default branch is "main" regardless of system git config.
+        repo.set_head("refs/heads/main")
+            .context("failed to set HEAD to main")?;
         git_configure_repo(&repo_path, "Test User", "test@example.com")?;
         let remote_url = bare_path
             .to_str()
@@ -1132,6 +1044,9 @@ mod tests {
         git_commit_changes(&repo_path, "initial commit")?;
         let base_commit = git_resolve_head_oid(&repo_path)?
             .ok_or_else(|| anyhow!("failed to resolve initial commit"))?;
+
+        // Push the initial commit as origin/main so merge-base resolution works.
+        push_branch(&repo_path, "main", None, false)?;
 
         fs::write(repo_path.join("README.md"), "updated content\n")
             .context("failed to update README.md")?;
@@ -1295,28 +1210,12 @@ mod tests {
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-1"));
         let patch_record = PatchRecord::new(patch_id("p-1"), patch);
-        let issue_record = IssueRecord::new(
-            issue_id.clone(),
-            Issue::new(
-                IssueType::Task,
-                "issue for patch diff".to_string(),
-                Username::from("creator-a"),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                false,
-            ),
-        );
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
-        let issue_mock = mock_get_issue(&server, issue_record);
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
+        mock_get_github_token_failure(&server);
         create_patch(
             &client,
             patch_title.clone(),
@@ -1325,7 +1224,6 @@ mod tests {
             false,
             None,
             issue_id.clone(),
-            None,
             false,
             false,
             Some(&repo_path),
@@ -1333,7 +1231,6 @@ mod tests {
         .await?;
 
         job_mock.assert();
-        issue_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
 
@@ -1369,8 +1266,9 @@ mod tests {
         let job_id_opt = Some(job_id.clone());
         let description = "patch with job id".to_string();
         let issue_id = issue_id("i-job-1234");
-        let commit_range = Some(format!("{base_commit}..{head_commit}"));
-        let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
+        let base_branch = format!("metis/{}/base", issue_id.as_ref());
+        create_branch_at(&repo_path, &base_branch, base_commit)?;
+        let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
         let patch = with_git_identity(
             Patch::new(
                 title.clone(),
@@ -1391,28 +1289,12 @@ mod tests {
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-2"));
         let patch_record = PatchRecord::new(patch_id("p-2"), patch);
-        let issue_record = IssueRecord::new(
-            issue_id.clone(),
-            Issue::new(
-                IssueType::Task,
-                "issue with job patch".to_string(),
-                Username::from("creator-a"),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                false,
-            ),
-        );
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
-        let issue_mock = mock_get_issue(&server, issue_record);
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
+        mock_get_github_token_failure(&server);
 
         create_patch(
             &client,
@@ -1422,7 +1304,6 @@ mod tests {
             false,
             None,
             issue_id.clone(),
-            commit_range,
             false,
             false,
             Some(&repo_path),
@@ -1430,7 +1311,6 @@ mod tests {
         .await?;
 
         job_mock.assert();
-        issue_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
 
@@ -1439,11 +1319,12 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_errors_without_job_id() -> Result<()> {
-        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, base_commit, _head_commit) = initialize_repo_with_changes()?;
         let server = MockServer::start();
         let client = metis_client(&server);
-        let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let issue_id = issue_id("i-missing-job");
+        let base_branch = format!("metis/{}/base", issue_id.as_ref());
+        create_branch_at(&repo_path, &base_branch, base_commit)?;
         let result = create_patch(
             &client,
             "missing job".to_string(),
@@ -1452,7 +1333,6 @@ mod tests {
             false,
             None,
             issue_id,
-            commit_range,
             false,
             false,
             Some(&repo_path),
@@ -1470,11 +1350,12 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_requires_creator_github_token_when_creating_pr() -> Result<()> {
-        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, base_commit, _head_commit) = initialize_repo_with_changes()?;
         let server = MockServer::start();
         let client = metis_client(&server);
-        let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let issue_id = issue_id("i-gh-token");
+        let base_branch = format!("metis/{}/base", issue_id.as_ref());
+        create_branch_at(&repo_path, &base_branch, base_commit)?;
         let job_id = task_id("t-job-gh-token");
         let job_record = JobRecord::new(
             job_id.clone(),
@@ -1495,38 +1376,8 @@ mod tests {
             ),
         );
         let job_mock = mock_get_job(&server, job_record);
-        let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
-        let expected_patch_request = UpsertPatchRequest::new(Patch::new(
-            "pr title".to_string(),
-            "pr description".to_string(),
-            expected_diff,
-            PatchStatus::Open,
-            false,
-            Some(job_id.clone()),
-            Vec::new(),
-            sample_repo_name(),
-            None,
-            false,
-        ));
-        let patch_response = UpsertPatchResponse::new(patch_id("p-gh-token"));
-        let _patch_mock = mock_create_patch(&server, expected_patch_request, patch_response);
-        let issue_record = IssueRecord::new(
-            issue_id.clone(),
-            Issue::new(
-                IssueType::Task,
-                "issue requiring github token".to_string(),
-                Username::from("creator-a"),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                false,
-            ),
-        );
-        let issue_mock = mock_get_issue(&server, issue_record);
+        // Return 401 for github token -- create with --github should fail.
+        mock_get_github_token_failure(&server);
 
         let result = create_patch(
             &client,
@@ -1536,7 +1387,6 @@ mod tests {
             true,
             None,
             issue_id,
-            commit_range,
             false,
             false,
             Some(&repo_path),
@@ -1554,7 +1404,6 @@ mod tests {
             "error should reference GitHub token or PR creation: {error}"
         );
         job_mock.assert();
-        issue_mock.assert();
 
         Ok(())
     }
@@ -1651,6 +1500,7 @@ mod tests {
         let patch_mock = mock_create_patch(&server, expected_patch_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
         let parent_issue_mock = mock_get_issue(&server, parent_issue_record);
+        mock_get_github_token_failure(&server);
         let issue_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/issues")
@@ -1667,7 +1517,6 @@ mod tests {
             false,
             Some("owner-a".to_string()),
             parent_issue.clone(),
-            None,
             false,
             false,
             Some(&repo_path),
@@ -1677,120 +1526,8 @@ mod tests {
         job_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
-        parent_issue_mock.assert_hits(2);
+        parent_issue_mock.assert_hits(1);
         issue_mock.assert();
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn create_patch_updates_merge_request_patch_when_present() -> Result<()> {
-        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        let branch_name = current_branch(&repo_path)?;
-        let job_id = task_id("t-job-review");
-        let job_record = JobRecord::new(
-            job_id.clone(),
-            Task::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
-                    name: sample_repo_name(),
-                    rev: None,
-                },
-                None,
-                None,
-                None,
-                Default::default(),
-                None,
-                None,
-                None,
-                false,
-            ),
-        );
-        let issue_id = issue_id("i-review");
-        let patch_id = patch_id("p-review");
-        let commit_range = Some(format!("{base_commit}..{head_commit}"));
-        let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
-        let reviews = vec![Review::new(
-            "needs adjustments".to_string(),
-            false,
-            "reviewer".to_string(),
-            None,
-        )];
-        let existing_patch = Patch::new(
-            "old title".to_string(),
-            "old description".to_string(),
-            sample_diff(),
-            PatchStatus::ChangesRequested,
-            false,
-            Some(job_id.clone()),
-            reviews.clone(),
-            sample_repo_name(),
-            None,
-            false,
-        );
-        let patch_record = PatchRecord::new(patch_id.clone(), existing_patch);
-        let issue_record = IssueRecord::new(
-            issue_id.clone(),
-            Issue::new(
-                IssueType::MergeRequest,
-                "review patch".to_string(),
-                Username::from("creator-a"),
-                String::new(),
-                IssueStatus::Open,
-                Some("agent-a".to_string()),
-                None,
-                Vec::new(),
-                Vec::new(),
-                vec![patch_id.clone()],
-                false,
-            ),
-        );
-        let updated_patch = with_git_identity(
-            Patch::new(
-                "updated title".to_string(),
-                "updated description".to_string(),
-                expected_diff.clone(),
-                PatchStatus::ChangesRequested,
-                false,
-                Some(job_id.clone()),
-                reviews,
-                sample_repo_name(),
-                None,
-                false,
-            ),
-            &branch_name,
-            base_commit,
-            head_commit,
-        );
-        let expected_request = UpsertPatchRequest::new(updated_patch);
-        let patch_response = UpsertPatchResponse::new(patch_id.clone());
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let job_mock = mock_get_job(&server, job_record);
-        let issue_mock = mock_get_issue(&server, issue_record);
-        let patch_mock = mock_get_patch(&server, patch_record);
-        let update_mock =
-            mock_update_patch(&server, patch_id.clone(), expected_request, patch_response);
-
-        create_patch(
-            &client,
-            "updated title".to_string(),
-            "updated description".to_string(),
-            Some(job_id),
-            false,
-            None,
-            issue_id,
-            commit_range,
-            false,
-            false,
-            Some(repo_path.as_path()),
-        )
-        .await?;
-
-        job_mock.assert();
-        issue_mock.assert();
-        patch_mock.assert();
-        update_mock.assert();
 
         Ok(())
     }
@@ -1801,7 +1538,6 @@ mod tests {
         let branch_name = current_branch(&repo_path)?;
         let diff = git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
         let job_id = task_id("t-job-automatic");
-        // When commit_range is None, only branch_name is set (no commit_range).
         let mut expected_patch = Patch::new(
             "backup patch".to_string(),
             "backup description".to_string(),
@@ -1815,11 +1551,13 @@ mod tests {
             false,
         );
         expected_patch.branch_name = Some(branch_name);
+        expected_patch.commit_range = Some(CommitRange::new(base_commit, head_commit));
         let expected_request = UpsertPatchRequest::new(expected_patch);
         let patch_response = UpsertPatchResponse::new(patch_id("p-automatic"));
         let server = MockServer::start();
         let client = metis_client(&server);
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
+        mock_get_github_token_failure(&server);
         let _ = create_patch_artifact_from_repo(
             &client,
             &repo_path,
@@ -1828,11 +1566,9 @@ mod tests {
             "backup description".to_string(),
             Some(job_id.clone()),
             false,
-            None,
             true,
             false,
             sample_repo_name(),
-            None,
         )
         .await?;
 
@@ -1864,9 +1600,10 @@ mod tests {
                 false,
             ),
         );
-        let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let issue_id = issue_id("i-service");
-        let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
+        let base_branch = format!("metis/{}/base", issue_id.as_ref());
+        create_branch_at(&repo_path, &base_branch, base_commit)?;
+        let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
         let patch = with_git_identity(
             Patch::new(
                 "backup patch".to_string(),
@@ -1887,28 +1624,12 @@ mod tests {
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-service"));
         let patch_record = PatchRecord::new(patch_id("p-service"), patch);
-        let issue_record = IssueRecord::new(
-            issue_id.clone(),
-            Issue::new(
-                IssueType::Task,
-                "issue with service repo".to_string(),
-                Username::from("creator-a"),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                false,
-            ),
-        );
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
-        let issue_mock = mock_get_issue(&server, issue_record);
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
+        mock_get_github_token_failure(&server);
 
         create_patch(
             &client,
@@ -1918,7 +1639,6 @@ mod tests {
             false,
             None,
             issue_id.clone(),
-            commit_range,
             false,
             false,
             Some(repo_path.as_path()),
@@ -1926,7 +1646,6 @@ mod tests {
         .await?;
 
         job_mock.assert();
-        issue_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
         Ok(())
@@ -2048,6 +1767,8 @@ mod tests {
 
     #[tokio::test]
     async fn update_patch_modifies_requested_fields() -> Result<()> {
+        // Use a non-git temp dir to isolate from the real project repo.
+        let tempdir = tempfile::tempdir()?;
         let patch_record = PatchRecord::new(
             patch_id("p-update"),
             Patch::new(
@@ -2095,15 +1816,14 @@ mod tests {
             UpsertPatchResponse::new(patch_id("p-update")),
         );
 
-        update_patch(
+        update_patch_inner(
             &client,
             patch_id("p-update"),
             Some("Updated title".to_string()),
             Some("Updated description".to_string()),
             Some(PatchStatus::Closed),
             false,
-            None,
-            None,
+            Some(tempdir.path()),
         )
         .await?;
 
@@ -2115,17 +1835,18 @@ mod tests {
 
     #[tokio::test]
     async fn update_patch_rejects_empty_updates() {
+        // Use a non-git temp dir to test the "no fields + no git repo" error path.
+        let tempdir = tempfile::tempdir().unwrap();
         let server = MockServer::start();
         let client = metis_client(&server);
-        let result = update_patch(
+        let result = update_patch_inner(
             &client,
             patch_id("p-empty"),
             None,
             None,
             None,
             false,
-            None,
-            None,
+            Some(tempdir.path()),
         )
         .await;
 
@@ -2208,8 +1929,8 @@ mod tests {
         let job_id = task_id("t-job-branch-check");
         let server = MockServer::start();
         let client = metis_client(&server);
+        mock_get_github_token(&server, "test-token");
 
-        let commit_range = format!("{base_commit}..{head_commit}");
         let result = create_patch_artifact_from_repo(
             &client,
             &repo_path,
@@ -2218,11 +1939,9 @@ mod tests {
             "test description".to_string(),
             Some(job_id),
             true,
-            Some("test-token"),
             false,
             false,
             sample_repo_name(),
-            Some(&commit_range),
         )
         .await;
 
