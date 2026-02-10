@@ -12,8 +12,8 @@ use metis_common::{
     api::v1::{
         error::ApiError,
         events::{
-            EntityEventData, EventsQuery, HeartbeatEventData, ResyncEventData, SnapshotEventData,
-            SseEventType,
+            EntityEventData, EventsQuery, HeartbeatEventData, LAST_EVENT_ID_HEADER,
+            ResyncEventData, SnapshotEventData, SseEventType,
         },
     },
     ids::{DocumentId, IssueId, PatchId, TaskId},
@@ -21,9 +21,6 @@ use metis_common::{
 use std::{collections::HashMap, convert::Infallible};
 use tokio::sync::broadcast::error::RecvError;
 use tracing::{info, warn};
-
-/// Header name for SSE reconnection support.
-const LAST_EVENT_ID_HEADER: &str = "last-event-id";
 
 /// GET /v1/events — Server-Sent Events stream for entity change notifications.
 pub async fn get_events(
