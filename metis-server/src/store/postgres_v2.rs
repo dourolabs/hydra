@@ -1292,7 +1292,7 @@ impl Store for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each patch, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, created_at, updated_at \
+            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, created_at, updated_at \
              FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
