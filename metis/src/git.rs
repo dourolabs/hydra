@@ -394,6 +394,31 @@ fn checkout_revision(repo: &Repository, rev: &str) -> Result<()> {
     Ok(())
 }
 
+/// Resolve the base and head commit SHAs from a commit range string (e.g. "base..HEAD").
+pub fn resolve_commit_range_oids(repo_root: &Path, commit_range: &str) -> Result<(GitOid, GitOid)> {
+    let repo = repo_for_path(repo_root)?;
+    let trimmed = commit_range.trim();
+    if trimmed.is_empty() {
+        bail!("commit range must not be empty");
+    }
+
+    let rev_spec = repo
+        .revparse(trimmed)
+        .with_context(|| format!("failed to parse commit range '{trimmed}'"))?;
+    if !rev_spec.mode().contains(RevparseMode::RANGE) {
+        bail!("commit range '{trimmed}' must be specified in '<base>..<head>' format");
+    }
+
+    let base = rev_spec
+        .from()
+        .ok_or_else(|| anyhow!("commit range '{trimmed}' is missing a base revision"))?;
+    let head = rev_spec
+        .to()
+        .ok_or_else(|| anyhow!("commit range '{trimmed}' is missing a head revision"))?;
+
+    Ok((GitOid::new(base.id()), GitOid::new(head.id())))
+}
+
 pub fn has_uncommitted_changes(repo_root: &Path) -> Result<bool> {
     let repo = repo_for_path(repo_root)?;
     let mut opts = StatusOptions::new();

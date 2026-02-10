@@ -370,6 +370,7 @@ async fn submit_patch_artifact_if_present(
         is_automatic_backup,
         false,
         service_repo_name.clone(),
+        None,
     )
     .await?;
 
@@ -785,7 +786,8 @@ mod tests {
         let job_id = task_id("t-job-123");
         let repo_name = RepoName::from_str("dourolabs/example")?;
         let diff = workdir_diff(repo_path)?;
-        let expected_request = UpsertPatchRequest::new(Patch::new(
+        let branch_name = git_current_branch(repo_path)?;
+        let mut expected_patch = Patch::new(
             "final output line".to_string(),
             "final output line".to_string(),
             diff.clone(),
@@ -796,7 +798,9 @@ mod tests {
             repo_name.clone(),
             None,
             false,
-        ));
+        );
+        expected_patch.branch_name = Some(branch_name);
+        let expected_request = UpsertPatchRequest::new(expected_patch);
         let server = MockServer::start();
         let patch_mock = server.mock(|when, then| {
             when.method(POST)
