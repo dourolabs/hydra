@@ -18,7 +18,6 @@ pub mod list;
 pub mod logs;
 pub mod worker_run;
 
-pub(crate) use crate::command::output::format_runtime;
 pub use list::DEFAULT_JOB_LIMIT;
 
 #[derive(Subcommand)]

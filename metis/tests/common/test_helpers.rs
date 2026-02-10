@@ -335,7 +335,7 @@ pub async fn wait_for_status(
 
         let jobs = client.list_jobs(&SearchJobsQuery::default()).await?.jobs;
         if let Some(job) = jobs.iter().find(|job| &job.id == job_id) {
-            if job.status_log.current_status() == expected {
+            if job.task.status == expected {
                 return Ok(());
             }
         }

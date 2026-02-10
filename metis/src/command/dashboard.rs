@@ -19,7 +19,7 @@ use metis_common::{
     jobs::{JobRecord, SearchJobsQuery},
     patches::{GithubPr, PatchRecord},
     repositories::SearchRepositoriesQuery,
-    task_status::{Status, TaskError, TaskStatusLog},
+    task_status::{Status, TaskError},
     users::Username,
     whoami::ActorIdentity,
     IssueId, PatchId, RepoName, RepositoryRecord, TaskId,
@@ -38,7 +38,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::{
     client::MetisClientInterface,
-    command::{jobs, output::CommandContext},
+    command::output::{self, CommandContext},
 };
 
 pub mod panel;
@@ -3416,9 +3416,13 @@ fn issue_status_order(status: IssueStatus) -> usize {
 }
 
 fn summarize_job(job: JobRecord, now: DateTime<Utc>) -> JobDisplay {
-    let status = job.status_log.current_status();
-    let runtime = jobs::format_runtime(&job.status_log, now);
-    let last_change = last_activity(&job.status_log);
+    let status = job.task.status;
+    let runtime = output::format_runtime(&job.task, now);
+    let last_change = job
+        .task
+        .end_time
+        .or(job.task.start_time)
+        .or(job.task.creation_time);
     let note = note_or_error(&job);
 
     JobDisplay {
@@ -3428,13 +3432,6 @@ fn summarize_job(job: JobRecord, now: DateTime<Utc>) -> JobDisplay {
         note,
         last_change,
     }
-}
-
-fn last_activity(status_log: &TaskStatusLog) -> Option<DateTime<Utc>> {
-    status_log
-        .end_time()
-        .or_else(|| status_log.start_time())
-        .or_else(|| status_log.creation_time())
 }
 
 fn compare_recent(a: Option<DateTime<Utc>>, b: Option<DateTime<Utc>>) -> Ordering {
@@ -3447,8 +3444,8 @@ fn compare_recent(a: Option<DateTime<Utc>>, b: Option<DateTime<Utc>>) -> Orderin
 }
 
 fn note_or_error(job: &JobRecord) -> String {
-    if let Some(Err(error)) = job.status_log.result() {
-        return format_task_error(&error);
+    if let Some(error) = &job.task.error {
+        return format_task_error(error);
     }
 
     "-".into()
@@ -3578,7 +3575,6 @@ mod tests {
     use super::*;
     use crate::client::MetisClient;
     use crate::test_utils::ids::{issue_id, task_id};
-    use chrono::Duration as ChronoDuration;
     use crossterm::event::{
         Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
         MouseEventKind,
@@ -3586,7 +3582,6 @@ mod tests {
     use httpmock::prelude::*;
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
-    use metis_common::task_status::Event;
     use metis_common::{RepoName, Repository, RepositoryRecord};
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
@@ -3599,38 +3594,17 @@ mod tests {
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
 
-    fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
-        let now = Utc::now() - ChronoDuration::seconds(offset_seconds);
-        let mut log = TaskStatusLog::new(Status::Created, now);
-        match status {
-            Status::Pending => log.events.push(Event::Created {
-                at: now,
-                status: Status::Pending,
-            }),
-            Status::Running => log.events.push(Event::Started { at: now }),
-            Status::Complete => {
-                log.events.push(Event::Started { at: now });
-                log.events.push(Event::Completed {
-                    at: now,
-                    last_message: None,
-                });
-            }
-            Status::Failed => {
-                log.events.push(Event::Started { at: now });
-                log.events.push(Event::Failed {
-                    at: now,
-                    error: TaskError::JobEngineError {
-                        reason: "boom".into(),
-                    },
-                });
-            }
-            Status::Created => {}
-            other => unreachable!("unsupported task status variant: {other:?}"),
-        }
-
+    fn job_with_status(id: &str, status: Status, _offset_seconds: i64) -> JobRecord {
+        let error = if status == Status::Failed {
+            Some(TaskError::JobEngineError {
+                reason: "boom".into(),
+            })
+        } else {
+            None
+        };
         JobRecord::new(
             task_id(id),
-            Task::new(
+            Task::new_with_status(
                 "0".into(),
                 BundleSpec::None,
                 None,
@@ -3640,9 +3614,11 @@ mod tests {
                 None,
                 None,
                 None,
+                status,
+                None,
+                error,
                 false,
             ),
-            log,
         )
     }
 

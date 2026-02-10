@@ -7,10 +7,10 @@ use metis_common::{
     agents::AgentRecord,
     documents::DocumentRecord,
     issues::{Issue, IssueRecord},
-    jobs::JobRecord,
+    jobs::{JobRecord, Task},
     patches::{PatchRecord, PatchStatus},
     repositories::RepositoryRecord,
-    task_status::{Status, TaskError, TaskStatusLog},
+    task_status::{Status, TaskError},
     whoami::ActorIdentity,
 };
 use owo_colors::OwoColorize;
@@ -308,19 +308,19 @@ fn render_job_records_pretty(jobs: &[JobRecord], writer: &mut impl Write) -> Res
     }
 
     let terminal_width = current_terminal_width();
-    let now = Utc::now();
 
     let (plain_header, colored_header) = header_row();
     writeln!(writer, "{colored_header}")?;
     writeln!(writer, "{}", "-".repeat(plain_header.len()))?;
 
+    let now = Utc::now();
     for job in jobs {
-        let status_display = format_status(&job.status_log.current_status());
-        let runtime = format_runtime(&job.status_log, now).unwrap_or_else(|| "-".into());
+        let status_display = format_status(&job.task.status);
+        let runtime = format_runtime(&job.task, now).unwrap_or_else(|| "-".into());
         let notes = job_note(job).unwrap_or_else(|| "-".into());
         let cells = job_row_cells(job.id.as_ref(), status_display, &runtime);
         let plain_prefix = job_row_prefix(&cells);
-        let colored_prefix = colored_job_row_prefix(&cells, &job.status_log.current_status());
+        let colored_prefix = colored_job_row_prefix(&cells, &job.task.status);
         for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
             .into_iter()
             .enumerate()
@@ -545,41 +545,7 @@ fn format_status(status: &Status) -> &'static str {
     }
 }
 
-pub(crate) fn format_runtime(status_log: &TaskStatusLog, now: DateTime<Utc>) -> Option<String> {
-    let start = status_log.start_time().or(status_log.creation_time())?;
-    let end = status_log.end_time().unwrap_or(now);
-    let duration = if end < start {
-        ChronoDuration::zero()
-    } else {
-        end - start
-    };
-
-    Some(format_duration(duration))
-}
-
-fn format_duration(duration: ChronoDuration) -> String {
-    let total_seconds = duration.num_seconds();
-    if total_seconds <= 0 {
-        return "0s".to_string();
-    }
-
-    let hours = total_seconds / 3600;
-    let minutes = (total_seconds % 3600) / 60;
-    let seconds = total_seconds % 60;
-
-    if hours > 0 {
-        format!("{hours}h {minutes:02}m {seconds:02}s")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds:02}s")
-    } else {
-        format!("{seconds}s")
-    }
-}
-
 fn job_note(job: &JobRecord) -> Option<String> {
-    if let Some(Err(error)) = job.status_log.result() {
-        return Some(format_task_error(&error));
-    }
     job.task.error.as_ref().map(format_task_error)
 }
 
@@ -644,6 +610,62 @@ fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize) -> Vec<Str
                 }
             })
             .collect()
+    }
+}
+
+pub(crate) fn format_runtime(task: &Task, now: DateTime<Utc>) -> Option<String> {
+    match task.status {
+        Status::Running => {
+            // Running: elapsed = now - start_time (or creation_time as fallback)
+            let started = task.start_time.or(task.creation_time)?;
+            let duration = if now < started {
+                ChronoDuration::zero()
+            } else {
+                now - started
+            };
+            Some(format_duration(duration))
+        }
+        Status::Pending | Status::Created => {
+            // Pending/Created: elapsed = now - creation_time
+            let created = task.creation_time?;
+            let duration = if now < created {
+                ChronoDuration::zero()
+            } else {
+                now - created
+            };
+            Some(format_duration(duration))
+        }
+        Status::Complete | Status::Failed => {
+            // Completed/Failed: total runtime = end_time - start_time (or creation_time)
+            let started = task.start_time.or(task.creation_time)?;
+            let ended = task.end_time?;
+            let duration = if ended < started {
+                ChronoDuration::zero()
+            } else {
+                ended - started
+            };
+            Some(format_duration(duration))
+        }
+        _ => None,
+    }
+}
+
+fn format_duration(duration: ChronoDuration) -> String {
+    let total_seconds = duration.num_seconds();
+    if total_seconds <= 0 {
+        return "0s".to_string();
+    }
+
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{hours}h {minutes:02}m {seconds:02}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds:02}s")
+    } else {
+        format!("{seconds}s")
     }
 }
 

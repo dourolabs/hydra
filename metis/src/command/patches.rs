@@ -922,7 +922,6 @@ mod tests {
             CreatePatchAssetResponse, GitOid, ListPatchesResponse, Patch, PatchRecord, Review,
             UpsertPatchResponse,
         },
-        task_status::TaskStatusLog,
         users::Username,
         RepoName,
     };
@@ -1147,7 +1146,6 @@ mod tests {
                 None,
                 false,
             ),
-            TaskStatusLog::from_events(Vec::new()),
         );
         let patch_title = "custom patch title".to_string();
         let patch_description = "custom patch description".to_string();
@@ -1235,7 +1233,6 @@ mod tests {
                 None,
                 false,
             ),
-            TaskStatusLog::from_events(Vec::new()),
         );
 
         let title = "patch with job title".to_string();
@@ -1361,7 +1358,6 @@ mod tests {
                 None,
                 false,
             ),
-            TaskStatusLog::from_events(Vec::new()),
         );
         let job_mock = mock_get_job(&server, job_record);
         let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
@@ -1452,7 +1448,6 @@ mod tests {
                 None,
                 false,
             ),
-            TaskStatusLog::from_events(Vec::new()),
         );
         let created_patch_id = patch_id("p-merge");
         let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
@@ -1568,7 +1563,6 @@ mod tests {
                 None,
                 false,
             ),
-            TaskStatusLog::from_events(Vec::new()),
         );
         let issue_id = issue_id("i-review");
         let patch_id = patch_id("p-review");
@@ -1716,7 +1710,6 @@ mod tests {
                 None,
                 false,
             ),
-            TaskStatusLog::from_events(Vec::new()),
         );
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let issue_id = issue_id("i-service");
@@ -1819,7 +1812,6 @@ mod tests {
                 None,
                 false,
             ),
-            TaskStatusLog::from_events(Vec::new()),
         );
         let job_mock = mock_get_job(&server, job_record.clone());
 

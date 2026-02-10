@@ -43,7 +43,7 @@ async fn stream_logs_for_issue(
     watch: bool,
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
-    let mut jobs = client
+    let jobs = client
         .list_jobs(&SearchJobsQuery::new(None, Some(issue_id.clone()), None))
         .await
         .with_context(|| format!("failed to find jobs for issue '{issue_id}'"))?
@@ -53,12 +53,8 @@ async fn stream_logs_for_issue(
         bail!("no jobs found spawned from issue '{issue_id}'");
     }
 
-    jobs.sort_by(|a, b| {
-        let a_time = a.status_log.creation_time();
-        let b_time = b.status_log.creation_time();
-        b_time.cmp(&a_time)
-    });
-
+    // Jobs are returned from the server sorted by most recent activity,
+    // so the first job is the most recently updated one.
     let job_ids: Vec<TaskId> = jobs.into_iter().map(|job| job.id).collect();
     let chosen_job = job_ids.first().cloned().unwrap();
     let found_jobs = job_ids
@@ -85,10 +81,7 @@ mod tests {
         command::output::{CommandContext, ResolvedOutputFormat},
     };
     use httpmock::prelude::*;
-    use metis_common::{
-        jobs::{JobRecord, ListJobsResponse, Task},
-        task_status::{Event, Status, TaskStatusLog},
-    };
+    use metis_common::jobs::{JobRecord, ListJobsResponse, Task};
     use reqwest::Client as HttpClient;
     use std::{collections::HashMap, str::FromStr};
 
@@ -102,7 +95,7 @@ mod tests {
         ids::issue_id(value)
     }
 
-    fn job_record(id: &str, created_at_secs: i64) -> JobRecord {
+    fn job_record(id: &str) -> JobRecord {
         JobRecord::new(
             task_id(id),
             Task::new(
@@ -117,10 +110,6 @@ mod tests {
                 None,
                 false,
             ),
-            TaskStatusLog::from_events(vec![Event::Created {
-                at: chrono::Utc::now() + chrono::Duration::seconds(created_at_secs),
-                status: Status::Created,
-            }]),
         )
     }
 
@@ -155,8 +144,8 @@ mod tests {
                 .path("/v1/jobs/")
                 .query_param("spawned_from", issue_id.as_ref());
             then.status(200).json_body_obj(&ListJobsResponse::new(vec![
-                job_record("t-newest", 5),
-                job_record("t-older", 0),
+                job_record("t-newest"),
+                job_record("t-older"),
             ]));
         });
         let log_mock = server.mock(|when, then| {

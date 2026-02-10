@@ -419,18 +419,6 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let jobs = client.list_jobs(&SearchJobsQuery::default()).await?;
     let listed_job = jobs.jobs.first().expect("job from list");
     assert!(matches!(listed_job.task.context, BundleSpec::Unknown));
-    assert!(matches!(
-        listed_job.status_log.events.first(),
-        Some(Event::Created {
-            status: Status::Unknown,
-            ..
-        })
-    ));
-    assert!(matches!(
-        listed_job.status_log.events.get(1),
-        Some(Event::Unknown)
-    ));
-    assert!(listed_job.status_log.current_status().is_failure());
 
     let fetched_job = client.get_job(&job_id).await?;
     assert!(matches!(fetched_job.task.context, BundleSpec::Unknown));
@@ -809,14 +797,4 @@ fn forward_todo_response(issue_id: &IssueId) -> Value {
         ],
         "note": "todos"
     })
-}
-
-trait StatusSummary {
-    fn is_failure(&self) -> bool;
-}
-
-impl StatusSummary for Status {
-    fn is_failure(&self) -> bool {
-        matches!(self, Status::Failed | Status::Unknown)
-    }
 }
