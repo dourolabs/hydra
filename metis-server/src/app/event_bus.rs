@@ -30,56 +30,67 @@ pub enum ServerEvent {
     IssueCreated {
         seq: u64,
         issue_id: IssueId,
+        version: u64,
         timestamp: DateTime<Utc>,
     },
     IssueUpdated {
         seq: u64,
         issue_id: IssueId,
+        version: u64,
         timestamp: DateTime<Utc>,
     },
     IssueDeleted {
         seq: u64,
         issue_id: IssueId,
+        version: u64,
         timestamp: DateTime<Utc>,
     },
     PatchCreated {
         seq: u64,
         patch_id: PatchId,
+        version: u64,
         timestamp: DateTime<Utc>,
     },
     PatchUpdated {
         seq: u64,
         patch_id: PatchId,
+        version: u64,
         timestamp: DateTime<Utc>,
     },
     PatchDeleted {
         seq: u64,
         patch_id: PatchId,
+        version: u64,
         timestamp: DateTime<Utc>,
     },
     JobCreated {
         seq: u64,
         task_id: TaskId,
+        version: u64,
         timestamp: DateTime<Utc>,
     },
     JobUpdated {
         seq: u64,
         task_id: TaskId,
+        version: u64,
         timestamp: DateTime<Utc>,
     },
     DocumentCreated {
         seq: u64,
         document_id: DocumentId,
+        version: u64,
         timestamp: DateTime<Utc>,
     },
     DocumentUpdated {
         seq: u64,
         document_id: DocumentId,
+        version: u64,
         timestamp: DateTime<Utc>,
     },
     DocumentDeleted {
         seq: u64,
         document_id: DocumentId,
+        version: u64,
         timestamp: DateTime<Utc>,
     },
 }
@@ -142,90 +153,101 @@ impl EventBus {
         let _ = self.sender.send(event);
     }
 
-    pub fn emit_issue_created(&self, issue_id: IssueId) {
+    pub fn emit_issue_created(&self, issue_id: IssueId, version: u64) {
         self.send(ServerEvent::IssueCreated {
             seq: self.next_seq(),
             issue_id,
+            version,
             timestamp: Utc::now(),
         });
     }
 
-    pub fn emit_issue_updated(&self, issue_id: IssueId) {
+    pub fn emit_issue_updated(&self, issue_id: IssueId, version: u64) {
         self.send(ServerEvent::IssueUpdated {
             seq: self.next_seq(),
             issue_id,
+            version,
             timestamp: Utc::now(),
         });
     }
 
-    pub fn emit_issue_deleted(&self, issue_id: IssueId) {
+    pub fn emit_issue_deleted(&self, issue_id: IssueId, version: u64) {
         self.send(ServerEvent::IssueDeleted {
             seq: self.next_seq(),
             issue_id,
+            version,
             timestamp: Utc::now(),
         });
     }
 
-    pub fn emit_patch_created(&self, patch_id: PatchId) {
+    pub fn emit_patch_created(&self, patch_id: PatchId, version: u64) {
         self.send(ServerEvent::PatchCreated {
             seq: self.next_seq(),
             patch_id,
+            version,
             timestamp: Utc::now(),
         });
     }
 
-    pub fn emit_patch_updated(&self, patch_id: PatchId) {
+    pub fn emit_patch_updated(&self, patch_id: PatchId, version: u64) {
         self.send(ServerEvent::PatchUpdated {
             seq: self.next_seq(),
             patch_id,
+            version,
             timestamp: Utc::now(),
         });
     }
 
-    pub fn emit_patch_deleted(&self, patch_id: PatchId) {
+    pub fn emit_patch_deleted(&self, patch_id: PatchId, version: u64) {
         self.send(ServerEvent::PatchDeleted {
             seq: self.next_seq(),
             patch_id,
+            version,
             timestamp: Utc::now(),
         });
     }
 
-    pub fn emit_job_created(&self, task_id: TaskId) {
+    pub fn emit_job_created(&self, task_id: TaskId, version: u64) {
         self.send(ServerEvent::JobCreated {
             seq: self.next_seq(),
             task_id,
+            version,
             timestamp: Utc::now(),
         });
     }
 
-    pub fn emit_job_updated(&self, task_id: TaskId) {
+    pub fn emit_job_updated(&self, task_id: TaskId, version: u64) {
         self.send(ServerEvent::JobUpdated {
             seq: self.next_seq(),
             task_id,
+            version,
             timestamp: Utc::now(),
         });
     }
 
-    pub fn emit_document_created(&self, document_id: DocumentId) {
+    pub fn emit_document_created(&self, document_id: DocumentId, version: u64) {
         self.send(ServerEvent::DocumentCreated {
             seq: self.next_seq(),
             document_id,
+            version,
             timestamp: Utc::now(),
         });
     }
 
-    pub fn emit_document_updated(&self, document_id: DocumentId) {
+    pub fn emit_document_updated(&self, document_id: DocumentId, version: u64) {
         self.send(ServerEvent::DocumentUpdated {
             seq: self.next_seq(),
             document_id,
+            version,
             timestamp: Utc::now(),
         });
     }
 
-    pub fn emit_document_deleted(&self, document_id: DocumentId) {
+    pub fn emit_document_deleted(&self, document_id: DocumentId, version: u64) {
         self.send(ServerEvent::DocumentDeleted {
             seq: self.next_seq(),
             document_id,
+            version,
             timestamp: Utc::now(),
         });
     }
@@ -294,7 +316,7 @@ impl Store for StoreWithEvents {
 
     async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
         let (issue_id, version) = self.inner.add_issue(issue).await?;
-        self.event_bus.emit_issue_created(issue_id.clone());
+        self.event_bus.emit_issue_created(issue_id.clone(), version);
         Ok((issue_id, version))
     }
 
@@ -312,7 +334,7 @@ impl Store for StoreWithEvents {
 
     async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
         let version = self.inner.update_issue(id, issue).await?;
-        self.event_bus.emit_issue_updated(id.clone());
+        self.event_bus.emit_issue_updated(id.clone(), version);
         Ok(version)
     }
 
@@ -325,7 +347,7 @@ impl Store for StoreWithEvents {
 
     async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
         let version = self.inner.delete_issue(id).await?;
-        self.event_bus.emit_issue_deleted(id.clone());
+        self.event_bus.emit_issue_deleted(id.clone(), version);
         Ok(version)
     }
 
@@ -340,7 +362,7 @@ impl Store for StoreWithEvents {
 
     async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
         let (patch_id, version) = self.inner.add_patch(patch).await?;
-        self.event_bus.emit_patch_created(patch_id.clone());
+        self.event_bus.emit_patch_created(patch_id.clone(), version);
         Ok((patch_id, version))
     }
 
@@ -358,7 +380,7 @@ impl Store for StoreWithEvents {
 
     async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
         let version = self.inner.update_patch(id, patch).await?;
-        self.event_bus.emit_patch_updated(id.clone());
+        self.event_bus.emit_patch_updated(id.clone(), version);
         Ok(version)
     }
 
@@ -371,7 +393,7 @@ impl Store for StoreWithEvents {
 
     async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
         let version = self.inner.delete_patch(id).await?;
-        self.event_bus.emit_patch_deleted(id.clone());
+        self.event_bus.emit_patch_deleted(id.clone(), version);
         Ok(version)
     }
 
@@ -386,7 +408,8 @@ impl Store for StoreWithEvents {
         document: Document,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let (document_id, version) = self.inner.add_document(document).await?;
-        self.event_bus.emit_document_created(document_id.clone());
+        self.event_bus
+            .emit_document_created(document_id.clone(), version);
         Ok((document_id, version))
     }
 
@@ -411,13 +434,13 @@ impl Store for StoreWithEvents {
         document: Document,
     ) -> Result<VersionNumber, StoreError> {
         let version = self.inner.update_document(id, document).await?;
-        self.event_bus.emit_document_updated(id.clone());
+        self.event_bus.emit_document_updated(id.clone(), version);
         Ok(version)
     }
 
     async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
         let version = self.inner.delete_document(id).await?;
-        self.event_bus.emit_document_deleted(id.clone());
+        self.event_bus.emit_document_deleted(id.clone(), version);
         Ok(version)
     }
 
@@ -457,7 +480,7 @@ impl Store for StoreWithEvents {
         creation_time: DateTime<Utc>,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let (task_id, version) = self.inner.add_task(task, creation_time).await?;
-        self.event_bus.emit_job_created(task_id.clone());
+        self.event_bus.emit_job_created(task_id.clone(), version);
         Ok((task_id, version))
     }
 
@@ -470,7 +493,8 @@ impl Store for StoreWithEvents {
         self.inner
             .add_task_with_id(metis_id.clone(), task, creation_time)
             .await?;
-        self.event_bus.emit_job_created(metis_id);
+        // add_task_with_id does not return a version; use 1 as the initial version.
+        self.event_bus.emit_job_created(metis_id, 1);
         Ok(())
     }
 
@@ -480,7 +504,8 @@ impl Store for StoreWithEvents {
         task: Task,
     ) -> Result<Versioned<Task>, StoreError> {
         let result = self.inner.update_task(metis_id, task).await?;
-        self.event_bus.emit_job_updated(metis_id.clone());
+        self.event_bus
+            .emit_job_updated(metis_id.clone(), result.version);
         Ok(result)
     }
 
@@ -592,16 +617,20 @@ mod tests {
         let mut rx = bus.subscribe();
 
         let issue_id = IssueId::new();
-        bus.emit_issue_created(issue_id.clone());
+        bus.emit_issue_created(issue_id.clone(), 1);
 
         let event = rx.recv().await.expect("should receive event");
         assert_eq!(event.seq(), 1);
         match event {
             ServerEvent::IssueCreated {
-                issue_id: id, seq, ..
+                issue_id: id,
+                seq,
+                version,
+                ..
             } => {
                 assert_eq!(id, issue_id);
                 assert_eq!(seq, 1);
+                assert_eq!(version, 1);
             }
             other => panic!("expected IssueCreated, got {other:?}"),
         }
@@ -613,8 +642,8 @@ mod tests {
         let mut rx = bus.subscribe();
 
         let issue_id = IssueId::new();
-        bus.emit_issue_created(issue_id.clone());
-        bus.emit_issue_updated(issue_id);
+        bus.emit_issue_created(issue_id.clone(), 1);
+        bus.emit_issue_updated(issue_id, 2);
 
         let e1 = rx.recv().await.unwrap();
         let e2 = rx.recv().await.unwrap();
@@ -649,9 +678,17 @@ mod tests {
         let (issue_id, _) = store.add_issue(issue).await.unwrap();
 
         let event = rx.recv().await.expect("should receive IssueCreated");
-        assert!(
-            matches!(&event, ServerEvent::IssueCreated { issue_id: id, .. } if *id == issue_id)
-        );
+        match &event {
+            ServerEvent::IssueCreated {
+                issue_id: id,
+                version,
+                ..
+            } => {
+                assert_eq!(*id, issue_id);
+                assert_eq!(*version, 1);
+            }
+            other => panic!("expected IssueCreated, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -685,9 +722,17 @@ mod tests {
         store.update_issue(&issue_id, updated).await.unwrap();
 
         let event = rx.recv().await.expect("should receive IssueUpdated");
-        assert!(
-            matches!(&event, ServerEvent::IssueUpdated { issue_id: id, .. } if *id == issue_id)
-        );
+        match &event {
+            ServerEvent::IssueUpdated {
+                issue_id: id,
+                version,
+                ..
+            } => {
+                assert_eq!(*id, issue_id);
+                assert_eq!(*version, 2);
+            }
+            other => panic!("expected IssueUpdated, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -719,8 +764,16 @@ mod tests {
         store.delete_issue(&issue_id).await.unwrap();
 
         let event = rx.recv().await.expect("should receive IssueDeleted");
-        assert!(
-            matches!(&event, ServerEvent::IssueDeleted { issue_id: id, .. } if *id == issue_id)
-        );
+        match &event {
+            ServerEvent::IssueDeleted {
+                issue_id: id,
+                version,
+                ..
+            } => {
+                assert_eq!(*id, issue_id);
+                assert_eq!(*version, 2);
+            }
+            other => panic!("expected IssueDeleted, got {other:?}"),
+        }
     }
 }

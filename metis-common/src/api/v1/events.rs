@@ -122,6 +122,7 @@ impl std::str::FromStr for SseEventType {
 pub struct EntityEventData {
     pub entity_type: String,
     pub entity_id: String,
+    pub version: u64,
     pub timestamp: DateTime<Utc>,
 }
 
