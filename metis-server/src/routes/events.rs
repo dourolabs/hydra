@@ -303,111 +303,137 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
 
 /// Converts a ServerEvent into an SSE event type and data payload.
 fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
-    let (event_type, entity_type, entity_id, timestamp) = match event {
+    let (event_type, entity_type, entity_id, version, timestamp) = match event {
         ServerEvent::IssueCreated {
             issue_id,
+            version,
             timestamp,
             ..
         } => (
             SseEventType::IssueCreated,
             "issue",
             issue_id.to_string(),
+            *version,
             *timestamp,
         ),
         ServerEvent::IssueUpdated {
             issue_id,
+            version,
             timestamp,
             ..
         } => (
             SseEventType::IssueUpdated,
             "issue",
             issue_id.to_string(),
+            *version,
             *timestamp,
         ),
         ServerEvent::IssueDeleted {
             issue_id,
+            version,
             timestamp,
             ..
         } => (
             SseEventType::IssueDeleted,
             "issue",
             issue_id.to_string(),
+            *version,
             *timestamp,
         ),
         ServerEvent::PatchCreated {
             patch_id,
+            version,
             timestamp,
             ..
         } => (
             SseEventType::PatchCreated,
             "patch",
             patch_id.to_string(),
+            *version,
             *timestamp,
         ),
         ServerEvent::PatchUpdated {
             patch_id,
+            version,
             timestamp,
             ..
         } => (
             SseEventType::PatchUpdated,
             "patch",
             patch_id.to_string(),
+            *version,
             *timestamp,
         ),
         ServerEvent::PatchDeleted {
             patch_id,
+            version,
             timestamp,
             ..
         } => (
             SseEventType::PatchDeleted,
             "patch",
             patch_id.to_string(),
+            *version,
             *timestamp,
         ),
         ServerEvent::JobCreated {
-            task_id, timestamp, ..
+            task_id,
+            version,
+            timestamp,
+            ..
         } => (
             SseEventType::JobCreated,
             "job",
             task_id.to_string(),
+            *version,
             *timestamp,
         ),
         ServerEvent::JobUpdated {
-            task_id, timestamp, ..
+            task_id,
+            version,
+            timestamp,
+            ..
         } => (
             SseEventType::JobUpdated,
             "job",
             task_id.to_string(),
+            *version,
             *timestamp,
         ),
         ServerEvent::DocumentCreated {
             document_id,
+            version,
             timestamp,
             ..
         } => (
             SseEventType::DocumentCreated,
             "document",
             document_id.to_string(),
+            *version,
             *timestamp,
         ),
         ServerEvent::DocumentUpdated {
             document_id,
+            version,
             timestamp,
             ..
         } => (
             SseEventType::DocumentUpdated,
             "document",
             document_id.to_string(),
+            *version,
             *timestamp,
         ),
         ServerEvent::DocumentDeleted {
             document_id,
+            version,
             timestamp,
             ..
         } => (
             SseEventType::DocumentDeleted,
             "document",
             document_id.to_string(),
+            *version,
             *timestamp,
         ),
     };
@@ -417,6 +443,7 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
         EntityEventData {
             entity_type: entity_type.to_string(),
             entity_id,
+            version,
             timestamp,
         },
     )
