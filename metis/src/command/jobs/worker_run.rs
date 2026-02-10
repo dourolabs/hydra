@@ -369,6 +369,7 @@ async fn submit_patch_artifact_if_present(
         is_automatic_backup,
         false,
         service_repo_name.clone(),
+        "origin/main",
     )
     .await?;
 
