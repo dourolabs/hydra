@@ -2,6 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Standard HTTP header name for SSE reconnection support.
+pub const LAST_EVENT_ID_HEADER: &str = "last-event-id";
+
 /// Query parameters for the GET /v1/events SSE endpoint.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct EventsQuery {
@@ -24,6 +27,29 @@ pub struct EventsQuery {
     /// Comma-separated document IDs to filter.
     #[serde(default)]
     pub document_ids: Option<String>,
+}
+
+impl EventsQuery {
+    /// Build query string key-value pairs for URL construction.
+    pub fn query_pairs(&self) -> Vec<(&str, String)> {
+        let mut params = Vec::new();
+        if let Some(ref types) = self.types {
+            params.push(("types", types.clone()));
+        }
+        if let Some(ref ids) = self.issue_ids {
+            params.push(("issue_ids", ids.clone()));
+        }
+        if let Some(ref ids) = self.job_ids {
+            params.push(("job_ids", ids.clone()));
+        }
+        if let Some(ref ids) = self.patch_ids {
+            params.push(("patch_ids", ids.clone()));
+        }
+        if let Some(ref ids) = self.document_ids {
+            params.push(("document_ids", ids.clone()));
+        }
+        params
+    }
 }
 
 /// The SSE event type names sent in the `event:` field.
@@ -63,6 +89,30 @@ impl SseEventType {
             Self::Snapshot => "snapshot",
             Self::Resync => "resync",
             Self::Heartbeat => "heartbeat",
+        }
+    }
+}
+
+impl std::str::FromStr for SseEventType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "issue_created" => Ok(Self::IssueCreated),
+            "issue_updated" => Ok(Self::IssueUpdated),
+            "issue_deleted" => Ok(Self::IssueDeleted),
+            "patch_created" => Ok(Self::PatchCreated),
+            "patch_updated" => Ok(Self::PatchUpdated),
+            "patch_deleted" => Ok(Self::PatchDeleted),
+            "job_created" => Ok(Self::JobCreated),
+            "job_updated" => Ok(Self::JobUpdated),
+            "document_created" => Ok(Self::DocumentCreated),
+            "document_updated" => Ok(Self::DocumentUpdated),
+            "document_deleted" => Ok(Self::DocumentDeleted),
+            "snapshot" => Ok(Self::Snapshot),
+            "resync" => Ok(Self::Resync),
+            "heartbeat" => Ok(Self::Heartbeat),
+            other => Err(format!("unknown SSE event type: {other}")),
         }
     }
 }
