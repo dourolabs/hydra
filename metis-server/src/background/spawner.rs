@@ -374,7 +374,7 @@ mod tests {
     }
 
     async fn record_completed_task(handles: &TestStateHandles, task: Task) -> anyhow::Result<()> {
-        let task_id = handles.store.add_task(task, Utc::now()).await?;
+        let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
         handles.state.transition_task_to_pending(&task_id).await?;
         handles.state.transition_task_to_running(&task_id).await?;
         handles
@@ -462,7 +462,7 @@ mod tests {
     #[tokio::test]
     async fn spawns_tasks_for_ready_assigned_issues() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
-        let assigned_issue_id = handles
+        let (assigned_issue_id, _) = handles
             .store
             .add_issue(issue(
                 "Fix login page",
@@ -473,7 +473,7 @@ mod tests {
             ))
             .await?;
 
-        let in_progress_issue_id = handles
+        let (in_progress_issue_id, _) = handles
             .store
             .add_issue(issue(
                 "In-progress but ready",
@@ -543,7 +543,7 @@ mod tests {
     #[tokio::test]
     async fn does_not_requeue_when_task_exists() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
-        let issue_id = handles
+        let (issue_id, _) = handles
             .store
             .add_issue(issue(
                 "Already queued",
@@ -591,7 +591,7 @@ mod tests {
             repo_name.clone(),
             None,
         );
-        let patch_id = handles.store.add_patch(patch).await?;
+        let (patch_id, _) = handles.store.add_patch(patch).await?;
         handles
             .store
             .add_issue(Issue {
@@ -655,7 +655,7 @@ mod tests {
     #[tokio::test]
     async fn assignment_agent_spawns_for_unassigned_issue() -> anyhow::Result<()> {
         let handles = test_state_handles();
-        let issue_id = handles
+        let (issue_id, _) = handles
             .store
             .add_issue(issue_without_repo(
                 "Needs assignment",
@@ -701,7 +701,7 @@ mod tests {
     #[tokio::test]
     async fn does_not_spawn_when_issue_not_ready() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
-        let blocker_id = handles
+        let (blocker_id, _) = handles
             .store
             .add_issue(issue(
                 "Blocker",
@@ -735,7 +735,7 @@ mod tests {
     #[tokio::test]
     async fn does_not_spawn_when_parent_task_running() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
-        let parent_id = handles
+        let (parent_id, _) = handles
             .store
             .add_issue(issue(
                 "Parent issue",
@@ -746,7 +746,7 @@ mod tests {
             ))
             .await?;
 
-        let task_id = handles
+        let (task_id, _) = handles
             .store
             .add_task(
                 task(
@@ -903,7 +903,7 @@ mod tests {
         queue.max_simultaneous = 1;
 
         let (handles, repo_name) = state_with_repository().await?;
-        let issue_id = handles
+        let (issue_id, _) = handles
             .store
             .add_issue(Issue {
                 issue_type: IssueType::Task,
@@ -920,7 +920,7 @@ mod tests {
             })
             .await?;
 
-        let task_id = handles
+        let (task_id, _) = handles
             .store
             .add_task(
                 Task {
@@ -958,7 +958,7 @@ mod tests {
         queue.max_simultaneous = 2;
 
         let (handles, repo_name) = state_with_repository().await?;
-        let first_issue_id = handles
+        let (first_issue_id, _) = handles
             .store
             .add_issue(Issue {
                 issue_type: IssueType::Task,
@@ -974,7 +974,7 @@ mod tests {
                 deleted: false,
             })
             .await?;
-        let second_issue_id = handles
+        let (second_issue_id, _) = handles
             .store
             .add_issue(Issue {
                 issue_type: IssueType::Task,
@@ -1063,7 +1063,7 @@ mod tests {
         queue.max_tries = 1;
 
         let (handles, repo_name) = state_with_repository().await?;
-        let issue_id = handles
+        let (issue_id, _) = handles
             .store
             .add_issue(issue(
                 "State change reset",
@@ -1115,7 +1115,7 @@ mod tests {
             .unwrap_or_else(|| "main".into());
         let default_image = "agent-image".to_string();
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
-        let issue_id = handles
+        let (issue_id, _) = handles
             .store
             .add_issue(Issue {
                 issue_type: IssueType::Task,

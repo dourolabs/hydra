@@ -928,7 +928,7 @@ impl PostgresStore {
         id: &str,
         schema_version: i32,
         payload: &T,
-    ) -> Result<(), StoreError> {
+    ) -> Result<u64, StoreError> {
         let latest_version = self
             .fetch_latest_version_number(table, id)
             .await?
@@ -947,7 +947,9 @@ impl PostgresStore {
             next_version,
             payload,
         )
-        .await
+        .await?;
+
+        Ok(next_version)
     }
 
     async fn fetch_latest_version_number(
@@ -1020,7 +1022,8 @@ impl Store for PostgresStore {
                     REPOSITORY_SCHEMA_VERSION,
                     &config,
                 )
-                .await
+                .await?;
+                Ok(())
             }
             Some(_) => Err(StoreError::RepositoryAlreadyExists(name)),
             None => {
@@ -1073,7 +1076,8 @@ impl Store for PostgresStore {
             REPOSITORY_SCHEMA_VERSION,
             &config,
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     async fn list_repositories(
@@ -1113,7 +1117,7 @@ impl Store for PostgresStore {
         self.update_repository(name.clone(), repo).await
     }
 
-    async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, u64), StoreError> {
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
         let id = IssueId::new();
@@ -1128,7 +1132,7 @@ impl Store for PostgresStore {
         )
         .await?;
 
-        Ok(id)
+        Ok((id, 1))
     }
 
     async fn get_issue(
@@ -1158,7 +1162,7 @@ impl Store for PostgresStore {
         Ok(versions)
     }
 
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError> {
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<u64, StoreError> {
         self.get_issue(id, true).await?;
 
         self.validate_issue_dependencies(&issue.dependencies)
@@ -1180,7 +1184,7 @@ impl Store for PostgresStore {
         self.fetch_latest_issues(query).await
     }
 
-    async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError> {
+    async fn delete_issue(&self, id: &IssueId) -> Result<u64, StoreError> {
         let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
         issue.deleted = true;
@@ -1200,7 +1204,7 @@ impl Store for PostgresStore {
         context.apply_filters(filters)
     }
 
-    async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, u64), StoreError> {
         let id = PatchId::new();
         self.insert_payload(
             TABLE_PATCHES,
@@ -1211,7 +1215,7 @@ impl Store for PostgresStore {
             &patch,
         )
         .await?;
-        Ok(id)
+        Ok((id, 1))
     }
 
     async fn get_patch(
@@ -1239,7 +1243,7 @@ impl Store for PostgresStore {
         Ok(versions)
     }
 
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError> {
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<u64, StoreError> {
         self.get_patch(id, true).await?;
 
         self.update_payload(
@@ -1259,7 +1263,7 @@ impl Store for PostgresStore {
         self.fetch_latest_patches(query).await
     }
 
-    async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
+    async fn delete_patch(&self, id: &PatchId) -> Result<u64, StoreError> {
         let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
         patch.deleted = true;
@@ -1277,7 +1281,7 @@ impl Store for PostgresStore {
             .collect())
     }
 
-    async fn add_document(&self, document: Document) -> Result<DocumentId, StoreError> {
+    async fn add_document(&self, document: Document) -> Result<(DocumentId, u64), StoreError> {
         let id = DocumentId::new();
         self.insert_payload(
             TABLE_DOCUMENTS,
@@ -1288,7 +1292,7 @@ impl Store for PostgresStore {
             &document,
         )
         .await?;
-        Ok(id)
+        Ok((id, 1))
     }
 
     async fn get_document(
@@ -1329,7 +1333,11 @@ impl Store for PostgresStore {
         Ok(versions)
     }
 
-    async fn update_document(&self, id: &DocumentId, document: Document) -> Result<(), StoreError> {
+    async fn update_document(
+        &self,
+        id: &DocumentId,
+        document: Document,
+    ) -> Result<u64, StoreError> {
         self.get_document(id, true).await?;
         self.update_payload(
             TABLE_DOCUMENTS,
@@ -1341,7 +1349,7 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn delete_document(&self, id: &DocumentId) -> Result<(), StoreError> {
+    async fn delete_document(&self, id: &DocumentId) -> Result<u64, StoreError> {
         let current = self.get_document(id, true).await?;
         let mut document = current.item;
         document.deleted = true;
@@ -1419,11 +1427,11 @@ impl Store for PostgresStore {
         &self,
         task: Task,
         creation_time: chrono::DateTime<Utc>,
-    ) -> Result<TaskId, StoreError> {
+    ) -> Result<(TaskId, u64), StoreError> {
         let id = TaskId::new();
         self.add_task_with_id(id.clone(), task, creation_time)
             .await?;
-        Ok(id)
+        Ok((id, 1))
     }
 
     async fn add_task_with_id(
@@ -1525,12 +1533,12 @@ impl Store for PostgresStore {
         self.fetch_latest_tasks(query).await
     }
 
-    async fn delete_task(&self, id: &TaskId) -> Result<(), StoreError> {
+    async fn delete_task(&self, id: &TaskId) -> Result<u64, StoreError> {
         let current = self.get_task(id, true).await?;
         let mut task = current.item;
         task.deleted = true;
-        self.update_task(id, task).await?;
-        Ok(())
+        let versioned = self.update_task(id, task).await?;
+        Ok(versioned.version)
     }
 
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
@@ -1655,7 +1663,8 @@ impl Store for PostgresStore {
         }
 
         self.update_payload(TABLE_ACTORS, "actor", &name, ACTOR_SCHEMA_VERSION, &actor)
-            .await
+            .await?;
+        Ok(())
     }
 
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
@@ -1989,8 +1998,8 @@ mod tests {
     async fn issue_round_trip(pool: PgStorePool) {
         let store = PostgresStore::new(pool);
 
-        let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let issue = store
+        let (parent, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue, _) = store
             .add_issue(sample_issue(vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent.clone(),
@@ -2014,7 +2023,7 @@ mod tests {
         let children = store.get_issue_children(&parent).await.unwrap();
         assert_eq!(children, vec![issue.clone()]);
 
-        let new_parent = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (new_parent, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
         let mut updated_issue = sample_issue(vec![IssueDependency::new(
             IssueDependencyType::ChildOf,
             new_parent.clone(),
@@ -2048,7 +2057,7 @@ mod tests {
 
         assert!(matches!(err, StoreError::InvalidDependency(id) if id == missing));
 
-        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
         let err = store
             .update_issue(
                 &issue_id,
@@ -2068,7 +2077,7 @@ mod tests {
         let pool_for_update = pool.clone();
         let store = PostgresStore::new(pool);
 
-        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
 
         sqlx::query(&format!(
             "UPDATE {TABLE_ISSUES} SET schema_version = $1 WHERE id = $2"
@@ -2087,7 +2096,7 @@ mod tests {
     #[ignore]
     async fn migrates_outdated_payloads(pool: PgStorePool) {
         let store = PostgresStore::new(pool.clone());
-        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
 
         let migration = PayloadTable {
             object_type: "issue",
@@ -2112,8 +2121,8 @@ mod tests {
     #[ignore]
     async fn issue_graph_searches_blockers(pool: PgStorePool) {
         let store = PostgresStore::new(pool);
-        let blocker = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let blocked = store
+        let (blocker, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (blocked, _) = store
             .add_issue(sample_issue(vec![IssueDependency::new(
                 IssueDependencyType::BlockedOn,
                 blocker.clone(),
@@ -2133,10 +2142,10 @@ mod tests {
     #[ignore]
     async fn patch_associations_round_trip(pool: PgStorePool) {
         let store = PostgresStore::new(pool);
-        let patch_id = store.add_patch(sample_patch()).await.unwrap();
+        let (patch_id, _) = store.add_patch(sample_patch()).await.unwrap();
         let mut issue = sample_issue(vec![]);
         issue.patches = vec![patch_id.clone()];
-        let issue_id = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue).await.unwrap();
 
         let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
         assert_eq!(issues, vec![issue_id]);
@@ -2157,11 +2166,11 @@ mod tests {
     async fn task_lifecycle_updates_status(pool: PgStorePool) {
         let store = Arc::new(PostgresStore::new(pool));
         let handles = test_state_with_store(store.clone());
-        let issue_id = handles.store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = handles.store.add_issue(sample_issue(vec![])).await.unwrap();
 
         let mut task = sample_task();
         task.spawned_from = Some(issue_id.clone());
-        let task_id = handles
+        let (task_id, _) = handles
             .store
             .add_task(task.clone(), Utc::now())
             .await
@@ -2262,7 +2271,7 @@ mod tests {
     #[ignore]
     async fn documents_round_trip(pool: PgStorePool) {
         let store = PostgresStore::new(pool);
-        let doc_id = store
+        let (doc_id, _) = store
             .add_document(sample_document("docs/guide.md", None))
             .await
             .unwrap();
@@ -2299,7 +2308,7 @@ mod tests {
     async fn document_filters_apply_query(pool: PgStorePool) {
         let store = PostgresStore::new(pool);
         let task_id = TaskId::new();
-        let doc_id = store
+        let (doc_id, _) = store
             .add_document(sample_document("docs/howto.md", Some(task_id.clone())))
             .await
             .unwrap();
@@ -2369,7 +2378,7 @@ mod tests {
             created_by: None,
             deleted: false,
         };
-        let doc_id = store.add_document(doc).await.unwrap();
+        let (doc_id, _) = store.add_document(doc).await.unwrap();
 
         // Update the document to change the title to "changed_title"
         let updated_doc = Document {
@@ -2418,7 +2427,7 @@ mod tests {
             vec![],
             vec![],
         );
-        let issue_id = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue).await.unwrap();
 
         // Update the issue to change the description
         let updated_issue = Issue::new(
@@ -2489,7 +2498,7 @@ mod tests {
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
         );
-        let patch_id = store.add_patch(patch).await.unwrap();
+        let (patch_id, _) = store.add_patch(patch).await.unwrap();
 
         // Update the patch to change the title
         let updated_patch = Patch::new(

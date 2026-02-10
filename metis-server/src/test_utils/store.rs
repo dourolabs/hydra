@@ -62,7 +62,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_issue(&self, _issue: Issue) -> Result<IssueId, StoreError> {
+    async fn add_issue(&self, _issue: Issue) -> Result<(IssueId, u64), StoreError> {
         fail()
     }
 
@@ -78,7 +78,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_issue(&self, _id: &IssueId, _issue: Issue) -> Result<(), StoreError> {
+    async fn update_issue(&self, _id: &IssueId, _issue: Issue) -> Result<u64, StoreError> {
         fail()
     }
 
@@ -89,7 +89,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_issue(&self, _id: &IssueId) -> Result<(), StoreError> {
+    async fn delete_issue(&self, _id: &IssueId) -> Result<u64, StoreError> {
         fail()
     }
 
@@ -100,7 +100,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_patch(&self, _patch: Patch) -> Result<PatchId, StoreError> {
+    async fn add_patch(&self, _patch: Patch) -> Result<(PatchId, u64), StoreError> {
         fail()
     }
 
@@ -116,7 +116,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_patch(&self, _id: &PatchId, _patch: Patch) -> Result<(), StoreError> {
+    async fn update_patch(&self, _id: &PatchId, _patch: Patch) -> Result<u64, StoreError> {
         fail()
     }
 
@@ -127,7 +127,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_patch(&self, _id: &PatchId) -> Result<(), StoreError> {
+    async fn delete_patch(&self, _id: &PatchId) -> Result<u64, StoreError> {
         fail()
     }
 
@@ -135,7 +135,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_document(&self, _document: Document) -> Result<DocumentId, StoreError> {
+    async fn add_document(&self, _document: Document) -> Result<(DocumentId, u64), StoreError> {
         fail()
     }
 
@@ -158,11 +158,11 @@ impl Store for FailingStore {
         &self,
         _id: &DocumentId,
         _document: Document,
-    ) -> Result<(), StoreError> {
+    ) -> Result<u64, StoreError> {
         fail()
     }
 
-    async fn delete_document(&self, _id: &DocumentId) -> Result<(), StoreError> {
+    async fn delete_document(&self, _id: &DocumentId) -> Result<u64, StoreError> {
         fail()
     }
 
@@ -196,7 +196,7 @@ impl Store for FailingStore {
         &self,
         _task: Task,
         _creation_time: DateTime<Utc>,
-    ) -> Result<TaskId, StoreError> {
+    ) -> Result<(TaskId, u64), StoreError> {
         fail()
     }
 
@@ -236,7 +236,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_task(&self, _id: &TaskId) -> Result<(), StoreError> {
+    async fn delete_task(&self, _id: &TaskId) -> Result<u64, StoreError> {
         fail()
     }
 

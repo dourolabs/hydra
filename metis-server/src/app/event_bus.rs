@@ -292,10 +292,10 @@ impl Store for StoreWithEvents {
 
     // ---- Issue ----
 
-    async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
-        let issue_id = self.inner.add_issue(issue).await?;
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, u64), StoreError> {
+        let (issue_id, version) = self.inner.add_issue(issue).await?;
         self.event_bus.emit_issue_created(issue_id.clone());
-        Ok(issue_id)
+        Ok((issue_id, version))
     }
 
     async fn get_issue(
@@ -310,10 +310,10 @@ impl Store for StoreWithEvents {
         self.inner.get_issue_versions(id).await
     }
 
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError> {
-        self.inner.update_issue(id, issue).await?;
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<u64, StoreError> {
+        let version = self.inner.update_issue(id, issue).await?;
         self.event_bus.emit_issue_updated(id.clone());
-        Ok(())
+        Ok(version)
     }
 
     async fn list_issues(
@@ -323,10 +323,10 @@ impl Store for StoreWithEvents {
         self.inner.list_issues(query).await
     }
 
-    async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError> {
-        self.inner.delete_issue(id).await?;
+    async fn delete_issue(&self, id: &IssueId) -> Result<u64, StoreError> {
+        let version = self.inner.delete_issue(id).await?;
         self.event_bus.emit_issue_deleted(id.clone());
-        Ok(())
+        Ok(version)
     }
 
     async fn search_issue_graph(
@@ -338,10 +338,10 @@ impl Store for StoreWithEvents {
 
     // ---- Patch ----
 
-    async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
-        let patch_id = self.inner.add_patch(patch).await?;
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, u64), StoreError> {
+        let (patch_id, version) = self.inner.add_patch(patch).await?;
         self.event_bus.emit_patch_created(patch_id.clone());
-        Ok(patch_id)
+        Ok((patch_id, version))
     }
 
     async fn get_patch(
@@ -356,10 +356,10 @@ impl Store for StoreWithEvents {
         self.inner.get_patch_versions(id).await
     }
 
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError> {
-        self.inner.update_patch(id, patch).await?;
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<u64, StoreError> {
+        let version = self.inner.update_patch(id, patch).await?;
         self.event_bus.emit_patch_updated(id.clone());
-        Ok(())
+        Ok(version)
     }
 
     async fn list_patches(
@@ -369,10 +369,10 @@ impl Store for StoreWithEvents {
         self.inner.list_patches(query).await
     }
 
-    async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
-        self.inner.delete_patch(id).await?;
+    async fn delete_patch(&self, id: &PatchId) -> Result<u64, StoreError> {
+        let version = self.inner.delete_patch(id).await?;
         self.event_bus.emit_patch_deleted(id.clone());
-        Ok(())
+        Ok(version)
     }
 
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
@@ -381,10 +381,10 @@ impl Store for StoreWithEvents {
 
     // ---- Document ----
 
-    async fn add_document(&self, document: Document) -> Result<DocumentId, StoreError> {
-        let document_id = self.inner.add_document(document).await?;
+    async fn add_document(&self, document: Document) -> Result<(DocumentId, u64), StoreError> {
+        let (document_id, version) = self.inner.add_document(document).await?;
         self.event_bus.emit_document_created(document_id.clone());
-        Ok(document_id)
+        Ok((document_id, version))
     }
 
     async fn get_document(
@@ -402,16 +402,20 @@ impl Store for StoreWithEvents {
         self.inner.get_document_versions(id).await
     }
 
-    async fn update_document(&self, id: &DocumentId, document: Document) -> Result<(), StoreError> {
-        self.inner.update_document(id, document).await?;
+    async fn update_document(
+        &self,
+        id: &DocumentId,
+        document: Document,
+    ) -> Result<u64, StoreError> {
+        let version = self.inner.update_document(id, document).await?;
         self.event_bus.emit_document_updated(id.clone());
-        Ok(())
+        Ok(version)
     }
 
-    async fn delete_document(&self, id: &DocumentId) -> Result<(), StoreError> {
-        self.inner.delete_document(id).await?;
+    async fn delete_document(&self, id: &DocumentId) -> Result<u64, StoreError> {
+        let version = self.inner.delete_document(id).await?;
         self.event_bus.emit_document_deleted(id.clone());
-        Ok(())
+        Ok(version)
     }
 
     async fn list_documents(
@@ -448,10 +452,10 @@ impl Store for StoreWithEvents {
         &self,
         task: Task,
         creation_time: DateTime<Utc>,
-    ) -> Result<TaskId, StoreError> {
-        let task_id = self.inner.add_task(task, creation_time).await?;
+    ) -> Result<(TaskId, u64), StoreError> {
+        let (task_id, version) = self.inner.add_task(task, creation_time).await?;
         self.event_bus.emit_job_created(task_id.clone());
-        Ok(task_id)
+        Ok((task_id, version))
     }
 
     async fn add_task_with_id(
@@ -496,7 +500,7 @@ impl Store for StoreWithEvents {
         self.inner.list_tasks(query).await
     }
 
-    async fn delete_task(&self, id: &TaskId) -> Result<(), StoreError> {
+    async fn delete_task(&self, id: &TaskId) -> Result<u64, StoreError> {
         self.inner.delete_task(id).await
     }
 
@@ -639,7 +643,7 @@ mod tests {
             Vec::new(),
         );
 
-        let issue_id = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue).await.unwrap();
 
         let event = rx.recv().await.expect("should receive IssueCreated");
         assert!(
@@ -670,7 +674,7 @@ mod tests {
             Vec::new(),
         );
 
-        let issue_id = store.add_issue(issue.clone()).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue.clone()).await.unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         let mut updated = issue;
@@ -706,7 +710,7 @@ mod tests {
             Vec::new(),
         );
 
-        let issue_id = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue).await.unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         store.delete_issue(&issue_id).await.unwrap();

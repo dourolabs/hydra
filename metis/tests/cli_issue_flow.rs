@@ -38,7 +38,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
             Vec::new(),
             false,
         );
-        let parent_id = handles.store.add_issue(parent_issue.into()).await?;
+        let (parent_id, _) = handles.store.add_issue(parent_issue.into()).await?;
         (auth_token, parent_id)
     };
     let server = test_utils::spawn_test_server_with_state(state, handles.store).await?;

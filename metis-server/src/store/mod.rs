@@ -171,8 +171,9 @@ pub trait Store: Send + Sync {
 
     /// Adds a new issue to the store and assigns it an IssueId.
     ///
-    /// Returns an error if any declared dependencies reference missing issues.
-    async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError>;
+    /// Returns the new IssueId and its initial version number, or an error if
+    /// any declared dependencies reference missing issues.
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, u64), StoreError>;
 
     /// Retrieves an issue by its IssueId.
     ///
@@ -191,9 +192,9 @@ pub trait Store: Send + Sync {
 
     /// Updates an existing issue in the store.
     ///
-    /// Returns an error if the issue does not exist or if any dependencies
-    /// reference missing issues.
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError>;
+    /// Returns the new version number, or an error if the issue does not exist
+    /// or if any dependencies reference missing issues.
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<u64, StoreError>;
 
     /// Lists issues in the store that match the provided search query.
     ///
@@ -211,8 +212,9 @@ pub trait Store: Send + Sync {
     ///
     /// This creates a new version of the issue with `deleted: true`.
     /// The issue can still be retrieved via `get_issue` but will be filtered
-    /// from `list_issues` by default.
-    async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError>;
+    /// from `list_issues` by default. Returns the version number of the
+    /// deletion record.
+    async fn delete_issue(&self, id: &IssueId) -> Result<u64, StoreError>;
 
     /// Applies dependency graph filters and returns the matching issue IDs.
     ///
@@ -224,7 +226,9 @@ pub trait Store: Send + Sync {
     ) -> Result<HashSet<IssueId>, StoreError>;
 
     /// Adds a new patch to the store and assigns it a PatchId.
-    async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError>;
+    ///
+    /// Returns the new PatchId and its initial version number.
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, u64), StoreError>;
 
     /// Retrieves a patch by its PatchId.
     ///
@@ -242,7 +246,9 @@ pub trait Store: Send + Sync {
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError>;
 
     /// Updates an existing patch in the store.
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError>;
+    ///
+    /// Returns the new version number.
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<u64, StoreError>;
 
     /// Lists patches that match the provided search query.
     async fn list_patches(
@@ -254,14 +260,17 @@ pub trait Store: Send + Sync {
     ///
     /// This creates a new version of the patch with `deleted: true`.
     /// The patch can still be retrieved via `get_patch` but will be filtered
-    /// from `list_patches` by default.
-    async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError>;
+    /// from `list_patches` by default. Returns the version number of the
+    /// deletion record.
+    async fn delete_patch(&self, id: &PatchId) -> Result<u64, StoreError>;
 
     /// Lists all issues that reference the provided patch ID.
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError>;
 
     /// Adds a new document to the store and assigns it a DocumentId.
-    async fn add_document(&self, document: Document) -> Result<DocumentId, StoreError>;
+    ///
+    /// Returns the new DocumentId and its initial version number.
+    async fn add_document(&self, document: Document) -> Result<(DocumentId, u64), StoreError>;
 
     /// Retrieves a document by its DocumentId.
     ///
@@ -282,7 +291,10 @@ pub trait Store: Send + Sync {
     ) -> Result<Vec<Versioned<Document>>, StoreError>;
 
     /// Updates an existing document in the store.
-    async fn update_document(&self, id: &DocumentId, document: Document) -> Result<(), StoreError>;
+    ///
+    /// Returns the new version number.
+    async fn update_document(&self, id: &DocumentId, document: Document)
+    -> Result<u64, StoreError>;
 
     /// Soft-deletes a document by setting its `deleted` flag to true.
     ///
@@ -290,7 +302,8 @@ pub trait Store: Send + Sync {
     /// The document can still be retrieved via `get_document` with `include_deleted: true`,
     /// but will be filtered from `get_document` with `include_deleted: false` and from
     /// `list_documents` by default (unless `include_deleted: true` is in the query).
-    async fn delete_document(&self, id: &DocumentId) -> Result<(), StoreError>;
+    /// Returns the version number of the deletion record.
+    async fn delete_document(&self, id: &DocumentId) -> Result<u64, StoreError>;
 
     /// Lists documents that match the provided search query.
     async fn list_documents(
@@ -322,11 +335,13 @@ pub trait Store: Send + Sync {
     /// # Arguments
     /// * `task` - The task to add
     /// * `creation_time` - The timestamp when the task is being created
+    ///
+    /// Returns the new TaskId and its initial version number.
     async fn add_task(
         &self,
         task: Task,
         creation_time: DateTime<Utc>,
-    ) -> Result<TaskId, StoreError>;
+    ) -> Result<(TaskId, u64), StoreError>;
 
     /// Adds a task to the store with a specific ID.
     ///
@@ -409,8 +424,9 @@ pub trait Store: Send + Sync {
     ///
     /// This creates a new version of the task with `deleted: true`.
     /// The task can still be retrieved via `get_task` but will be filtered
-    /// from `list_tasks` by default.
-    async fn delete_task(&self, id: &TaskId) -> Result<(), StoreError>;
+    /// from `list_tasks` by default. Returns the version number of the
+    /// deletion record.
+    async fn delete_task(&self, id: &TaskId) -> Result<u64, StoreError>;
 
     /// Lists all task IDs with the specified status in the store.
     ///

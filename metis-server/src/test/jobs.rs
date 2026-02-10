@@ -219,7 +219,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
         secrets: None,
     };
 
-    let issue_id = handles
+    let (issue_id, _) = handles
         .store
         .add_issue(Issue {
             issue_type: IssueType::Task,
@@ -303,7 +303,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
         secrets: None,
     };
 
-    let issue_id = handles
+    let (issue_id, _) = handles
         .store
         .add_issue(Issue {
             issue_type: IssueType::Task,
@@ -1034,7 +1034,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
         .await?;
     state.transition_task_to_pending(&job_id).await?;
     state.transition_task_to_running(&job_id).await?;
-    let patch_id = handles
+    let (patch_id, _) = handles
         .store
         .add_patch(Patch {
             title: "done".to_string(),
@@ -1274,7 +1274,7 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
         .await?;
     state.transition_task_to_pending(&job_id).await?;
     state.transition_task_to_running(&job_id).await?;
-    let patch_id = handles
+    let (patch_id, _) = handles
         .store
         .add_patch(Patch {
             title: "all good".to_string(),
@@ -1398,7 +1398,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
         .await?;
     state.transition_task_to_pending(&parent_job_id).await?;
     state.transition_task_to_running(&parent_job_id).await?;
-    let _parent_patch_id = handles
+    let (_parent_patch_id, _) = handles
         .store
         .add_patch(Patch {
             title: "done".to_string(),

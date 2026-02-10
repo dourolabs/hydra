@@ -124,7 +124,7 @@ mod tests {
             None,
             None,
         );
-        let task_id = handles
+        let (task_id, _) = handles
             .store
             .add_task(task, Utc::now())
             .await
@@ -186,7 +186,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        let issue_id = handles.store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = handles.store.add_issue(issue).await.unwrap();
 
         let task = Task::new(
             "spawned task".to_string(),
@@ -199,7 +199,7 @@ mod tests {
             None,
             None,
         );
-        let task_id = handles.store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = handles.store.add_task(task, Utc::now()).await.unwrap();
 
         handles.store.delete_issue(&issue_id).await.unwrap();
 

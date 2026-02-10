@@ -74,7 +74,7 @@ async fn state_with_repo_and_patch(
         None,
     );
 
-    let patch_id = handles.store.add_patch(patch).await?;
+    let (patch_id, _) = handles.store.add_patch(patch).await?;
 
     Ok((handles, patch_id, remote_dir))
 }
