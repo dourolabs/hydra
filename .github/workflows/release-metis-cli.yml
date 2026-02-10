@@ -103,3 +103,100 @@ jobs:
           files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-homebrew:
+    name: Publish Homebrew formula
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets and compute checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+
+          # Download the macOS universal binary and Linux x86_64 binary
+          gh release download "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --pattern "metis-universal-apple-darwin" \
+            --pattern "metis-x86_64-unknown-linux-gnu" \
+            --dir assets
+
+          # Create tarballs (Homebrew expects .tar.gz archives)
+          mkdir -p tarballs
+          tar -czf "tarballs/metis-${VERSION}-universal-apple-darwin.tar.gz" \
+            -C assets metis-universal-apple-darwin
+          tar -czf "tarballs/metis-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            -C assets metis-x86_64-unknown-linux-gnu
+
+          # Compute SHA-256 checksums
+          MAC_SHA256="$(sha256sum "tarballs/metis-${VERSION}-universal-apple-darwin.tar.gz" | awk '{print $1}')"
+          LINUX_SHA256="$(sha256sum "tarballs/metis-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" | awk '{print $1}')"
+          echo "MAC_SHA256=${MAC_SHA256}" >> "$GITHUB_ENV"
+          echo "LINUX_SHA256=${LINUX_SHA256}" >> "$GITHUB_ENV"
+
+      - name: Upload tarballs to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ env.TAG }}" \
+            tarballs/*.tar.gz \
+            --repo "${{ github.repository }}" \
+            --clobber
+
+      - name: Generate formula and push to tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          export REPO="${{ github.repository }}"
+          export VERSION="${{ env.VERSION }}"
+          export TAG="${{ env.TAG }}"
+          export MAC_SHA256="${{ env.MAC_SHA256 }}"
+          export LINUX_SHA256="${{ env.LINUX_SHA256 }}"
+
+          cat > metis.rb.tpl <<'FORMULA'
+          class Metis < Formula
+            desc "Metis CLI"
+            homepage "https://github.com/${REPO}"
+            version "${VERSION}"
+            license "MIT"
+
+            if OS.mac?
+              url "https://github.com/${REPO}/releases/download/${TAG}/metis-${VERSION}-universal-apple-darwin.tar.gz"
+              sha256 "${MAC_SHA256}"
+            end
+
+            if OS.linux? && Hardware::CPU.intel?
+              url "https://github.com/${REPO}/releases/download/${TAG}/metis-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+              sha256 "${LINUX_SHA256}"
+            end
+
+            def install
+              bin.install "metis-universal-apple-darwin" => "metis" if OS.mac?
+              bin.install "metis-x86_64-unknown-linux-gnu" => "metis" if OS.linux?
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/metis --version")
+            end
+          end
+          FORMULA
+
+          # Remove leading whitespace from heredoc indentation and substitute variables
+          sed 's/^          //' metis.rb.tpl | envsubst '$REPO $VERSION $TAG $MAC_SHA256 $LINUX_SHA256' > metis.rb
+
+          # Clone the tap repo and update the formula
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/dourolabs/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp metis.rb tap/Formula/metis.rb
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/metis.rb
+          git commit -m "Update metis to ${VERSION}"
+          git push
