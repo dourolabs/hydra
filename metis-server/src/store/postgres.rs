@@ -1117,7 +1117,7 @@ impl Store for PostgresStore {
         self.update_repository(name.clone(), repo).await
     }
 
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, u64), StoreError> {
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
         let id = IssueId::new();
@@ -1162,7 +1162,7 @@ impl Store for PostgresStore {
         Ok(versions)
     }
 
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<u64, StoreError> {
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
         self.get_issue(id, true).await?;
 
         self.validate_issue_dependencies(&issue.dependencies)
@@ -1184,7 +1184,7 @@ impl Store for PostgresStore {
         self.fetch_latest_issues(query).await
     }
 
-    async fn delete_issue(&self, id: &IssueId) -> Result<u64, StoreError> {
+    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
         let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
         issue.deleted = true;
@@ -1204,7 +1204,7 @@ impl Store for PostgresStore {
         context.apply_filters(filters)
     }
 
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, u64), StoreError> {
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
         let id = PatchId::new();
         self.insert_payload(
             TABLE_PATCHES,
@@ -1243,7 +1243,7 @@ impl Store for PostgresStore {
         Ok(versions)
     }
 
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<u64, StoreError> {
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
         self.get_patch(id, true).await?;
 
         self.update_payload(
@@ -1263,7 +1263,7 @@ impl Store for PostgresStore {
         self.fetch_latest_patches(query).await
     }
 
-    async fn delete_patch(&self, id: &PatchId) -> Result<u64, StoreError> {
+    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
         let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
         patch.deleted = true;
@@ -1281,7 +1281,10 @@ impl Store for PostgresStore {
             .collect())
     }
 
-    async fn add_document(&self, document: Document) -> Result<(DocumentId, u64), StoreError> {
+    async fn add_document(
+        &self,
+        document: Document,
+    ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let id = DocumentId::new();
         self.insert_payload(
             TABLE_DOCUMENTS,
@@ -1337,7 +1340,7 @@ impl Store for PostgresStore {
         &self,
         id: &DocumentId,
         document: Document,
-    ) -> Result<u64, StoreError> {
+    ) -> Result<VersionNumber, StoreError> {
         self.get_document(id, true).await?;
         self.update_payload(
             TABLE_DOCUMENTS,
@@ -1349,7 +1352,7 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn delete_document(&self, id: &DocumentId) -> Result<u64, StoreError> {
+    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
         let current = self.get_document(id, true).await?;
         let mut document = current.item;
         document.deleted = true;
@@ -1427,7 +1430,7 @@ impl Store for PostgresStore {
         &self,
         task: Task,
         creation_time: chrono::DateTime<Utc>,
-    ) -> Result<(TaskId, u64), StoreError> {
+    ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
         self.add_task_with_id(id.clone(), task, creation_time)
             .await?;
@@ -1533,7 +1536,7 @@ impl Store for PostgresStore {
         self.fetch_latest_tasks(query).await
     }
 
-    async fn delete_task(&self, id: &TaskId) -> Result<u64, StoreError> {
+    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
         let current = self.get_task(id, true).await?;
         let mut task = current.item;
         task.deleted = true;

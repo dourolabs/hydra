@@ -973,7 +973,7 @@ impl Store for PostgresStoreV2 {
     // Issue methods
     // -------------------------------------------------------------------------
 
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, u64), StoreError> {
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
         let id = IssueId::new();
@@ -1047,7 +1047,7 @@ impl Store for PostgresStoreV2 {
         Ok(results)
     }
 
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<u64, StoreError> {
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
         self.get_issue(id, true).await?;
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
@@ -1175,7 +1175,7 @@ impl Store for PostgresStoreV2 {
         Ok(issues)
     }
 
-    async fn delete_issue(&self, id: &IssueId) -> Result<u64, StoreError> {
+    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
         let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
         issue.deleted = true;
@@ -1199,7 +1199,7 @@ impl Store for PostgresStoreV2 {
     // Patch methods
     // -------------------------------------------------------------------------
 
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, u64), StoreError> {
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
         let id = PatchId::new();
         self.insert_patch(&id, 1, &patch).await?;
         Ok((id, 1))
@@ -1269,7 +1269,7 @@ impl Store for PostgresStoreV2 {
         Ok(results)
     }
 
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<u64, StoreError> {
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
         self.get_patch(id, true).await?;
 
         let latest_version = self
@@ -1379,7 +1379,7 @@ impl Store for PostgresStoreV2 {
         Ok(patches)
     }
 
-    async fn delete_patch(&self, id: &PatchId) -> Result<u64, StoreError> {
+    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
         let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
         patch.deleted = true;
@@ -1401,7 +1401,10 @@ impl Store for PostgresStoreV2 {
     // Document methods
     // -------------------------------------------------------------------------
 
-    async fn add_document(&self, document: Document) -> Result<(DocumentId, u64), StoreError> {
+    async fn add_document(
+        &self,
+        document: Document,
+    ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let id = DocumentId::new();
         self.insert_document(&id, 1, &document).await?;
         Ok((id, 1))
@@ -1478,7 +1481,7 @@ impl Store for PostgresStoreV2 {
         &self,
         id: &DocumentId,
         document: Document,
-    ) -> Result<u64, StoreError> {
+    ) -> Result<VersionNumber, StoreError> {
         self.get_document(id, true).await?;
 
         let latest_version = self
@@ -1495,7 +1498,7 @@ impl Store for PostgresStoreV2 {
         Ok(next_version)
     }
 
-    async fn delete_document(&self, id: &DocumentId) -> Result<u64, StoreError> {
+    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
         let current = self.get_document(id, true).await?;
         let mut document = current.item;
         document.deleted = true;
@@ -1661,7 +1664,7 @@ impl Store for PostgresStoreV2 {
         &self,
         task: Task,
         _creation_time: DateTime<Utc>,
-    ) -> Result<(TaskId, u64), StoreError> {
+    ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
         self.add_task_with_id(id.clone(), task, _creation_time)
             .await?;
@@ -1867,7 +1870,7 @@ impl Store for PostgresStoreV2 {
         Ok(tasks)
     }
 
-    async fn delete_task(&self, id: &TaskId) -> Result<u64, StoreError> {
+    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
         let current = self.get_task(id, true).await?;
         let mut task = current.item;
         task.deleted = true;

@@ -393,7 +393,7 @@ impl Store for MemoryStore {
         self.update_repository(name.clone(), repo).await
     }
 
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, u64), StoreError> {
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
         let id = IssueId::new();
         let new_dependencies = issue.dependencies.clone();
         let new_patches = issue.patches.clone();
@@ -436,7 +436,7 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
     }
 
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<u64, StoreError> {
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
         let (previous_dependencies, previous_patches) = match self.issues.get(id) {
             Some(entry) => match entry.value().last() {
                 Some(latest) => (
@@ -510,7 +510,7 @@ impl Store for MemoryStore {
             .collect())
     }
 
-    async fn delete_issue(&self, id: &IssueId) -> Result<u64, StoreError> {
+    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
         let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
         issue.deleted = true;
@@ -568,7 +568,7 @@ impl Store for MemoryStore {
         context.apply_filters(filters)
     }
 
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, u64), StoreError> {
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
         let id = PatchId::new();
         self.patches
             .insert(id.clone(), vec![Self::versioned_now(patch, 1)]);
@@ -598,7 +598,7 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
     }
 
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<u64, StoreError> {
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
         let mut versions = self
             .patches
             .get_mut(id)
@@ -635,7 +635,7 @@ impl Store for MemoryStore {
             .collect())
     }
 
-    async fn delete_patch(&self, id: &PatchId) -> Result<u64, StoreError> {
+    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
         let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
         patch.deleted = true;
@@ -653,7 +653,10 @@ impl Store for MemoryStore {
         }
     }
 
-    async fn add_document(&self, document: Document) -> Result<(DocumentId, u64), StoreError> {
+    async fn add_document(
+        &self,
+        document: Document,
+    ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let id = DocumentId::new();
         let path = document.path.clone();
         self.documents
@@ -692,7 +695,7 @@ impl Store for MemoryStore {
         &self,
         id: &DocumentId,
         document: Document,
-    ) -> Result<u64, StoreError> {
+    ) -> Result<VersionNumber, StoreError> {
         let mut versions = self
             .documents
             .get_mut(id)
@@ -712,7 +715,7 @@ impl Store for MemoryStore {
         Ok(next_version)
     }
 
-    async fn delete_document(&self, id: &DocumentId) -> Result<u64, StoreError> {
+    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
         let current = self.get_document(id, true).await?;
         let mut document = current.item;
         document.deleted = true;
@@ -825,7 +828,7 @@ impl Store for MemoryStore {
         &self,
         task: Task,
         creation_time: DateTime<Utc>,
-    ) -> Result<(TaskId, u64), StoreError> {
+    ) -> Result<(TaskId, VersionNumber), StoreError> {
         // Generate a unique ID for the new task
         let id = TaskId::new();
         let mut task = task;
@@ -983,7 +986,7 @@ impl Store for MemoryStore {
             .collect())
     }
 
-    async fn delete_task(&self, id: &TaskId) -> Result<u64, StoreError> {
+    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
         let current = self.get_task(id, true).await?;
         let mut task = current.item;
         task.deleted = true;
