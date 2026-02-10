@@ -24,7 +24,6 @@ use metis_common::api::v1::repositories::SearchRepositoriesQuery;
 use metis_common::{
     DocumentId, PatchId, RepoName, TaskId, Versioned,
     api::v1 as api,
-    constants::ENV_METIS_ID,
     issues::IssueId,
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     merge_queues::MergeQueue,
@@ -65,11 +64,10 @@ pub enum CreateJobError {
         source: StoreError,
         issue_id: IssueId,
     },
-    #[error("failed to store job {job_id}")]
+    #[error("failed to store job")]
     Store {
         #[source]
         source: StoreError,
-        job_id: TaskId,
     },
 }
 
@@ -962,10 +960,7 @@ impl AppState {
         &self,
         request: api::jobs::CreateJobRequest,
     ) -> Result<TaskId, CreateJobError> {
-        let job_id = TaskId::new();
-
-        let mut env_vars = request.variables;
-        env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
+        let env_vars = request.variables;
 
         let issue = match request.issue_id.as_ref() {
             Some(issue_id) => {
@@ -1043,13 +1038,10 @@ impl AppState {
         self.resolve_task(&task).await?;
 
         let store = self.store.as_ref();
-        store
-            .add_task_with_id(job_id.clone(), task, Utc::now())
+        let (job_id, _version) = store
+            .add_task(task, Utc::now())
             .await
-            .map_err(|source| CreateJobError::Store {
-                source,
-                job_id: job_id.clone(),
-            })?;
+            .map_err(|source| CreateJobError::Store { source })?;
 
         Ok(job_id)
     }
@@ -2762,13 +2754,12 @@ mod tests {
         )
         .await?;
 
-        let task_id = TaskId::try_from("t-test".to_string())?;
         let mut task = sample_task();
         let created_at = Utc::now();
-        handles
+        let (task_id, _) = handles
             .store
             .as_ref()
-            .add_task_with_id(task_id.clone(), task.clone(), created_at)
+            .add_task(task.clone(), created_at)
             .await?;
         task.status = Status::Running;
         handles.store.as_ref().update_task(&task_id, task).await?;

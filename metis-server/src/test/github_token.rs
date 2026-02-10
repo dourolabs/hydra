@@ -97,7 +97,6 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         ))
         .await?;
 
-    let task_id = TaskId::new();
     let task = Task::new(
         "prompt".to_string(),
         BundleSpec::None,
@@ -109,11 +108,8 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         None,
         None,
     );
-    let (actor, auth_token) = Actor::new_for_task(task_id.clone());
-    handles
-        .store
-        .add_task_with_id(task_id, task, Utc::now())
-        .await?;
+    let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
+    let (actor, auth_token) = Actor::new_for_task(task_id);
     handles.store.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
@@ -211,7 +207,6 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         ))
         .await?;
 
-    let task_id = TaskId::new();
     let task = Task::new(
         "prompt".to_string(),
         BundleSpec::None,
@@ -223,11 +218,8 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         None,
         None,
     );
-    let (actor, auth_token) = Actor::new_for_task(task_id.clone());
-    handles
-        .store
-        .add_task_with_id(task_id, task, Utc::now())
-        .await?;
+    let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
+    let (actor, auth_token) = Actor::new_for_task(task_id);
     handles.store.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
@@ -299,7 +291,6 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         ))
         .await?;
 
-    let task_id = TaskId::new();
     let task = Task::new(
         "prompt".to_string(),
         BundleSpec::None,
@@ -311,11 +302,8 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         None,
         None,
     );
-    let (actor, auth_token) = Actor::new_for_task(task_id.clone());
-    handles
-        .store
-        .add_task_with_id(task_id, task, Utc::now())
-        .await?;
+    let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
+    let (actor, auth_token) = Actor::new_for_task(task_id);
     handles.store.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;

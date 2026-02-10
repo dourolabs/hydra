@@ -484,20 +484,6 @@ impl Store for StoreWithEvents {
         Ok((task_id, version))
     }
 
-    async fn add_task_with_id(
-        &self,
-        metis_id: TaskId,
-        task: Task,
-        creation_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        self.inner
-            .add_task_with_id(metis_id.clone(), task, creation_time)
-            .await?;
-        // add_task_with_id does not return a version; use 1 as the initial version.
-        self.event_bus.emit_job_created(metis_id, 1);
-        Ok(())
-    }
-
     async fn update_task(
         &self,
         metis_id: &TaskId,

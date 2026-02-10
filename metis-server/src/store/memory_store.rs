@@ -829,7 +829,6 @@ impl Store for MemoryStore {
         task: Task,
         creation_time: DateTime<Utc>,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
-        // Generate a unique ID for the new task
         let id = TaskId::new();
         let mut task = task;
         task.status = Status::Created;
@@ -837,7 +836,6 @@ impl Store for MemoryStore {
         task.error = None;
         let spawned_from = task.spawned_from.clone();
 
-        // Add the task
         self.tasks
             .insert(id.clone(), vec![Self::versioned_at(task, 1, creation_time)]);
 
@@ -846,37 +844,6 @@ impl Store for MemoryStore {
         }
 
         Ok((id, 1))
-    }
-
-    async fn add_task_with_id(
-        &self,
-        metis_id: TaskId,
-        task: Task,
-        creation_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        // Check if task already exists
-        if self.tasks.contains_key(&metis_id) {
-            return Err(StoreError::Internal(format!(
-                "Task already exists: {metis_id}"
-            )));
-        }
-        let mut task = task;
-        task.status = Status::Created;
-        task.last_message = None;
-        task.error = None;
-        let spawned_from = task.spawned_from.clone();
-
-        // Add the task with the specified ID
-        self.tasks.insert(
-            metis_id.clone(),
-            vec![Self::versioned_at(task, 1, creation_time)],
-        );
-
-        if let Some(issue_id) = spawned_from.as_ref() {
-            self.index_task_for_issue(issue_id, metis_id.clone());
-        }
-
-        Ok(())
     }
 
     async fn update_task(

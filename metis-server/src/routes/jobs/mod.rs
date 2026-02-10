@@ -38,8 +38,8 @@ pub async fn create_job(
                 ApiError::internal(format!("Failed to load issue '{issue_id}': {other}"))
             }
         },
-        CreateJobError::Store { source, job_id } => {
-            error!(error = %source, job_id = %job_id, "failed to store task");
+        CreateJobError::Store { source } => {
+            error!(error = %source, "failed to store task");
             ApiError::internal(format!("Failed to store task: {source}"))
         }
     })?;

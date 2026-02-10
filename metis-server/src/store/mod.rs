@@ -349,30 +349,6 @@ pub trait Store: Send + Sync {
         creation_time: DateTime<Utc>,
     ) -> Result<(TaskId, VersionNumber), StoreError>;
 
-    /// Adds a task to the store with a specific ID.
-    ///
-    /// This is similar to `add_task`, but allows specifying the TaskId directly.
-    /// Useful when the ID comes from an external source (e.g., Kubernetes job ID).
-    ///
-    /// # Arguments
-    /// * `metis_id` - The TaskId to use for this task
-    /// * `task` - The task to add
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task already exists
-    ///
-    /// # Arguments
-    /// * `metis_id` - The TaskId to use for this task
-    /// * `task` - The task to add
-    /// * `creation_time` - The timestamp when the task is being created
-    async fn add_task_with_id(
-        &self,
-        metis_id: TaskId,
-        task: Task,
-        creation_time: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
-
     /// Updates an existing task in the store.
     ///
     /// This function overwrites the task data for the given vertex.

@@ -211,12 +211,10 @@ async fn patch_version_endpoints_return_404s() -> anyhow::Result<()> {
 async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let default_image = default_image();
-    let job_id = super::common::task_id("t-emit");
     let check_state = handles.state.clone();
-    handles
+    let (job_id, _) = handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,

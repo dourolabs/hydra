@@ -3,7 +3,7 @@ use crate::{
     routes::jobs::{ApiError, JobIdPath},
 };
 use axum::{Json, extract::State};
-use metis_common::api::v1;
+use metis_common::{api::v1, constants::ENV_METIS_ID};
 use tracing::{error, info};
 
 pub async fn get_job_context(
@@ -19,12 +19,15 @@ pub async fn get_job_context(
 
     let resolved = state.resolve_task(&task).await.map_err(ApiError::from)?;
 
+    let mut env_vars = resolved.env_vars;
+    env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
+
     let build_cache = state.config.build_cache.to_context();
     let context = v1::jobs::WorkerContext::new(
         resolved.context.bundle.into(),
         task.prompt,
         task.model.clone(),
-        resolved.env_vars,
+        env_vars,
         build_cache,
     );
     info!(job_id = %job_id, "get_job_context completed");

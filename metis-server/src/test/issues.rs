@@ -14,7 +14,7 @@ use crate::{
 };
 use chrono::Utc;
 use metis_common::{
-    IssueId, PatchId, TaskId,
+    IssueId, PatchId,
     api::v1::issues::{
         AddTodoItemRequest, IssueRecord, IssueVersionRecord, ListIssueVersionsResponse,
         ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
@@ -822,11 +822,9 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    let task_id = TaskId::new();
-    handles
+    let (task_id, _) = handles
         .store
-        .add_task_with_id(
-            task_id.clone(),
+        .add_task(
             Task {
                 prompt: "do work".to_string(),
                 context: BundleSpec::None,

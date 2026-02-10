@@ -1,4 +1,3 @@
-use super::common::task_id;
 use crate::{
     domain::jobs::{BundleSpec, Task},
     store::Status,
@@ -154,12 +153,8 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
 
     // Non-running job also returns 400
     let handles = test_state_handles();
-    let non_running = task_id("t-nonrunning");
     let task = sample_task(Status::Complete);
-    handles
-        .store
-        .add_task_with_id(non_running.clone(), task, Utc::now())
-        .await?;
+    let (non_running, _) = handles.store.add_task(task, Utc::now()).await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
     let response = client
@@ -174,12 +169,8 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
 
     // Running job succeeds
     let handles = test_state_handles();
-    let running_job = task_id("t-running");
     let task = sample_task(Status::Running);
-    handles
-        .store
-        .add_task_with_id(running_job.clone(), task.clone(), Utc::now())
-        .await?;
+    let (running_job, _) = handles.store.add_task(task.clone(), Utc::now()).await?;
     handles.store.update_task(&running_job, task).await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
@@ -199,12 +190,8 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
 #[tokio::test]
 async fn documents_support_search_filters() -> anyhow::Result<()> {
     let handles = test_state_handles();
-    let running_task = TaskId::new();
     let task = sample_task(Status::Running);
-    handles
-        .store
-        .add_task_with_id(running_task.clone(), task.clone(), Utc::now())
-        .await?;
+    let (running_task, _) = handles.store.add_task(task.clone(), Utc::now()).await?;
     handles.store.update_task(&running_task, task).await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();

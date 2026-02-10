@@ -1666,40 +1666,17 @@ impl Store for PostgresStoreV2 {
         _creation_time: DateTime<Utc>,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
-        self.add_task_with_id(id.clone(), task, _creation_time)
-            .await?;
-        Ok((id, 1))
-    }
-
-    async fn add_task_with_id(
-        &self,
-        metis_id: TaskId,
-        task: Task,
-        _creation_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
         let mut task = task;
         task.status = Status::Created;
         task.last_message = None;
         task.error = None;
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_TASKS_V2} WHERE id = $1"
-        ))
-        .bind(metis_id.as_ref())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        if exists > 0 {
-            return Err(StoreError::Internal(format!(
-                "Task already exists: {metis_id}"
-            )));
-        }
 
         if let Some(issue_id) = task.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
         }
 
-        self.insert_task(&metis_id, 1, &task).await
+        self.insert_task(&id, 1, &task).await?;
+        Ok((id, 1))
     }
 
     async fn update_task(
