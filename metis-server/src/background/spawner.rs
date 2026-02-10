@@ -374,7 +374,7 @@ mod tests {
     }
 
     async fn record_completed_task(handles: &TestStateHandles, task: Task) -> anyhow::Result<()> {
-        let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
+        let (task_id, _) = handles.store.add_task(task, Utc::now(), None).await?;
         handles.state.transition_task_to_pending(&task_id).await?;
         handles.state.transition_task_to_running(&task_id).await?;
         handles
@@ -568,6 +568,7 @@ mod tests {
                     ]),
                 ),
                 Utc::now(),
+                None,
             )
             .await?;
 
@@ -760,6 +761,7 @@ mod tests {
                     ]),
                 ),
                 Utc::now(),
+                None,
             )
             .await?;
         handles.state.transition_task_to_pending(&task_id).await?;
@@ -942,6 +944,7 @@ mod tests {
                     deleted: false,
                 },
                 Utc::now(),
+                None,
             )
             .await?;
         handles.state.transition_task_to_pending(&task_id).await?;
@@ -1013,6 +1016,7 @@ mod tests {
                     deleted: false,
                 },
                 Utc::now(),
+                None,
             )
             .await?;
 

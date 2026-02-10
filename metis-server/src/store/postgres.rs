@@ -1429,20 +1429,10 @@ impl Store for PostgresStore {
     async fn add_task(
         &self,
         task: Task,
-        creation_time: chrono::DateTime<Utc>,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let id = TaskId::new();
-        self.add_task_with_id(id.clone(), task, creation_time)
-            .await?;
-        Ok((id, 1))
-    }
-
-    async fn add_task_with_id(
-        &self,
-        metis_id: TaskId,
-        task: Task,
         _creation_time: chrono::DateTime<Utc>,
-    ) -> Result<(), StoreError> {
+        task_id: Option<TaskId>,
+    ) -> Result<(TaskId, VersionNumber), StoreError> {
+        let id = task_id.unwrap_or_default();
         let mut task = task;
         task.status = Status::Created;
         task.last_message = None;
@@ -1450,15 +1440,13 @@ impl Store for PostgresStore {
         let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT COUNT(1) FROM {TABLE_TASKS} WHERE id = $1"
         ))
-        .bind(metis_id.as_ref())
+        .bind(id.as_ref())
         .fetch_one(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
 
         if exists > 0 {
-            return Err(StoreError::Internal(format!(
-                "Task already exists: {metis_id}"
-            )));
+            return Err(StoreError::Internal(format!("Task already exists: {id}")));
         }
 
         if let Some(issue_id) = task.spawned_from.as_ref() {
@@ -1468,14 +1456,14 @@ impl Store for PostgresStore {
         self.insert_payload(
             TABLE_TASKS,
             "task",
-            metis_id.as_ref(),
+            id.as_ref(),
             TASK_SCHEMA_VERSION,
             1,
             &task,
         )
         .await?;
 
-        Ok(())
+        Ok((id, 1))
     }
 
     async fn update_task(
@@ -2175,7 +2163,7 @@ mod tests {
         task.spawned_from = Some(issue_id.clone());
         let (task_id, _) = handles
             .store
-            .add_task(task.clone(), Utc::now())
+            .add_task(task.clone(), Utc::now(), None)
             .await
             .unwrap();
         assert_eq!(
@@ -2257,7 +2245,7 @@ mod tests {
 
         let explicit_id = TaskId::new();
         store
-            .add_task_with_id(explicit_id.clone(), sample_task(), Utc::now())
+            .add_task(sample_task(), Utc::now(), Some(explicit_id.clone()))
             .await
             .unwrap();
         let all_tasks: HashSet<_> = store

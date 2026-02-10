@@ -898,7 +898,7 @@ impl AppState {
         created_at: DateTime<Utc>,
     ) -> Result<TaskId, StoreError> {
         let store = self.store.as_ref();
-        let (task_id, _version) = store.add_task(task, created_at).await?;
+        let (task_id, _version) = store.add_task(task, created_at, None).await?;
         Ok(task_id)
     }
 
@@ -1044,7 +1044,7 @@ impl AppState {
 
         let store = self.store.as_ref();
         store
-            .add_task_with_id(job_id.clone(), task, Utc::now())
+            .add_task(task, Utc::now(), Some(job_id.clone()))
             .await
             .map_err(|source| CreateJobError::Store {
                 source,
@@ -2768,7 +2768,7 @@ mod tests {
         handles
             .store
             .as_ref()
-            .add_task_with_id(task_id.clone(), task.clone(), created_at)
+            .add_task(task.clone(), created_at, Some(task_id.clone()))
             .await?;
         task.status = Status::Running;
         handles.store.as_ref().update_task(&task_id, task).await?;
@@ -2972,7 +2972,7 @@ mod tests {
 
         let (task_id, _) = {
             let store = state.store.as_ref();
-            store.add_task(task, Utc::now()).await.unwrap()
+            store.add_task(task, Utc::now(), None).await.unwrap()
         };
 
         state.start_pending_task(task_id.clone()).await;
@@ -3031,7 +3031,7 @@ mod tests {
             let mut task = task_for_issue(&issue_id);
             task.cpu_limit = job_settings.cpu_limit.clone();
             task.memory_limit = job_settings.memory_limit.clone();
-            store.add_task(task, Utc::now()).await.unwrap()
+            store.add_task(task, Utc::now(), None).await.unwrap()
         };
 
         state.start_pending_task(task_id.clone()).await;
@@ -3071,7 +3071,10 @@ mod tests {
         let state = test_state_with_engine(job_engine.clone());
         let (tracked_task_id, _) = {
             let store = state.store.as_ref();
-            store.add_task(sample_task(), Utc::now()).await.unwrap()
+            store
+                .add_task(sample_task(), Utc::now(), None)
+                .await
+                .unwrap()
         };
         let orphan_task_id = TaskId::new();
 
@@ -3105,7 +3108,10 @@ mod tests {
         let state = test_state_with_engine(job_engine);
         let task_id = {
             let store = state.store.as_ref();
-            let (task_id, _) = store.add_task(sample_task(), Utc::now()).await.unwrap();
+            let (task_id, _) = store
+                .add_task(sample_task(), Utc::now(), None)
+                .await
+                .unwrap();
             state
                 .transition_task_to_pending(&task_id)
                 .await
@@ -3138,7 +3144,10 @@ mod tests {
 
         let task_id = {
             let store = state.store.as_ref();
-            let (task_id, _) = store.add_task(sample_task(), Utc::now()).await.unwrap();
+            let (task_id, _) = store
+                .add_task(sample_task(), Utc::now(), None)
+                .await
+                .unwrap();
             state
                 .transition_task_to_pending(&task_id)
                 .await
@@ -3213,15 +3222,15 @@ mod tests {
         let (parent_task_id, child_task_id, grandchild_task_id) = {
             let store = state.store.as_ref();
             let (parent_task_id, _) = store
-                .add_task(task_for_issue(&parent_id), Utc::now())
+                .add_task(task_for_issue(&parent_id), Utc::now(), None)
                 .await
                 .unwrap();
             let (child_task_id, _) = store
-                .add_task(task_for_issue(&child_id), Utc::now())
+                .add_task(task_for_issue(&child_id), Utc::now(), None)
                 .await
                 .unwrap();
             let (grandchild_task_id, _) = store
-                .add_task(task_for_issue(&grandchild_id), Utc::now())
+                .add_task(task_for_issue(&grandchild_id), Utc::now(), None)
                 .await
                 .unwrap();
             (parent_task_id, child_task_id, grandchild_task_id)
@@ -3563,7 +3572,7 @@ mod tests {
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task(task_for_issue(&issue_id), Utc::now())
+            .add_task(task_for_issue(&issue_id), Utc::now(), None)
             .await
             .unwrap();
 
@@ -3592,7 +3601,7 @@ mod tests {
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task(task_for_issue(&issue_id), Utc::now())
+            .add_task(task_for_issue(&issue_id), Utc::now(), None)
             .await
             .unwrap();
 
@@ -3611,7 +3620,10 @@ mod tests {
         let state = test_state_with_engine(job_engine);
         let store = state.store.as_ref();
 
-        let (task_id, _) = store.add_task(sample_task(), Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(sample_task(), Utc::now(), None)
+            .await
+            .unwrap();
 
         state.cleanup_orphaned_tasks().await;
 
@@ -3633,7 +3645,7 @@ mod tests {
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task(task_for_issue(&issue_id), Utc::now())
+            .add_task(task_for_issue(&issue_id), Utc::now(), None)
             .await
             .unwrap();
         state

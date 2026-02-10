@@ -158,7 +158,7 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     let task = sample_task(Status::Complete);
     handles
         .store
-        .add_task_with_id(non_running.clone(), task, Utc::now())
+        .add_task(task, Utc::now(), Some(non_running.clone()))
         .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
@@ -178,7 +178,7 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     let task = sample_task(Status::Running);
     handles
         .store
-        .add_task_with_id(running_job.clone(), task.clone(), Utc::now())
+        .add_task(task.clone(), Utc::now(), Some(running_job.clone()))
         .await?;
     handles.store.update_task(&running_job, task).await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
@@ -203,7 +203,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
     let task = sample_task(Status::Running);
     handles
         .store
-        .add_task_with_id(running_task.clone(), task.clone(), Utc::now())
+        .add_task(task.clone(), Utc::now(), Some(running_task.clone()))
         .await?;
     handles.store.update_task(&running_task, task).await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;

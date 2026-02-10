@@ -825,8 +825,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
     let task_id = TaskId::new();
     handles
         .store
-        .add_task_with_id(
-            task_id.clone(),
+        .add_task(
             Task {
                 prompt: "do work".to_string(),
                 context: BundleSpec::None,
@@ -843,6 +842,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
                 deleted: false,
             },
             Utc::now(),
+            Some(task_id.clone()),
         )
         .await?;
     handles.state.transition_task_to_pending(&task_id).await?;

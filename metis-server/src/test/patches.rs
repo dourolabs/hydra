@@ -215,8 +215,7 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
     let check_state = handles.state.clone();
     handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -233,6 +232,7 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
                 deleted: false,
             },
             Utc::now(),
+            Some(job_id.clone()),
         )
         .await?;
     handles.state.transition_task_to_pending(&job_id).await?;

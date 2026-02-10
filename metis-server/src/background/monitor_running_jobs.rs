@@ -126,7 +126,7 @@ mod tests {
         );
         let (task_id, _) = handles
             .store
-            .add_task(task, Utc::now())
+            .add_task(task, Utc::now(), None)
             .await
             .expect("task should be added");
         handles
@@ -199,7 +199,11 @@ mod tests {
             None,
             None,
         );
-        let (task_id, _) = handles.store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = handles
+            .store
+            .add_task(task, Utc::now(), None)
+            .await
+            .unwrap();
 
         handles.store.delete_issue(&issue_id).await.unwrap();
 

@@ -600,8 +600,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
     let now = Utc::now();
     handles
         .store
-        .add_task_with_id(
-            oldest_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -618,12 +617,12 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 deleted: false,
             },
             now - Duration::seconds(30),
+            Some(oldest_id.clone()),
         )
         .await?;
     handles
         .store
-        .add_task_with_id(
-            middle_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -640,12 +639,12 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 deleted: false,
             },
             now - Duration::seconds(20),
+            Some(middle_id.clone()),
         )
         .await?;
     handles
         .store
-        .add_task_with_id(
-            newest_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -662,6 +661,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 deleted: false,
             },
             now - Duration::seconds(10),
+            Some(newest_id.clone()),
         )
         .await?;
     state.transition_task_to_pending(&middle_id).await?;
@@ -693,8 +693,7 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
     let now = Utc::now();
     handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -711,6 +710,7 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
                 deleted: false,
             },
             now - Duration::seconds(20),
+            Some(job_id.clone()),
         )
         .await?;
     state.transition_task_to_pending(&job_id).await?;
@@ -757,8 +757,7 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
     let now = Utc::now();
     handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -775,6 +774,7 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
                 deleted: false,
             },
             now - Duration::seconds(30),
+            Some(job_id.clone()),
         )
         .await?;
     state.transition_task_to_pending(&job_id).await?;
@@ -1012,8 +1012,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
     let job_id = task_id("t-spawn");
     handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1030,6 +1029,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
                 deleted: false,
             },
             Utc::now(),
+            Some(job_id.clone()),
         )
         .await?;
     state.transition_task_to_pending(&job_id).await?;
@@ -1085,8 +1085,7 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
     let job_id = task_id("t-lastmsg");
     handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1103,6 +1102,7 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
                 deleted: false,
             },
             Utc::now(),
+            Some(job_id.clone()),
         )
         .await?;
     state.transition_task_to_pending(&job_id).await?;
@@ -1143,8 +1143,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
     let job_id = task_id("t-fail");
     handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1161,6 +1160,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
                 deleted: false,
             },
             Utc::now(),
+            Some(job_id.clone()),
         )
         .await?;
     state.transition_task_to_pending(&job_id).await?;
@@ -1198,8 +1198,7 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
     let job_id = task_id("t-status");
     handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1216,6 +1215,7 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
                 deleted: false,
             },
             Utc::now(),
+            Some(job_id.clone()),
         )
         .await?;
     state.transition_task_to_pending(&job_id).await?;
@@ -1252,8 +1252,7 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
     let job_id = task_id("t-output");
     handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1270,6 +1269,7 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
                 deleted: false,
             },
             Utc::now(),
+            Some(job_id.clone()),
         )
         .await?;
     state.transition_task_to_pending(&job_id).await?;
@@ -1376,8 +1376,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
     let ctx_job_id = task_id("t-ctxjob");
     handles
         .store
-        .add_task_with_id(
-            parent_job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1394,6 +1393,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 deleted: false,
             },
             Utc::now(),
+            Some(parent_job_id.clone()),
         )
         .await?;
     state.transition_task_to_pending(&parent_job_id).await?;
@@ -1420,8 +1420,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
         .await?;
     handles
         .store
-        .add_task_with_id(
-            ctx_job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: context_spec.clone(),
@@ -1438,6 +1437,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 deleted: false,
             },
             Utc::now(),
+            Some(ctx_job_id.clone()),
         )
         .await?;
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
@@ -1472,8 +1472,7 @@ async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
     let job_id = task_id("t-modeljob");
     handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1490,6 +1489,7 @@ async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
                 deleted: false,
             },
             Utc::now(),
+            Some(job_id.clone()),
         )
         .await?;
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
@@ -1514,8 +1514,7 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
     let job_id = task_id("t-envjob");
     handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1532,6 +1531,7 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
                 deleted: false,
             },
             Utc::now(),
+            Some(job_id.clone()),
         )
         .await?;
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;

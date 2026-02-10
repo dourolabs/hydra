@@ -112,7 +112,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
     let (actor, auth_token) = Actor::new_for_task(task_id.clone());
     handles
         .store
-        .add_task_with_id(task_id, task, Utc::now())
+        .add_task(task, Utc::now(), Some(task_id))
         .await?;
     handles.store.add_actor(actor).await?;
 
@@ -226,7 +226,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     let (actor, auth_token) = Actor::new_for_task(task_id.clone());
     handles
         .store
-        .add_task_with_id(task_id, task, Utc::now())
+        .add_task(task, Utc::now(), Some(task_id))
         .await?;
     handles.store.add_actor(actor).await?;
 
@@ -314,7 +314,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
     let (actor, auth_token) = Actor::new_for_task(task_id.clone());
     handles
         .store
-        .add_task_with_id(task_id, task, Utc::now())
+        .add_task(task, Utc::now(), Some(task_id))
         .await?;
     handles.store.add_actor(actor).await?;
 

@@ -828,16 +828,21 @@ impl Store for MemoryStore {
         &self,
         task: Task,
         creation_time: DateTime<Utc>,
+        task_id: Option<TaskId>,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
-        // Generate a unique ID for the new task
-        let id = TaskId::new();
+        let id = task_id.unwrap_or_default();
+
+        // Check if task already exists when a specific ID is provided
+        if self.tasks.contains_key(&id) {
+            return Err(StoreError::Internal(format!("Task already exists: {id}")));
+        }
+
         let mut task = task;
         task.status = Status::Created;
         task.last_message = None;
         task.error = None;
         let spawned_from = task.spawned_from.clone();
 
-        // Add the task
         self.tasks
             .insert(id.clone(), vec![Self::versioned_at(task, 1, creation_time)]);
 
@@ -846,37 +851,6 @@ impl Store for MemoryStore {
         }
 
         Ok((id, 1))
-    }
-
-    async fn add_task_with_id(
-        &self,
-        metis_id: TaskId,
-        task: Task,
-        creation_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        // Check if task already exists
-        if self.tasks.contains_key(&metis_id) {
-            return Err(StoreError::Internal(format!(
-                "Task already exists: {metis_id}"
-            )));
-        }
-        let mut task = task;
-        task.status = Status::Created;
-        task.last_message = None;
-        task.error = None;
-        let spawned_from = task.spawned_from.clone();
-
-        // Add the task with the specified ID
-        self.tasks.insert(
-            metis_id.clone(),
-            vec![Self::versioned_at(task, 1, creation_time)],
-        );
-
-        if let Some(issue_id) = spawned_from.as_ref() {
-            self.index_task_for_issue(issue_id, metis_id.clone());
-        }
-
-        Ok(())
     }
 
     async fn update_task(
@@ -2099,7 +2073,10 @@ mod tests {
         let store = MemoryStore::new();
 
         let task = spawn_task();
-        let (task_id, _) = store.add_task(task.clone(), Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(task.clone(), Utc::now(), None)
+            .await
+            .unwrap();
 
         let fetched = store.get_task(&task_id, false).await.unwrap();
         assert_versioned(&fetched, &task, 1);
@@ -2124,7 +2101,7 @@ mod tests {
 
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
-        let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = store.add_task(task, Utc::now(), None).await.unwrap();
 
         let mut updated = spawn_task();
         updated.prompt = "v2".to_string();
@@ -2143,7 +2120,7 @@ mod tests {
 
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
-        let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = store.add_task(task, Utc::now(), None).await.unwrap();
 
         let mut v2 = spawn_task();
         v2.prompt = "v2".to_string();
@@ -2159,7 +2136,10 @@ mod tests {
     async fn task_versions_increment_on_transitions() {
         let store = Arc::new(MemoryStore::new());
         let state = test_state_with_store(store.clone()).state;
-        let (task_id, _) = store.add_task(spawn_task(), Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(spawn_task(), Utc::now(), None)
+            .await
+            .unwrap();
 
         state.transition_task_to_pending(&task_id).await.unwrap();
         state.transition_task_to_running(&task_id).await.unwrap();
@@ -2183,7 +2163,10 @@ mod tests {
         let created_at = Utc::now() - Duration::seconds(60);
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
-        let (task_id, _) = store.add_task(task.clone(), created_at).await.unwrap();
+        let (task_id, _) = store
+            .add_task(task.clone(), created_at, None)
+            .await
+            .unwrap();
 
         let mut updated = task.clone();
         updated.prompt = "v2".to_string();
@@ -2232,17 +2215,26 @@ mod tests {
 
         let mut pending_task = spawn_task();
         pending_task.spawned_from = Some(issue_id.clone());
-        let (pending_id, _) = store.add_task(pending_task, Utc::now()).await.unwrap();
+        let (pending_id, _) = store
+            .add_task(pending_task, Utc::now(), None)
+            .await
+            .unwrap();
 
         let mut running_task = spawn_task();
         running_task.spawned_from = Some(issue_id.clone());
-        let (running_id, _) = store.add_task(running_task, Utc::now()).await.unwrap();
+        let (running_id, _) = store
+            .add_task(running_task, Utc::now(), None)
+            .await
+            .unwrap();
         state.transition_task_to_pending(&running_id).await.unwrap();
         state.transition_task_to_running(&running_id).await.unwrap();
 
         let mut completed_task = spawn_task();
         completed_task.spawned_from = Some(issue_id.clone());
-        let (completed_id, _) = store.add_task(completed_task, Utc::now()).await.unwrap();
+        let (completed_id, _) = store
+            .add_task(completed_task, Utc::now(), None)
+            .await
+            .unwrap();
         state
             .transition_task_to_pending(&completed_id)
             .await
@@ -2258,7 +2250,10 @@ mod tests {
 
         let mut unrelated_task = spawn_task();
         unrelated_task.spawned_from = Some(other_issue.clone());
-        let (unrelated_id, _) = store.add_task(unrelated_task, Utc::now()).await.unwrap();
+        let (unrelated_id, _) = store
+            .add_task(unrelated_task, Utc::now(), None)
+            .await
+            .unwrap();
 
         let tasks: HashSet<_> = store
             .get_tasks_for_issue(&issue_id)
@@ -2292,7 +2287,7 @@ mod tests {
         let store = MemoryStore::new();
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store.add_task(root_task, Utc::now(), None).await.unwrap();
 
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
@@ -2306,7 +2301,7 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store.add_task(root_task, Utc::now(), None).await.unwrap();
 
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
@@ -2326,7 +2321,7 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store.add_task(root_task, Utc::now(), None).await.unwrap();
 
         state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
@@ -2342,7 +2337,7 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store.add_task(root_task, Utc::now(), None).await.unwrap();
 
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
@@ -2374,7 +2369,7 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store.add_task(root_task, Utc::now(), None).await.unwrap();
 
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
@@ -2412,7 +2407,7 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store.add_task(root_task, Utc::now(), None).await.unwrap();
 
         // Trying to mark as complete from pending should fail
         let err = state
@@ -2428,7 +2423,7 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store.add_task(root_task, Utc::now(), None).await.unwrap();
 
         // Marking as failed from pending should succeed
         state
@@ -3053,7 +3048,7 @@ mod tests {
     async fn delete_task_sets_deleted_flag_and_filters_from_list() {
         let store = MemoryStore::new();
         let task = spawn_task();
-        let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = store.add_task(task, Utc::now(), None).await.unwrap();
 
         // Task should be visible in list initially
         let tasks = store.list_tasks(&SearchJobsQuery::default()).await.unwrap();
@@ -3342,18 +3337,18 @@ mod tests {
         // Create tasks spawned from different issues
         let mut task_a1 = spawn_task();
         task_a1.spawned_from = Some(issue_a.clone());
-        let (task_a1_id, _) = store.add_task(task_a1, Utc::now()).await.unwrap();
+        let (task_a1_id, _) = store.add_task(task_a1, Utc::now(), None).await.unwrap();
 
         let mut task_a2 = spawn_task();
         task_a2.spawned_from = Some(issue_a.clone());
-        let (task_a2_id, _) = store.add_task(task_a2, Utc::now()).await.unwrap();
+        let (task_a2_id, _) = store.add_task(task_a2, Utc::now(), None).await.unwrap();
 
         let mut task_b1 = spawn_task();
         task_b1.spawned_from = Some(issue_b.clone());
-        let (task_b1_id, _) = store.add_task(task_b1, Utc::now()).await.unwrap();
+        let (task_b1_id, _) = store.add_task(task_b1, Utc::now(), None).await.unwrap();
 
         let task_orphan = spawn_task(); // no spawned_from
-        let (task_orphan_id, _) = store.add_task(task_orphan, Utc::now()).await.unwrap();
+        let (task_orphan_id, _) = store.add_task(task_orphan, Utc::now(), None).await.unwrap();
 
         // Filter by issue_a should return only tasks spawned from issue_a
         let query = SearchJobsQuery::new(None, Some(issue_a.clone()), None);
@@ -3401,15 +3396,15 @@ mod tests {
         // Create tasks with different prompts
         let mut task1 = spawn_task();
         task1.prompt = "Fix authentication bug".to_string();
-        let (task1_id, _) = store.add_task(task1, Utc::now()).await.unwrap();
+        let (task1_id, _) = store.add_task(task1, Utc::now(), None).await.unwrap();
 
         let mut task2 = spawn_task();
         task2.prompt = "Add new feature for login".to_string();
-        let (task2_id, _) = store.add_task(task2, Utc::now()).await.unwrap();
+        let (task2_id, _) = store.add_task(task2, Utc::now(), None).await.unwrap();
 
         let mut task3 = spawn_task();
         task3.prompt = "Refactor database layer".to_string();
-        let (task3_id, _) = store.add_task(task3, Utc::now()).await.unwrap();
+        let (task3_id, _) = store.add_task(task3, Utc::now(), None).await.unwrap();
 
         // Search for "auth" should match task1
         let query = SearchJobsQuery::new(Some("auth".to_string()), None, None);
@@ -3466,7 +3461,7 @@ mod tests {
         let store = MemoryStore::new();
 
         let task = spawn_task();
-        let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = store.add_task(task, Utc::now(), None).await.unwrap();
 
         // Search by partial task ID
         let id_prefix = &task_id.as_ref()[..6]; // First 6 characters
@@ -3487,11 +3482,17 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         // Create three tasks and transition them to different states
-        let (task1_id, _) = store.add_task(spawn_task(), Utc::now()).await.unwrap();
+        let (task1_id, _) = store
+            .add_task(spawn_task(), Utc::now(), None)
+            .await
+            .unwrap();
         state.transition_task_to_pending(&task1_id).await.unwrap();
         state.transition_task_to_running(&task1_id).await.unwrap();
 
-        let (task2_id, _) = store.add_task(spawn_task(), Utc::now()).await.unwrap();
+        let (task2_id, _) = store
+            .add_task(spawn_task(), Utc::now(), None)
+            .await
+            .unwrap();
         state.transition_task_to_pending(&task2_id).await.unwrap();
         state.transition_task_to_running(&task2_id).await.unwrap();
         state
@@ -3499,7 +3500,10 @@ mod tests {
             .await
             .unwrap();
 
-        let (task3_id, _) = store.add_task(spawn_task(), Utc::now()).await.unwrap();
+        let (task3_id, _) = store
+            .add_task(spawn_task(), Utc::now(), None)
+            .await
+            .unwrap();
         state.transition_task_to_pending(&task3_id).await.unwrap();
         state.transition_task_to_running(&task3_id).await.unwrap();
         state
@@ -3553,18 +3557,18 @@ mod tests {
 
         // Create a task in Created status
         let task1 = spawn_task();
-        let (task1_id, _) = store.add_task(task1, Utc::now()).await.unwrap();
+        let (task1_id, _) = store.add_task(task1, Utc::now(), None).await.unwrap();
 
         // Create a task and update to Running status
         let task2 = spawn_task();
-        let (task2_id, _) = store.add_task(task2, Utc::now()).await.unwrap();
+        let (task2_id, _) = store.add_task(task2, Utc::now(), None).await.unwrap();
         let mut updated = spawn_task();
         updated.status = Status::Running;
         store.update_task(&task2_id, updated).await.unwrap();
 
         // Create a task and update to Complete status
         let task3 = spawn_task();
-        let (task3_id, _) = store.add_task(task3, Utc::now()).await.unwrap();
+        let (task3_id, _) = store.add_task(task3, Utc::now(), None).await.unwrap();
         let mut updated = spawn_task();
         updated.status = Status::Complete;
         store.update_task(&task3_id, updated).await.unwrap();
