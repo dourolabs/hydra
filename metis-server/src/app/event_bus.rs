@@ -14,7 +14,7 @@ use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, PatchId, RepoName, TaskId, Versioned,
+    DocumentId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -292,7 +292,7 @@ impl Store for StoreWithEvents {
 
     // ---- Issue ----
 
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, u64), StoreError> {
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
         let (issue_id, version) = self.inner.add_issue(issue).await?;
         self.event_bus.emit_issue_created(issue_id.clone());
         Ok((issue_id, version))
@@ -310,7 +310,7 @@ impl Store for StoreWithEvents {
         self.inner.get_issue_versions(id).await
     }
 
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<u64, StoreError> {
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
         let version = self.inner.update_issue(id, issue).await?;
         self.event_bus.emit_issue_updated(id.clone());
         Ok(version)
@@ -323,7 +323,7 @@ impl Store for StoreWithEvents {
         self.inner.list_issues(query).await
     }
 
-    async fn delete_issue(&self, id: &IssueId) -> Result<u64, StoreError> {
+    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
         let version = self.inner.delete_issue(id).await?;
         self.event_bus.emit_issue_deleted(id.clone());
         Ok(version)
@@ -338,7 +338,7 @@ impl Store for StoreWithEvents {
 
     // ---- Patch ----
 
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, u64), StoreError> {
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
         let (patch_id, version) = self.inner.add_patch(patch).await?;
         self.event_bus.emit_patch_created(patch_id.clone());
         Ok((patch_id, version))
@@ -356,7 +356,7 @@ impl Store for StoreWithEvents {
         self.inner.get_patch_versions(id).await
     }
 
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<u64, StoreError> {
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
         let version = self.inner.update_patch(id, patch).await?;
         self.event_bus.emit_patch_updated(id.clone());
         Ok(version)
@@ -369,7 +369,7 @@ impl Store for StoreWithEvents {
         self.inner.list_patches(query).await
     }
 
-    async fn delete_patch(&self, id: &PatchId) -> Result<u64, StoreError> {
+    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
         let version = self.inner.delete_patch(id).await?;
         self.event_bus.emit_patch_deleted(id.clone());
         Ok(version)
@@ -381,7 +381,10 @@ impl Store for StoreWithEvents {
 
     // ---- Document ----
 
-    async fn add_document(&self, document: Document) -> Result<(DocumentId, u64), StoreError> {
+    async fn add_document(
+        &self,
+        document: Document,
+    ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let (document_id, version) = self.inner.add_document(document).await?;
         self.event_bus.emit_document_created(document_id.clone());
         Ok((document_id, version))
@@ -406,13 +409,13 @@ impl Store for StoreWithEvents {
         &self,
         id: &DocumentId,
         document: Document,
-    ) -> Result<u64, StoreError> {
+    ) -> Result<VersionNumber, StoreError> {
         let version = self.inner.update_document(id, document).await?;
         self.event_bus.emit_document_updated(id.clone());
         Ok(version)
     }
 
-    async fn delete_document(&self, id: &DocumentId) -> Result<u64, StoreError> {
+    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
         let version = self.inner.delete_document(id).await?;
         self.event_bus.emit_document_deleted(id.clone());
         Ok(version)
@@ -452,7 +455,7 @@ impl Store for StoreWithEvents {
         &self,
         task: Task,
         creation_time: DateTime<Utc>,
-    ) -> Result<(TaskId, u64), StoreError> {
+    ) -> Result<(TaskId, VersionNumber), StoreError> {
         let (task_id, version) = self.inner.add_task(task, creation_time).await?;
         self.event_bus.emit_job_created(task_id.clone());
         Ok((task_id, version))
@@ -500,7 +503,7 @@ impl Store for StoreWithEvents {
         self.inner.list_tasks(query).await
     }
 
-    async fn delete_task(&self, id: &TaskId) -> Result<u64, StoreError> {
+    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
         self.inner.delete_task(id).await
     }
 

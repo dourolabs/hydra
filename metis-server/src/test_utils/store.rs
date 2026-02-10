@@ -16,7 +16,7 @@ use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned,
+    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use std::collections::{HashMap, HashSet};
@@ -62,7 +62,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_issue(&self, _issue: Issue) -> Result<(IssueId, u64), StoreError> {
+    async fn add_issue(&self, _issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
         fail()
     }
 
@@ -78,7 +78,11 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_issue(&self, _id: &IssueId, _issue: Issue) -> Result<u64, StoreError> {
+    async fn update_issue(
+        &self,
+        _id: &IssueId,
+        _issue: Issue,
+    ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
@@ -89,7 +93,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_issue(&self, _id: &IssueId) -> Result<u64, StoreError> {
+    async fn delete_issue(&self, _id: &IssueId) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
@@ -100,7 +104,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_patch(&self, _patch: Patch) -> Result<(PatchId, u64), StoreError> {
+    async fn add_patch(&self, _patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
         fail()
     }
 
@@ -116,7 +120,11 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_patch(&self, _id: &PatchId, _patch: Patch) -> Result<u64, StoreError> {
+    async fn update_patch(
+        &self,
+        _id: &PatchId,
+        _patch: Patch,
+    ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
@@ -127,7 +135,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_patch(&self, _id: &PatchId) -> Result<u64, StoreError> {
+    async fn delete_patch(&self, _id: &PatchId) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
@@ -135,7 +143,10 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_document(&self, _document: Document) -> Result<(DocumentId, u64), StoreError> {
+    async fn add_document(
+        &self,
+        _document: Document,
+    ) -> Result<(DocumentId, VersionNumber), StoreError> {
         fail()
     }
 
@@ -158,11 +169,11 @@ impl Store for FailingStore {
         &self,
         _id: &DocumentId,
         _document: Document,
-    ) -> Result<u64, StoreError> {
+    ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
-    async fn delete_document(&self, _id: &DocumentId) -> Result<u64, StoreError> {
+    async fn delete_document(&self, _id: &DocumentId) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
@@ -196,7 +207,7 @@ impl Store for FailingStore {
         &self,
         _task: Task,
         _creation_time: DateTime<Utc>,
-    ) -> Result<(TaskId, u64), StoreError> {
+    ) -> Result<(TaskId, VersionNumber), StoreError> {
         fail()
     }
 
@@ -236,7 +247,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_task(&self, _id: &TaskId) -> Result<u64, StoreError> {
+    async fn delete_task(&self, _id: &TaskId) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
