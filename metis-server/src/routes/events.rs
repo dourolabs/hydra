@@ -8,12 +8,15 @@ use axum::{
 };
 use chrono::Utc;
 use futures::channel::mpsc;
-use metis_common::api::v1::{
-    error::ApiError,
-    events::{
-        EntityEventData, EventsQuery, HeartbeatEventData, ResyncEventData, SnapshotEventData,
-        SseEventType,
+use metis_common::{
+    api::v1::{
+        error::ApiError,
+        events::{
+            EntityEventData, EventsQuery, HeartbeatEventData, ResyncEventData, SnapshotEventData,
+            SseEventType,
+        },
     },
+    ids::{DocumentId, IssueId, PatchId, TaskId},
 };
 use std::{collections::HashMap, convert::Infallible};
 use tokio::sync::broadcast::error::RecvError;
@@ -33,7 +36,7 @@ pub async fn get_events(
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
 
-    let filter = EventFilter::from_query(&query);
+    let filter = EventFilter::from_query(&query).map_err(ApiError::bad_request)?;
 
     info!(
         last_event_id = ?last_event_id,
@@ -158,36 +161,70 @@ pub async fn get_events(
 /// Filter for SSE events based on query parameters.
 struct EventFilter {
     entity_types: Option<Vec<String>>,
-    issue_ids: Option<Vec<String>>,
-    job_ids: Option<Vec<String>>,
-    patch_ids: Option<Vec<String>>,
-    document_ids: Option<Vec<String>>,
+    issue_ids: Option<Vec<IssueId>>,
+    job_ids: Option<Vec<TaskId>>,
+    patch_ids: Option<Vec<PatchId>>,
+    document_ids: Option<Vec<DocumentId>>,
 }
 
 impl EventFilter {
-    fn from_query(query: &EventsQuery) -> Self {
-        Self {
-            entity_types: query
-                .types
-                .as_ref()
-                .map(|s| s.split(',').map(|t| t.trim().to_string()).collect()),
-            issue_ids: query
-                .issue_ids
-                .as_ref()
-                .map(|s| s.split(',').map(|t| t.trim().to_string()).collect()),
-            job_ids: query
-                .job_ids
-                .as_ref()
-                .map(|s| s.split(',').map(|t| t.trim().to_string()).collect()),
-            patch_ids: query
-                .patch_ids
-                .as_ref()
-                .map(|s| s.split(',').map(|t| t.trim().to_string()).collect()),
-            document_ids: query
-                .document_ids
-                .as_ref()
-                .map(|s| s.split(',').map(|t| t.trim().to_string()).collect()),
-        }
+    fn from_query(query: &EventsQuery) -> Result<Self, String> {
+        let entity_types = query
+            .types
+            .as_ref()
+            .map(|s| s.split(',').map(|t| t.trim().to_string()).collect());
+
+        let issue_ids = query
+            .issue_ids
+            .as_ref()
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().parse::<IssueId>())
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .map_err(|e| format!("invalid issue_ids: {e}"))?;
+
+        let job_ids = query
+            .job_ids
+            .as_ref()
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().parse::<TaskId>())
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .map_err(|e| format!("invalid job_ids: {e}"))?;
+
+        let patch_ids = query
+            .patch_ids
+            .as_ref()
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().parse::<PatchId>())
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .map_err(|e| format!("invalid patch_ids: {e}"))?;
+
+        let document_ids = query
+            .document_ids
+            .as_ref()
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().parse::<DocumentId>())
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .map_err(|e| format!("invalid document_ids: {e}"))?;
+
+        Ok(Self {
+            entity_types,
+            issue_ids,
+            job_ids,
+            patch_ids,
+            document_ids,
+        })
     }
 
     fn matches(&self, event: &ServerEvent) -> bool {
@@ -201,61 +238,68 @@ impl EventFilter {
         }
 
         // Check entity-specific ID filters.
-        match entity_type {
-            "issues" => {
+        match entity_id {
+            EntityId::Issue(id) => {
                 if let Some(ids) = &self.issue_ids {
-                    if !ids.contains(&entity_id) {
+                    if !ids.contains(id) {
                         return false;
                     }
                 }
             }
-            "jobs" => {
+            EntityId::Task(id) => {
                 if let Some(ids) = &self.job_ids {
-                    if !ids.contains(&entity_id) {
+                    if !ids.contains(id) {
                         return false;
                     }
                 }
             }
-            "patches" => {
+            EntityId::Patch(id) => {
                 if let Some(ids) = &self.patch_ids {
-                    if !ids.contains(&entity_id) {
+                    if !ids.contains(id) {
                         return false;
                     }
                 }
             }
-            "documents" => {
+            EntityId::Document(id) => {
                 if let Some(ids) = &self.document_ids {
-                    if !ids.contains(&entity_id) {
+                    if !ids.contains(id) {
                         return false;
                     }
                 }
             }
-            _ => {}
         }
 
         true
     }
 }
 
-/// Extracts the entity type category and entity ID from a ServerEvent.
-fn event_entity_info(event: &ServerEvent) -> (&'static str, String) {
+/// A typed entity ID extracted from a ServerEvent.
+enum EntityId<'a> {
+    Issue(&'a IssueId),
+    Task(&'a TaskId),
+    Patch(&'a PatchId),
+    Document(&'a DocumentId),
+}
+
+/// Extracts the entity type category and typed entity ID from a ServerEvent.
+fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
     match event {
         ServerEvent::IssueCreated { issue_id, .. }
         | ServerEvent::IssueUpdated { issue_id, .. }
-        | ServerEvent::IssueDeleted { issue_id, .. } => ("issues", issue_id.to_string()),
+        | ServerEvent::IssueDeleted { issue_id, .. } => ("issues", EntityId::Issue(issue_id)),
 
         ServerEvent::PatchCreated { patch_id, .. }
         | ServerEvent::PatchUpdated { patch_id, .. }
-        | ServerEvent::PatchDeleted { patch_id, .. } => ("patches", patch_id.to_string()),
+        | ServerEvent::PatchDeleted { patch_id, .. } => ("patches", EntityId::Patch(patch_id)),
 
         ServerEvent::JobCreated { task_id, .. } | ServerEvent::JobUpdated { task_id, .. } => {
-            ("jobs", task_id.to_string())
+            ("jobs", EntityId::Task(task_id))
         }
 
         ServerEvent::DocumentCreated { document_id, .. }
         | ServerEvent::DocumentUpdated { document_id, .. }
         | ServerEvent::DocumentDeleted { document_id, .. } => {
-            ("documents", document_id.to_string())
+            ("documents", EntityId::Document(document_id))
         }
     }
 }
