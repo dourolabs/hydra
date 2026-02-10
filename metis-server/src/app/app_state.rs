@@ -1404,6 +1404,13 @@ impl AppState {
                     {
                         Ok(_) => {
                             warn!(metis_id = %task_id, "task marked failed due to missing results after job completion timeout");
+                            if let Err(err) = self.job_engine.kill_job(&task_id).await {
+                                warn!(
+                                    metis_id = %task_id,
+                                    error = %err,
+                                    "failed to clean up job after task completion"
+                                );
+                            }
                         }
                         Err(err) => {
                             warn!(metis_id = %task_id, error = %err, "failed to mark task failed after missing results timeout");
@@ -1426,6 +1433,13 @@ impl AppState {
                     {
                         Ok(_) => {
                             info!(metis_id = %task_id, "updated task status to Failed from job engine");
+                            if let Err(err) = self.job_engine.kill_job(&task_id).await {
+                                warn!(
+                                    metis_id = %task_id,
+                                    error = %err,
+                                    "failed to clean up job after task failure"
+                                );
+                            }
                         }
                         Err(err) => {
                             warn!(metis_id = %task_id, error = %err, "failed to update task status to Failed");

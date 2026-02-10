@@ -89,7 +89,7 @@ mod tests {
             jobs::BundleSpec,
             users::Username,
         },
-        job_engine::JobStatus,
+        job_engine::{JobEngine, JobStatus},
         store::{Status, StoreError, Task},
         test_utils::{
             FailingStore, MockJobEngine, test_state_handles, test_state_with_engine_handles,
@@ -167,6 +167,126 @@ mod tests {
         let outcome = worker.run_iteration().await;
 
         assert!(matches!(outcome, WorkerOutcome::TransientError { .. }));
+    }
+
+    #[tokio::test]
+    async fn reconcile_kills_job_after_completed_task_timeout() {
+        let engine = Arc::new(MockJobEngine::new());
+        let handles = test_state_with_engine_handles(engine.clone());
+        let task = Task::new(
+            "observe".to_string(),
+            BundleSpec::None,
+            None,
+            None,
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+        );
+        let task_id = handles
+            .store
+            .add_task(task, Utc::now())
+            .await
+            .expect("task should be added");
+        handles
+            .state
+            .transition_task_to_pending(&task_id)
+            .await
+            .expect("task should be marked pending");
+        handles
+            .state
+            .transition_task_to_running(&task_id)
+            .await
+            .expect("task should be marked running");
+
+        // Insert a completed job with completion_time > 60 seconds ago to trigger timeout
+        let old_completion = Utc::now() - chrono::Duration::seconds(120);
+        engine
+            .insert_job_with_metadata(&task_id, JobStatus::Complete, Some(old_completion), None)
+            .await;
+
+        handles.state.reconcile_running_task(task_id.clone()).await;
+
+        // Task should be marked failed
+        let task = handles
+            .state
+            .get_task(&task_id)
+            .await
+            .expect("task should exist");
+        assert_eq!(task.status, Status::Failed);
+
+        // Job should have been killed (mock kill_job sets status to Failed and completion_time)
+        let job = engine
+            .find_job_by_metis_id(&task_id)
+            .await
+            .expect("job should exist");
+        assert!(
+            job.completion_time.unwrap() > old_completion,
+            "kill_job should have updated the completion_time"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconcile_kills_job_after_failed_task() {
+        let engine = Arc::new(MockJobEngine::new());
+        let handles = test_state_with_engine_handles(engine.clone());
+        let task = Task::new(
+            "observe".to_string(),
+            BundleSpec::None,
+            None,
+            None,
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+        );
+        let task_id = handles
+            .store
+            .add_task(task, Utc::now())
+            .await
+            .expect("task should be added");
+        handles
+            .state
+            .transition_task_to_pending(&task_id)
+            .await
+            .expect("task should be marked pending");
+        handles
+            .state
+            .transition_task_to_running(&task_id)
+            .await
+            .expect("task should be marked running");
+
+        // Insert a failed job without completion_time
+        engine
+            .insert_job_with_metadata(
+                &task_id,
+                JobStatus::Failed,
+                None,
+                Some("OOM killed".to_string()),
+            )
+            .await;
+
+        handles.state.reconcile_running_task(task_id.clone()).await;
+
+        // Task should be marked failed
+        let task = handles
+            .state
+            .get_task(&task_id)
+            .await
+            .expect("task should exist");
+        assert_eq!(task.status, Status::Failed);
+
+        // Job should have been killed (mock kill_job sets completion_time)
+        let job = engine
+            .find_job_by_metis_id(&task_id)
+            .await
+            .expect("job should exist");
+        assert!(
+            job.completion_time.is_some(),
+            "kill_job should have set completion_time"
+        );
     }
 
     #[tokio::test]
