@@ -12,6 +12,7 @@ use crossterm::event::{
 };
 use futures::StreamExt;
 use metis_common::{
+    api::v1::events::{EventsQuery, SseEventType},
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueRecord as ApiIssueRecord, IssueStatus,
         IssueType, JobSettings, SearchIssuesQuery, UpsertIssueRequest,
@@ -37,7 +38,7 @@ use tui_textarea::TextArea;
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    client::MetisClientInterface,
+    client::{sse::SseEventStream, MetisClientInterface},
     command::output::{self, CommandContext},
 };
 
@@ -474,6 +475,21 @@ async fn run_dashboard_loop(
     update_panel_focus(&mut state);
     let mut needs_draw = true;
 
+    // Attempt to subscribe to SSE events for real-time updates.
+    let sse_stream = match client.subscribe_events(&EventsQuery::default(), None).await {
+        Ok(Some(stream)) => Some(stream),
+        Ok(None) => {
+            state.jobs_error =
+                Some("Server does not support SSE; using polling fallback".to_string());
+            None
+        }
+        Err(err) => {
+            state.jobs_error = Some(format!("SSE unavailable ({err}); using polling fallback"));
+            None
+        }
+    };
+
+    // Perform the initial full fetch to populate state.
     if let Err(err) = refresh_jobs(client, &mut state).await {
         state.jobs_error = Some(format!("Failed to load jobs: {err}"));
     }
@@ -482,98 +498,132 @@ async fn run_dashboard_loop(
         state.records_error = Some(format!("Failed to load records: {err}"));
     }
 
-    let mut events = EventStream::new();
+    match sse_stream {
+        Some(sse_stream) => {
+            run_dashboard_loop_sse(client, terminal, &mut state, sse_stream, &mut needs_draw).await
+        }
+        None => run_dashboard_loop_polling(client, terminal, &mut state, &mut needs_draw).await,
+    }
+}
+
+/// Dashboard main loop driven by SSE events for real-time incremental updates.
+async fn run_dashboard_loop_sse(
+    client: &dyn MetisClientInterface,
+    terminal: &mut DefaultTerminal,
+    state: &mut DashboardState,
+    mut sse_stream: SseEventStream,
+    needs_draw: &mut bool,
+) -> Result<()> {
+    let mut terminal_events = EventStream::new();
+
+    loop {
+        if *needs_draw {
+            state.last_frame_size = Some(terminal.size()?.into());
+            clamp_issue_scrolls(state);
+            terminal.draw(|f| render(f, state))?;
+            *needs_draw = false;
+        }
+
+        tokio::select! {
+            maybe_sse = sse_stream.next() => {
+                match maybe_sse {
+                    Some(Ok(sse_event)) => {
+                        let changed = handle_sse_event(client, state, &sse_event).await;
+                        *needs_draw |= changed;
+                    }
+                    Some(Err(err)) => {
+                        // Stream error — log and stop processing SSE.
+                        // Reconnection is handled by a separate task (out of scope).
+                        state.jobs_error = Some(format!("SSE stream error: {err}"));
+                        *needs_draw = true;
+                        break;
+                    }
+                    None => {
+                        // Stream ended — stop processing SSE.
+                        break;
+                    }
+                }
+            }
+            maybe_event = terminal_events.next() => {
+                match maybe_event {
+                    Some(Ok(event)) => {
+                        let quit = handle_terminal_event(
+                            client, terminal, state, event, needs_draw,
+                        ).await?;
+                        if quit {
+                            return Ok(());
+                        }
+                    }
+                    Some(Err(err)) => {
+                        state.jobs_error = Some(format!("Terminal event error: {err}"));
+                        *needs_draw = true;
+                    }
+                    None => return Ok(()),
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Dashboard main loop using polling intervals as a fallback when SSE is unavailable.
+async fn run_dashboard_loop_polling(
+    client: &dyn MetisClientInterface,
+    terminal: &mut DefaultTerminal,
+    state: &mut DashboardState,
+    needs_draw: &mut bool,
+) -> Result<()> {
+    let mut terminal_events = EventStream::new();
     let mut jobs_tick = tokio::time::interval(JOB_REFRESH_INTERVAL);
     let mut records_tick = tokio::time::interval(RECORD_REFRESH_INTERVAL);
 
     loop {
-        if needs_draw {
+        if *needs_draw {
             state.last_frame_size = Some(terminal.size()?.into());
-            clamp_issue_scrolls(&mut state);
-            terminal.draw(|f| render(f, &mut state))?;
-            needs_draw = false;
+            clamp_issue_scrolls(state);
+            terminal.draw(|f| render(f, state))?;
+            *needs_draw = false;
         }
 
         tokio::select! {
             _ = jobs_tick.tick() => {
-                match refresh_jobs(client, &mut state).await {
+                match refresh_jobs(client, state).await {
                     Ok(changed) => {
                         state.jobs_error = None;
-                        needs_draw |= changed;
+                        *needs_draw |= changed;
                     }
                     Err(err) => {
                         state.jobs_error = Some(format!("Failed to refresh jobs: {err}"));
-                        needs_draw = true;
+                        *needs_draw = true;
                     }
                 }
             }
             _ = records_tick.tick() => {
-                match refresh_records(client, &mut state).await {
+                match refresh_records(client, state).await {
                     Ok(changed) => {
                         state.records_error = None;
-                        needs_draw |= changed;
+                        *needs_draw |= changed;
                     }
                     Err(err) => {
                         state.records_error = Some(format!("Failed to refresh records: {err}"));
-                        needs_draw = true;
+                        *needs_draw = true;
                     }
                 }
             }
-            maybe_event = events.next() => {
+            maybe_event = terminal_events.next() => {
                 match maybe_event {
                     Some(Ok(event)) => {
-                        let outcome = handle_event(event, &mut state);
-                        if outcome.should_quit {
-                            break;
+                        let quit = handle_terminal_event(
+                            client, terminal, state, event, needs_draw,
+                        ).await?;
+                        if quit {
+                            return Ok(());
                         }
-                        if let Some(issue_id) = outcome.open_issue_pr {
-                            if let Err(err) = open_issue_pr(client, &state, &issue_id).await {
-                                state.records_error = Some(format!(
-                                    "Failed to open pull request for {issue_id}: {err}"
-                                ));
-                            }
-                        }
-                        if let Some(update) = outcome.status_update {
-                            let issue_id = update.issue_id.clone();
-                            if let Err(err) = update_issue_status(client, &update).await {
-                                state.records_error = Some(format!(
-                                    "Failed to update issue {issue_id}: {err}"
-                                ));
-                            } else if let Err(err) = refresh_records(client, &mut state).await {
-                                state.records_error =
-                                    Some(format!("Failed to refresh records: {err}"));
-                            }
-                        }
-                        if let Some(submission) = outcome.submission {
-                            let assignee = submission.assignee.clone();
-                            state.issue_draft.info_message =
-                                Some(format!("Submitting issue for @{assignee}..."));
-                            terminal.draw(|f| render(f, &mut state))?;
-                            let submission_result =
-                                submit_issue(client, &submission, &state.username)
-                            .await;
-                            handle_issue_submission_result(
-                                &mut state,
-                                &assignee,
-                                submission_result,
-                            );
-                            if state.issue_draft.validation_error.is_none() {
-                                match refresh_records(client, &mut state).await {
-                                    Ok(_changed) => {
-                                        state.records_error = None;
-                                    }
-                                    Err(err) => {
-                                        state.records_error =
-                                            Some(format!("Failed to refresh records: {err}"));
-                                    }
-                                }
-                            }
-                        }
-                        needs_draw = true;
                     }
                     Some(Err(err)) => {
-                        state.jobs_error = Some(format!("Event stream error: {err}"));
-                        needs_draw = true;
+                        state.jobs_error = Some(format!("Terminal event error: {err}"));
+                        *needs_draw = true;
                     }
                     None => break,
                 }
@@ -582,6 +632,156 @@ async fn run_dashboard_loop(
     }
 
     Ok(())
+}
+
+/// Process a terminal UI event (keyboard/mouse input). Returns `true` if the dashboard should quit.
+async fn handle_terminal_event(
+    client: &dyn MetisClientInterface,
+    terminal: &mut DefaultTerminal,
+    state: &mut DashboardState,
+    event: Event,
+    needs_draw: &mut bool,
+) -> Result<bool> {
+    let outcome = handle_event(event, state);
+    if outcome.should_quit {
+        return Ok(true);
+    }
+    if let Some(issue_id) = outcome.open_issue_pr {
+        if let Err(err) = open_issue_pr(client, state, &issue_id).await {
+            state.records_error =
+                Some(format!("Failed to open pull request for {issue_id}: {err}"));
+        }
+    }
+    if let Some(update) = outcome.status_update {
+        let issue_id = update.issue_id.clone();
+        if let Err(err) = update_issue_status(client, &update).await {
+            state.records_error = Some(format!("Failed to update issue {issue_id}: {err}"));
+        } else if let Err(err) = refresh_records(client, state).await {
+            state.records_error = Some(format!("Failed to refresh records: {err}"));
+        }
+    }
+    if let Some(submission) = outcome.submission {
+        let assignee = submission.assignee.clone();
+        state.issue_draft.info_message = Some(format!("Submitting issue for @{assignee}..."));
+        terminal.draw(|f| render(f, state))?;
+        let submission_result = submit_issue(client, &submission, &state.username).await;
+        handle_issue_submission_result(state, &assignee, submission_result);
+        if state.issue_draft.validation_error.is_none() {
+            match refresh_records(client, state).await {
+                Ok(_changed) => {
+                    state.records_error = None;
+                }
+                Err(err) => {
+                    state.records_error = Some(format!("Failed to refresh records: {err}"));
+                }
+            }
+        }
+    }
+    *needs_draw = true;
+    Ok(false)
+}
+
+/// Handle a single SSE event by fetching the changed entity and updating state.
+/// Returns `true` if the dashboard state changed and needs redrawing.
+async fn handle_sse_event(
+    client: &dyn MetisClientInterface,
+    state: &mut DashboardState,
+    sse_event: &crate::client::sse::SseEvent,
+) -> bool {
+    match sse_event.event_type {
+        SseEventType::IssueCreated | SseEventType::IssueUpdated => {
+            let entity = match sse_event.as_entity_event() {
+                Ok(e) => e,
+                Err(_) => return false,
+            };
+            let issue_id: IssueId = match entity.entity_id.clone().try_into() {
+                Ok(id) => id,
+                Err(_) => return false,
+            };
+            match client.get_issue(&issue_id).await {
+                Ok(api_record) => {
+                    if let Some(record) = issue_to_record(api_record) {
+                        let mut record = record;
+                        record.version = Some(entity.version);
+                        apply_issue_update(state, record)
+                    } else {
+                        false
+                    }
+                }
+                Err(_) => false,
+            }
+        }
+        SseEventType::IssueDeleted => {
+            let entity = match sse_event.as_entity_event() {
+                Ok(e) => e,
+                Err(_) => return false,
+            };
+            let issue_id: IssueId = match entity.entity_id.clone().try_into() {
+                Ok(id) => id,
+                Err(_) => return false,
+            };
+            remove_issue(state, &issue_id)
+        }
+        SseEventType::JobCreated | SseEventType::JobUpdated => {
+            let entity = match sse_event.as_entity_event() {
+                Ok(e) => e,
+                Err(_) => return false,
+            };
+            let task_id: TaskId = match entity.entity_id.clone().try_into() {
+                Ok(id) => id,
+                Err(_) => return false,
+            };
+            match client.get_job(&task_id).await {
+                Ok(job_record) => {
+                    let issue_id = job_record.task.spawned_from.clone();
+                    let display = summarize_job(job_record, Utc::now());
+                    let job = JobDetails {
+                        display,
+                        issue_id,
+                        version: Some(entity.version),
+                    };
+                    apply_job_update(state, job)
+                }
+                Err(_) => false,
+            }
+        }
+        SseEventType::Heartbeat => {
+            // No-op for heartbeat events.
+            false
+        }
+        SseEventType::Resync | SseEventType::Snapshot => {
+            // Resync (or unexpected mid-stream snapshot): trigger a full refresh.
+            let mut changed = false;
+            match refresh_jobs(client, state).await {
+                Ok(c) => {
+                    state.jobs_error = None;
+                    changed |= c;
+                }
+                Err(err) => {
+                    state.jobs_error = Some(format!("Failed to refresh jobs: {err}"));
+                    changed = true;
+                }
+            }
+            match refresh_records(client, state).await {
+                Ok(c) => {
+                    state.records_error = None;
+                    changed |= c;
+                }
+                Err(err) => {
+                    state.records_error = Some(format!("Failed to refresh records: {err}"));
+                    changed = true;
+                }
+            }
+            changed
+        }
+        // Patch and document events are not displayed on the dashboard; ignore them.
+        SseEventType::PatchCreated
+        | SseEventType::PatchUpdated
+        | SseEventType::PatchDeleted
+        | SseEventType::DocumentCreated
+        | SseEventType::DocumentUpdated
+        | SseEventType::DocumentDeleted => false,
+    }
 }
 
 fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
@@ -2830,7 +3030,6 @@ fn rebuild_issue_index(state: &mut DashboardState) {
 
 /// Insert or update a single job in the dashboard state and refresh derived views.
 /// Returns `true` if the state changed.
-#[allow(dead_code)]
 fn apply_job_update(state: &mut DashboardState, job: JobDetails) -> bool {
     let job_id = job.display.id.clone();
     if let Some(&idx) = state.job_index.get(&job_id) {
@@ -2849,7 +3048,6 @@ fn apply_job_update(state: &mut DashboardState, job: JobDetails) -> bool {
 
 /// Insert or update a single issue in the dashboard state and refresh derived views.
 /// Returns `true` if the state changed.
-#[allow(dead_code)]
 fn apply_issue_update(state: &mut DashboardState, issue: IssueRecord) -> bool {
     let issue_id = issue.id.clone();
     if let Some(&idx) = state.issue_index.get(&issue_id) {
@@ -2881,7 +3079,6 @@ fn remove_job(state: &mut DashboardState, task_id: &TaskId) -> bool {
 
 /// Remove an issue from the dashboard state by issue ID and refresh derived views.
 /// Returns `true` if the state changed.
-#[allow(dead_code)]
 fn remove_issue(state: &mut DashboardState, issue_id: &IssueId) -> bool {
     let Some(&idx) = state.issue_index.get(issue_id) else {
         return update_views(state);
