@@ -225,12 +225,11 @@ pub trait MetisClientInterface: Send + Sync {
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentRecord>;
 
     /// Open an SSE connection to GET /v1/events and return a stream of parsed events.
-    /// Returns `Ok(None)` if the server does not support SSE (e.g. older version).
     async fn subscribe_events(
         &self,
         query: &EventsQuery,
         last_event_id: Option<u64>,
-    ) -> Result<Option<SseEventStream>>;
+    ) -> Result<SseEventStream>;
 }
 
 impl MetisClientUnauthenticated {
@@ -1376,14 +1375,11 @@ impl MetisClient {
     }
 
     /// Open an SSE connection to GET /v1/events.
-    ///
-    /// Returns `Ok(None)` if the server returns a non-SSE response (e.g. 404),
-    /// indicating the server does not support the events endpoint.
     pub async fn subscribe_events(
         &self,
         query: &EventsQuery,
         last_event_id: Option<u64>,
-    ) -> Result<Option<SseEventStream>> {
+    ) -> Result<SseEventStream> {
         use metis_common::api::v1::events::LAST_EVENT_ID_HEADER;
 
         let url = self.endpoint("/v1/events")?;
@@ -1396,17 +1392,10 @@ impl MetisClient {
             builder = builder.header(LAST_EVENT_ID_HEADER, id.to_string());
         }
 
-        let response = match builder.send().await {
-            Ok(resp) => resp,
-            Err(err) => {
-                // Connection error — treat as SSE unavailable for fallback.
-                return Err(anyhow!("failed to connect to events endpoint: {err}"));
-            }
-        };
-
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
+        let response = builder
+            .send()
+            .await
+            .context("failed to connect to events endpoint")?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -1422,12 +1411,12 @@ impl MetisClient {
             .unwrap_or(false);
 
         if !is_sse {
-            return Ok(None);
+            return Err(anyhow!("events endpoint returned non-SSE content type"));
         }
 
-        Ok(Some(sse::parse_sse_event_stream(Box::pin(
+        Ok(sse::parse_sse_event_stream(Box::pin(
             response.bytes_stream(),
-        ))))
+        )))
     }
 
     fn endpoint(&self, path: &str) -> Result<Url> {
@@ -1793,7 +1782,7 @@ impl MetisClientInterface for MetisClient {
         &self,
         query: &EventsQuery,
         last_event_id: Option<u64>,
-    ) -> Result<Option<SseEventStream>> {
+    ) -> Result<SseEventStream> {
         MetisClient::subscribe_events(self, query, last_event_id).await
     }
 }
