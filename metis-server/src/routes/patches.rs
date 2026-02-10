@@ -539,6 +539,14 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
             error!(error = %source, "patch store operation failed");
             ApiError::internal(anyhow!("patch store error: {source}"))
         }
+        UpsertPatchError::DuplicateBranchName {
+            existing_patch_id,
+            branch_name,
+        } => ApiError::conflict(format!(
+            "Can't create patch because an open patch '{existing_patch_id}' already exists \
+             for branch '{branch_name}'. Consider updating that patch with: \
+             metis patches update {existing_patch_id}"
+        )),
     }
 }
 

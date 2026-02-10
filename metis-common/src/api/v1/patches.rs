@@ -357,11 +357,32 @@ pub struct SearchPatchesQuery {
     pub q: Option<String>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
+    /// Filter patches by status (e.g., Open, Closed). When multiple statuses
+    /// are provided, a patch matches if its status is any of the given values.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub status: Vec<PatchStatus>,
+    /// Filter patches by exact branch name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_name: Option<String>,
 }
 
 impl SearchPatchesQuery {
     pub fn new(q: Option<String>, include_deleted: Option<bool>) -> Self {
-        Self { q, include_deleted }
+        Self {
+            q,
+            include_deleted,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_status(mut self, status: Vec<PatchStatus>) -> Self {
+        self.status = status;
+        self
+    }
+
+    pub fn with_branch_name(mut self, branch_name: String) -> Self {
+        self.branch_name = Some(branch_name);
+        self
     }
 }
 
@@ -444,6 +465,8 @@ mod tests {
         let query = SearchPatchesQuery {
             q: Some("test query".to_string()),
             include_deleted: None,
+            status: Vec::new(),
+            branch_name: None,
         };
 
         let params = serialize_query_params(&query)

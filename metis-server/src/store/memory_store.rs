@@ -619,6 +619,9 @@ impl Store for MemoryStore {
             .map(|value| value.trim().to_lowercase())
             .filter(|value| !value.is_empty());
 
+        let status_filter: Vec<crate::domain::patches::PatchStatus> =
+            query.status.iter().copied().map(Into::into).collect();
+
         Ok(self
             .patches
             .iter()
@@ -626,6 +629,14 @@ impl Store for MemoryStore {
                 let latest = Self::latest_versioned(entry.value())?;
                 if !include_deleted && latest.item.deleted {
                     return None;
+                }
+                if !status_filter.is_empty() && !status_filter.contains(&latest.item.status) {
+                    return None;
+                }
+                if let Some(ref branch) = query.branch_name {
+                    if latest.item.branch_name.as_deref() != Some(branch.as_str()) {
+                        return None;
+                    }
                 }
                 if !Self::patch_matches(search_term.as_deref(), entry.key(), &latest.item) {
                     return None;
@@ -3601,5 +3612,116 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert_eq!(tasks, vec![task3_id]);
+    }
+
+    #[tokio::test]
+    async fn list_patches_filters_by_status() {
+        use metis_common::api::v1::patches::PatchStatus as ApiPatchStatus;
+
+        let store = MemoryStore::new();
+
+        let mut open_patch = sample_patch();
+        open_patch.status = PatchStatus::Open;
+        let (open_id, _) = store.add_patch(open_patch).await.unwrap();
+
+        let mut closed_patch = sample_patch();
+        closed_patch.status = PatchStatus::Closed;
+        store.add_patch(closed_patch).await.unwrap();
+
+        let mut merged_patch = sample_patch();
+        merged_patch.status = PatchStatus::Merged;
+        store.add_patch(merged_patch).await.unwrap();
+
+        // Filter for Open only
+        let query = SearchPatchesQuery::new(None, None).with_status(vec![ApiPatchStatus::Open]);
+        let patches = store.list_patches(&query).await.unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, open_id);
+
+        // Filter for Open and Closed
+        let query = SearchPatchesQuery::new(None, None)
+            .with_status(vec![ApiPatchStatus::Open, ApiPatchStatus::Closed]);
+        let patches = store.list_patches(&query).await.unwrap();
+        assert_eq!(patches.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_patches_filters_by_branch_name() {
+        let store = MemoryStore::new();
+
+        let mut patch1 = sample_patch();
+        patch1.branch_name = Some("feature/foo".to_string());
+        let (patch1_id, _) = store.add_patch(patch1).await.unwrap();
+
+        let mut patch2 = sample_patch();
+        patch2.branch_name = Some("feature/bar".to_string());
+        store.add_patch(patch2).await.unwrap();
+
+        let mut patch3 = sample_patch();
+        patch3.branch_name = None;
+        store.add_patch(patch3).await.unwrap();
+
+        let query = SearchPatchesQuery::new(None, None).with_branch_name("feature/foo".to_string());
+        let patches = store.list_patches(&query).await.unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch1_id);
+    }
+
+    #[tokio::test]
+    async fn list_patches_combines_status_and_branch_name_filters() {
+        use metis_common::api::v1::patches::PatchStatus as ApiPatchStatus;
+
+        let store = MemoryStore::new();
+
+        let mut open_foo = sample_patch();
+        open_foo.status = PatchStatus::Open;
+        open_foo.branch_name = Some("feature/foo".to_string());
+        let (open_foo_id, _) = store.add_patch(open_foo).await.unwrap();
+
+        let mut closed_foo = sample_patch();
+        closed_foo.status = PatchStatus::Closed;
+        closed_foo.branch_name = Some("feature/foo".to_string());
+        store.add_patch(closed_foo).await.unwrap();
+
+        let mut open_bar = sample_patch();
+        open_bar.status = PatchStatus::Open;
+        open_bar.branch_name = Some("feature/bar".to_string());
+        store.add_patch(open_bar).await.unwrap();
+
+        // Open patches with branch "feature/foo"
+        let query = SearchPatchesQuery::new(None, None)
+            .with_status(vec![ApiPatchStatus::Open])
+            .with_branch_name("feature/foo".to_string());
+        let patches = store.list_patches(&query).await.unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, open_foo_id);
+    }
+
+    #[tokio::test]
+    async fn list_patches_branch_name_filter_no_match() {
+        let store = MemoryStore::new();
+
+        let mut patch = sample_patch();
+        patch.branch_name = Some("feature/foo".to_string());
+        store.add_patch(patch).await.unwrap();
+
+        let query =
+            SearchPatchesQuery::new(None, None).with_branch_name("feature/nonexistent".to_string());
+        let patches = store.list_patches(&query).await.unwrap();
+        assert!(patches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_patches_deleted_patch_excluded_from_branch_filter() {
+        let store = MemoryStore::new();
+
+        let mut patch = sample_patch();
+        patch.branch_name = Some("feature/foo".to_string());
+        let (patch_id, _) = store.add_patch(patch).await.unwrap();
+        store.delete_patch(&patch_id).await.unwrap();
+
+        let query = SearchPatchesQuery::new(None, None).with_branch_name("feature/foo".to_string());
+        let patches = store.list_patches(&query).await.unwrap();
+        assert!(patches.is_empty());
     }
 }
