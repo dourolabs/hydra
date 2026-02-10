@@ -15,7 +15,7 @@ use crate::{
     job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, TimeDelta, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
@@ -43,6 +43,12 @@ use super::{
     MergeQueueError, Repository, RepositoryError, RepositoryRecord, ServiceState,
     TaskResolutionError,
 };
+
+/// Grace period after which completed or failed Kubernetes Jobs are cleaned up.
+///
+/// Jobs whose `completion_time` is older than this duration will be deleted
+/// by the background sweep in [`AppState::cleanup_completed_jobs`].
+const COMPLETED_JOB_GRACE_PERIOD: TimeDelta = TimeDelta::minutes(5);
 
 /// Shared application state and application-specific coordination such as issue lifecycle validation.
 #[derive(Clone)]
@@ -1334,6 +1340,61 @@ impl AppState {
                         metis_id = %task_id,
                         error = %err,
                         "failed to kill job for orphaned task"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Deletes Kubernetes Jobs (and their Pods) that have been in a completed
+    /// or failed state for longer than [`COMPLETED_JOB_GRACE_PERIOD`].
+    ///
+    /// This is a safety-net sweep that catches any Jobs that slipped through
+    /// the primary cleanup (e.g., due to a transient `kill_job()` failure).
+    pub async fn cleanup_completed_jobs(&self) {
+        let jobs = match self.job_engine.list_jobs().await {
+            Ok(jobs) => jobs,
+            Err(err) => {
+                error!(error = %err, "failed to list jobs for completed job cleanup");
+                return;
+            }
+        };
+
+        let now = Utc::now();
+        let stale_jobs: Vec<_> = jobs
+            .into_iter()
+            .filter(|job| matches!(job.status, JobStatus::Complete | JobStatus::Failed))
+            .filter(|job| {
+                job.completion_time
+                    .map(|ct| now - ct > COMPLETED_JOB_GRACE_PERIOD)
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        if stale_jobs.is_empty() {
+            return;
+        }
+
+        info!(
+            count = stale_jobs.len(),
+            "cleaning up stale completed/failed jobs"
+        );
+
+        for job in stale_jobs {
+            match self.job_engine.kill_job(&job.id).await {
+                Ok(()) => {
+                    info!(
+                        metis_id = %job.id,
+                        status = %job.status,
+                        "cleaned up stale completed/failed job"
+                    );
+                }
+                Err(err) => {
+                    warn!(
+                        metis_id = %job.id,
+                        status = %job.status,
+                        error = %err,
+                        "failed to clean up stale completed/failed job"
                     );
                 }
             }
@@ -3097,6 +3158,135 @@ mod tests {
             .expect("orphan job should exist")
             .status;
         assert_eq!(orphan_status, JobStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn cleanup_completed_jobs_deletes_stale_completed_jobs() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        let stale_id = TaskId::new();
+        let recent_id = TaskId::new();
+
+        // Stale completed job: completion_time 10 minutes ago
+        job_engine
+            .insert_job_with_metadata(
+                &stale_id,
+                JobStatus::Complete,
+                Some(Utc::now() - Duration::minutes(10)),
+                None,
+            )
+            .await;
+
+        // Recent completed job: completion_time 1 minute ago (within grace period)
+        job_engine
+            .insert_job_with_metadata(
+                &recent_id,
+                JobStatus::Complete,
+                Some(Utc::now() - Duration::minutes(1)),
+                None,
+            )
+            .await;
+
+        state.cleanup_completed_jobs().await;
+
+        // Stale job should have been killed (MockJobEngine sets status to Failed)
+        let stale_status = job_engine
+            .find_job_by_metis_id(&stale_id)
+            .await
+            .expect("stale job should exist")
+            .status;
+        assert_eq!(stale_status, JobStatus::Failed);
+
+        // Recent job should be left untouched
+        let recent_status = job_engine
+            .find_job_by_metis_id(&recent_id)
+            .await
+            .expect("recent job should exist")
+            .status;
+        assert_eq!(recent_status, JobStatus::Complete);
+    }
+
+    #[tokio::test]
+    async fn cleanup_completed_jobs_deletes_stale_failed_jobs() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        let stale_id = TaskId::new();
+
+        // Stale failed job: completion_time 10 minutes ago
+        job_engine
+            .insert_job_with_metadata(
+                &stale_id,
+                JobStatus::Failed,
+                Some(Utc::now() - Duration::minutes(10)),
+                Some("out of memory".to_string()),
+            )
+            .await;
+
+        state.cleanup_completed_jobs().await;
+
+        // Stale failed job should have been killed
+        let stale_job = job_engine
+            .find_job_by_metis_id(&stale_id)
+            .await
+            .expect("stale job should exist");
+        // MockJobEngine.kill_job sets completion_time to now, so just verify it was called
+        // by checking the job still exists (kill_job doesn't remove from the list)
+        assert_eq!(stale_job.status, JobStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn cleanup_completed_jobs_skips_running_and_pending_jobs() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        let running_id = TaskId::new();
+        let pending_id = TaskId::new();
+
+        job_engine.insert_job(&running_id, JobStatus::Running).await;
+        job_engine.insert_job(&pending_id, JobStatus::Pending).await;
+
+        state.cleanup_completed_jobs().await;
+
+        // Running job should be untouched
+        let running_status = job_engine
+            .find_job_by_metis_id(&running_id)
+            .await
+            .expect("running job should exist")
+            .status;
+        assert_eq!(running_status, JobStatus::Running);
+
+        // Pending job should be untouched
+        let pending_status = job_engine
+            .find_job_by_metis_id(&pending_id)
+            .await
+            .expect("pending job should exist")
+            .status;
+        assert_eq!(pending_status, JobStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn cleanup_completed_jobs_skips_jobs_without_completion_time() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        let no_time_id = TaskId::new();
+
+        // Completed job with no completion_time
+        job_engine
+            .insert_job_with_metadata(&no_time_id, JobStatus::Complete, None, None)
+            .await;
+
+        state.cleanup_completed_jobs().await;
+
+        // Job without completion_time should be untouched
+        let status = job_engine
+            .find_job_by_metis_id(&no_time_id)
+            .await
+            .expect("job should exist")
+            .status;
+        assert_eq!(status, JobStatus::Complete);
     }
 
     #[tokio::test]

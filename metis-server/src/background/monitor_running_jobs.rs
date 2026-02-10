@@ -33,6 +33,9 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
         // Clean up tasks whose spawned_from issue has been deleted
         self.state.cleanup_orphaned_tasks().await;
 
+        // Clean up completed/failed jobs that have exceeded the grace period
+        self.state.cleanup_completed_jobs().await;
+
         let mut active_ids = Vec::new();
         for status in [Status::Pending, Status::Running] {
             match self.state.list_tasks_with_status(status).await {
@@ -89,14 +92,14 @@ mod tests {
             jobs::BundleSpec,
             users::Username,
         },
-        job_engine::JobStatus,
+        job_engine::{JobEngine, JobStatus},
         store::{Status, StoreError, Task},
         test_utils::{
             FailingStore, MockJobEngine, test_state_handles, test_state_with_engine_handles,
             test_state_with_store,
         },
     };
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
     use std::{collections::HashMap, sync::Arc};
 
     #[tokio::test]
@@ -210,6 +213,94 @@ mod tests {
         assert!(
             matches!(result, Err(StoreError::TaskNotFound(_))),
             "orphaned task should be cleaned up during worker iteration"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_iteration_cleans_up_stale_completed_jobs() {
+        let engine = Arc::new(MockJobEngine::new());
+        let handles = test_state_with_engine_handles(engine.clone());
+
+        // Create tasks in the store so reap_orphaned_jobs() doesn't kill them
+        let stale_task = Task::new(
+            "stale task".to_string(),
+            BundleSpec::None,
+            None,
+            None,
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+        );
+        let (stale_id, _) = handles
+            .store
+            .add_task(stale_task, Utc::now())
+            .await
+            .expect("stale task should be added");
+
+        let recent_task = Task::new(
+            "recent task".to_string(),
+            BundleSpec::None,
+            None,
+            None,
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+        );
+        let (recent_id, _) = handles
+            .store
+            .add_task(recent_task, Utc::now())
+            .await
+            .expect("recent task should be added");
+
+        // Stale completed job: completion_time 10 minutes ago
+        engine
+            .insert_job_with_metadata(
+                &stale_id,
+                JobStatus::Complete,
+                Some(Utc::now() - Duration::minutes(10)),
+                None,
+            )
+            .await;
+
+        // Recent completed job: completion_time 1 minute ago
+        engine
+            .insert_job_with_metadata(
+                &recent_id,
+                JobStatus::Complete,
+                Some(Utc::now() - Duration::minutes(1)),
+                None,
+            )
+            .await;
+
+        let worker = MonitorRunningJobsWorker::new(handles.state);
+        worker.run_iteration().await;
+
+        // Stale job should have been cleaned up (killed)
+        let stale_status = engine
+            .find_job_by_metis_id(&stale_id)
+            .await
+            .expect("stale job should exist")
+            .status;
+        assert_eq!(
+            stale_status,
+            JobStatus::Failed,
+            "stale completed job should be cleaned up during worker iteration"
+        );
+
+        // Recent job should be left alone
+        let recent_status = engine
+            .find_job_by_metis_id(&recent_id)
+            .await
+            .expect("recent job should exist")
+            .status;
+        assert_eq!(
+            recent_status,
+            JobStatus::Complete,
+            "recent completed job should not be cleaned up"
         );
     }
 }
