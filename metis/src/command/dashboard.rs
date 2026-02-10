@@ -48,6 +48,7 @@ use panel::{keybinding_line_from_labels, wrapped_content_len, Panel, PanelEvent,
 
 const JOB_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const RECORD_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const RENDER_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_MESSAGE_WIDTH: usize = 90;
 const USER_ISSUES_PANEL_CONTENT_HEIGHT: u16 = 5;
 const USER_ISSUES_PANEL_HEIGHT: u16 = USER_ISSUES_PANEL_CONTENT_HEIGHT + 2;
@@ -635,6 +636,7 @@ async fn run_dashboard_loop_sse(
     needs_draw: &mut bool,
 ) -> Result<SseLoopExit> {
     let mut terminal_events = EventStream::new();
+    let mut render_tick = tokio::time::interval(RENDER_TICK_INTERVAL);
 
     loop {
         if *needs_draw {
@@ -678,6 +680,9 @@ async fn run_dashboard_loop_sse(
                     None => return Ok(SseLoopExit::UserQuit),
                 }
             }
+            _ = render_tick.tick() => {
+                *needs_draw = true;
+            }
         }
     }
 }
@@ -694,6 +699,7 @@ async fn run_polling_until(
     let mut terminal_events = EventStream::new();
     let mut jobs_tick = tokio::time::interval(JOB_REFRESH_INTERVAL);
     let mut records_tick = tokio::time::interval(RECORD_REFRESH_INTERVAL);
+    let mut render_tick = tokio::time::interval(RENDER_TICK_INTERVAL);
     let sleep = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline));
     tokio::pin!(sleep);
 
@@ -749,6 +755,9 @@ async fn run_polling_until(
                     }
                     None => return Ok(true),
                 }
+            }
+            _ = render_tick.tick() => {
+                *needs_draw = true;
             }
         }
     }
