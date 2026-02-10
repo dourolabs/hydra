@@ -85,6 +85,14 @@ pub enum PatchesCommand {
         /// Force push the branch to the remote.
         #[arg(long = "force")]
         force: bool,
+
+        /// Base ref for computing the commit range (defaults to origin/main).
+        #[arg(
+            long = "base-ref",
+            value_name = "BASE_REF",
+            default_value = "origin/main"
+        )]
+        base_ref: String,
     },
 
     /// Apply a patch to the current git repository.
@@ -134,6 +142,14 @@ pub enum PatchesCommand {
         /// Force push the branch to the remote.
         #[arg(long = "force")]
         force: bool,
+
+        /// Base ref for computing the commit range (defaults to origin/main).
+        #[arg(
+            long = "base-ref",
+            value_name = "BASE_REF",
+            default_value = "origin/main"
+        )]
+        base_ref: String,
     },
 
     /// Inspect or enqueue merge queue entries for a repository branch.
@@ -200,6 +216,7 @@ pub async fn run(
             issue_id,
             allow_uncommitted,
             force,
+            base_ref,
         } => {
             let created = create_patch(
                 client,
@@ -211,6 +228,7 @@ pub async fn run(
                 issue_id,
                 allow_uncommitted,
                 force,
+                &base_ref,
                 None,
             )
             .await?;
@@ -234,8 +252,10 @@ pub async fn run(
             description,
             status,
             force,
+            base_ref,
         } => {
-            let patch = update_patch(client, id, title, description, status, force).await?;
+            let patch =
+                update_patch(client, id, title, description, status, force, &base_ref).await?;
             write_patch_output(context.output_format, &patch, None)?;
             Ok(())
         }
@@ -426,6 +446,7 @@ async fn create_patch(
     issue_id: IssueId,
     allow_uncommitted: bool,
     force: bool,
+    base_ref: &str,
     repo_root: Option<&Path>,
 ) -> Result<CreatedPatch> {
     let repo_root = match repo_root {
@@ -437,7 +458,9 @@ async fn create_patch(
         bail!("Working directory has uncommitted changes. Commit them before creating a patch or re-run with --allow-uncommitted.");
     }
 
-    let commit_range = format!("metis/{}/base..HEAD", issue_id.as_ref());
+    // Derive commit range from merge-base with the provided base ref.
+    let (base_oid, head_oid) = git_resolve_commit_range_from_merge_base(&repo_root, base_ref)?;
+    let commit_range = format!("{base_oid}..{head_oid}");
     let diff = git_diff_commit_range(&repo_root, &commit_range)?;
     if diff.trim().is_empty() {
         bail!("No changes found in commit range '{commit_range}'.");
@@ -464,6 +487,7 @@ async fn create_patch(
         is_automatic_backup,
         force,
         service_repo_name,
+        base_ref,
     )
     .await?;
 
@@ -516,8 +540,19 @@ async fn update_patch(
     description: Option<String>,
     status: Option<PatchStatus>,
     force: bool,
+    base_ref: &str,
 ) -> Result<PatchRecord> {
-    update_patch_inner(client, patch_id, title, description, status, force, None).await
+    update_patch_inner(
+        client,
+        patch_id,
+        title,
+        description,
+        status,
+        force,
+        base_ref,
+        None,
+    )
+    .await
 }
 
 async fn update_patch_inner(
@@ -527,6 +562,7 @@ async fn update_patch_inner(
     description: Option<String>,
     status: Option<PatchStatus>,
     force: bool,
+    base_ref: &str,
     repo_root: Option<&Path>,
 ) -> Result<PatchRecord> {
     let description = match description {
@@ -583,9 +619,8 @@ async fn update_patch_inner(
         let branch_name = current_branch(&repo_root)?;
         updated_patch.branch_name = Some(branch_name.clone());
 
-        // Derive commit range from the merge-base of HEAD with origin/main.
-        let (base_oid, head_oid) =
-            git_resolve_commit_range_from_merge_base(&repo_root, "origin/main")?;
+        // Derive commit range from the merge-base of HEAD with the provided base ref.
+        let (base_oid, head_oid) = git_resolve_commit_range_from_merge_base(&repo_root, base_ref)?;
         let range_str = format!("{base_oid}..{head_oid}");
         let diff = git_diff_commit_range(&repo_root, &range_str)?;
         if !diff.trim().is_empty() {
@@ -764,6 +799,7 @@ pub async fn create_patch_artifact_from_repo(
     is_automatic_backup: bool,
     force: bool,
     service_repo_name: RepoName,
+    base_ref: &str,
 ) -> Result<UpsertPatchResponse> {
     let title = title.trim().to_string();
     let description = description.trim().to_string();
@@ -794,9 +830,8 @@ pub async fn create_patch_artifact_from_repo(
     let branch_name = current_branch(repo_root)?;
     patch_payload.branch_name = Some(branch_name.clone());
 
-    // Derive commit range from merge-base with origin/main.
-    if let Ok((base_oid, head_oid)) =
-        git_resolve_commit_range_from_merge_base(repo_root, "origin/main")
+    // Derive commit range from merge-base with the provided base ref.
+    if let Ok((base_oid, head_oid)) = git_resolve_commit_range_from_merge_base(repo_root, base_ref)
     {
         patch_payload.commit_range =
             Some(metis_common::patches::CommitRange::new(base_oid, head_oid));
@@ -925,7 +960,7 @@ mod tests {
         RepoName,
     };
     use reqwest::Client as HttpClient;
-    use std::{fs, path::Path, str::FromStr};
+    use std::{fs, str::FromStr};
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
 
@@ -1060,16 +1095,6 @@ mod tests {
         Ok((tempdir, repo_path, base_commit, head_commit))
     }
 
-    fn create_branch_at(repo_path: &Path, branch: &str, target: GitOid) -> Result<()> {
-        let repo = Repository::open(repo_path)?;
-        let commit = repo
-            .find_commit(target.into())
-            .with_context(|| format!("failed to resolve commit {target} for branch '{branch}'"))?;
-        repo.branch(branch, &commit, true)
-            .with_context(|| format!("failed to create branch '{branch}'"))?;
-        Ok(())
-    }
-
     #[tokio::test]
     async fn list_patches_sets_patch_filter_and_query() -> Result<()> {
         let server = MockServer::start();
@@ -1165,8 +1190,6 @@ mod tests {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let job_id = task_id("t-job-diff");
         let issue_id = issue_id("i-diff");
-        let base_branch = format!("metis/{}/base", issue_id.as_ref());
-        create_branch_at(&repo_path, &base_branch, base_commit)?;
         let branch_name = current_branch(&repo_path)?;
         let job_record = JobRecord::new(
             job_id.clone(),
@@ -1189,7 +1212,8 @@ mod tests {
         let patch_title = "custom patch title".to_string();
         let patch_description = "custom patch description".to_string();
         let job_id_clone = job_id.clone();
-        let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
+        let expected_diff =
+            git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
         let patch = with_git_identity(
             Patch::new(
                 patch_title.clone(),
@@ -1226,6 +1250,7 @@ mod tests {
             issue_id.clone(),
             false,
             false,
+            "origin/main",
             Some(&repo_path),
         )
         .await?;
@@ -1266,9 +1291,8 @@ mod tests {
         let job_id_opt = Some(job_id.clone());
         let description = "patch with job id".to_string();
         let issue_id = issue_id("i-job-1234");
-        let base_branch = format!("metis/{}/base", issue_id.as_ref());
-        create_branch_at(&repo_path, &base_branch, base_commit)?;
-        let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
+        let expected_diff =
+            git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
         let patch = with_git_identity(
             Patch::new(
                 title.clone(),
@@ -1306,6 +1330,7 @@ mod tests {
             issue_id.clone(),
             false,
             false,
+            "origin/main",
             Some(&repo_path),
         )
         .await?;
@@ -1319,12 +1344,10 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_errors_without_job_id() -> Result<()> {
-        let (_tempdir, repo_path, base_commit, _head_commit) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, _base_commit, _head_commit) = initialize_repo_with_changes()?;
         let server = MockServer::start();
         let client = metis_client(&server);
         let issue_id = issue_id("i-missing-job");
-        let base_branch = format!("metis/{}/base", issue_id.as_ref());
-        create_branch_at(&repo_path, &base_branch, base_commit)?;
         let result = create_patch(
             &client,
             "missing job".to_string(),
@@ -1335,6 +1358,7 @@ mod tests {
             issue_id,
             false,
             false,
+            "origin/main",
             Some(&repo_path),
         )
         .await;
@@ -1350,12 +1374,10 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_requires_creator_github_token_when_creating_pr() -> Result<()> {
-        let (_tempdir, repo_path, base_commit, _head_commit) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, _base_commit, _head_commit) = initialize_repo_with_changes()?;
         let server = MockServer::start();
         let client = metis_client(&server);
         let issue_id = issue_id("i-gh-token");
-        let base_branch = format!("metis/{}/base", issue_id.as_ref());
-        create_branch_at(&repo_path, &base_branch, base_commit)?;
         let job_id = task_id("t-job-gh-token");
         let job_record = JobRecord::new(
             job_id.clone(),
@@ -1389,6 +1411,7 @@ mod tests {
             issue_id,
             false,
             false,
+            "origin/main",
             Some(&repo_path),
         )
         .await;
@@ -1413,8 +1436,6 @@ mod tests {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let job_id = task_id("t-job-merge");
         let parent_issue = issue_id("i-parent");
-        let base_branch = format!("metis/{}/base", parent_issue.as_ref());
-        create_branch_at(&repo_path, &base_branch, base_commit)?;
         let branch_name = current_branch(&repo_path)?;
         let job_record = JobRecord::new(
             job_id.clone(),
@@ -1435,7 +1456,8 @@ mod tests {
             ),
         );
         let created_patch_id = patch_id("p-merge");
-        let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
+        let expected_diff =
+            git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
         let patch = with_git_identity(
             Patch::new(
                 "custom patch title".to_string(),
@@ -1519,6 +1541,7 @@ mod tests {
             parent_issue.clone(),
             false,
             false,
+            "origin/main",
             Some(&repo_path),
         )
         .await?;
@@ -1569,6 +1592,7 @@ mod tests {
             true,
             false,
             sample_repo_name(),
+            "origin/main",
         )
         .await?;
 
@@ -1601,9 +1625,8 @@ mod tests {
             ),
         );
         let issue_id = issue_id("i-service");
-        let base_branch = format!("metis/{}/base", issue_id.as_ref());
-        create_branch_at(&repo_path, &base_branch, base_commit)?;
-        let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
+        let expected_diff =
+            git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
         let patch = with_git_identity(
             Patch::new(
                 "backup patch".to_string(),
@@ -1641,6 +1664,7 @@ mod tests {
             issue_id.clone(),
             false,
             false,
+            "origin/main",
             Some(repo_path.as_path()),
         )
         .await?;
@@ -1823,6 +1847,7 @@ mod tests {
             Some("Updated description".to_string()),
             Some(PatchStatus::Closed),
             false,
+            "origin/main",
             Some(tempdir.path()),
         )
         .await?;
@@ -1846,6 +1871,7 @@ mod tests {
             None,
             None,
             false,
+            "origin/main",
             Some(tempdir.path()),
         )
         .await;
@@ -1942,6 +1968,7 @@ mod tests {
             false,
             false,
             sample_repo_name(),
+            "origin/main",
         )
         .await;
 
