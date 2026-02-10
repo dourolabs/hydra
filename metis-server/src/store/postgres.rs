@@ -751,6 +751,7 @@ impl PostgresStore {
                  OR LOWER(payload->>'status') LIKE ${idx_status} \
                  OR LOWER(payload->>'service_repo_name') LIKE ${idx_repo} \
                  OR LOWER(payload->>'diff') LIKE ${idx_diff} \
+                 OR LOWER(COALESCE(payload->>'branch_name','')) LIKE ${idx_branch} \
                  OR LOWER(payload->'github'->>'owner') LIKE ${idx_gh_owner} \
                  OR LOWER(payload->'github'->>'repo') LIKE ${idx_gh_repo} \
                  OR (payload->'github'->>'number') LIKE ${idx_gh_number} \
@@ -762,14 +763,15 @@ impl PostgresStore {
                 idx_status = idx_start + 3,
                 idx_repo = idx_start + 4,
                 idx_diff = idx_start + 5,
-                idx_gh_owner = idx_start + 6,
-                idx_gh_repo = idx_start + 7,
-                idx_gh_number = idx_start + 8,
-                idx_gh_head = idx_start + 9,
-                idx_gh_base = idx_start + 10,
+                idx_branch = idx_start + 6,
+                idx_gh_owner = idx_start + 7,
+                idx_gh_repo = idx_start + 8,
+                idx_gh_number = idx_start + 9,
+                idx_gh_head = idx_start + 10,
+                idx_gh_base = idx_start + 11,
             ));
             let pattern = format!("%{term}%");
-            for _ in 0..11 {
+            for _ in 0..12 {
                 bindings.push(pattern.clone());
             }
         }

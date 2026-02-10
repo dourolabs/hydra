@@ -12,7 +12,7 @@ use crate::{
             JobSettings, TodoItem,
         },
         jobs::{BundleSpec, Task},
-        patches::{GithubPr, Patch, PatchStatus, Review},
+        patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
         task_status::{Status, TaskError},
         users::{User, Username},
     },
@@ -261,9 +261,19 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
+        let commit_range_json = patch
+            .commit_range
+            .as_ref()
+            .map(|cr| {
+                serde_json::to_value(cr).map_err(|e| {
+                    StoreError::Internal(format!("failed to serialize commit_range: {e}"))
+                })
+            })
+            .transpose()?;
+
         let query = format!(
-            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
+            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -278,6 +288,8 @@ impl PostgresStoreV2 {
             .bind(patch.service_repo_name.as_str())
             .bind(&github_json)
             .bind(patch.deleted)
+            .bind(&patch.branch_name)
+            .bind(&commit_range_json)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -309,6 +321,16 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
+        let commit_range: Option<CommitRange> = row
+            .commit_range
+            .as_ref()
+            .map(|cr| {
+                serde_json::from_value(cr.clone()).map_err(|e| {
+                    StoreError::Internal(format!("failed to deserialize commit_range: {e}"))
+                })
+            })
+            .transpose()?;
+
         Ok(Patch {
             title: row.title.clone(),
             description: row.description.clone(),
@@ -320,6 +342,8 @@ impl PostgresStoreV2 {
             service_repo_name,
             github,
             deleted: row.deleted,
+            branch_name: row.branch_name.clone(),
+            commit_range,
         })
     }
 
@@ -731,6 +755,8 @@ struct PatchRow {
     service_repo_name: String,
     github: Option<Value>,
     deleted: bool,
+    branch_name: Option<String>,
+    commit_range: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -1184,7 +1210,7 @@ impl Store for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Patch>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, created_at, updated_at
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, created_at, updated_at
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1212,7 +1238,7 @@ impl Store for PostgresStoreV2 {
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, created_at, updated_at
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, created_at, updated_at
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -1266,7 +1292,7 @@ impl Store for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each patch, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, created_at, updated_at \
+            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, created_at, updated_at \
              FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -1293,6 +1319,7 @@ impl Store for PostgresStoreV2 {
                  OR LOWER(status) LIKE ${idx_status} \
                  OR LOWER(service_repo_name) LIKE ${idx_repo} \
                  OR LOWER(diff) LIKE ${idx_diff} \
+                 OR LOWER(COALESCE(branch_name,'')) LIKE ${idx_branch} \
                  OR LOWER(github->>'owner') LIKE ${idx_gh_owner} \
                  OR LOWER(github->>'repo') LIKE ${idx_gh_repo} \
                  OR (github->>'number') LIKE ${idx_gh_number} \
@@ -1304,14 +1331,15 @@ impl Store for PostgresStoreV2 {
                 idx_status = idx_start + 3,
                 idx_repo = idx_start + 4,
                 idx_diff = idx_start + 5,
-                idx_gh_owner = idx_start + 6,
-                idx_gh_repo = idx_start + 7,
-                idx_gh_number = idx_start + 8,
-                idx_gh_head = idx_start + 9,
-                idx_gh_base = idx_start + 10,
+                idx_branch = idx_start + 6,
+                idx_gh_owner = idx_start + 7,
+                idx_gh_repo = idx_start + 8,
+                idx_gh_number = idx_start + 9,
+                idx_gh_head = idx_start + 10,
+                idx_gh_base = idx_start + 11,
             ));
             let pattern = format!("%{term}%");
-            for _ in 0..11 {
+            for _ in 0..12 {
                 bindings.push(pattern.clone());
             }
         }

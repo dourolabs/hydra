@@ -178,6 +178,20 @@ impl From<GitOid> for Oid {
     }
 }
 
+/// A base–head SHA pair identifying the exact commit range a patch covers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct CommitRange {
+    pub base: GitOid,
+    pub head: GitOid,
+}
+
+impl CommitRange {
+    pub fn new(base: GitOid, head: GitOid) -> Self {
+        Self { base, head }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Patch {
@@ -200,6 +214,12 @@ pub struct Patch {
     pub github: Option<GithubPr>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    /// The head branch name for this patch, independent of any GitHub PR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_name: Option<String>,
+    /// The base-to-head commit range this patch covers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_range: Option<CommitRange>,
 }
 
 impl Patch {
@@ -227,6 +247,8 @@ impl Patch {
             service_repo_name,
             github,
             deleted,
+            branch_name: None,
+            commit_range: None,
         }
     }
 }
@@ -457,5 +479,64 @@ mod tests {
             PatchStatus::ChangesRequested
         );
         assert!(PatchStatus::from_str("pending").is_err());
+    }
+
+    #[test]
+    fn patch_serde_round_trip_with_branch_and_commit_range() {
+        let patch = Patch {
+            title: "fix bug".to_string(),
+            description: "a fix".to_string(),
+            diff: "diff content".to_string(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            created_by: None,
+            reviews: vec![],
+            service_repo_name: "org/repo".parse().unwrap(),
+            github: None,
+            deleted: false,
+            branch_name: Some("feature/my-branch".to_string()),
+            commit_range: Some(CommitRange::new(
+                "0000000000000000000000000000000000000001".parse().unwrap(),
+                "0000000000000000000000000000000000000002".parse().unwrap(),
+            )),
+        };
+
+        let json = serde_json::to_string(&patch).unwrap();
+        let deserialized: Patch = serde_json::from_str(&json).unwrap();
+        assert_eq!(patch, deserialized);
+        assert_eq!(
+            deserialized.branch_name.as_deref(),
+            Some("feature/my-branch")
+        );
+        assert!(deserialized.commit_range.is_some());
+    }
+
+    #[test]
+    fn patch_deserializes_without_new_fields() {
+        let json = r#"{
+            "title": "old patch",
+            "description": "desc",
+            "diff": "",
+            "status": "Open",
+            "is_automatic_backup": false,
+            "reviews": [],
+            "service_repo_name": "org/repo"
+        }"#;
+
+        let patch: Patch = serde_json::from_str(json).unwrap();
+        assert_eq!(patch.title, "old patch");
+        assert_eq!(patch.branch_name, None);
+        assert_eq!(patch.commit_range, None);
+    }
+
+    #[test]
+    fn commit_range_serde_round_trip() {
+        let cr = CommitRange::new(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".parse().unwrap(),
+        );
+        let json = serde_json::to_string(&cr).unwrap();
+        let deserialized: CommitRange = serde_json::from_str(&json).unwrap();
+        assert_eq!(cr, deserialized);
     }
 }

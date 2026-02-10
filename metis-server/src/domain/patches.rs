@@ -172,6 +172,19 @@ impl From<GitOid> for Oid {
     }
 }
 
+/// A base–head SHA pair identifying the exact commit range a patch covers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitRange {
+    pub base: GitOid,
+    pub head: GitOid,
+}
+
+impl CommitRange {
+    pub fn new(base: GitOid, head: GitOid) -> Self {
+        Self { base, head }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Patch {
     #[serde(default)]
@@ -193,6 +206,12 @@ pub struct Patch {
     pub github: Option<GithubPr>,
     #[serde(default)]
     pub deleted: bool,
+    /// The head branch name for this patch, independent of any GitHub PR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_name: Option<String>,
+    /// The base-to-head commit range this patch covers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_range: Option<CommitRange>,
 }
 
 impl Patch {
@@ -219,6 +238,8 @@ impl Patch {
             service_repo_name,
             github,
             deleted: false,
+            branch_name: None,
+            commit_range: None,
         }
     }
 }
@@ -347,6 +368,21 @@ impl From<GitOid> for api::patches::GitOid {
     }
 }
 
+impl From<api::patches::CommitRange> for CommitRange {
+    fn from(value: api::patches::CommitRange) -> Self {
+        CommitRange {
+            base: value.base.into(),
+            head: value.head.into(),
+        }
+    }
+}
+
+impl From<CommitRange> for api::patches::CommitRange {
+    fn from(value: CommitRange) -> Self {
+        api::patches::CommitRange::new(value.base.into(), value.head.into())
+    }
+}
+
 impl From<api::patches::Patch> for Patch {
     fn from(value: api::patches::Patch) -> Self {
         Patch {
@@ -360,13 +396,15 @@ impl From<api::patches::Patch> for Patch {
             service_repo_name: value.service_repo_name,
             github: value.github.map(Into::into),
             deleted: value.deleted,
+            branch_name: value.branch_name,
+            commit_range: value.commit_range.map(Into::into),
         }
     }
 }
 
 impl From<Patch> for api::patches::Patch {
     fn from(value: Patch) -> Self {
-        api::patches::Patch::new(
+        let mut patch = api::patches::Patch::new(
             value.title,
             value.description,
             value.diff,
@@ -377,7 +415,10 @@ impl From<Patch> for api::patches::Patch {
             value.service_repo_name,
             value.github.map(Into::into),
             value.deleted,
-        )
+        );
+        patch.branch_name = value.branch_name;
+        patch.commit_range = value.commit_range.map(Into::into);
+        patch
     }
 }
 
@@ -488,5 +529,55 @@ mod tests {
         let round_trip: GithubCiStatus = api_value.into();
 
         assert_eq!(round_trip, domain);
+    }
+
+    #[test]
+    fn patch_round_trip_with_branch_and_commit_range() {
+        let domain_patch = Patch {
+            title: "test".to_string(),
+            description: "desc".to_string(),
+            diff: "diff".to_string(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            created_by: None,
+            reviews: vec![],
+            service_repo_name: "org/repo".parse().unwrap(),
+            github: None,
+            deleted: false,
+            branch_name: Some("feature/branch".to_string()),
+            commit_range: Some(CommitRange::new(
+                "0000000000000000000000000000000000000001".parse().unwrap(),
+                "0000000000000000000000000000000000000002".parse().unwrap(),
+            )),
+        };
+
+        let api_patch: api::patches::Patch = domain_patch.clone().into();
+        assert_eq!(api_patch.branch_name.as_deref(), Some("feature/branch"));
+        assert!(api_patch.commit_range.is_some());
+
+        let round_trip: Patch = api_patch.into();
+        assert_eq!(round_trip, domain_patch);
+    }
+
+    #[test]
+    fn patch_domain_api_round_trip_without_new_fields() {
+        let domain_patch = Patch::new(
+            "title".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            vec![],
+            "org/repo".parse().unwrap(),
+            None,
+        );
+
+        assert_eq!(domain_patch.branch_name, None);
+        assert_eq!(domain_patch.commit_range, None);
+
+        let api_patch: api::patches::Patch = domain_patch.clone().into();
+        let round_trip: Patch = api_patch.into();
+        assert_eq!(round_trip, domain_patch);
     }
 }

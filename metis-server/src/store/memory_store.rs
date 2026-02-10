@@ -114,6 +114,11 @@ impl MemoryStore {
                 .contains(term)
             || patch.diff.to_lowercase().contains(term)
             || patch
+                .branch_name
+                .as_deref()
+                .map(|value| value.to_lowercase().contains(term))
+                .unwrap_or(false)
+            || patch
                 .github
                 .as_ref()
                 .map(|github| {

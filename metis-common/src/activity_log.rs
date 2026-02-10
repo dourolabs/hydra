@@ -248,6 +248,8 @@ mod tests {
             service_repo_name: repo_name.clone(),
             github: None,
             deleted: false,
+            branch_name: None,
+            commit_range: None,
         };
         let patch_v2 = Patch {
             title: "v2".to_string(),
