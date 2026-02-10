@@ -180,6 +180,7 @@ pub async fn run_with_state(
         )
         .route("/v1/whoami", get(routes::whoami::whoami))
         .route("/v1/users/:username", get(routes::users::get_user))
+        .route("/v1/events", get(routes::events::get_events))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             routes::auth::require_auth,
