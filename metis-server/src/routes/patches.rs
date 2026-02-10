@@ -535,6 +535,53 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
                 "failed to create github pull request for '{owner}/{repo}': {source}"
             ))
         }
+        UpsertPatchError::GithubPullRequestList {
+            owner,
+            repo,
+            source,
+        } => {
+            error!(
+                owner = %owner,
+                repo = %repo,
+                error = %source,
+                "failed to list github pull requests"
+            );
+            ApiError::internal(anyhow!(
+                "failed to list github pull requests for '{owner}/{repo}': {source}"
+            ))
+        }
+        UpsertPatchError::GithubPullRequestNotFound {
+            owner,
+            repo,
+            head_ref,
+        } => {
+            error!(
+                owner = %owner,
+                repo = %repo,
+                head_ref = %head_ref,
+                "no open github pull request found for branch"
+            );
+            ApiError::internal(anyhow!(
+                "no open github pull request found for branch '{head_ref}' in '{owner}/{repo}'"
+            ))
+        }
+        UpsertPatchError::GithubReviewList {
+            owner,
+            repo,
+            number,
+            source,
+        } => {
+            error!(
+                owner = %owner,
+                repo = %repo,
+                number = %number,
+                error = %source,
+                "failed to list github reviews"
+            );
+            ApiError::internal(anyhow!(
+                "failed to list github reviews for '{owner}/{repo}#{number}': {source}"
+            ))
+        }
         UpsertPatchError::Store { source } => {
             error!(error = %source, "patch store operation failed");
             ApiError::internal(anyhow!("patch store error: {source}"))

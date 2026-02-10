@@ -4265,6 +4265,7 @@ dependencies = [
  "dashmap",
  "futures",
  "git2",
+ "http 1.4.0",
  "httpmock",
  "jsonwebtoken",
  "k8s-openapi",

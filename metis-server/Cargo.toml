@@ -31,6 +31,7 @@ dashmap = "6.1"
 metis-common = { path = "../metis-common" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
+http = "1"
 octocrab = "0.49.5"
 git2 = { workspace = true }
 tempfile = "3.14"

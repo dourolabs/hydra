@@ -9,7 +9,7 @@ use crate::{
             TodoItem,
         },
         jobs::BundleSpec,
-        patches::{GithubPr, Patch, PatchStatus},
+        patches::{GithubPr, Patch, PatchStatus, Review},
         users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
@@ -29,7 +29,7 @@ use metis_common::{
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     merge_queues::MergeQueue,
 };
-use octocrab::Octocrab;
+use octocrab::{Octocrab, models::pulls::Review as PullRequestReview};
 use serde::Deserialize;
 use std::{collections::HashMap, collections::HashSet, sync::Arc};
 use thiserror::Error;
@@ -151,6 +151,27 @@ pub enum UpsertPatchError {
         source: octocrab::Error,
         owner: String,
         repo: String,
+    },
+    #[error("failed to list github pull requests for '{owner}/{repo}'")]
+    GithubPullRequestList {
+        #[source]
+        source: octocrab::Error,
+        owner: String,
+        repo: String,
+    },
+    #[error("no open github pull request found for branch '{head_ref}' in '{owner}/{repo}'")]
+    GithubPullRequestNotFound {
+        owner: String,
+        repo: String,
+        head_ref: String,
+    },
+    #[error("failed to list github reviews for '{owner}/{repo}#{number}'")]
+    GithubReviewList {
+        #[source]
+        source: octocrab::Error,
+        owner: String,
+        repo: String,
+        number: u64,
     },
     #[error("failed to load merge-request issues for patch '{patch_id}'")]
     MergeRequestLookup {
@@ -722,21 +743,57 @@ impl AppState {
             }
         };
 
-        let pr = client
+        let create_result = client
             .pulls(&owner, &repo)
             .create(patch.title.clone(), head_ref, base_ref)
             .body(patch.description.clone())
             .send()
-            .await
-            .map_err(|source| UpsertPatchError::GithubPullRequestCreate {
-                source,
-                owner: owner.clone(),
-                repo: repo.clone(),
-            })?;
+            .await;
+
+        let (pr, reused_existing) = match create_result {
+            Ok(pr) => (pr, false),
+            Err(octocrab::Error::GitHub { ref source, .. })
+                if source.status_code == http::StatusCode::UNPROCESSABLE_ENTITY =>
+            {
+                info!(
+                    owner = %owner,
+                    repo = %repo,
+                    head_ref = %head_ref,
+                    "PR creation returned 422; looking up existing PR for branch"
+                );
+                let page = client
+                    .pulls(&owner, &repo)
+                    .list()
+                    .head(format!("{owner}:{head_ref}"))
+                    .state(octocrab::params::State::Open)
+                    .send()
+                    .await
+                    .map_err(|source| UpsertPatchError::GithubPullRequestList {
+                        source,
+                        owner: owner.clone(),
+                        repo: repo.clone(),
+                    })?;
+                let pr = page.items.into_iter().next().ok_or_else(|| {
+                    UpsertPatchError::GithubPullRequestNotFound {
+                        owner: owner.clone(),
+                        repo: repo.clone(),
+                        head_ref: head_ref.to_string(),
+                    }
+                })?;
+                (pr, true)
+            }
+            Err(source) => {
+                return Err(UpsertPatchError::GithubPullRequestCreate {
+                    source,
+                    owner: owner.clone(),
+                    repo: repo.clone(),
+                });
+            }
+        };
 
         patch.github = Some(GithubPr::new(
-            owner,
-            repo,
+            owner.clone(),
+            repo.clone(),
             pr.number,
             Some(pr.head.ref_field.clone()),
             Some(pr.base.ref_field.clone()),
@@ -744,7 +801,73 @@ impl AppState {
             patch.github.as_ref().and_then(|github| github.ci.clone()),
         ));
 
+        if reused_existing {
+            let reviews = self
+                .fetch_github_reviews(&client, &owner, &repo, pr.number)
+                .await?;
+            patch.reviews = reviews;
+        }
+
         Ok(())
+    }
+
+    /// Fetches PR reviews from GitHub and converts them to internal `Review` entries.
+    async fn fetch_github_reviews(
+        &self,
+        client: &Octocrab,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+    ) -> Result<Vec<Review>, UpsertPatchError> {
+        let reviews: Vec<PullRequestReview> = client
+            .all_pages(
+                client
+                    .pulls(owner, repo)
+                    .list_reviews(pr_number)
+                    .per_page(100)
+                    .send()
+                    .await
+                    .map_err(|source| UpsertPatchError::GithubReviewList {
+                        source,
+                        owner: owner.to_string(),
+                        repo: repo.to_string(),
+                        number: pr_number,
+                    })?,
+            )
+            .await
+            .map_err(|source| UpsertPatchError::GithubReviewList {
+                source,
+                owner: owner.to_string(),
+                repo: repo.to_string(),
+                number: pr_number,
+            })?;
+
+        let mut entries = Vec::new();
+        for review in reviews {
+            let Some(body) = review.body.as_ref().map(|value| value.trim().to_string()) else {
+                continue;
+            };
+            if body.is_empty() {
+                continue;
+            }
+
+            let Some(author) = review.user.as_ref().map(|user| user.login.clone()) else {
+                continue;
+            };
+
+            entries.push(Review::new(
+                body,
+                review
+                    .state
+                    .as_ref()
+                    .map(|state| state == &octocrab::models::pulls::ReviewState::Approved)
+                    .unwrap_or(false),
+                author,
+                review.submitted_at,
+            ));
+        }
+
+        Ok(entries)
     }
 
     async fn github_user_client(&self, actor: &Actor) -> Result<Octocrab, UpsertPatchError> {
@@ -2797,6 +2920,242 @@ mod tests {
 
         user_mock.assert_async().await;
         create_mock.assert_async().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_sync_github_reuses_existing_pr_on_422() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let user_mock = github_server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_user_response("octo", 42));
+        });
+        // PR creation returns 422 because PR already exists for this branch.
+        let create_mock = github_server.mock(|when, then| {
+            when.method(POST).path("/repos/octo/repo/pulls");
+            then.status(422)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "message": "Validation Failed",
+                    "errors": [{"message": "A pull request already exists for octo:metis-t-test."}]
+                }));
+        });
+        // Fallback: list open PRs for the branch returns the existing PR.
+        let list_mock = github_server.mock(|when, then| {
+            when.method(GET)
+                .path("/repos/octo/repo/pulls")
+                .query_param("head", "octo:metis-t-test")
+                .query_param("state", "open");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!([github_pull_request_response(
+                    55,
+                    "metis-t-test",
+                    "main",
+                    "https://example.com/pr/55",
+                )]));
+        });
+        // Reviews for the existing PR.
+        let review_time = "2024-06-15T10:00:00Z";
+        let reviews_mock = github_server.mock(|when, then| {
+            when.method(GET).path("/repos/octo/repo/pulls/55/reviews");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!([
+                    {
+                        "id": 201,
+                        "node_id": "NODEID",
+                        "html_url": "https://example.com/reviews/201",
+                        "body": "needs changes",
+                        "state": "CHANGES_REQUESTED",
+                        "user": github_user_response("reviewer", 1001),
+                        "submitted_at": review_time,
+                        "pull_request_url": "https://example.com/pr/55"
+                    }
+                ]));
+        });
+
+        let handles = test_state_with_github_api_base_url(github_server.base_url());
+        let username = Username::from("octo");
+        let user = User::new(
+            username.clone(),
+            42,
+            "token-789".to_string(),
+            "refresh-789".to_string(),
+        );
+        handles.store.as_ref().add_user(user).await?;
+        let (actor, _auth_token) = Actor::new_for_user(username);
+        handles.store.as_ref().add_actor(actor.clone()).await?;
+        let repo_name = RepoName::new("octo", "repo")?;
+        add_repository(
+            &handles.state,
+            repo_name.clone(),
+            crate::app::Repository::new(
+                "https://example.com/repo.git".to_string(),
+                Some("main".to_string()),
+                None,
+            ),
+        )
+        .await?;
+
+        let task_id = TaskId::try_from("t-fallback".to_string())?;
+        let mut task = sample_task();
+        let created_at = Utc::now();
+        handles
+            .store
+            .as_ref()
+            .add_task_with_id(task_id.clone(), task.clone(), created_at)
+            .await?;
+        task.status = Status::Running;
+        handles.store.as_ref().update_task(&task_id, task).await?;
+        let patch = Patch::new(
+            "Second patch".to_string(),
+            "Second patch description".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            Some(task_id),
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let request = api::patches::UpsertPatchRequest::new(patch.into())
+            .with_sync_github_branch("metis-t-test");
+
+        let patch_id = handles
+            .state
+            .upsert_patch(Some(&actor), None, request)
+            .await?;
+        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        let github = stored_patch
+            .item
+            .github
+            .expect("github metadata should be attached from existing PR");
+
+        assert_eq!(github.number, 55);
+        assert_eq!(github.owner, "octo");
+        assert_eq!(github.repo, "repo");
+        assert_eq!(github.head_ref.as_deref(), Some("metis-t-test"));
+        assert_eq!(github.base_ref.as_deref(), Some("main"));
+        assert_eq!(github.url.as_deref(), Some("https://example.com/pr/55"));
+
+        // Reviews should be pre-populated from the existing PR.
+        assert_eq!(stored_patch.item.reviews.len(), 1);
+        assert_eq!(stored_patch.item.reviews[0].contents, "needs changes");
+        assert_eq!(stored_patch.item.reviews[0].author, "reviewer");
+        assert!(!stored_patch.item.reviews[0].is_approved);
+
+        user_mock.assert_async().await;
+        create_mock.assert_async().await;
+        list_mock.assert_async().await;
+        reviews_mock.assert_async().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_sync_github_422_no_reviews_returns_empty_reviews() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let _user_mock = github_server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_user_response("octo", 42));
+        });
+        let _create_mock = github_server.mock(|when, then| {
+            when.method(POST).path("/repos/octo/repo/pulls");
+            then.status(422)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "message": "Validation Failed",
+                    "errors": [{"message": "A pull request already exists for octo:metis-t-test."}]
+                }));
+        });
+        let _list_mock = github_server.mock(|when, then| {
+            when.method(GET)
+                .path("/repos/octo/repo/pulls")
+                .query_param("head", "octo:metis-t-test")
+                .query_param("state", "open");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!([github_pull_request_response(
+                    60,
+                    "metis-t-test",
+                    "main",
+                    "https://example.com/pr/60"
+                )]));
+        });
+        let _reviews_mock = github_server.mock(|when, then| {
+            when.method(GET).path("/repos/octo/repo/pulls/60/reviews");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!([]));
+        });
+
+        let handles = test_state_with_github_api_base_url(github_server.base_url());
+        let username = Username::from("octo");
+        handles
+            .store
+            .as_ref()
+            .add_user(User::new(
+                username.clone(),
+                42,
+                "token-empty".to_string(),
+                "refresh-empty".to_string(),
+            ))
+            .await?;
+        let (actor, _auth_token) = Actor::new_for_user(username);
+        handles.store.as_ref().add_actor(actor.clone()).await?;
+        let repo_name = RepoName::new("octo", "repo")?;
+        add_repository(
+            &handles.state,
+            repo_name.clone(),
+            crate::app::Repository::new(
+                "https://example.com/repo.git".to_string(),
+                Some("main".to_string()),
+                None,
+            ),
+        )
+        .await?;
+
+        let task_id = TaskId::try_from("t-emptyrev".to_string())?;
+        let mut task = sample_task();
+        let created_at = Utc::now();
+        handles
+            .store
+            .as_ref()
+            .add_task_with_id(task_id.clone(), task.clone(), created_at)
+            .await?;
+        task.status = Status::Running;
+        handles.store.as_ref().update_task(&task_id, task).await?;
+        let patch = Patch::new(
+            "Patch with no reviews".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            Some(task_id),
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let request = api::patches::UpsertPatchRequest::new(patch.into())
+            .with_sync_github_branch("metis-t-test");
+
+        let patch_id = handles
+            .state
+            .upsert_patch(Some(&actor), None, request)
+            .await?;
+        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        let github = stored_patch
+            .item
+            .github
+            .expect("github metadata should be attached");
+        assert_eq!(github.number, 60);
+        assert!(stored_patch.item.reviews.is_empty());
 
         Ok(())
     }
