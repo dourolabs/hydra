@@ -171,6 +171,11 @@ pub enum UpsertPatchError {
         patch_id: PatchId,
         issue_id: IssueId,
     },
+    #[error("an open patch '{existing_patch_id}' already exists for branch '{branch_name}'")]
+    DuplicateBranchName {
+        existing_patch_id: PatchId,
+        branch_name: String,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -1559,6 +1564,24 @@ impl AppState {
                     }
                 }
 
+                // Check for duplicate branch_name among open patches.
+                if let Some(ref branch_name) = patch.branch_name {
+                    use metis_common::api::v1::patches::PatchStatus as ApiPatchStatus;
+                    let query = SearchPatchesQuery::new(None, None)
+                        .with_status(vec![ApiPatchStatus::Open, ApiPatchStatus::ChangesRequested])
+                        .with_branch_name(branch_name.clone());
+                    let existing = store
+                        .list_patches(&query)
+                        .await
+                        .map_err(|source| UpsertPatchError::Store { source })?;
+                    if let Some((existing_id, _)) = existing.first() {
+                        return Err(UpsertPatchError::DuplicateBranchName {
+                            existing_patch_id: existing_id.clone(),
+                            branch_name: branch_name.clone(),
+                        });
+                    }
+                }
+
                 if let Some(sync_github_branch) = sync_github_branch {
                     let actor = actor.ok_or(UpsertPatchError::GithubActorMissing)?;
                     self.sync_patch_with_github(actor, &mut patch, &sync_github_branch)
@@ -2462,7 +2485,7 @@ fn merge_request_issue_title(patch: &Patch) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{LoginError, UpsertIssueError};
+    use super::{LoginError, UpsertIssueError, UpsertPatchError};
     use crate::{
         app::{AppState, ServerEvent, ServiceState},
         domain::{
@@ -2479,7 +2502,7 @@ mod tests {
         store::{MemoryStore, Status, Store, StoreError, TaskError},
         test_utils::{
             MockJobEngine, add_repository, github_user_response, test_app_config, test_state,
-            test_state_with_engine, test_state_with_github_api_base_url,
+            test_state_handles, test_state_with_engine, test_state_with_github_api_base_url,
         },
     };
     use chrono::{Duration, Utc};
@@ -3744,5 +3767,182 @@ mod tests {
                 "seq numbers should be strictly increasing: {seqs:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_rejects_duplicate_branch_name_on_create() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::new("octo", "repo")?;
+
+        let mut patch1 = Patch::new(
+            "First patch".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo_name.clone(),
+            None,
+        );
+        patch1.branch_name = Some("feature/foo".to_string());
+        let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
+        let patch1_id = handles.state.upsert_patch(None, None, request1).await?;
+
+        let mut patch2 = Patch::new(
+            "Second patch".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        patch2.branch_name = Some("feature/foo".to_string());
+        let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
+        let err = handles
+            .state
+            .upsert_patch(None, None, request2)
+            .await
+            .unwrap_err();
+
+        match err {
+            UpsertPatchError::DuplicateBranchName {
+                existing_patch_id,
+                branch_name,
+            } => {
+                assert_eq!(existing_patch_id, patch1_id);
+                assert_eq!(branch_name, "feature/foo");
+            }
+            other => panic!("expected DuplicateBranchName, got: {other:?}"),
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_allows_same_branch_after_close() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::new("octo", "repo")?;
+
+        let mut patch1 = Patch::new(
+            "First patch".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo_name.clone(),
+            None,
+        );
+        patch1.branch_name = Some("feature/foo".to_string());
+        let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
+        let patch1_id = handles.state.upsert_patch(None, None, request1).await?;
+
+        // Close the first patch
+        let mut closed_patch = handles.store.get_patch(&patch1_id, false).await?.item;
+        closed_patch.status = PatchStatus::Closed;
+        handles.store.update_patch(&patch1_id, closed_patch).await?;
+
+        // Creating a new patch with the same branch_name should succeed
+        let mut patch2 = Patch::new(
+            "Second patch".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        patch2.branch_name = Some("feature/foo".to_string());
+        let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
+        handles.state.upsert_patch(None, None, request2).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_update_allows_same_branch() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::new("octo", "repo")?;
+
+        let mut patch1 = Patch::new(
+            "First patch".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo_name.clone(),
+            None,
+        );
+        patch1.branch_name = Some("feature/foo".to_string());
+        let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
+        let patch1_id = handles.state.upsert_patch(None, None, request1).await?;
+
+        // Updating the same patch should succeed (the uniqueness check is only
+        // on creates, not updates).
+        let mut update_patch = Patch::new(
+            "Updated title".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        update_patch.branch_name = Some("feature/foo".to_string());
+        let request2 = api::patches::UpsertPatchRequest::new(update_patch.into());
+        handles
+            .state
+            .upsert_patch(None, Some(patch1_id), request2)
+            .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_allows_create_without_branch_name() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::new("octo", "repo")?;
+
+        // Create two patches without branch_name -- should both succeed
+        let patch1 = Patch::new(
+            "First patch".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo_name.clone(),
+            None,
+        );
+        let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
+        handles.state.upsert_patch(None, None, request1).await?;
+
+        let patch2 = Patch::new(
+            "Second patch".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
+        handles.state.upsert_patch(None, None, request2).await?;
+
+        Ok(())
     }
 }

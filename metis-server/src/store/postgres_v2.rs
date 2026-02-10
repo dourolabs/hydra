@@ -1306,6 +1306,32 @@ impl Store for PostgresStoreV2 {
             predicates.push("deleted = false".to_string());
         }
 
+        if !query.status.is_empty() {
+            let status_strings: Vec<String> = query
+                .status
+                .iter()
+                .map(|s| {
+                    let domain: crate::domain::patches::PatchStatus = (*s).into();
+                    domain.as_str().to_string()
+                })
+                .collect();
+            let placeholders: Vec<String> = status_strings
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+                .collect();
+            predicates.push(format!("status IN ({})", placeholders.join(", ")));
+            for s in status_strings {
+                bindings.push(s);
+            }
+        }
+
+        if let Some(ref branch) = query.branch_name {
+            let idx = bindings.len() + 1;
+            predicates.push(format!("branch_name = ${idx}"));
+            bindings.push(branch.clone());
+        }
+
         if let Some(term) = query
             .q
             .as_ref()
