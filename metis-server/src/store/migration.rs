@@ -1029,7 +1029,7 @@ mod tests {
             patches: vec![],
             deleted: false,
         };
-        let issue_id = v1_store.add_issue(issue.clone()).await.unwrap();
+        let (issue_id, _) = v1_store.add_issue(issue.clone()).await.unwrap();
 
         // Run migration
         let result = migrate_v1_to_v2(&pool).await.unwrap();
@@ -1067,7 +1067,7 @@ mod tests {
             patches: vec![],
             deleted: false,
         };
-        let issue_id = v2_store.add_issue(issue.clone()).await.unwrap();
+        let (issue_id, _) = v2_store.add_issue(issue.clone()).await.unwrap();
 
         // Verify data can be read back
         let retrieved = v2_store.get_issue(&issue_id, false).await.unwrap();

@@ -499,7 +499,8 @@ impl AppState {
 
     pub async fn delete_patch(&self, patch_id: &PatchId) -> Result<(), StoreError> {
         let store = self.store.as_ref();
-        store.delete_patch(patch_id).await
+        store.delete_patch(patch_id).await?;
+        Ok(())
     }
 
     pub async fn upsert_document(
@@ -569,7 +570,7 @@ impl AppState {
                 }
 
                 let created_by = new_document.created_by.clone();
-                let document_id = store
+                let (document_id, _version) = store
                     .add_document(new_document)
                     .await
                     .map_err(|source| UpsertDocumentError::Store { source })?;
@@ -611,7 +612,8 @@ impl AppState {
 
     pub async fn delete_document(&self, document_id: &DocumentId) -> Result<(), StoreError> {
         let store = self.store.as_ref();
-        store.delete_document(document_id).await
+        store.delete_document(document_id).await?;
+        Ok(())
     }
 
     pub async fn get_documents_by_path(
@@ -896,7 +898,8 @@ impl AppState {
         created_at: DateTime<Utc>,
     ) -> Result<TaskId, StoreError> {
         let store = self.store.as_ref();
-        store.add_task(task, created_at).await
+        let (task_id, _version) = store.add_task(task, created_at).await?;
+        Ok(task_id)
     }
 
     pub async fn create_agent(
@@ -1562,16 +1565,18 @@ impl AppState {
                         .await?;
                 }
 
-                store
-                    .add_patch(patch)
-                    .await
-                    .map_err(|source| match source {
-                        StoreError::PatchNotFound(id) => UpsertPatchError::PatchNotFound {
-                            patch_id: id.clone(),
-                            source: StoreError::PatchNotFound(id),
-                        },
-                        other => UpsertPatchError::Store { source: other },
-                    })?
+                let (id, _version) =
+                    store
+                        .add_patch(patch)
+                        .await
+                        .map_err(|source| match source {
+                            StoreError::PatchNotFound(id) => UpsertPatchError::PatchNotFound {
+                                patch_id: id.clone(),
+                                source: StoreError::PatchNotFound(id),
+                            },
+                            other => UpsertPatchError::Store { source: other },
+                        })?;
+                id
             }
         };
 
@@ -1792,7 +1797,7 @@ impl AppState {
                 }
 
                 match store.update_issue(&id, updated_issue).await {
-                    Ok(()) => {
+                    Ok(_version) => {
                         if is_dropping {
                             tasks_to_kill =
                                 active_tasks_for_issue(store, &id).await.map_err(|source| {
@@ -1895,21 +1900,23 @@ impl AppState {
                     });
                 }
 
-                store
-                    .add_issue(issue)
-                    .await
-                    .map_err(|source| match source {
-                        StoreError::InvalidDependency(dependency_id) => {
-                            UpsertIssueError::MissingDependency {
-                                dependency_id: dependency_id.clone(),
-                                source: StoreError::InvalidDependency(dependency_id),
+                let (id, _version) =
+                    store
+                        .add_issue(issue)
+                        .await
+                        .map_err(|source| match source {
+                            StoreError::InvalidDependency(dependency_id) => {
+                                UpsertIssueError::MissingDependency {
+                                    dependency_id: dependency_id.clone(),
+                                    source: StoreError::InvalidDependency(dependency_id),
+                                }
                             }
-                        }
-                        other => UpsertIssueError::Store {
-                            source: other,
-                            issue_id: None,
-                        },
-                    })?
+                            other => UpsertIssueError::Store {
+                                source: other,
+                                issue_id: None,
+                            },
+                        })?;
+                id
             }
         };
 
@@ -2109,7 +2116,8 @@ impl AppState {
 
     pub async fn delete_issue(&self, issue_id: &IssueId) -> Result<(), StoreError> {
         let store = self.store.as_ref();
-        store.delete_issue(issue_id).await
+        store.delete_issue(issue_id).await?;
+        Ok(())
     }
 
     pub async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
@@ -2667,7 +2675,7 @@ mod tests {
             )),
         );
 
-        let patch_id = handles.store.as_ref().add_patch(existing_patch).await?;
+        let (patch_id, _) = handles.store.as_ref().add_patch(existing_patch).await?;
 
         let request_patch = Patch::new(
             "Updated title".to_string(),
@@ -2805,7 +2813,7 @@ mod tests {
     async fn open_issue_ready_when_not_blocked() {
         let state = test_state();
 
-        let issue_id = {
+        let (issue_id, _) = {
             let store = state.store.as_ref();
             store
                 .add_issue(issue_with_status("open", IssueStatus::Open, vec![]))
@@ -2822,11 +2830,11 @@ mod tests {
 
         let (blocker_id, blocked_issue_id) = {
             let store = state.store.as_ref();
-            let blocker_id = store
+            let (blocker_id, _) = store
                 .add_issue(issue_with_status("blocker", IssueStatus::Open, vec![]))
                 .await
                 .unwrap();
-            let blocked_issue_id = store
+            let (blocked_issue_id, _) = store
                 .add_issue(issue_with_status(
                     "blocked",
                     IssueStatus::Open,
@@ -2863,7 +2871,7 @@ mod tests {
 
         let (parent_id, child_id, child_dependencies) = {
             let store = state.store.as_ref();
-            let parent_id = store
+            let (parent_id, _) = store
                 .add_issue(issue_with_status("parent", IssueStatus::InProgress, vec![]))
                 .await
                 .unwrap();
@@ -2871,7 +2879,7 @@ mod tests {
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
             )];
-            let child_id = store
+            let (child_id, _) = store
                 .add_issue(issue_with_status(
                     "child",
                     IssueStatus::Open,
@@ -2903,7 +2911,7 @@ mod tests {
     async fn dropped_issue_is_not_ready() {
         let state = test_state();
 
-        let issue_id = {
+        let (issue_id, _) = {
             let store = state.store.as_ref();
             store
                 .add_issue(issue_with_status("dropped", IssueStatus::Dropped, vec![]))
@@ -2918,9 +2926,9 @@ mod tests {
     async fn dropped_blocker_keeps_issue_blocked() {
         let state = test_state();
 
-        let blocked_issue_id = {
+        let (blocked_issue_id, _) = {
             let store = state.store.as_ref();
-            let blocker_id = store
+            let (blocker_id, _) = store
                 .add_issue(issue_with_status("blocker", IssueStatus::Dropped, vec![]))
                 .await
                 .unwrap();
@@ -2944,7 +2952,7 @@ mod tests {
     async fn closed_issue_is_not_ready() {
         let state = test_state();
 
-        let issue_id = {
+        let (issue_id, _) = {
             let store = state.store.as_ref();
             store
                 .add_issue(issue_with_status("closed", IssueStatus::Closed, vec![]))
@@ -2962,7 +2970,7 @@ mod tests {
         let config = state.config.clone();
         let task = sample_task();
 
-        let task_id = {
+        let (task_id, _) = {
             let store = state.store.as_ref();
             store.add_task(task, Utc::now()).await.unwrap()
         };
@@ -2998,7 +3006,7 @@ mod tests {
             ..Default::default()
         };
 
-        let issue_id = {
+        let (issue_id, _) = {
             let store = state.store.as_ref();
             store
                 .add_issue(Issue {
@@ -3018,7 +3026,7 @@ mod tests {
                 .unwrap()
         };
 
-        let task_id = {
+        let (task_id, _) = {
             let store = state.store.as_ref();
             let mut task = task_for_issue(&issue_id);
             task.cpu_limit = job_settings.cpu_limit.clone();
@@ -3061,7 +3069,7 @@ mod tests {
     async fn reap_orphaned_jobs_kills_jobs_missing_from_store() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
-        let tracked_task_id = {
+        let (tracked_task_id, _) = {
             let store = state.store.as_ref();
             store.add_task(sample_task(), Utc::now()).await.unwrap()
         };
@@ -3097,7 +3105,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
         let task_id = {
             let store = state.store.as_ref();
-            let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
+            let (task_id, _) = store.add_task(sample_task(), Utc::now()).await.unwrap();
             state
                 .transition_task_to_pending(&task_id)
                 .await
@@ -3130,7 +3138,7 @@ mod tests {
 
         let task_id = {
             let store = state.store.as_ref();
-            let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
+            let (task_id, _) = store.add_task(sample_task(), Utc::now()).await.unwrap();
             state
                 .transition_task_to_pending(&task_id)
                 .await
@@ -3204,15 +3212,15 @@ mod tests {
 
         let (parent_task_id, child_task_id, grandchild_task_id) = {
             let store = state.store.as_ref();
-            let parent_task_id = store
+            let (parent_task_id, _) = store
                 .add_task(task_for_issue(&parent_id), Utc::now())
                 .await
                 .unwrap();
-            let child_task_id = store
+            let (child_task_id, _) = store
                 .add_task(task_for_issue(&child_id), Utc::now())
                 .await
                 .unwrap();
-            let grandchild_task_id = store
+            let (grandchild_task_id, _) = store
                 .add_task(task_for_issue(&grandchild_id), Utc::now())
                 .await
                 .unwrap();
@@ -3550,11 +3558,11 @@ mod tests {
         let state = test_state_with_engine(job_engine);
         let store = state.store.as_ref();
 
-        let issue_id = store
+        let (issue_id, _) = store
             .add_issue(issue_with_status("parent", IssueStatus::Open, vec![]))
             .await
             .unwrap();
-        let task_id = store
+        let (task_id, _) = store
             .add_task(task_for_issue(&issue_id), Utc::now())
             .await
             .unwrap();
@@ -3579,11 +3587,11 @@ mod tests {
         let state = test_state_with_engine(job_engine);
         let store = state.store.as_ref();
 
-        let issue_id = store
+        let (issue_id, _) = store
             .add_issue(issue_with_status("parent", IssueStatus::Open, vec![]))
             .await
             .unwrap();
-        let task_id = store
+        let (task_id, _) = store
             .add_task(task_for_issue(&issue_id), Utc::now())
             .await
             .unwrap();
@@ -3603,7 +3611,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
         let store = state.store.as_ref();
 
-        let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
+        let (task_id, _) = store.add_task(sample_task(), Utc::now()).await.unwrap();
 
         state.cleanup_orphaned_tasks().await;
 
@@ -3620,11 +3628,11 @@ mod tests {
         let state = test_state_with_engine(job_engine.clone());
         let store = state.store.as_ref();
 
-        let issue_id = store
+        let (issue_id, _) = store
             .add_issue(issue_with_status("parent", IssueStatus::Open, vec![]))
             .await
             .unwrap();
-        let task_id = store
+        let (task_id, _) = store
             .add_task(task_for_issue(&issue_id), Utc::now())
             .await
             .unwrap();

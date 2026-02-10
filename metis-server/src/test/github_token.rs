@@ -81,7 +81,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
     );
 
     handles.store.add_user(user).await?;
-    let issue_id = handles
+    let (issue_id, _) = handles
         .store
         .add_issue(Issue::new(
             IssueType::Task,
@@ -195,7 +195,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     };
 
     handles.store.add_user(user).await?;
-    let issue_id = handles
+    let (issue_id, _) = handles
         .store
         .add_issue(Issue::new(
             IssueType::Task,
@@ -283,7 +283,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
     };
 
     handles.store.add_user(user).await?;
-    let issue_id = handles
+    let (issue_id, _) = handles
         .store
         .add_issue(Issue::new(
             IssueType::Task,
