@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
     process::Command,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{bail, Context, Result};
@@ -307,6 +307,20 @@ struct IssueDetailsState {
     confirm_drop: bool,
 }
 
+/// Connection state for the SSE event stream.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ConnectionState {
+    /// Connected to the SSE stream and receiving events.
+    Connected,
+    /// Attempting to reconnect after a disconnection.
+    Reconnecting(u32),
+    /// Reconnection failed; using polling as a fallback.
+    PollingFallback,
+}
+
+const RECONNECT_BASE_DELAY: Duration = Duration::from_secs(1);
+const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
+
 #[derive(Clone)]
 struct DashboardState {
     jobs: Vec<JobDetails>,
@@ -330,6 +344,8 @@ struct DashboardState {
     issue_draft_scroll: ListScrollState,
     issue_details: IssueDetailsState,
     issue_list_filter: IssueListFilter,
+    connection_state: ConnectionState,
+    last_event_id: Option<u64>,
     jobs_error: Option<String>,
     records_error: Option<String>,
     username: Username,
@@ -389,6 +405,8 @@ impl Default for DashboardState {
             issue_draft_scroll: ListScrollState::default(),
             issue_details: IssueDetailsState::default(),
             issue_list_filter: IssueListFilter::default(),
+            connection_state: ConnectionState::Connected,
+            last_event_id: None,
             jobs_error: None,
             records_error: None,
             username: Username::from(""),
@@ -477,13 +495,18 @@ async fn run_dashboard_loop(
 
     // Attempt to subscribe to SSE events for real-time updates.
     let sse_stream = match client.subscribe_events(&EventsQuery::default(), None).await {
-        Ok(Some(stream)) => Some(stream),
+        Ok(Some(stream)) => {
+            state.connection_state = ConnectionState::Connected;
+            Some(stream)
+        }
         Ok(None) => {
+            state.connection_state = ConnectionState::PollingFallback;
             state.jobs_error =
                 Some("Server does not support SSE; using polling fallback".to_string());
             None
         }
         Err(err) => {
+            state.connection_state = ConnectionState::PollingFallback;
             state.jobs_error = Some(format!("SSE unavailable ({err}); using polling fallback"));
             None
         }
@@ -498,22 +521,105 @@ async fn run_dashboard_loop(
         state.records_error = Some(format!("Failed to load records: {err}"));
     }
 
-    match sse_stream {
-        Some(sse_stream) => {
-            run_dashboard_loop_sse(client, terminal, &mut state, sse_stream, &mut needs_draw).await
+    let mut sse_stream = match sse_stream {
+        Some(s) => s,
+        None => {
+            return run_dashboard_loop_polling(client, terminal, &mut state, &mut needs_draw).await;
         }
-        None => run_dashboard_loop_polling(client, terminal, &mut state, &mut needs_draw).await,
+    };
+
+    // Main loop: run SSE, reconnect on failure, fall back to polling during reconnection.
+    let mut reconnect_attempts: u32 = 0;
+    loop {
+        let exit = run_dashboard_loop_sse(
+            client,
+            terminal,
+            &mut state,
+            &mut sse_stream,
+            &mut needs_draw,
+        )
+        .await?;
+        match exit {
+            SseLoopExit::UserQuit => return Ok(()),
+            SseLoopExit::StreamEnded | SseLoopExit::StreamError => {
+                // Enter reconnection state and attempt to reconnect with backoff.
+                reconnect_attempts += 1;
+                state.connection_state = ConnectionState::Reconnecting(reconnect_attempts);
+                needs_draw = true;
+
+                let delay = reconnect_delay(reconnect_attempts);
+
+                // Poll while waiting for the reconnection delay to expire.
+                let reconnect_at = Instant::now() + delay;
+                let quit =
+                    run_polling_until(client, terminal, &mut state, &mut needs_draw, reconnect_at)
+                        .await?;
+                if quit {
+                    return Ok(());
+                }
+
+                // Try to reconnect.
+                match client
+                    .subscribe_events(&EventsQuery::default(), state.last_event_id)
+                    .await
+                {
+                    Ok(Some(stream)) => {
+                        reconnect_attempts = 0;
+                        state.connection_state = ConnectionState::Connected;
+                        state.jobs_error = None;
+                        needs_draw = true;
+                        sse_stream = stream;
+                    }
+                    Ok(None) => {
+                        // Server no longer supports SSE; permanent fallback.
+                        state.connection_state = ConnectionState::PollingFallback;
+                        state.jobs_error =
+                            Some("Server does not support SSE; using polling fallback".to_string());
+                        needs_draw = true;
+                        return run_dashboard_loop_polling(
+                            client,
+                            terminal,
+                            &mut state,
+                            &mut needs_draw,
+                        )
+                        .await;
+                    }
+                    Err(_) => {
+                        // Reconnect failed; loop will retry with increased backoff.
+                        continue;
+                    }
+                }
+            }
+        }
     }
 }
 
+/// Compute the reconnection delay using exponential backoff capped at `RECONNECT_MAX_DELAY`.
+fn reconnect_delay(attempt: u32) -> Duration {
+    let shift = attempt.saturating_sub(1).min(31);
+    let secs = RECONNECT_BASE_DELAY.as_secs().saturating_mul(1u64 << shift);
+    Duration::from_secs(secs).min(RECONNECT_MAX_DELAY)
+}
+
+/// Outcome of the SSE inner loop.
+enum SseLoopExit {
+    /// The user requested to quit the dashboard.
+    UserQuit,
+    /// The SSE stream ended cleanly.
+    StreamEnded,
+    /// The SSE stream encountered an error.
+    StreamError,
+}
+
 /// Dashboard main loop driven by SSE events for real-time incremental updates.
+/// Returns how the loop exited so the caller can decide whether to reconnect.
 async fn run_dashboard_loop_sse(
     client: &dyn MetisClientInterface,
     terminal: &mut DefaultTerminal,
     state: &mut DashboardState,
-    mut sse_stream: SseEventStream,
+    sse_stream: &mut SseEventStream,
     needs_draw: &mut bool,
-) -> Result<()> {
+) -> Result<SseLoopExit> {
     let mut terminal_events = EventStream::new();
 
     loop {
@@ -532,15 +638,12 @@ async fn run_dashboard_loop_sse(
                         *needs_draw |= changed;
                     }
                     Some(Err(err)) => {
-                        // Stream error — log and stop processing SSE.
-                        // Reconnection is handled by a separate task (out of scope).
                         state.jobs_error = Some(format!("SSE stream error: {err}"));
                         *needs_draw = true;
-                        break;
+                        return Ok(SseLoopExit::StreamError);
                     }
                     None => {
-                        // Stream ended — stop processing SSE.
-                        break;
+                        return Ok(SseLoopExit::StreamEnded);
                     }
                 }
             }
@@ -551,20 +654,90 @@ async fn run_dashboard_loop_sse(
                             client, terminal, state, event, needs_draw,
                         ).await?;
                         if quit {
-                            return Ok(());
+                            return Ok(SseLoopExit::UserQuit);
                         }
                     }
                     Some(Err(err)) => {
                         state.jobs_error = Some(format!("Terminal event error: {err}"));
                         *needs_draw = true;
                     }
-                    None => return Ok(()),
+                    None => return Ok(SseLoopExit::UserQuit),
                 }
             }
         }
     }
+}
 
-    Ok(())
+/// Run the polling loop until `deadline`, processing terminal events and refreshing data.
+/// Returns `true` if the user requested to quit.
+async fn run_polling_until(
+    client: &dyn MetisClientInterface,
+    terminal: &mut DefaultTerminal,
+    state: &mut DashboardState,
+    needs_draw: &mut bool,
+    deadline: Instant,
+) -> Result<bool> {
+    let mut terminal_events = EventStream::new();
+    let mut jobs_tick = tokio::time::interval(JOB_REFRESH_INTERVAL);
+    let mut records_tick = tokio::time::interval(RECORD_REFRESH_INTERVAL);
+    let sleep = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline));
+    tokio::pin!(sleep);
+
+    loop {
+        if *needs_draw {
+            state.last_frame_size = Some(terminal.size()?.into());
+            clamp_issue_scrolls(state);
+            terminal.draw(|f| render(f, state))?;
+            *needs_draw = false;
+        }
+
+        tokio::select! {
+            () = &mut sleep => {
+                return Ok(false);
+            }
+            _ = jobs_tick.tick() => {
+                match refresh_jobs(client, state).await {
+                    Ok(changed) => {
+                        state.jobs_error = None;
+                        *needs_draw |= changed;
+                    }
+                    Err(err) => {
+                        state.jobs_error = Some(format!("Failed to refresh jobs: {err}"));
+                        *needs_draw = true;
+                    }
+                }
+            }
+            _ = records_tick.tick() => {
+                match refresh_records(client, state).await {
+                    Ok(changed) => {
+                        state.records_error = None;
+                        *needs_draw |= changed;
+                    }
+                    Err(err) => {
+                        state.records_error = Some(format!("Failed to refresh records: {err}"));
+                        *needs_draw = true;
+                    }
+                }
+            }
+            maybe_event = terminal_events.next() => {
+                match maybe_event {
+                    Some(Ok(event)) => {
+                        let quit = handle_terminal_event(
+                            client, terminal, state, event, needs_draw,
+                        ).await?;
+                        if quit {
+                            return Ok(true);
+                        }
+                    }
+                    Some(Err(err)) => {
+                        state.jobs_error = Some(format!("Terminal event error: {err}"));
+                        *needs_draw = true;
+                    }
+                    None => return Ok(true),
+                }
+            }
+        }
+    }
 }
 
 /// Dashboard main loop using polling intervals as a fallback when SSE is unavailable.
@@ -688,6 +861,10 @@ async fn handle_sse_event(
     state: &mut DashboardState,
     sse_event: &crate::client::sse::SseEvent,
 ) -> bool {
+    // Track the last received event ID for reconnection.
+    if let Some(id) = sse_event.id {
+        state.last_event_id = Some(id);
+    }
     match sse_event.event_type {
         SseEventType::IssueCreated | SseEventType::IssueUpdated => {
             let entity = match sse_event.as_entity_event() {
@@ -1537,6 +1714,7 @@ fn render(frame: &mut Frame, state: &mut DashboardState) {
         state.username.as_str(),
         &state.server_url,
         state.issue_list_filter,
+        &state.connection_state,
     );
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
@@ -1548,12 +1726,26 @@ fn render(frame: &mut Frame, state: &mut DashboardState) {
     }
 }
 
+fn connection_state_indicator(state: &ConnectionState) -> Span<'static> {
+    match state {
+        ConnectionState::Connected => Span::styled(" [SSE]", Style::default().fg(Color::Green)),
+        ConnectionState::Reconnecting(n) => Span::styled(
+            format!(" [reconnecting ({n})...]"),
+            Style::default().fg(Color::Yellow),
+        ),
+        ConnectionState::PollingFallback => {
+            Span::styled(" [polling]", Style::default().fg(Color::DarkGray))
+        }
+    }
+}
+
 fn render_dashboard_header(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
     username: &str,
     server_url: &str,
     issue_list_filter: IssueListFilter,
+    connection_state: &ConnectionState,
 ) {
     let title = dashboard_title(username, server_url);
     let hint = format!(
@@ -1565,10 +1757,10 @@ fn render_dashboard_header(
         .constraints([Constraint::Min(0), Constraint::Max(hint.len() as u16)])
         .split(area);
 
-    let title_line = Line::from(Span::styled(
-        title,
-        Style::default().add_modifier(Modifier::BOLD),
-    ));
+    let title_line = Line::from(vec![
+        Span::styled(title, Style::default().add_modifier(Modifier::BOLD)),
+        connection_state_indicator(connection_state),
+    ]);
     let hint_line = Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray)));
 
     frame.render_widget(Paragraph::new(title_line), chunks[0]);
@@ -4027,6 +4219,7 @@ mod tests {
                     "metis-user",
                     "https://example.com",
                     IssueListFilter::All,
+                    &ConnectionState::Connected,
                 );
             })
             .expect("draw failed");
