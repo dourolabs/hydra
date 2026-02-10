@@ -22,7 +22,7 @@ use metis_common::{
     task_status::{Status, TaskError},
     users::Username,
     whoami::ActorIdentity,
-    IssueId, PatchId, RepoName, RepositoryRecord, TaskId,
+    IssueId, PatchId, RepoName, RepositoryRecord, TaskId, VersionNumber,
 };
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
@@ -85,13 +85,14 @@ impl IssueListFilter {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct JobDetails {
     display: JobDisplay,
     issue_id: Option<IssueId>,
+    version: Option<VersionNumber>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct JobDisplay {
     id: TaskId,
     status: Status,
@@ -100,7 +101,7 @@ struct JobDisplay {
     last_change: Option<DateTime<Utc>>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct IssueRecord {
     id: IssueId,
     issue_type: IssueType,
@@ -111,6 +112,7 @@ struct IssueRecord {
     assignee: Option<String>,
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
+    version: Option<VersionNumber>,
 }
 
 #[derive(Default, Clone, PartialEq)]
@@ -307,7 +309,9 @@ struct IssueDetailsState {
 #[derive(Clone)]
 struct DashboardState {
     jobs: Vec<JobDetails>,
+    job_index: HashMap<TaskId, usize>,
     issues: Vec<IssueRecord>,
+    issue_index: HashMap<IssueId, usize>,
     repositories: Vec<RepositoryRecord>,
     issue_lines: IssueLines,
     user_unowned_issue_lines: IssueLines,
@@ -365,7 +369,9 @@ impl Default for DashboardState {
 
         let mut state = Self {
             jobs: Vec::new(),
+            job_index: HashMap::new(),
             issues: Vec::new(),
+            issue_index: HashMap::new(),
             repositories: Vec::new(),
             issue_lines: IssueLines::default(),
             user_unowned_issue_lines: IssueLines::default(),
@@ -2678,12 +2684,17 @@ async fn refresh_jobs(
     for summary in response.jobs {
         let issue_id = summary.task.spawned_from.clone();
         let display = summarize_job(summary, now);
-        jobs.push(JobDetails { display, issue_id });
+        jobs.push(JobDetails {
+            display,
+            issue_id,
+            version: None,
+        });
     }
 
     let jobs_changed = jobs != state.jobs;
     if jobs_changed {
         state.jobs = jobs;
+        rebuild_job_index(state);
     }
 
     let derived_changed = update_views(state);
@@ -2700,6 +2711,7 @@ async fn refresh_records(
     let issues_changed = issues != state.issues;
     if issues_changed {
         state.issues = issues;
+        rebuild_issue_index(state);
     }
     let repositories_changed = repositories != state.repositories;
     if repositories_changed {
@@ -2745,6 +2757,7 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
         assignee: issue.assignee,
         dependencies: issue.dependencies,
         patches: issue.patches,
+        version: None,
     })
 }
 
@@ -2795,6 +2808,88 @@ fn update_views(state: &mut DashboardState) -> bool {
     reconcile_issue_details(state);
 
     changed || issue_details_open != state.issue_details.is_open
+}
+
+fn rebuild_job_index(state: &mut DashboardState) {
+    state.job_index = state
+        .jobs
+        .iter()
+        .enumerate()
+        .map(|(i, job)| (job.display.id.clone(), i))
+        .collect();
+}
+
+fn rebuild_issue_index(state: &mut DashboardState) {
+    state.issue_index = state
+        .issues
+        .iter()
+        .enumerate()
+        .map(|(i, issue)| (issue.id.clone(), i))
+        .collect();
+}
+
+/// Insert or update a single job in the dashboard state and refresh derived views.
+/// Returns `true` if the state changed.
+#[allow(dead_code)]
+fn apply_job_update(state: &mut DashboardState, job: JobDetails) -> bool {
+    let job_id = job.display.id.clone();
+    if let Some(&idx) = state.job_index.get(&job_id) {
+        if state.jobs[idx] == job {
+            return update_views(state);
+        }
+        state.jobs[idx] = job;
+    } else {
+        let idx = state.jobs.len();
+        state.jobs.push(job);
+        state.job_index.insert(job_id, idx);
+    }
+    update_views(state);
+    true
+}
+
+/// Insert or update a single issue in the dashboard state and refresh derived views.
+/// Returns `true` if the state changed.
+#[allow(dead_code)]
+fn apply_issue_update(state: &mut DashboardState, issue: IssueRecord) -> bool {
+    let issue_id = issue.id.clone();
+    if let Some(&idx) = state.issue_index.get(&issue_id) {
+        if state.issues[idx] == issue {
+            return update_views(state);
+        }
+        state.issues[idx] = issue;
+    } else {
+        let idx = state.issues.len();
+        state.issues.push(issue);
+        state.issue_index.insert(issue_id, idx);
+    }
+    update_views(state);
+    true
+}
+
+/// Remove a job from the dashboard state by task ID and refresh derived views.
+/// Returns `true` if the state changed.
+#[allow(dead_code)]
+fn remove_job(state: &mut DashboardState, task_id: &TaskId) -> bool {
+    let Some(&idx) = state.job_index.get(task_id) else {
+        return update_views(state);
+    };
+    state.jobs.swap_remove(idx);
+    rebuild_job_index(state);
+    update_views(state);
+    true
+}
+
+/// Remove an issue from the dashboard state by issue ID and refresh derived views.
+/// Returns `true` if the state changed.
+#[allow(dead_code)]
+fn remove_issue(state: &mut DashboardState, issue_id: &IssueId) -> bool {
+    let Some(&idx) = state.issue_index.get(issue_id) else {
+        return update_views(state);
+    };
+    state.issues.swap_remove(idx);
+    rebuild_issue_index(state);
+    update_views(state);
+    true
 }
 
 fn reconcile_issue_details(state: &mut DashboardState) {
@@ -3640,6 +3735,7 @@ mod tests {
             assignee: None,
             dependencies,
             patches: Vec::new(),
+            version: None,
         }
     }
 
@@ -3654,6 +3750,7 @@ mod tests {
             assignee: assignee.map(str::to_string),
             dependencies: Vec::new(),
             patches: Vec::new(),
+            version: None,
         }
     }
 
@@ -3673,6 +3770,7 @@ mod tests {
             assignee: None,
             dependencies,
             patches: Vec::new(),
+            version: None,
         }
     }
 
@@ -3759,6 +3857,7 @@ mod tests {
                 last_change: Some(Utc::now()),
             },
             issue_id: linked_issue.map(issue_id),
+            version: None,
         }
     }
 
@@ -3935,6 +4034,7 @@ mod tests {
             assignee: None,
             dependencies: Vec::new(),
             patches: Vec::new(),
+            version: None,
         }];
 
         let lines = build_issue_lines(&issues, &[], false);
@@ -3956,6 +4056,7 @@ mod tests {
             assignee: Some("alice".to_string()),
             dependencies: Vec::new(),
             patches: Vec::new(),
+            version: None,
         };
 
         let lines = issue_detail_lines(&issue, "alice");
@@ -3983,6 +4084,7 @@ mod tests {
             assignee: None,
             dependencies: Vec::new(),
             patches: Vec::new(),
+            version: None,
         };
 
         let lines = issue_detail_lines(&issue, "bob");
@@ -4003,6 +4105,7 @@ mod tests {
             assignee: None,
             dependencies: Vec::new(),
             patches: Vec::new(),
+            version: None,
         };
 
         let lines = issue_detail_lines(&issue, "alice");
@@ -4044,6 +4147,7 @@ mod tests {
                 assignee: None,
                 dependencies: Vec::new(),
                 patches: Vec::new(),
+                version: None,
             },
             IssueRecord {
                 id: issue_id("i-other"),
@@ -4055,6 +4159,7 @@ mod tests {
                 assignee: None,
                 dependencies: Vec::new(),
                 patches: Vec::new(),
+                version: None,
             },
         ];
 
@@ -4079,6 +4184,7 @@ mod tests {
                 assignee: None,
                 dependencies: Vec::new(),
                 patches: Vec::new(),
+                version: None,
             },
             IssueRecord {
                 id: issue_id("i-other"),
@@ -4090,6 +4196,7 @@ mod tests {
                 assignee: None,
                 dependencies: Vec::new(),
                 patches: Vec::new(),
+                version: None,
             },
         ];
         let mut state = DashboardState {
@@ -4786,6 +4893,7 @@ mod tests {
                 assignee: Some("alice".to_string()),
                 dependencies: Vec::new(),
                 patches: Vec::new(),
+                version: None,
             },
             IssueRecord {
                 id: issue_id("i-child"),
@@ -4797,6 +4905,7 @@ mod tests {
                 assignee: Some("alice".to_string()),
                 dependencies: vec![child_of("i-root")],
                 patches: Vec::new(),
+                version: None,
             },
         ];
 
@@ -5742,5 +5851,259 @@ mod tests {
             row.push_str(buffer[(x, y)].symbol());
         }
         row.trim_end().to_string()
+    }
+
+    fn job_details(id: &str, status: Status) -> JobDetails {
+        let job = job_with_status(id, status, 0);
+        let display = summarize_job(job, Utc::now());
+        JobDetails {
+            display,
+            issue_id: None,
+            version: None,
+        }
+    }
+
+    fn state_with_issues(issues: Vec<IssueRecord>) -> DashboardState {
+        let mut state = DashboardState {
+            issues,
+            username: Username::from("alice"),
+            ..DashboardState::default()
+        };
+        rebuild_issue_index(&mut state);
+        update_views(&mut state);
+        state
+    }
+
+    fn state_with_jobs(jobs: Vec<JobDetails>) -> DashboardState {
+        let mut state = DashboardState {
+            jobs,
+            username: Username::from("alice"),
+            ..DashboardState::default()
+        };
+        rebuild_job_index(&mut state);
+        update_views(&mut state);
+        state
+    }
+
+    #[test]
+    fn apply_job_update_inserts_new_job() {
+        let mut state = DashboardState::default();
+        let job = job_details("t-new", Status::Running);
+
+        let changed = apply_job_update(&mut state, job.clone());
+
+        assert!(changed);
+        assert_eq!(state.jobs.len(), 1);
+        assert_eq!(state.jobs[0], job);
+        assert_eq!(state.job_index.get(&task_id("t-new")), Some(&0));
+    }
+
+    #[test]
+    fn apply_job_update_replaces_existing_job() {
+        let job_v1 = job_details("t-existing", Status::Running);
+        let mut state = state_with_jobs(vec![job_v1]);
+
+        let mut job_v2 = job_details("t-existing", Status::Complete);
+        job_v2.version = Some(2);
+        let changed = apply_job_update(&mut state, job_v2.clone());
+
+        assert!(changed);
+        assert_eq!(state.jobs.len(), 1);
+        assert_eq!(state.jobs[0], job_v2);
+        assert_eq!(state.job_index.get(&task_id("t-existing")), Some(&0));
+    }
+
+    #[test]
+    fn apply_job_update_noop_for_identical_job() {
+        let job = job_details("t-same", Status::Running);
+        let mut state = state_with_jobs(vec![job.clone()]);
+
+        let _changed = apply_job_update(&mut state, job);
+
+        // Views may still recompute, but the job data itself didn't change.
+        assert_eq!(state.jobs.len(), 1);
+    }
+
+    #[test]
+    fn apply_issue_update_inserts_new_issue() {
+        let mut state = DashboardState::default();
+        let new_issue = issue("i-new", IssueStatus::Open, vec![]);
+
+        let changed = apply_issue_update(&mut state, new_issue.clone());
+
+        assert!(changed);
+        assert_eq!(state.issues.len(), 1);
+        assert_eq!(state.issues[0], new_issue);
+        assert_eq!(state.issue_index.get(&issue_id("i-new")), Some(&0));
+    }
+
+    #[test]
+    fn apply_issue_update_replaces_existing_issue() {
+        let issue_v1 = issue("i-existing", IssueStatus::Open, vec![]);
+        let mut state = state_with_issues(vec![issue_v1]);
+
+        let mut issue_v2 = issue("i-existing", IssueStatus::InProgress, vec![]);
+        issue_v2.version = Some(2);
+        let changed = apply_issue_update(&mut state, issue_v2.clone());
+
+        assert!(changed);
+        assert_eq!(state.issues.len(), 1);
+        assert_eq!(state.issues[0], issue_v2);
+        assert_eq!(state.issue_index.get(&issue_id("i-existing")), Some(&0));
+    }
+
+    #[test]
+    fn apply_issue_update_noop_for_identical_issue() {
+        let iss = issue("i-same", IssueStatus::Open, vec![]);
+        let mut state = state_with_issues(vec![iss.clone()]);
+
+        let _changed = apply_issue_update(&mut state, iss);
+
+        assert_eq!(state.issues.len(), 1);
+    }
+
+    #[test]
+    fn remove_job_removes_existing_job() {
+        let job1 = job_details("t-one", Status::Running);
+        let job2 = job_details("t-two", Status::Complete);
+        let mut state = state_with_jobs(vec![job1, job2.clone()]);
+
+        let changed = remove_job(&mut state, &task_id("t-one"));
+
+        assert!(changed);
+        assert_eq!(state.jobs.len(), 1);
+        assert!(!state.job_index.contains_key(&task_id("t-one")));
+        assert!(state.job_index.contains_key(&task_id("t-two")));
+    }
+
+    #[test]
+    fn remove_job_noop_for_missing_id() {
+        let job = job_details("t-exists", Status::Running);
+        let mut state = state_with_jobs(vec![job]);
+
+        let _changed = remove_job(&mut state, &task_id("t-missing"));
+
+        assert_eq!(state.jobs.len(), 1);
+        assert!(state.job_index.contains_key(&task_id("t-exists")));
+    }
+
+    #[test]
+    fn remove_issue_removes_existing_issue() {
+        let iss1 = issue("i-one", IssueStatus::Open, vec![]);
+        let iss2 = issue("i-two", IssueStatus::InProgress, vec![]);
+        let mut state = state_with_issues(vec![iss1, iss2.clone()]);
+
+        let changed = remove_issue(&mut state, &issue_id("i-one"));
+
+        assert!(changed);
+        assert_eq!(state.issues.len(), 1);
+        assert!(!state.issue_index.contains_key(&issue_id("i-one")));
+        assert!(state.issue_index.contains_key(&issue_id("i-two")));
+    }
+
+    #[test]
+    fn remove_issue_noop_for_missing_id() {
+        let iss = issue("i-exists", IssueStatus::Open, vec![]);
+        let mut state = state_with_issues(vec![iss]);
+
+        let _changed = remove_issue(&mut state, &issue_id("i-missing"));
+
+        assert_eq!(state.issues.len(), 1);
+        assert!(state.issue_index.contains_key(&issue_id("i-exists")));
+    }
+
+    #[test]
+    fn rebuild_job_index_reflects_current_vec() {
+        let mut state = DashboardState {
+            jobs: vec![
+                job_details("t-a", Status::Running),
+                job_details("t-b", Status::Complete),
+            ],
+            ..DashboardState::default()
+        };
+        rebuild_job_index(&mut state);
+
+        assert_eq!(state.job_index.len(), 2);
+        assert_eq!(state.job_index.get(&task_id("t-a")), Some(&0));
+        assert_eq!(state.job_index.get(&task_id("t-b")), Some(&1));
+    }
+
+    #[test]
+    fn rebuild_issue_index_reflects_current_vec() {
+        let mut state = DashboardState {
+            issues: vec![
+                issue("i-a", IssueStatus::Open, vec![]),
+                issue("i-b", IssueStatus::InProgress, vec![]),
+            ],
+            ..DashboardState::default()
+        };
+        rebuild_issue_index(&mut state);
+
+        assert_eq!(state.issue_index.len(), 2);
+        assert_eq!(state.issue_index.get(&issue_id("i-a")), Some(&0));
+        assert_eq!(state.issue_index.get(&issue_id("i-b")), Some(&1));
+    }
+
+    #[test]
+    fn version_field_preserved_through_apply_update() {
+        let mut state = DashboardState::default();
+        let mut iss = issue("i-versioned", IssueStatus::Open, vec![]);
+        iss.version = Some(5);
+
+        apply_issue_update(&mut state, iss.clone());
+
+        assert_eq!(state.issues[0].version, Some(5));
+
+        let mut iss_v2 = issue("i-versioned", IssueStatus::InProgress, vec![]);
+        iss_v2.version = Some(6);
+        apply_issue_update(&mut state, iss_v2);
+
+        assert_eq!(state.issues[0].version, Some(6));
+    }
+
+    #[test]
+    fn job_version_field_preserved_through_apply_update() {
+        let mut state = DashboardState::default();
+        let mut job = job_details("t-versioned", Status::Running);
+        job.version = Some(3);
+
+        apply_job_update(&mut state, job.clone());
+
+        assert_eq!(state.jobs[0].version, Some(3));
+    }
+
+    #[test]
+    fn apply_multiple_issue_updates_maintains_index() {
+        let mut state = DashboardState::default();
+        let iss_a = issue("i-a", IssueStatus::Open, vec![]);
+        let iss_b = issue("i-b", IssueStatus::Open, vec![]);
+        let iss_c = issue("i-c", IssueStatus::Open, vec![]);
+
+        apply_issue_update(&mut state, iss_a);
+        apply_issue_update(&mut state, iss_b);
+        apply_issue_update(&mut state, iss_c);
+
+        assert_eq!(state.issues.len(), 3);
+        assert_eq!(state.issue_index.len(), 3);
+        assert_eq!(state.issue_index.get(&issue_id("i-a")), Some(&0));
+        assert_eq!(state.issue_index.get(&issue_id("i-b")), Some(&1));
+        assert_eq!(state.issue_index.get(&issue_id("i-c")), Some(&2));
+    }
+
+    #[test]
+    fn remove_then_insert_issue_works() {
+        let iss = issue("i-remove-reinsert", IssueStatus::Open, vec![]);
+        let mut state = state_with_issues(vec![iss.clone()]);
+
+        remove_issue(&mut state, &issue_id("i-remove-reinsert"));
+        assert_eq!(state.issues.len(), 0);
+        assert!(state.issue_index.is_empty());
+
+        apply_issue_update(&mut state, iss);
+        assert_eq!(state.issues.len(), 1);
+        assert_eq!(
+            state.issue_index.get(&issue_id("i-remove-reinsert")),
+            Some(&0)
+        );
     }
 }
