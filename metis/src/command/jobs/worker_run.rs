@@ -366,7 +366,6 @@ async fn submit_patch_artifact_if_present(
         description,
         Some(job.clone()),
         create_github_pr,
-        None,
         is_automatic_backup,
         false,
         service_repo_name.clone(),
@@ -775,17 +774,33 @@ mod tests {
     async fn submit_patch_artifact_if_present_creates_patch_from_uncommitted_changes() -> Result<()>
     {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
-        let repo_path = tempdir.path();
-        setup_git_repo_with_initial_commit(repo_path)?;
+        let repo_path = tempdir.path().join("repo");
+        let bare_path = tempdir.path().join("remote.git");
+        std::fs::create_dir_all(&repo_path)?;
+        Repository::init_bare(&bare_path).context("failed to init bare remote")?;
+        let repo = Repository::init(&repo_path).context("failed to init git repo for test")?;
+        // Ensure the default branch is "main" regardless of system git config.
+        repo.set_head("refs/heads/main")
+            .context("failed to set HEAD to main")?;
+        git_configure_repo(&repo_path, "Test User", "test@example.com")?;
+        let remote_url = bare_path.to_str().context("bare path not utf-8")?;
+        repo.remote("origin", remote_url)
+            .context("failed to set remote origin")?;
+
+        create_initial_commit(&repo_path, "README.md", "initial content")?;
         let base_commit =
-            resolve_head_oid(repo_path)?.expect("expected HEAD commit after initial setup");
+            resolve_head_oid(&repo_path)?.expect("expected HEAD commit after initial setup");
+        // Push to origin so merge-base resolution works.
+        push_branch(&repo_path, "main", None, false)?;
+
         std::fs::write(repo_path.join("README.md"), "updated content\n")?;
         std::fs::write(repo_path.join("untracked.txt"), "untracked content\n")?;
 
         let job_id = task_id("t-job-123");
         let repo_name = RepoName::from_str("dourolabs/example")?;
-        let diff = workdir_diff(repo_path)?;
-        let expected_request = UpsertPatchRequest::new(Patch::new(
+        let diff = workdir_diff(&repo_path)?;
+        let branch_name = git_current_branch(&repo_path)?;
+        let mut expected_patch = Patch::new(
             "final output line".to_string(),
             "final output line".to_string(),
             diff.clone(),
@@ -796,7 +811,14 @@ mod tests {
             repo_name.clone(),
             None,
             false,
+        );
+        expected_patch.branch_name = Some(branch_name);
+        // Merge-base of HEAD with origin/main is the initial commit (same as HEAD here).
+        expected_patch.commit_range = Some(metis_common::patches::CommitRange::new(
+            base_commit,
+            base_commit,
         ));
+        let expected_request = UpsertPatchRequest::new(expected_patch);
         let server = MockServer::start();
         let patch_mock = server.mock(|when, then| {
             when.method(POST)
@@ -805,13 +827,18 @@ mod tests {
             then.status(200)
                 .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123")));
         });
+        // Mock the github token endpoint (always called now, but returns 401).
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/github/token");
+            then.status(401);
+        });
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
 
         submit_patch_artifact_if_present(
             &client,
             &job_id,
-            repo_path,
+            &repo_path,
             "final output line",
             &repo_name,
             Some(base_commit),
