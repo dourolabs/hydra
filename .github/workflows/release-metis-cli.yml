@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  pages: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -103,3 +104,115 @@ jobs:
           files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-apt:
+    name: Publish to APT repository
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building .deb for version ${VERSION}"
+
+      - name: Download Linux binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: metis-x86_64-unknown-linux-gnu
+          path: artifacts
+
+      - name: Build .deb package
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DEB_NAME="metis_${VERSION}-1_amd64"
+          PKG_DIR="${DEB_NAME}"
+
+          mkdir -p "${PKG_DIR}/DEBIAN"
+          mkdir -p "${PKG_DIR}/usr/bin"
+
+          printf '%s\n' \
+            "Package: metis" \
+            "Version: ${VERSION}-1" \
+            "Section: utils" \
+            "Priority: optional" \
+            "Architecture: amd64" \
+            "Maintainer: Douro Labs <eng@dourolabs.com>" \
+            "Description: Metis CLI" \
+            " Build orchestration and development tool." \
+            > "${PKG_DIR}/DEBIAN/control"
+
+          cp artifacts/metis-x86_64-unknown-linux-gnu "${PKG_DIR}/usr/bin/metis"
+          chmod 755 "${PKG_DIR}/usr/bin/metis"
+
+          dpkg-deb --build "${PKG_DIR}"
+          echo "Built ${DEB_NAME}.deb"
+          ls -lh "${DEB_NAME}.deb"
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.APT_GPG_PASSPHRASE }}
+
+      - name: Fetch existing GitHub Pages content
+        run: |
+          git fetch origin gh-pages:gh-pages || true
+          mkdir -p apt-repo
+          if git show gh-pages:apt/ > /dev/null 2>&1; then
+            git archive gh-pages -- apt/ | tar -x -C apt-repo --strip-components=1
+            echo "Restored existing APT repository content"
+          else
+            echo "No existing APT repository found, starting fresh"
+          fi
+
+      - name: Add .deb to pool and generate APT metadata
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DEB_FILE="metis_${VERSION}-1_amd64.deb"
+          GPG_KEY_ID="$(gpg --list-secret-keys --keyid-format long 2>/dev/null \
+            | grep -m1 '^sec' | awk '{print $2}' | cut -d/ -f2)"
+
+          # Create pool directory structure
+          mkdir -p apt-repo/pool/main/m/metis
+          cp "${DEB_FILE}" "apt-repo/pool/main/m/metis/"
+
+          # Create dists directory structure
+          mkdir -p apt-repo/dists/stable/main/binary-amd64
+
+          # Generate Packages file
+          cd apt-repo
+          dpkg-scanpackages pool/ /dev/null > dists/stable/main/binary-amd64/Packages
+          gzip -k -f dists/stable/main/binary-amd64/Packages
+
+          # Generate Release file
+          cd dists/stable
+          apt-ftparchive release . > Release
+
+          # Sign the Release file
+          gpg --default-key "${GPG_KEY_ID}" --armor --detach-sign \
+              --output Release.gpg Release
+          gpg --default-key "${GPG_KEY_ID}" --armor --clearsign \
+              --output InRelease Release
+
+          cd ../..
+
+          # Export public key for user download
+          gpg --armor --export "${GPG_KEY_ID}" > gpg-key.pub
+
+          echo "APT repository structure:"
+          find . -type f | sort
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./apt-repo
+          destination_dir: apt
+          keep_files: true

@@ -41,6 +41,18 @@ shlex = "1.3"
 unicode-width = "0.1.14"
 openssl-sys = { workspace = true }
 
+[package.metadata.deb]
+maintainer = "Douro Labs <eng@dourolabs.com>"
+copyright = "2025, Douro Labs"
+license-file = ["../LICENSE", "0"]
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/x86_64-unknown-linux-gnu/release/metis", "usr/bin/", "755"],
+]
+extended-description = "Metis CLI — build orchestration and development tool."
+
 [dev-dependencies]
 httpmock = "0.7"
 metis-server = { path = "../metis-server", features = ["test-utils"] }
