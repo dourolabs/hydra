@@ -2,8 +2,7 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::api::v1::events::{
-    EntityEventData, EventsQuery, HeartbeatEventData, ResyncEventData, SnapshotEventData,
-    SseEventType,
+    EntityEventData, HeartbeatEventData, ResyncEventData, SnapshotEventData, SseEventType,
 };
 use std::pin::Pin;
 
@@ -141,7 +140,7 @@ fn parse_event_block(block: &str) -> Option<SseEvent> {
 
     let data = data_lines.join("\n");
     let event_type = match event_name.as_deref() {
-        Some(name) => parse_event_type(name)?,
+        Some(name) => name.parse::<SseEventType>().ok()?,
         None => return None,
     };
 
@@ -150,47 +149,6 @@ fn parse_event_block(block: &str) -> Option<SseEvent> {
         id: id_value,
         data,
     })
-}
-
-fn parse_event_type(name: &str) -> Option<SseEventType> {
-    match name {
-        "issue_created" => Some(SseEventType::IssueCreated),
-        "issue_updated" => Some(SseEventType::IssueUpdated),
-        "issue_deleted" => Some(SseEventType::IssueDeleted),
-        "patch_created" => Some(SseEventType::PatchCreated),
-        "patch_updated" => Some(SseEventType::PatchUpdated),
-        "patch_deleted" => Some(SseEventType::PatchDeleted),
-        "job_created" => Some(SseEventType::JobCreated),
-        "job_updated" => Some(SseEventType::JobUpdated),
-        "document_created" => Some(SseEventType::DocumentCreated),
-        "document_updated" => Some(SseEventType::DocumentUpdated),
-        "document_deleted" => Some(SseEventType::DocumentDeleted),
-        "snapshot" => Some(SseEventType::Snapshot),
-        "resync" => Some(SseEventType::Resync),
-        "heartbeat" => Some(SseEventType::Heartbeat),
-        _ => None,
-    }
-}
-
-/// Build query string parameters from an EventsQuery for use in URL construction.
-pub(crate) fn events_query_params(query: &EventsQuery) -> Vec<(&str, String)> {
-    let mut params = Vec::new();
-    if let Some(ref types) = query.types {
-        params.push(("types", types.clone()));
-    }
-    if let Some(ref ids) = query.issue_ids {
-        params.push(("issue_ids", ids.clone()));
-    }
-    if let Some(ref ids) = query.job_ids {
-        params.push(("job_ids", ids.clone()));
-    }
-    if let Some(ref ids) = query.patch_ids {
-        params.push(("patch_ids", ids.clone()));
-    }
-    if let Some(ref ids) = query.document_ids {
-        params.push(("document_ids", ids.clone()));
-    }
-    params
 }
 
 #[cfg(test)]

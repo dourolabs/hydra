@@ -1384,14 +1384,16 @@ impl MetisClient {
         query: &EventsQuery,
         last_event_id: Option<u64>,
     ) -> Result<Option<SseEventStream>> {
+        use metis_common::api::v1::events::LAST_EVENT_ID_HEADER;
+
         let url = self.endpoint("/v1/events")?;
         let mut builder = self
             .authed(self.http.get(url))
-            .query(&sse::events_query_params(query))
+            .query(&query.query_pairs())
             .header(header::ACCEPT, "text/event-stream");
 
         if let Some(id) = last_event_id {
-            builder = builder.header("Last-Event-ID", id.to_string());
+            builder = builder.header(LAST_EVENT_ID_HEADER, id.to_string());
         }
 
         let response = match builder.send().await {

@@ -5,7 +5,6 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
 use metis_common::{
-    api::v1::events::{EventsQuery, SseEventType},
     jobs::{BundleSpec, CreateJobRequest, SearchJobsQuery},
     logs::LogsQuery,
     task_status::{Status, TaskError},
@@ -109,117 +108,6 @@ pub(crate) async fn stream_job_logs_via_server(
 }
 
 async fn wait_for_job_completion_via_server(
-    client: &dyn MetisClientInterface,
-    job_id: &TaskId,
-    output_format: ResolvedOutputFormat,
-) -> Result<()> {
-    // Try SSE first, falling back to polling if unavailable.
-    let query = EventsQuery {
-        types: Some("jobs".to_string()),
-        job_ids: Some(job_id.to_string()),
-        ..EventsQuery::default()
-    };
-
-    match client.subscribe_events(&query, None).await {
-        Ok(Some(mut stream)) => {
-            // SSE path: listen for job completion/failure events.
-            // Also poll periodically as a safety net.
-            let mut poll_tick = tokio::time::interval(Duration::from_secs(30));
-            loop {
-                tokio::select! {
-                    maybe_event = stream.next() => {
-                        match maybe_event {
-                            Some(Ok(event)) => {
-                                match event.event_type {
-                                    SseEventType::JobUpdated => {
-                                        // A job update occurred — check its status.
-                                        if let Ok(result) = check_job_status(client, job_id, output_format).await {
-                                            return result;
-                                        }
-                                    }
-                                    SseEventType::Resync | SseEventType::Snapshot => {
-                                        if let Ok(result) = check_job_status(client, job_id, output_format).await {
-                                            return result;
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            Some(Err(_)) | None => {
-                                // Stream error or ended — fall back to polling.
-                                break;
-                            }
-                        }
-                    }
-                    _ = poll_tick.tick() => {
-                        if let Ok(result) = check_job_status(client, job_id, output_format).await {
-                            return result;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(None) | Err(_) => {
-            // SSE not available — use polling.
-        }
-    }
-
-    // Polling fallback.
-    poll_for_job_completion(client, job_id, output_format).await
-}
-
-/// Check if a job has reached a terminal status. Returns `Ok(Ok(()))` for complete,
-/// `Ok(Err(...))` for failed, and `Err(())` if the job is still running.
-async fn check_job_status(
-    client: &dyn MetisClientInterface,
-    job_id: &TaskId,
-    output_format: ResolvedOutputFormat,
-) -> std::result::Result<Result<()>, ()> {
-    let response = match client.list_jobs(&SearchJobsQuery::default()).await {
-        Ok(r) => r,
-        Err(_) => return Err(()),
-    };
-
-    if let Some(job) = response
-        .jobs
-        .iter()
-        .find(|job| job.id.as_ref() == job_id.as_ref())
-    {
-        match job.status_log.current_status() {
-            Status::Complete => {
-                if output_format == ResolvedOutputFormat::Pretty {
-                    eprintln!("Job '{job_id}' completed successfully.");
-                }
-                return Ok(Ok(()));
-            }
-            Status::Failed => {
-                let reason = job
-                    .task
-                    .error
-                    .as_ref()
-                    .map(|e| match e {
-                        TaskError::JobEngineError { reason } => reason.clone(),
-                        other => format!("{other:?}"),
-                    })
-                    .or_else(|| {
-                        job.status_log.result().and_then(|r| {
-                            r.err().map(|e| match e {
-                                TaskError::JobEngineError { reason } => reason,
-                                other => format!("{other:?}"),
-                            })
-                        })
-                    })
-                    .unwrap_or_else(|| "job failed without an error message".to_string());
-                return Ok(Err(anyhow::anyhow!("Job '{job_id}' failed: {reason}")));
-            }
-            _ => {}
-        }
-    }
-
-    Err(())
-}
-
-async fn poll_for_job_completion(
     client: &dyn MetisClientInterface,
     job_id: &TaskId,
     output_format: ResolvedOutputFormat,
