@@ -1,3 +1,5 @@
+pub mod sse;
+
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -5,6 +7,7 @@ use futures::{stream, Stream, StreamExt};
 use metis_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::error::ApiErrorBody,
+    api::v1::events::EventsQuery,
     api::v1::login::{LoginRequest, LoginResponse},
     documents::{
         DocumentRecord, DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
@@ -39,6 +42,7 @@ use metis_common::{
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
 use serde::Deserialize;
+use sse::SseEventStream;
 use std::path::Path;
 use std::pin::Pin;
 
@@ -219,6 +223,14 @@ pub trait MetisClientInterface: Send + Sync {
     async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueRecord>;
     async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchRecord>;
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentRecord>;
+
+    /// Open an SSE connection to GET /v1/events and return a stream of parsed events.
+    /// Returns `Ok(None)` if the server does not support SSE (e.g. older version).
+    async fn subscribe_events(
+        &self,
+        query: &EventsQuery,
+        last_event_id: Option<u64>,
+    ) -> Result<Option<SseEventStream>>;
 }
 
 impl MetisClientUnauthenticated {
@@ -1363,6 +1375,59 @@ impl MetisClient {
             .context("failed to decode delete document response")
     }
 
+    /// Open an SSE connection to GET /v1/events.
+    ///
+    /// Returns `Ok(None)` if the server returns a non-SSE response (e.g. 404),
+    /// indicating the server does not support the events endpoint.
+    pub async fn subscribe_events(
+        &self,
+        query: &EventsQuery,
+        last_event_id: Option<u64>,
+    ) -> Result<Option<SseEventStream>> {
+        let url = self.endpoint("/v1/events")?;
+        let mut builder = self
+            .authed(self.http.get(url))
+            .query(&sse::events_query_params(query))
+            .header(header::ACCEPT, "text/event-stream");
+
+        if let Some(id) = last_event_id {
+            builder = builder.header("Last-Event-ID", id.to_string());
+        }
+
+        let response = match builder.send().await {
+            Ok(resp) => resp,
+            Err(err) => {
+                // Connection error — treat as SSE unavailable for fallback.
+                return Err(anyhow!("failed to connect to events endpoint: {err}"));
+            }
+        };
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!("events endpoint returned {status}: {body}"));
+        }
+
+        let is_sse = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.starts_with("text/event-stream"))
+            .unwrap_or(false);
+
+        if !is_sse {
+            return Ok(None);
+        }
+
+        Ok(Some(sse::parse_sse_event_stream(Box::pin(
+            response.bytes_stream(),
+        ))))
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -1720,6 +1785,14 @@ impl MetisClientInterface for MetisClient {
 
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentRecord> {
         MetisClient::delete_document(self, document_id).await
+    }
+
+    async fn subscribe_events(
+        &self,
+        query: &EventsQuery,
+        last_event_id: Option<u64>,
+    ) -> Result<Option<SseEventStream>> {
+        MetisClient::subscribe_events(self, query, last_event_id).await
     }
 }
 

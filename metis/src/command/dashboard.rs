@@ -12,6 +12,7 @@ use crossterm::event::{
 };
 use futures::StreamExt;
 use metis_common::{
+    api::v1::events::{EventsQuery, SseEventType},
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueRecord as ApiIssueRecord, IssueStatus,
         IssueType, JobSettings, SearchIssuesQuery, UpsertIssueRequest,
@@ -37,7 +38,7 @@ use tui_textarea::TextArea;
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    client::MetisClientInterface,
+    client::{sse::SseEventStream, MetisClientInterface},
     command::{jobs, output::CommandContext},
 };
 
@@ -47,6 +48,7 @@ use panel::{keybinding_line_from_labels, wrapped_content_len, Panel, PanelEvent,
 
 const JOB_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const RECORD_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const SSE_POLL_FALLBACK_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_MESSAGE_WIDTH: usize = 90;
 const USER_ISSUES_PANEL_CONTENT_HEIGHT: u16 = 5;
 const USER_ISSUES_PANEL_HEIGHT: u16 = USER_ISSUES_PANEL_CONTENT_HEIGHT + 2;
@@ -476,9 +478,22 @@ async fn run_dashboard_loop(
         state.records_error = Some(format!("Failed to load records: {err}"));
     }
 
+    // Try to connect to SSE for real-time updates.
+    let mut sse_stream: Option<SseEventStream> = try_connect_sse(client).await;
+    let sse_active = sse_stream.is_some();
+
     let mut events = EventStream::new();
-    let mut jobs_tick = tokio::time::interval(JOB_REFRESH_INTERVAL);
-    let mut records_tick = tokio::time::interval(RECORD_REFRESH_INTERVAL);
+    // Use longer polling intervals when SSE is active (heartbeat/consistency check).
+    let mut jobs_tick = tokio::time::interval(if sse_active {
+        SSE_POLL_FALLBACK_INTERVAL
+    } else {
+        JOB_REFRESH_INTERVAL
+    });
+    let mut records_tick = tokio::time::interval(if sse_active {
+        SSE_POLL_FALLBACK_INTERVAL
+    } else {
+        RECORD_REFRESH_INTERVAL
+    });
 
     loop {
         if needs_draw {
@@ -489,6 +504,71 @@ async fn run_dashboard_loop(
         }
 
         tokio::select! {
+            // SSE event stream — only active when we have a connection.
+            sse_event = async {
+                match sse_stream.as_mut() {
+                    Some(stream) => stream.next().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match sse_event {
+                    Some(Ok(event)) => {
+                        match event.event_type {
+                            SseEventType::JobCreated | SseEventType::JobUpdated => {
+                                match refresh_jobs(client, &mut state).await {
+                                    Ok(changed) => {
+                                        state.jobs_error = None;
+                                        needs_draw |= changed;
+                                    }
+                                    Err(err) => {
+                                        state.jobs_error = Some(format!("Failed to refresh jobs: {err}"));
+                                        needs_draw = true;
+                                    }
+                                }
+                            }
+                            SseEventType::IssueCreated
+                            | SseEventType::IssueUpdated
+                            | SseEventType::IssueDeleted
+                            | SseEventType::PatchCreated
+                            | SseEventType::PatchUpdated
+                            | SseEventType::PatchDeleted
+                            | SseEventType::DocumentCreated
+                            | SseEventType::DocumentUpdated
+                            | SseEventType::DocumentDeleted => {
+                                match refresh_records(client, &mut state).await {
+                                    Ok(changed) => {
+                                        state.records_error = None;
+                                        needs_draw |= changed;
+                                    }
+                                    Err(err) => {
+                                        state.records_error =
+                                            Some(format!("Failed to refresh records: {err}"));
+                                        needs_draw = true;
+                                    }
+                                }
+                            }
+                            SseEventType::Resync | SseEventType::Snapshot => {
+                                // Full refresh on resync/snapshot.
+                                if let Err(err) = refresh_jobs(client, &mut state).await {
+                                    state.jobs_error = Some(format!("Failed to refresh jobs: {err}"));
+                                }
+                                if let Err(err) = refresh_records(client, &mut state).await {
+                                    state.records_error =
+                                        Some(format!("Failed to refresh records: {err}"));
+                                }
+                                needs_draw = true;
+                            }
+                            SseEventType::Heartbeat => {}
+                        }
+                    }
+                    Some(Err(_)) | None => {
+                        // SSE stream dropped — fall back to fast polling.
+                        sse_stream = None;
+                        jobs_tick = tokio::time::interval(JOB_REFRESH_INTERVAL);
+                        records_tick = tokio::time::interval(RECORD_REFRESH_INTERVAL);
+                    }
+                }
+            }
             _ = jobs_tick.tick() => {
                 match refresh_jobs(client, &mut state).await {
                     Ok(changed) => {
@@ -576,6 +656,14 @@ async fn run_dashboard_loop(
     }
 
     Ok(())
+}
+
+/// Attempt to connect to the SSE events endpoint. Returns `None` if unavailable.
+async fn try_connect_sse(client: &dyn MetisClientInterface) -> Option<SseEventStream> {
+    client
+        .subscribe_events(&EventsQuery::default(), None)
+        .await
+        .unwrap_or_default()
 }
 
 fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
