@@ -594,14 +594,10 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
     let state = handles.state.clone();
     let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
 
-    let oldest_id = task_id("t-oldest");
-    let middle_id = task_id("t-middle");
-    let newest_id = task_id("t-newest");
     let now = Utc::now();
-    handles
+    let (oldest_id, _) = handles
         .store
-        .add_task_with_id(
-            oldest_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -620,10 +616,9 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
             now - Duration::seconds(30),
         )
         .await?;
-    handles
+    let (middle_id, _) = handles
         .store
-        .add_task_with_id(
-            middle_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -642,10 +637,9 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
             now - Duration::seconds(20),
         )
         .await?;
-    handles
+    let (newest_id, _) = handles
         .store
-        .add_task_with_id(
-            newest_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -689,12 +683,10 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
     let state = handles.state;
     let default_image = default_image();
     let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
-    let job_id = task_id("t-jobab");
     let now = Utc::now();
-    handles
+    let (job_id, _) = handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -753,12 +745,10 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
     let state = handles.state;
     let default_image = default_image();
     let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
-    let job_id = task_id("t-trim");
     let now = Utc::now();
-    handles
+    let (job_id, _) = handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1009,11 +999,9 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
     let state = handles.state;
     let default_image = default_image();
     let check_state = state.clone();
-    let job_id = task_id("t-spawn");
-    handles
+    let (job_id, _) = handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1082,11 +1070,9 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();
-    let job_id = task_id("t-lastmsg");
-    handles
+    let (job_id, _) = handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1140,11 +1126,9 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
 async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
-    let job_id = task_id("t-fail");
-    handles
+    let (job_id, _) = handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1195,11 +1179,9 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
 async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
-    let job_id = task_id("t-status");
-    handles
+    let (job_id, _) = handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1249,11 +1231,9 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();
-    let job_id = task_id("t-output");
-    handles
+    let (job_id, _) = handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1372,12 +1352,9 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
         url: "https://example.com/repo.git".to_string(),
         rev: "main".to_string(),
     };
-    let parent_job_id = task_id("t-parentjob");
-    let ctx_job_id = task_id("t-ctxjob");
-    handles
+    let (parent_job_id, _) = handles
         .store
-        .add_task_with_id(
-            parent_job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1418,10 +1395,9 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
     state
         .transition_task_to_completion(&parent_job_id, Ok(()), None)
         .await?;
-    handles
+    let (ctx_job_id, _) = handles
         .store
-        .add_task_with_id(
-            ctx_job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: context_spec.clone(),
@@ -1469,11 +1445,9 @@ async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();
-    let job_id = task_id("t-modeljob");
-    handles
+    let (job_id, _) = handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1511,11 +1485,9 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();
-    let job_id = task_id("t-envjob");
-    handles
+    let (job_id, _) = handles
         .store
-        .add_task_with_id(
-            job_id.clone(),
+        .add_task(
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
@@ -1545,8 +1517,12 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
     assert!(response.status().is_success());
     let body: v1::jobs::WorkerContext = response.json().await?;
     assert_eq!(
-        body.variables,
-        HashMap::from([("SECRET_VALUE".to_string(), "keep-me-safe".to_string())])
+        body.variables.get("SECRET_VALUE").map(String::as_str),
+        Some("keep-me-safe")
+    );
+    assert_eq!(
+        body.variables.get("METIS_ID").map(String::as_str),
+        Some(job_id.as_ref())
     );
     Ok(())
 }

@@ -211,15 +211,6 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_task_with_id(
-        &self,
-        _metis_id: TaskId,
-        _task: Task,
-        _creation_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        fail()
-    }
-
     async fn update_task(
         &self,
         _metis_id: &TaskId,
