@@ -369,6 +369,13 @@ impl Store for StoreWithEvents {
         self.inner.list_patches(query).await
     }
 
+    async fn find_open_patch_by_branch_name(
+        &self,
+        branch_name: &str,
+    ) -> Result<Option<(PatchId, Patch)>, StoreError> {
+        self.inner.find_open_patch_by_branch_name(branch_name).await
+    }
+
     async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
         self.inner.delete_patch(id).await?;
         self.event_bus.emit_patch_deleted(id.clone());

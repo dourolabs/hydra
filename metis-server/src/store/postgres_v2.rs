@@ -1377,6 +1377,43 @@ impl Store for PostgresStoreV2 {
         Ok(patches)
     }
 
+    async fn find_open_patch_by_branch_name(
+        &self,
+        branch_name: &str,
+    ) -> Result<Option<(PatchId, Patch)>, StoreError> {
+        // Use a DISTINCT ON subquery to get the latest version of each patch,
+        // then filter for open/changes-requested, non-deleted, matching branch_name.
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, \
+             is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, \
+             branch_name, commit_range, created_at, updated_at \
+             FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
+        );
+        let sql = format!(
+            "SELECT * FROM ({subquery}) AS latest \
+             WHERE latest.branch_name = $1 \
+             AND latest.status IN ('Open', 'ChangesRequested') \
+             AND latest.deleted = false \
+             LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, PatchRow>(&sql)
+            .bind(branch_name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        match row {
+            Some(row) => {
+                let patch = self.row_to_patch(&row)?;
+                let patch_id = row.id.parse::<PatchId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid patch id stored in database: {err}"))
+                })?;
+                Ok(Some((patch_id, patch)))
+            }
+            None => Ok(None),
+        }
+    }
+
     async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
         let current = self.get_patch(id, true).await?;
         let mut patch = current.item;

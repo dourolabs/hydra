@@ -535,6 +535,21 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
                 "failed to create github pull request for '{owner}/{repo}': {source}"
             ))
         }
+        UpsertPatchError::DuplicateBranchName {
+            existing_patch_id,
+            branch_name,
+        } => {
+            error!(
+                existing_patch_id = %existing_patch_id,
+                branch_name = %branch_name,
+                "duplicate branch name for open patch"
+            );
+            ApiError::conflict(format!(
+                "Can't create patch because an open patch '{existing_patch_id}' already exists \
+                 for branch '{branch_name}'. Consider updating that patch with: \
+                 metis patches update {existing_patch_id}"
+            ))
+        }
         UpsertPatchError::Store { source } => {
             error!(error = %source, "patch store operation failed");
             ApiError::internal(anyhow!("patch store error: {source}"))

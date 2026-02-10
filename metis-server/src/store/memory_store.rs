@@ -11,7 +11,7 @@ use crate::domain::{
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
     },
-    patches::Patch,
+    patches::{Patch, PatchStatus},
     users::{User, Username},
 };
 use metis_common::api::v1::documents::SearchDocumentsQuery;
@@ -630,6 +630,33 @@ impl Store for MemoryStore {
                 Some((entry.key().clone(), latest))
             })
             .collect())
+    }
+
+    async fn find_open_patch_by_branch_name(
+        &self,
+        branch_name: &str,
+    ) -> Result<Option<(PatchId, Patch)>, StoreError> {
+        Ok(self
+            .patches
+            .iter()
+            .filter_map(|entry| {
+                let latest = Self::latest_versioned(entry.value())?;
+                if latest.item.deleted {
+                    return None;
+                }
+                if !matches!(
+                    latest.item.status,
+                    PatchStatus::Open | PatchStatus::ChangesRequested
+                ) {
+                    return None;
+                }
+                if latest.item.branch_name.as_deref() == Some(branch_name) {
+                    Some((entry.key().clone(), latest.item))
+                } else {
+                    None
+                }
+            })
+            .next())
     }
 
     async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
@@ -3591,5 +3618,111 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert_eq!(tasks, vec![task3_id]);
+    }
+
+    #[tokio::test]
+    async fn find_open_patch_by_branch_name_returns_matching_open_patch() {
+        let store = MemoryStore::new();
+        let mut patch = sample_patch();
+        patch.branch_name = Some("feature/foo".to_string());
+        let id = store.add_patch(patch).await.unwrap();
+
+        let result = store
+            .find_open_patch_by_branch_name("feature/foo")
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        let (found_id, _) = result.unwrap();
+        assert_eq!(found_id, id);
+    }
+
+    #[tokio::test]
+    async fn find_open_patch_by_branch_name_ignores_closed_patches() {
+        let store = MemoryStore::new();
+        let mut patch = sample_patch();
+        patch.branch_name = Some("feature/closed".to_string());
+        patch.status = PatchStatus::Closed;
+        store.add_patch(patch).await.unwrap();
+
+        let result = store
+            .find_open_patch_by_branch_name("feature/closed")
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn find_open_patch_by_branch_name_ignores_merged_patches() {
+        let store = MemoryStore::new();
+        let mut patch = sample_patch();
+        patch.branch_name = Some("feature/merged".to_string());
+        patch.status = PatchStatus::Merged;
+        store.add_patch(patch).await.unwrap();
+
+        let result = store
+            .find_open_patch_by_branch_name("feature/merged")
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn find_open_patch_by_branch_name_matches_changes_requested() {
+        let store = MemoryStore::new();
+        let mut patch = sample_patch();
+        patch.branch_name = Some("feature/cr".to_string());
+        patch.status = PatchStatus::ChangesRequested;
+        let id = store.add_patch(patch).await.unwrap();
+
+        let result = store
+            .find_open_patch_by_branch_name("feature/cr")
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        let (found_id, _) = result.unwrap();
+        assert_eq!(found_id, id);
+    }
+
+    #[tokio::test]
+    async fn find_open_patch_by_branch_name_ignores_deleted_patches() {
+        let store = MemoryStore::new();
+        let mut patch = sample_patch();
+        patch.branch_name = Some("feature/deleted".to_string());
+        let id = store.add_patch(patch).await.unwrap();
+        store.delete_patch(&id).await.unwrap();
+
+        let result = store
+            .find_open_patch_by_branch_name("feature/deleted")
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn find_open_patch_by_branch_name_returns_none_for_no_match() {
+        let store = MemoryStore::new();
+        let mut patch = sample_patch();
+        patch.branch_name = Some("feature/other".to_string());
+        store.add_patch(patch).await.unwrap();
+
+        let result = store
+            .find_open_patch_by_branch_name("feature/nonexistent")
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn find_open_patch_by_branch_name_returns_none_when_no_branch() {
+        let store = MemoryStore::new();
+        // Patch without branch_name
+        let patch = sample_patch();
+        store.add_patch(patch).await.unwrap();
+
+        let result = store
+            .find_open_patch_by_branch_name("feature/foo")
+            .await
+            .unwrap();
+        assert!(result.is_none());
     }
 }

@@ -1259,6 +1259,56 @@ impl Store for PostgresStore {
         self.fetch_latest_patches(query).await
     }
 
+    async fn find_open_patch_by_branch_name(
+        &self,
+        branch_name: &str,
+    ) -> Result<Option<(PatchId, Patch)>, StoreError> {
+        // Query the latest version of each patch, filter for open/changes-requested status
+        // with matching branch_name.
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number, created_at \
+             FROM {TABLE_PATCHES} ORDER BY id, version_number DESC"
+        );
+        let sql = format!(
+            "SELECT * FROM ({subquery}) AS latest \
+             WHERE latest.payload->>'branch_name' = $1 \
+             AND latest.payload->>'status' IN ('Open', 'ChangesRequested') \
+             AND COALESCE((latest.payload->>'deleted')::boolean, false) = false \
+             LIMIT 1"
+        );
+
+        #[derive(sqlx::FromRow)]
+        struct PatchRow {
+            id: String,
+            #[allow(dead_code)]
+            schema_version: i32,
+            payload: Value,
+            #[allow(dead_code)]
+            version_number: i64,
+            #[allow(dead_code)]
+            created_at: DateTime<Utc>,
+        }
+
+        let row = sqlx::query_as::<_, PatchRow>(&sql)
+            .bind(branch_name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        match row {
+            Some(row) => {
+                let patch: Patch = serde_json::from_value(row.payload).map_err(|e| {
+                    StoreError::Internal(format!("failed to deserialize patch: {e}"))
+                })?;
+                let patch_id = row.id.parse::<PatchId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid patch id stored in database: {err}"))
+                })?;
+                Ok(Some((patch_id, patch)))
+            }
+            None => Ok(None),
+        }
+    }
+
     async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
         let current = self.get_patch(id, true).await?;
         let mut patch = current.item;

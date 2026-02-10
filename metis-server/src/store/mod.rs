@@ -250,6 +250,14 @@ pub trait Store: Send + Sync {
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError>;
 
+    /// Finds an open (Open or ChangesRequested) non-deleted patch with the given branch name.
+    ///
+    /// Returns the first matching `(PatchId, Patch)` if one exists.
+    async fn find_open_patch_by_branch_name(
+        &self,
+        branch_name: &str,
+    ) -> Result<Option<(PatchId, Patch)>, StoreError>;
+
     /// Soft-deletes a patch by setting its `deleted` flag to true.
     ///
     /// This creates a new version of the patch with `deleted: true`.

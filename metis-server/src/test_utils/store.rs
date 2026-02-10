@@ -127,6 +127,13 @@ impl Store for FailingStore {
         fail()
     }
 
+    async fn find_open_patch_by_branch_name(
+        &self,
+        _branch_name: &str,
+    ) -> Result<Option<(PatchId, Patch)>, StoreError> {
+        fail()
+    }
+
     async fn delete_patch(&self, _id: &PatchId) -> Result<(), StoreError> {
         fail()
     }
