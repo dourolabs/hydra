@@ -1288,10 +1288,13 @@ impl AppState {
             return;
         }
 
-        let store_task_ids: Vec<TaskId> = {
+        let store_tasks: HashMap<TaskId, Status> = {
             let store = self.store.as_ref();
             match store.list_tasks(&SearchJobsQuery::default()).await {
-                Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
+                Ok(tasks) => tasks
+                    .into_iter()
+                    .map(|(id, versioned)| (id, versioned.item.status))
+                    .collect(),
                 Err(err) => {
                     error!(error = %err, "failed to list tasks from store for job reconciliation");
                     return;
@@ -1299,26 +1302,33 @@ impl AppState {
             }
         };
 
-        let store_task_set: HashSet<_> = store_task_ids.into_iter().collect();
-        let orphaned_jobs: Vec<_> = job_engine_jobs
+        let jobs_to_kill: Vec<_> = job_engine_jobs
             .into_iter()
-            .filter(|job| !store_task_set.contains(&job.id))
+            .filter(|job| match store_tasks.get(&job.id) {
+                None => true,
+                Some(status) => matches!(status, Status::Complete | Status::Failed),
+            })
             .collect();
 
-        if !orphaned_jobs.is_empty() {
+        if !jobs_to_kill.is_empty() {
             info!(
-                count = orphaned_jobs.len(),
-                "killing jobs present in engine but missing from store"
+                count = jobs_to_kill.len(),
+                "killing orphaned jobs (missing from store or in terminal state)"
             );
         }
 
-        for job in orphaned_jobs {
+        for job in jobs_to_kill {
+            let reason = if store_tasks.contains_key(&job.id) {
+                "task in terminal state"
+            } else {
+                "task not present in store"
+            };
             match self.job_engine.kill_job(&job.id).await {
                 Ok(()) => {
-                    info!(metis_id = %job.id, "killed job not present in store");
+                    info!(metis_id = %job.id, reason, "killed orphaned job");
                 }
                 Err(err) => {
-                    warn!(metis_id = %job.id, error = %err, "failed to kill job not present in store");
+                    warn!(metis_id = %job.id, reason, error = %err, "failed to kill orphaned job");
                 }
             }
         }
@@ -3302,6 +3312,84 @@ mod tests {
             .expect("orphan job should exist")
             .status;
         assert_eq!(orphan_status, JobStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn reap_orphaned_jobs_kills_jobs_with_failed_task() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        // Create a task and transition it to Failed
+        let (failed_task_id, _) = {
+            let store = state.store.as_ref();
+            store.add_task(sample_task(), Utc::now()).await.unwrap()
+        };
+        state
+            .transition_task_to_completion(
+                &failed_task_id,
+                Err(TaskError::JobEngineError {
+                    reason: "simulated failure".to_string(),
+                }),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Insert a K8s job for the failed task
+        job_engine
+            .insert_job(&failed_task_id, JobStatus::Running)
+            .await;
+
+        state.reap_orphaned_jobs().await;
+
+        let job_status = job_engine
+            .find_job_by_metis_id(&failed_task_id)
+            .await
+            .expect("job should still exist in engine")
+            .status;
+        assert_eq!(
+            job_status,
+            JobStatus::Failed,
+            "job for a Failed task should be killed"
+        );
+    }
+
+    #[tokio::test]
+    async fn reap_orphaned_jobs_preserves_jobs_with_running_task() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        // Create a task and transition it to Running
+        let (running_task_id, _) = {
+            let store = state.store.as_ref();
+            store.add_task(sample_task(), Utc::now()).await.unwrap()
+        };
+        state
+            .transition_task_to_pending(&running_task_id)
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&running_task_id)
+            .await
+            .unwrap();
+
+        // Insert a K8s job for the running task
+        job_engine
+            .insert_job(&running_task_id, JobStatus::Running)
+            .await;
+
+        state.reap_orphaned_jobs().await;
+
+        let job_status = job_engine
+            .find_job_by_metis_id(&running_task_id)
+            .await
+            .expect("job should still exist in engine")
+            .status;
+        assert_eq!(
+            job_status,
+            JobStatus::Running,
+            "job for a Running task should NOT be killed"
+        );
     }
 
     #[tokio::test]
