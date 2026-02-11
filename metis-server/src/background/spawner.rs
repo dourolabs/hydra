@@ -13,9 +13,9 @@ use crate::{
 };
 use anyhow::Context;
 use async_trait::async_trait;
-use metis_common::IssueId;
 #[cfg(test)]
 use metis_common::RepoName;
+use metis_common::{IssueId, VersionNumber};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::str::FromStr;
@@ -30,10 +30,11 @@ pub trait Spawner: Send + Sync {
     async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Task>>;
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct SpawnAttempt {
     status: IssueStatus,
     attempts: u32,
+    children_snapshot: HashMap<IssueId, VersionNumber>,
 }
 
 pub struct AgentQueue {
@@ -135,18 +136,24 @@ impl AgentQueue {
         &self,
         issue_id: &IssueId,
         status: IssueStatus,
+        children_snapshot: HashMap<IssueId, VersionNumber>,
         max_tries: u32,
     ) -> bool {
         let mut attempts = self.spawn_attempts.write().await;
         let entry = attempts.entry(issue_id.clone()).or_insert(SpawnAttempt {
             status,
             attempts: 0,
+            children_snapshot: HashMap::new(),
         });
 
-        if entry.status != status {
+        let status_changed = entry.status != status;
+        let children_changed = entry.children_snapshot != children_snapshot;
+
+        if status_changed || children_changed {
             *entry = SpawnAttempt {
                 status,
                 attempts: 0,
+                children_snapshot,
             };
         }
 
@@ -246,8 +253,21 @@ impl Spawner for AgentQueue {
             };
 
             let max_tries = self.max_tries_for_issue(&issue);
+            let children_snapshot = {
+                let child_ids = state
+                    .get_issue_children(&issue_id)
+                    .await
+                    .unwrap_or_default();
+                let mut snapshot = HashMap::new();
+                for child_id in child_ids {
+                    if let Ok(child) = state.get_issue(&child_id, false).await {
+                        snapshot.insert(child_id, child.version);
+                    }
+                }
+                snapshot
+            };
             if !self
-                .register_spawn_attempt(&issue_id, issue.status, max_tries)
+                .register_spawn_attempt(&issue_id, issue.status, children_snapshot, max_tries)
                 .await
             {
                 continue;
@@ -1091,6 +1111,160 @@ mod tests {
 
         let tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resets_attempt_counter_when_child_created() -> anyhow::Result<()> {
+        let mut queue = queue("agent-a");
+        queue.max_tries = 1;
+
+        let (handles, repo_name) = state_with_repository().await?;
+        let (parent_id, _) = handles
+            .store
+            .add_issue(issue(
+                "Parent with children progress",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
+
+        // First spawn attempt succeeds (attempt 1 of 1).
+        let mut tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        record_completed_task(&handles, tasks.remove(0)).await?;
+
+        // Second attempt should be blocked (max_tries=1 reached).
+        assert!(queue.spawn(&handles.state).await?.is_empty());
+
+        // Create a child issue — this counts as progress on the parent.
+        // Assign to a different agent so it doesn't spawn here.
+        handles
+            .store
+            .add_issue(issue(
+                "Child issue",
+                IssueStatus::Open,
+                Some("agent-b"),
+                vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )],
+                &repo_name,
+            ))
+            .await?;
+
+        // Now the counter should have reset, so spawning succeeds again.
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
+            Some(parent_id.as_ref())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resets_attempt_counter_when_child_updated() -> anyhow::Result<()> {
+        let mut queue = queue("agent-a");
+        queue.max_tries = 1;
+
+        let (handles, repo_name) = state_with_repository().await?;
+        let (parent_id, _) = handles
+            .store
+            .add_issue(issue(
+                "Parent with child update",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
+
+        // Create a child before the first spawn.
+        let (child_id, _) = handles
+            .store
+            .add_issue(issue(
+                "Child issue",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )],
+                &repo_name,
+            ))
+            .await?;
+
+        // First spawn attempt succeeds.
+        let mut tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 2); // parent + child both eligible
+        for t in tasks.drain(..) {
+            record_completed_task(&handles, t).await?;
+        }
+
+        // Further attempts should be blocked for both.
+        assert!(queue.spawn(&handles.state).await?.is_empty());
+
+        // Update the child issue — this counts as progress on the parent.
+        let child = handles.store.get_issue(&child_id, false).await?;
+        let mut child_item = child.item;
+        child_item.status = IssueStatus::InProgress;
+        handles.store.update_issue(&child_id, child_item).await?;
+
+        // Parent's counter should have reset (child version changed).
+        // Child's counter should also reset (its status changed).
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn does_not_reset_counter_when_children_unchanged() -> anyhow::Result<()> {
+        let mut queue = queue("agent-a");
+        queue.max_tries = 1;
+
+        let (handles, repo_name) = state_with_repository().await?;
+        let (parent_id, _) = handles
+            .store
+            .add_issue(issue(
+                "Parent no progress",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
+
+        // Create a child before the first spawn.
+        handles
+            .store
+            .add_issue(issue(
+                "Child issue",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )],
+                &repo_name,
+            ))
+            .await?;
+
+        // First spawn consumes both parent and child.
+        let mut tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 2);
+        for t in tasks.drain(..) {
+            record_completed_task(&handles, t).await?;
+        }
+
+        // No changes to children — counter should NOT reset, so no tasks spawn.
+        let tasks = queue.spawn(&handles.state).await?;
+        assert!(tasks.is_empty());
 
         Ok(())
     }

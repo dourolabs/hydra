@@ -2297,6 +2297,11 @@ impl AppState {
         store.get_tasks_for_issue(issue_id).await
     }
 
+    pub async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
+        let store = self.store.as_ref();
+        store.get_issue_children(issue_id).await
+    }
+
     pub async fn repository_from_store(&self, name: &RepoName) -> Result<Repository, StoreError> {
         let store = self.store.as_ref();
         // Use include_deleted: false since API callers should not see deleted repositories
