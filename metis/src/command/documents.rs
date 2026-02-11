@@ -400,7 +400,7 @@ fn save_manifest(directory: &Path, manifest: &SyncManifest) -> Result<()> {
     Ok(())
 }
 
-async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -> Result<()> {
+pub async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -> Result<()> {
     let directory = &args.directory;
 
     // Create directory if it doesn't exist
@@ -583,7 +583,7 @@ fn collect_local_files_recursive(
     Ok(())
 }
 
-async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -> Result<()> {
+pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -> Result<()> {
     let directory = &args.directory;
 
     // Safety guard: refuse to operate without a manifest
@@ -678,9 +678,7 @@ async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -> Re
                 let response = client
                     .create_document(&UpsertDocumentRequest::new(document))
                     .await
-                    .with_context(|| {
-                        format!("failed to create document for '{relative_path}'")
-                    })?;
+                    .with_context(|| format!("failed to create document for '{relative_path}'"))?;
 
                 new_entries.insert(
                     relative_path.to_string(),
