@@ -10,5 +10,6 @@ pub const ENV_METIS_API_ORIGIN: &str = "METIS_API_ORIGIN";
 pub const ENV_METIS_ID: &str = "METIS_ID";
 pub const ENV_METIS_ISSUE_ID: &str = "METIS_ISSUE_ID";
 pub const ENV_METIS_TOKEN: &str = "METIS_TOKEN";
+pub const ENV_METIS_DOCUMENTS_DIR: &str = "METIS_DOCUMENTS_DIR";
 pub const ENV_METIS_STORE_VERSION: &str = "METIS_STORE_VERSION";
 pub const ENV_BROWSER: &str = "BROWSER";

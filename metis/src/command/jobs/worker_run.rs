@@ -8,7 +8,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
-    constants::{ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID},
+    constants::{ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ISSUE_ID},
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     patches::GitOid,
@@ -17,6 +17,7 @@ use metis_common::{
 use tempfile::Builder;
 
 use crate::build_cache::build_cache_client;
+use crate::command::documents::{push_documents, sync_documents, PushArgs, SyncArgs};
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
 use crate::git::{
     clone_repo, commit_changes, configure_repo, push_branch, resolve_head_oid, stage_all_changes,
@@ -129,6 +130,35 @@ pub async fn run(
         }
     }
 
+    // Sync documents to a temporary directory (best-effort).
+    let documents_dir = Builder::new()
+        .prefix("metis-documents")
+        .tempdir()
+        .context("failed to create temporary documents directory")?;
+    let documents_path = documents_dir.path().to_path_buf();
+    match sync_documents(
+        client,
+        SyncArgs {
+            directory: documents_path.clone(),
+            path_prefix: None,
+            clean: false,
+        },
+    )
+    .await
+    {
+        Ok(()) => {
+            execution_env.insert(
+                ENV_METIS_DOCUMENTS_DIR.to_string(),
+                documents_path.to_string_lossy().to_string(),
+            );
+        }
+        Err(err) => {
+            log_status(format!(
+                "Warning: document sync failed, continuing without METIS_DOCUMENTS_DIR: {err}"
+            ));
+        }
+    }
+
     let output_dir = Builder::new()
         .prefix("codex-output")
         .tempdir()
@@ -167,6 +197,22 @@ pub async fn run(
             github_token.as_deref(),
         ) {
             errors.push(err.context("failed to finalize task output branches"));
+        }
+    }
+
+    // Push document changes back to the server (best-effort).
+    if execution_env.contains_key(ENV_METIS_DOCUMENTS_DIR) {
+        if let Err(err) = push_documents(
+            client,
+            PushArgs {
+                directory: documents_path.clone(),
+                dry_run: false,
+                path_prefix: None,
+            },
+        )
+        .await
+        {
+            log_status(format!("Warning: document push failed, continuing: {err}"));
         }
     }
 
