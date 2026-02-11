@@ -650,7 +650,7 @@ pub(crate) fn format_runtime(task: &Task, now: DateTime<Utc>) -> Option<String> 
     }
 }
 
-fn format_duration(duration: ChronoDuration) -> String {
+pub(crate) fn format_duration(duration: ChronoDuration) -> String {
     let total_seconds = duration.num_seconds();
     if total_seconds <= 0 {
         return "0s".to_string();

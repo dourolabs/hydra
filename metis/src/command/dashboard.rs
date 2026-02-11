@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use crossterm::event::{
     Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
@@ -101,6 +101,8 @@ struct JobDisplay {
     runtime: Option<String>,
     note: String,
     last_change: Option<DateTime<Utc>>,
+    start_time: Option<DateTime<Utc>>,
+    creation_time: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -681,6 +683,8 @@ async fn run_dashboard_loop_sse(
                 }
             }
             _ = render_tick.tick() => {
+                refresh_job_runtimes(state);
+                update_views(state);
                 *needs_draw = true;
             }
         }
@@ -3868,6 +3872,33 @@ fn summarize_job(job: JobRecord, now: DateTime<Utc>) -> JobDisplay {
         runtime,
         note,
         last_change,
+        start_time: job.task.start_time,
+        creation_time: job.task.creation_time,
+    }
+}
+
+/// Recalculate runtime strings for jobs with active statuses (Running, Pending, Created).
+/// Completed/Failed jobs use fixed end_time - start_time and do not need refreshing.
+fn refresh_job_runtimes(state: &mut DashboardState) {
+    let now = Utc::now();
+    for job in &mut state.jobs {
+        let d = &mut job.display;
+        match d.status {
+            Status::Running => {
+                let started = d.start_time.or(d.creation_time);
+                d.runtime = started.map(|s| {
+                    let dur = if now < s { TimeDelta::zero() } else { now - s };
+                    output::format_duration(dur)
+                });
+            }
+            Status::Pending | Status::Created => {
+                d.runtime = d.creation_time.map(|c| {
+                    let dur = if now < c { TimeDelta::zero() } else { now - c };
+                    output::format_duration(dur)
+                });
+            }
+            _ => {}
+        }
     }
 }
 
@@ -4198,6 +4229,8 @@ mod tests {
                 runtime: runtime.map(|value| value.to_string()),
                 note: "-".to_string(),
                 last_change: Some(Utc::now()),
+                start_time: None,
+                creation_time: None,
             },
             issue_id: linked_issue.map(issue_id),
             version: None,
