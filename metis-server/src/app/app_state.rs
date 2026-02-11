@@ -178,6 +178,8 @@ pub enum UpsertPatchError {
 
 #[derive(Debug, Error)]
 pub enum UpsertDocumentError {
+    #[error("document path contains hidden segments (components starting with '.'): {path}")]
+    InvalidPath { path: String },
     #[error("job '{job_id}' not found")]
     JobNotFound {
         #[source]
@@ -511,6 +513,13 @@ impl AppState {
         document_id: Option<DocumentId>,
         document: Document,
     ) -> Result<DocumentId, UpsertDocumentError> {
+        if let Some(path) = &document.path {
+            let normalized = path.strip_prefix('/').unwrap_or(path);
+            if has_hidden_segment(normalized) {
+                return Err(UpsertDocumentError::InvalidPath { path: path.clone() });
+            }
+        }
+
         let store = self.store.as_ref();
         match document_id {
             Some(id) => {
@@ -2553,13 +2562,22 @@ fn merge_request_issue_title(patch: &Patch) -> String {
         .to_string()
 }
 
+/// Returns true if any component of the given path starts with a dot character,
+/// indicating a hidden file or directory.
+fn has_hidden_segment(path: &str) -> bool {
+    path.split('/').any(|seg| seg.starts_with('.'))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{LoginError, UpsertIssueError, UpsertPatchError};
+    use super::{
+        LoginError, UpsertDocumentError, UpsertIssueError, UpsertPatchError, has_hidden_segment,
+    };
     use crate::{
         app::{AppState, ServerEvent, ServiceState},
         domain::{
             actors::Actor,
+            documents::Document,
             issues::{
                 Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
                 TodoItem,
@@ -4422,5 +4440,101 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn has_hidden_segment_detects_dot_prefixed_components() {
+        assert!(has_hidden_segment(".hidden"));
+        assert!(has_hidden_segment(".hidden/file.md"));
+        assert!(has_hidden_segment("dir/.hidden/file.md"));
+        assert!(has_hidden_segment("dir/.git/config"));
+        assert!(!has_hidden_segment("visible.md"));
+        assert!(!has_hidden_segment("dir/file.md"));
+        assert!(!has_hidden_segment("dir/sub/file.txt"));
+    }
+
+    #[tokio::test]
+    async fn upsert_document_rejects_hidden_path() {
+        let state = test_state();
+        let document = Document {
+            title: "Test".to_string(),
+            body_markdown: "body".to_string(),
+            path: Some(".hidden/file.md".to_string()),
+            created_by: None,
+            deleted: false,
+        };
+
+        let result = state.upsert_document(None, document).await;
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), UpsertDocumentError::InvalidPath { path } if path == ".hidden/file.md")
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_document_rejects_hidden_path_with_leading_slash() {
+        let state = test_state();
+        let document = Document {
+            title: "Test".to_string(),
+            body_markdown: "body".to_string(),
+            path: Some("/.hidden/file.md".to_string()),
+            created_by: None,
+            deleted: false,
+        };
+
+        let result = state.upsert_document(None, document).await;
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), UpsertDocumentError::InvalidPath { path } if path == "/.hidden/file.md")
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_document_rejects_nested_hidden_segment() {
+        let state = test_state();
+        let document = Document {
+            title: "Test".to_string(),
+            body_markdown: "body".to_string(),
+            path: Some("docs/.secret/notes.md".to_string()),
+            created_by: None,
+            deleted: false,
+        };
+
+        let result = state.upsert_document(None, document).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            UpsertDocumentError::InvalidPath { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn upsert_document_allows_normal_path() {
+        let state = test_state();
+        let document = Document {
+            title: "Test".to_string(),
+            body_markdown: "body".to_string(),
+            path: Some("docs/notes.md".to_string()),
+            created_by: None,
+            deleted: false,
+        };
+
+        let result = state.upsert_document(None, document).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn upsert_document_allows_no_path() {
+        let state = test_state();
+        let document = Document {
+            title: "Test".to_string(),
+            body_markdown: "body".to_string(),
+            path: None,
+            created_by: None,
+            deleted: false,
+        };
+
+        let result = state.upsert_document(None, document).await;
+        assert!(result.is_ok());
     }
 }
