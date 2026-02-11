@@ -171,7 +171,7 @@ If one or more patches have been created:
 - If the Patch is Merged, then this task may be complete. However, please look at the review feedback and see if there are any follow-up tasks
    that should be created.
    - Follow-up issues discovered during review are **independent work items** — create them as siblings (no child-of dependency):
-     "metis issues create \\"<description>\\" --assignee swe"
+     "metis issues create \\"<description>\\" "
    - Do NOT use --deps child-of:\$METIS_ISSUE_ID for follow-ups. Reserve child-of for sub-tasks that are part of completing the current issue.
 - If the patch_status is ChangesRequested (typically from a review left without closing the PR), after addressing all comments, run
   "metis patches update --patch-id <PATCH_ID> --status Open" to reopen the patch for review. This keeps the same patch id and
@@ -179,6 +179,7 @@ If one or more patches have been created:
   issue is created for the same patch when reopened).
 - If the Patch is Closed, then there is significant feedback and the patch needs to be reworked
    and resubmitted. Please make the needed updates to the code and resubmit another patch.
+- In any case where you are revising existing work, be sure to rebase changes on top of main to ensure mergeability.   
 
 Once you have merged all changes needed for this task and all follow-ups have been finished, then this task is complete.
 Update the issue tracker to mark the task as closed: "metis issues update \$METIS_ISSUE_ID --status closed
