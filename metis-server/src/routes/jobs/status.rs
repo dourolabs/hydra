@@ -29,6 +29,10 @@ pub async fn set_job_status(
                 );
                 ApiError::not_found(format!("Job '{job_id}' not found in store"))
             }
+            SetJobStatusError::InvalidStatusTransition { job_id } => {
+                info!(job_id = %job_id, "invalid status transition for task");
+                ApiError::conflict(format!("Invalid status transition for job '{job_id}'"))
+            }
             SetJobStatusError::Store { source, job_id } => {
                 error!(error = %source, job_id = %job_id, "failed to update task status");
                 ApiError::internal(anyhow!("Failed to update task status: {source}"))
