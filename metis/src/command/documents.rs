@@ -278,6 +278,10 @@ async fn create_document(
         if path.trim().is_empty() {
             bail!("document path must not be empty when provided");
         }
+        let normalized = path.strip_prefix('/').unwrap_or(path);
+        if has_hidden_segment(normalized) {
+            bail!("document path must not contain hidden segments (starting with '.')");
+        }
     }
 
     let body = args.body.read_required(true)?;
@@ -336,6 +340,10 @@ async fn update_document(
     } else if let Some(path) = &args.path {
         if path.trim().is_empty() {
             bail!("document path must not be empty when provided");
+        }
+        let normalized = path.strip_prefix('/').unwrap_or(path);
+        if has_hidden_segment(normalized) {
+            bail!("document path must not contain hidden segments (starting with '.')");
         }
         if document.path.as_deref() != Some(path.as_str()) {
             document.path = Some(path.clone());
@@ -433,6 +441,12 @@ async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -> Re
         let doc_path = record.document.path.as_deref().unwrap();
         // Strip leading slash if present for filesystem path
         let relative_path = doc_path.strip_prefix('/').unwrap_or(doc_path);
+
+        // Skip hidden files/directories (path segments starting with '.')
+        if has_hidden_segment(relative_path) {
+            continue;
+        }
+
         server_paths.insert(relative_path.to_string());
 
         let content_hash = compute_content_hash(&record.document.body_markdown);
@@ -532,7 +546,14 @@ fn title_from_filename(filename: &str) -> String {
     }
 }
 
-/// Collect local files in a directory, returning relative paths (excluding the manifest).
+/// Returns true if any component of the given path starts with a dot character,
+/// indicating a hidden file or directory.
+fn has_hidden_segment(path: &str) -> bool {
+    path.split('/').any(|seg| seg.starts_with('.'))
+}
+
+/// Collect local files in a directory, returning relative paths (excluding the manifest
+/// and hidden files/directories).
 fn collect_local_files(directory: &Path, path_prefix: Option<&str>) -> Result<Vec<String>> {
     let mut files = Vec::new();
     collect_local_files_recursive(directory, directory, path_prefix, &mut files)?;
@@ -553,6 +574,14 @@ fn collect_local_files_recursive(
             format!("failed to read directory entry in '{}'", current.display())
         })?;
         let path = entry.path();
+
+        // Skip hidden files and directories (names starting with '.')
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with('.') {
+                continue;
+            }
+        }
+
         if path.is_dir() {
             collect_local_files_recursive(base, &path, path_prefix, files)?;
         } else {
@@ -678,9 +707,7 @@ async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -> Re
                 let response = client
                     .create_document(&UpsertDocumentRequest::new(document))
                     .await
-                    .with_context(|| {
-                        format!("failed to create document for '{relative_path}'")
-                    })?;
+                    .with_context(|| format!("failed to create document for '{relative_path}'"))?;
 
                 new_entries.insert(
                     relative_path.to_string(),
@@ -1821,5 +1848,40 @@ mod tests {
         let files = collect_local_files(dir.path(), Some("/playbooks")).unwrap();
         assert_eq!(files.len(), 1);
         assert!(files.contains(&"playbooks/deploy.md".to_string()));
+    }
+
+    #[test]
+    fn collect_local_files_excludes_hidden_files() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("visible.md"), "content").unwrap();
+        fs::write(dir.path().join(".hidden"), "secret").unwrap();
+
+        let files = collect_local_files(dir.path(), None).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files.contains(&"visible.md".to_string()));
+    }
+
+    #[test]
+    fn collect_local_files_excludes_hidden_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".hidden_dir")).unwrap();
+        fs::write(dir.path().join(".hidden_dir/doc.md"), "content").unwrap();
+        fs::create_dir_all(dir.path().join("visible_dir")).unwrap();
+        fs::write(dir.path().join("visible_dir/doc.md"), "content").unwrap();
+
+        let files = collect_local_files(dir.path(), None).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files.contains(&"visible_dir/doc.md".to_string()));
+    }
+
+    #[test]
+    fn has_hidden_segment_detects_dot_prefixed_components() {
+        assert!(has_hidden_segment(".hidden"));
+        assert!(has_hidden_segment(".hidden/file.md"));
+        assert!(has_hidden_segment("dir/.hidden/file.md"));
+        assert!(has_hidden_segment("dir/.git/config"));
+        assert!(!has_hidden_segment("visible.md"));
+        assert!(!has_hidden_segment("dir/file.md"));
+        assert!(!has_hidden_segment("dir/sub/file.txt"));
     }
 }
