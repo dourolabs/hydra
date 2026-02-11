@@ -630,8 +630,11 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
     let mut created_count = 0u64;
     let mut unchanged_count = 0u64;
     let mut conflict_count = 0u64;
+    let mut deleted_count = 0u64;
 
     let mut new_entries = manifest.documents.clone();
+
+    let local_files_set: HashSet<&String> = local_files.iter().collect();
 
     for relative_path in &local_files {
         let file_path = directory.join(relative_path);
@@ -723,6 +726,34 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
         }
     }
 
+    // Detect deletions: manifest entries whose files no longer exist locally
+    for (manifest_path, entry) in &manifest.documents {
+        // Apply path prefix filter to only consider entries within the active prefix
+        if let Some(ref prefix) = args.path_prefix {
+            let prefix_stripped = prefix.strip_prefix('/').unwrap_or(prefix);
+            if !manifest_path.starts_with(prefix_stripped) {
+                continue;
+            }
+        }
+
+        if !local_files_set.contains(manifest_path) {
+            let doc_id = &entry.document_id;
+            if args.dry_run {
+                println!("Would delete: {manifest_path} ({doc_id})");
+            } else {
+                client
+                    .delete_document(&entry.document_id)
+                    .await
+                    .with_context(|| {
+                        format!("failed to delete document '{}'", entry.document_id)
+                    })?;
+                new_entries.remove(manifest_path);
+                println!("Deleted: {manifest_path} ({doc_id})");
+            }
+            deleted_count += 1;
+        }
+    }
+
     // Update manifest (only if not dry-run)
     if !args.dry_run {
         let updated_manifest = SyncManifest {
@@ -734,10 +765,10 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
     }
 
     let prefix = if args.dry_run { "Dry run: " } else { "" };
-    let total = updated_count + created_count;
+    let total = updated_count + created_count + deleted_count;
     let dir_display = directory.display();
     println!(
-        "{prefix}Pushed {total} document(s) from '{dir_display}' ({updated_count} updated, {created_count} created, {unchanged_count} unchanged, {conflict_count} conflicts)"
+        "{prefix}Pushed {total} document(s) from '{dir_display}' ({updated_count} updated, {created_count} created, {deleted_count} deleted, {unchanged_count} unchanged, {conflict_count} conflicts)"
     );
 
     Ok(())
@@ -1883,5 +1914,173 @@ mod tests {
         assert!(!has_hidden_segment("visible.md"));
         assert!(!has_hidden_segment("dir/file.md"));
         assert!(!has_hidden_segment("dir/sub/file.txt"));
+    }
+
+    #[tokio::test]
+    async fn push_documents_deletes_locally_removed_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let body = "# To be deleted";
+
+        // Create manifest with an entry, but don't create the local file
+        let mut documents = BTreeMap::new();
+        documents.insert(
+            "docs/old.md".to_string(),
+            SyncManifestEntry {
+                document_id: doc_id.clone(),
+                content_hash: compute_content_hash(body),
+            },
+        );
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents,
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        // Create the docs directory but not the file (simulating local deletion)
+        fs::create_dir_all(dir.path().join("docs")).unwrap();
+
+        // Mock server: DELETE document
+        let server = MockServer::start();
+        let doc_id_for_delete = doc_id.clone();
+        let delete_mock = server.mock(move |when, then| {
+            when.method(DELETE)
+                .path(format!("/v1/documents/{doc_id_for_delete}").as_str());
+            let record = DocumentRecord::new(
+                doc_id_for_delete.clone(),
+                DocumentPayload::new("Old".to_string(), body.to_string(), true),
+            );
+            then.status(200).json_body_obj(&record);
+        });
+        let client = mock_client(&server);
+
+        push_documents(
+            &client,
+            PushArgs {
+                directory: dir.path().to_path_buf(),
+                dry_run: false,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        delete_mock.assert();
+
+        // Verify manifest no longer contains the deleted entry
+        let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert!(!updated_manifest.documents.contains_key("docs/old.md"));
+    }
+
+    #[tokio::test]
+    async fn push_documents_dry_run_does_not_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let body = "# To be deleted";
+
+        // Create manifest with an entry, but don't create the local file
+        let mut documents = BTreeMap::new();
+        documents.insert(
+            "docs/old.md".to_string(),
+            SyncManifestEntry {
+                document_id: doc_id.clone(),
+                content_hash: compute_content_hash(body),
+            },
+        );
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents,
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        let server = MockServer::start();
+        // No DELETE mock — should not be called in dry-run
+        let client = mock_client(&server);
+
+        push_documents(
+            &client,
+            PushArgs {
+                directory: dir.path().to_path_buf(),
+                dry_run: true,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Manifest should NOT have been updated (dry-run)
+        let loaded_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert_eq!(loaded_manifest.synced_at, "2026-02-11T00:00:00Z");
+        assert!(loaded_manifest.documents.contains_key("docs/old.md"));
+    }
+
+    #[tokio::test]
+    async fn push_documents_delete_with_path_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let playbook_id = DocumentId::new();
+        let guide_id = DocumentId::new();
+
+        // Create manifest with entries in two directories
+        let mut documents = BTreeMap::new();
+        documents.insert(
+            "playbooks/old.md".to_string(),
+            SyncManifestEntry {
+                document_id: playbook_id.clone(),
+                content_hash: compute_content_hash("# Old playbook"),
+            },
+        );
+        documents.insert(
+            "guides/old.md".to_string(),
+            SyncManifestEntry {
+                document_id: guide_id.clone(),
+                content_hash: compute_content_hash("# Old guide"),
+            },
+        );
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents,
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        // Don't create either file locally (both "deleted"),
+        // but only push with --path-prefix /playbooks
+        fs::create_dir_all(dir.path().join("playbooks")).unwrap();
+        fs::create_dir_all(dir.path().join("guides")).unwrap();
+
+        let server = MockServer::start();
+        let playbook_id_for_delete = playbook_id.clone();
+        let delete_mock = server.mock(move |when, then| {
+            when.method(DELETE)
+                .path(format!("/v1/documents/{playbook_id_for_delete}").as_str());
+            let record = DocumentRecord::new(
+                playbook_id_for_delete.clone(),
+                DocumentPayload::new("Old".to_string(), "# Old playbook".to_string(), true),
+            );
+            then.status(200).json_body_obj(&record);
+        });
+        let client = mock_client(&server);
+
+        push_documents(
+            &client,
+            PushArgs {
+                directory: dir.path().to_path_buf(),
+                dry_run: false,
+                path_prefix: Some("/playbooks".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Only playbooks/old.md should have been deleted
+        delete_mock.assert_hits(1);
+
+        let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        // playbooks/old.md should be removed from manifest
+        assert!(!updated_manifest.documents.contains_key("playbooks/old.md"));
+        // guides/old.md should still be in manifest (not affected by path prefix)
+        assert!(updated_manifest.documents.contains_key("guides/old.md"));
     }
 }
