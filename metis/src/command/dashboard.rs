@@ -40,6 +40,7 @@ use unicode_width::UnicodeWidthChar;
 use crate::{
     client::{sse::SseEventStream, MetisClientInterface},
     command::output::{self, CommandContext},
+    util::format_duration,
 };
 
 pub mod panel;
@@ -3888,13 +3889,13 @@ fn refresh_job_runtimes(state: &mut DashboardState) {
                 let started = d.start_time.or(d.creation_time);
                 d.runtime = started.map(|s| {
                     let dur = if now < s { TimeDelta::zero() } else { now - s };
-                    output::format_duration(dur)
+                    format_duration(dur)
                 });
             }
             Status::Pending | Status::Created => {
                 d.runtime = d.creation_time.map(|c| {
                     let dur = if now < c { TimeDelta::zero() } else { now - c };
-                    output::format_duration(dur)
+                    format_duration(dur)
                 });
             }
             _ => {}

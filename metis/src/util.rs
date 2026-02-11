@@ -27,6 +27,26 @@ pub(crate) fn truncate_lines(
     truncated
 }
 
+/// Formats a duration with spaces between components (e.g. `5m 04s`).
+pub(crate) fn format_duration(duration: ChronoDuration) -> String {
+    let total_seconds = duration.num_seconds();
+    if total_seconds <= 0 {
+        return "0s".to_string();
+    }
+
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{hours}h {minutes:02}m {seconds:02}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds:02}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
 /// Formats a duration without spaces (e.g. `5m04s`) for compact column output.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn format_compact_duration(duration: ChronoDuration) -> String {
@@ -59,6 +79,26 @@ mod tests {
 
         assert_eq!(truncated.len(), 3);
         assert_eq!(truncated.last().unwrap(), "three...");
+    }
+
+    #[test]
+    fn format_duration_displays_spaced_units() {
+        assert_eq!(
+            format_duration(ChronoDuration::seconds(0)),
+            "0s".to_string()
+        );
+        assert_eq!(
+            format_duration(ChronoDuration::seconds(45)),
+            "45s".to_string()
+        );
+        assert_eq!(
+            format_duration(ChronoDuration::seconds(65)),
+            "1m 05s".to_string()
+        );
+        assert_eq!(
+            format_duration(ChronoDuration::seconds(3661)),
+            "1h 01m 01s".to_string()
+        );
     }
 
     #[test]
