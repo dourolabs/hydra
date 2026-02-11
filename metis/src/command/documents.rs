@@ -678,9 +678,7 @@ async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -> Re
                 let response = client
                     .create_document(&UpsertDocumentRequest::new(document))
                     .await
-                    .with_context(|| {
-                        format!("failed to create document for '{relative_path}'")
-                    })?;
+                    .with_context(|| format!("failed to create document for '{relative_path}'"))?;
 
                 new_entries.insert(
                     relative_path.to_string(),
