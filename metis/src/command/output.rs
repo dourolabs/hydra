@@ -17,7 +17,7 @@ use owo_colors::OwoColorize;
 use textwrap::{termwidth, Options, WrapAlgorithm};
 
 use crate::client::MetisClientInterface;
-use crate::util::truncate_lines;
+use crate::util::{format_duration, truncate_lines};
 
 const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
@@ -647,25 +647,6 @@ pub(crate) fn format_runtime(task: &Task, now: DateTime<Utc>) -> Option<String> 
             Some(format_duration(duration))
         }
         _ => None,
-    }
-}
-
-pub(crate) fn format_duration(duration: ChronoDuration) -> String {
-    let total_seconds = duration.num_seconds();
-    if total_seconds <= 0 {
-        return "0s".to_string();
-    }
-
-    let hours = total_seconds / 3600;
-    let minutes = (total_seconds % 3600) / 60;
-    let seconds = total_seconds % 60;
-
-    if hours > 0 {
-        format!("{hours}h {minutes:02}m {seconds:02}s")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds:02}s")
-    } else {
-        format!("{seconds}s")
     }
 }
 
