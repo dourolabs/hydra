@@ -366,16 +366,26 @@ async fn submit_job_status(
     status: JobStatusUpdate,
 ) -> Result<()> {
     log_status(format!("Updating status for job '{job}' via metis-server…"));
-    let response = client.set_job_status(job, &status).await?;
-    let last_message_length = status
-        .last_message()
-        .map(|message| message.len())
-        .unwrap_or(0);
-    log_status(format!(
-        "Status updated for job '{}'. Stored last message length: {}",
-        response.job_id, last_message_length,
-    ));
-    Ok(())
+    match client.set_job_status(job, &status).await {
+        Ok(response) => {
+            let last_message_length = status
+                .last_message()
+                .map(|message| message.len())
+                .unwrap_or(0);
+            log_status(format!(
+                "Status updated for job '{}'. Stored last message length: {}",
+                response.job_id, last_message_length,
+            ));
+            Ok(())
+        }
+        Err(err) if err.to_string().contains("409 Conflict") => {
+            log_status(format!(
+                "Status for job '{job}' was already set (conflict); ignoring."
+            ));
+            Ok(())
+        }
+        Err(err) => Err(err),
+    }
 }
 
 async fn submit_patch_artifact_if_present(

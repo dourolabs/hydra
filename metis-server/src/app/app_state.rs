@@ -79,6 +79,8 @@ pub enum SetJobStatusError {
         source: StoreError,
         job_id: TaskId,
     },
+    #[error("invalid status transition for job '{job_id}'")]
+    InvalidStatusTransition { job_id: TaskId },
     #[error("failed to update status for job '{job_id}'")]
     Store {
         #[source]
@@ -1095,9 +1097,14 @@ impl AppState {
                 status.last_message(),
             )
             .await
-            .map_err(|source| SetJobStatusError::Store {
-                source,
-                job_id: job_id.clone(),
+            .map_err(|source| match source {
+                StoreError::InvalidStatusTransition => SetJobStatusError::InvalidStatusTransition {
+                    job_id: job_id.clone(),
+                },
+                other => SetJobStatusError::Store {
+                    source: other,
+                    job_id: job_id.clone(),
+                },
             })?;
         }
 
@@ -2247,10 +2254,17 @@ impl AppState {
         let can_transition = match latest.item.status {
             Status::Created => result.is_err(),
             Status::Pending | Status::Running => true,
-            _ => false,
+            // Idempotent: if already in the target terminal state, return Ok
+            Status::Complete => result.is_ok(),
+            Status::Failed => result.is_err(),
         };
         if !can_transition {
             return Err(StoreError::InvalidStatusTransition);
+        }
+
+        // Already in the target terminal state — return existing version unchanged
+        if matches!(latest.item.status, Status::Complete | Status::Failed) {
+            return Ok(latest);
         }
 
         let mut updated = latest.item;

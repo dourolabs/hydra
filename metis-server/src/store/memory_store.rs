@@ -2426,6 +2426,141 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transition_task_idempotent_complete_to_complete() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
+
+        let root_task = spawn_task();
+        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+
+        state.transition_task_to_pending(&root_id).await.unwrap();
+        state.transition_task_to_running(&root_id).await.unwrap();
+        state
+            .transition_task_to_completion(&root_id, Ok(()), Some("first message".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_task(&root_id, false).await.unwrap().item.status,
+            Status::Complete
+        );
+
+        // Second Complete transition should succeed idempotently
+        let result = state
+            .transition_task_to_completion(&root_id, Ok(()), Some("second message".to_string()))
+            .await;
+        assert!(result.is_ok());
+
+        // Original last_message should be preserved
+        let task = store.get_task(&root_id, false).await.unwrap();
+        assert_eq!(task.item.status, Status::Complete);
+        assert_eq!(task.item.last_message.as_deref(), Some("first message"));
+    }
+
+    #[tokio::test]
+    async fn transition_task_idempotent_failed_to_failed() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
+
+        let root_task = spawn_task();
+        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+
+        state.transition_task_to_pending(&root_id).await.unwrap();
+        state.transition_task_to_running(&root_id).await.unwrap();
+        state
+            .transition_task_to_completion(
+                &root_id,
+                Err(TaskError::JobEngineError {
+                    reason: "first failure".to_string(),
+                }),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_task(&root_id, false).await.unwrap().item.status,
+            Status::Failed
+        );
+
+        // Second Failed transition should succeed idempotently
+        let result = state
+            .transition_task_to_completion(
+                &root_id,
+                Err(TaskError::JobEngineError {
+                    reason: "second failure".to_string(),
+                }),
+                None,
+            )
+            .await;
+        assert!(result.is_ok());
+
+        // Original error should be preserved
+        let task = store.get_task(&root_id, false).await.unwrap();
+        assert_eq!(task.item.status, Status::Failed);
+        assert!(matches!(
+            task.item.error,
+            Some(TaskError::JobEngineError { reason }) if reason == "first failure"
+        ));
+    }
+
+    #[tokio::test]
+    async fn transition_task_conflict_complete_to_failed() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
+
+        let root_task = spawn_task();
+        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+
+        state.transition_task_to_pending(&root_id).await.unwrap();
+        state.transition_task_to_running(&root_id).await.unwrap();
+        state
+            .transition_task_to_completion(&root_id, Ok(()), None)
+            .await
+            .unwrap();
+
+        // Trying to transition Complete -> Failed should fail
+        let err = state
+            .transition_task_to_completion(
+                &root_id,
+                Err(TaskError::JobEngineError {
+                    reason: "conflict".to_string(),
+                }),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::InvalidStatusTransition));
+    }
+
+    #[tokio::test]
+    async fn transition_task_conflict_failed_to_complete() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
+
+        let root_task = spawn_task();
+        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+
+        state.transition_task_to_pending(&root_id).await.unwrap();
+        state.transition_task_to_running(&root_id).await.unwrap();
+        state
+            .transition_task_to_completion(
+                &root_id,
+                Err(TaskError::JobEngineError {
+                    reason: "failure".to_string(),
+                }),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Trying to transition Failed -> Complete should fail
+        let err = state
+            .transition_task_to_completion(&root_id, Ok(()), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::InvalidStatusTransition));
+    }
+
+    #[tokio::test]
     async fn update_user_overwrites_existing_value() {
         let store = MemoryStore::new();
         let username = Username::from("alice");
