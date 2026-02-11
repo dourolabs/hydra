@@ -176,9 +176,9 @@ struct IssueSummary {
 #[derive(Clone)]
 struct IssueDraft {
     prompt: TextArea<'static>,
-    assignees: Vec<String>,
+    assignees: Vec<Option<String>>,
     assignee_index: usize,
-    repos: Vec<RepoName>,
+    repos: Vec<Option<RepoName>>,
     repo_index: usize,
     validation_error: Option<String>,
     info_message: Option<String>,
@@ -189,9 +189,9 @@ impl Default for IssueDraft {
     fn default() -> Self {
         let mut draft = Self {
             prompt: TextArea::default(),
-            assignees: vec!["pm".to_string()],
+            assignees: vec![None],
             assignee_index: 0,
-            repos: Vec::new(),
+            repos: vec![None],
             repo_index: 0,
             validation_error: None,
             info_message: None,
@@ -221,7 +221,7 @@ impl IssueDraft {
     fn selected_assignee(&self) -> Option<&str> {
         self.assignees
             .get(self.assignee_index)
-            .map(|assignee| assignee.as_str())
+            .and_then(|assignee| assignee.as_deref())
     }
 
     fn cycle_assignee(&mut self, forward: bool) {
@@ -239,7 +239,9 @@ impl IssueDraft {
     }
 
     fn selected_repo(&self) -> Option<&RepoName> {
-        self.repos.get(self.repo_index)
+        self.repos
+            .get(self.repo_index)
+            .and_then(|repo| repo.as_ref())
     }
 
     fn cycle_repo(&mut self, forward: bool) {
@@ -1553,7 +1555,7 @@ fn attempt_issue_submit(state: &mut DashboardState) -> Option<IssueSubmission> {
     let assignee = state
         .issue_draft
         .selected_assignee()
-        .unwrap_or("pm")
+        .unwrap_or("")
         .to_string();
 
     if prompt.is_empty() {
@@ -1841,15 +1843,18 @@ fn render_issue_creator(
         state.issue_draft_scroll.scrollbar_state,
     );
 
-    let assignee = draft.selected_assignee().unwrap_or("pm");
+    let assignee_display = match draft.selected_assignee() {
+        Some(assignee) => format!("@{assignee}"),
+        None => "--".to_string(),
+    };
     let assignee_line = Line::from(vec![
         Span::styled("Assignee: ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled(format!("@{assignee}"), Style::default().fg(Color::Yellow)),
+        Span::styled(assignee_display, Style::default().fg(Color::Yellow)),
     ]);
     let repo_label = draft
         .selected_repo()
         .map(ToString::to_string)
-        .unwrap_or_else(|| "-".to_string());
+        .unwrap_or_else(|| "--".to_string());
     let repo_line = Line::from(vec![
         Span::styled("Repo: ", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled(repo_label, Style::default().fg(Color::Yellow)),
@@ -3330,29 +3335,20 @@ fn clamp_issue_selections(state: &mut DashboardState) {
 }
 
 fn update_assignee_options(state: &mut DashboardState) -> bool {
-    let fallback = "pm";
-    let preferred = state
-        .issue_draft
-        .selected_assignee()
-        .unwrap_or(fallback)
-        .to_string();
+    let preferred = state.issue_draft.selected_assignee().map(|s| s.to_string());
     let new_options = build_assignee_options(&state.issues);
     let options_changed = new_options != state.issue_draft.assignees;
     if options_changed {
         state.issue_draft.assignees = new_options;
     }
 
-    let next_index = state
-        .issue_draft
-        .assignees
-        .iter()
-        .position(|assignee| assignee == &preferred)
-        .or_else(|| {
+    let next_index = preferred
+        .and_then(|preferred| {
             state
                 .issue_draft
                 .assignees
                 .iter()
-                .position(|assignee| assignee == fallback)
+                .position(|assignee| assignee.as_deref() == Some(preferred.as_str()))
         })
         .unwrap_or(0);
     let index_changed = next_index != state.issue_draft.assignee_index;
@@ -3360,9 +3356,8 @@ fn update_assignee_options(state: &mut DashboardState) -> bool {
     options_changed || index_changed
 }
 
-fn build_assignee_options(issues: &[IssueRecord]) -> Vec<String> {
+fn build_assignee_options(issues: &[IssueRecord]) -> Vec<Option<String>> {
     let mut options = BTreeSet::new();
-    options.insert("pm".to_string());
 
     for issue in issues {
         if let Some(assignee) = &issue.assignee {
@@ -3373,7 +3368,9 @@ fn build_assignee_options(issues: &[IssueRecord]) -> Vec<String> {
         }
     }
 
-    options.into_iter().collect()
+    let mut result: Vec<Option<String>> = vec![None];
+    result.extend(options.into_iter().map(Some));
+    result
 }
 
 fn update_repo_options(state: &mut DashboardState) -> bool {
@@ -3384,33 +3381,29 @@ fn update_repo_options(state: &mut DashboardState) -> bool {
         state.issue_draft.repos = new_options;
     }
 
-    let fallback_index = if state.issue_draft.repos.is_empty() {
-        None
-    } else {
-        Some(0)
-    };
     let next_index = preferred
         .and_then(|preferred| {
             state
                 .issue_draft
                 .repos
                 .iter()
-                .position(|repo| repo == &preferred)
+                .position(|repo| repo.as_ref() == Some(&preferred))
         })
-        .or(fallback_index)
         .unwrap_or(0);
     let index_changed = next_index != state.issue_draft.repo_index;
     state.issue_draft.repo_index = next_index;
     options_changed || index_changed
 }
 
-fn build_repo_options(repositories: &[RepositoryRecord]) -> Vec<RepoName> {
+fn build_repo_options(repositories: &[RepositoryRecord]) -> Vec<Option<RepoName>> {
     let mut options = BTreeSet::new();
     for repository in repositories {
         options.insert(repository.name.clone());
     }
 
-    options.into_iter().collect()
+    let mut result: Vec<Option<RepoName>> = vec![None];
+    result.extend(options.into_iter().map(Some));
+    result
 }
 
 fn build_user_unowned_issue_lines(
@@ -5409,7 +5402,7 @@ mod tests {
     }
 
     #[test]
-    fn build_assignee_options_includes_pm_and_unique_sorted() {
+    fn build_assignee_options_includes_none_and_unique_sorted() {
         let issues = vec![
             issue_with_assignee("i-1", IssueStatus::Open, Some("alice")),
             issue_with_assignee("i-2", IssueStatus::Open, Some("bob")),
@@ -5418,14 +5411,14 @@ mod tests {
 
         let options = build_assignee_options(&issues);
 
-        assert!(options.contains(&"pm".to_string()));
-        assert!(options.contains(&"alice".to_string()));
-        assert!(options.contains(&"bob".to_string()));
+        assert_eq!(options[0], None);
+        assert!(options.contains(&Some("alice".to_string())));
+        assert!(options.contains(&Some("bob".to_string())));
         assert_eq!(options.len(), 3);
     }
 
     #[test]
-    fn build_repo_options_includes_unique_sorted() {
+    fn build_repo_options_includes_none_and_unique_sorted() {
         let repositories = vec![
             repo_record("dourolabs/metis"),
             repo_record("dourolabs/api"),
@@ -5437,14 +5430,15 @@ mod tests {
         assert_eq!(
             options,
             vec![
-                RepoName::from_str("dourolabs/api").unwrap(),
-                RepoName::from_str("dourolabs/metis").unwrap(),
+                None,
+                Some(RepoName::from_str("dourolabs/api").unwrap()),
+                Some(RepoName::from_str("dourolabs/metis").unwrap()),
             ]
         );
     }
 
     #[test]
-    fn update_assignee_options_keeps_pm_as_default() {
+    fn update_assignee_options_defaults_to_none() {
         let mut state = DashboardState {
             issues: vec![issue_with_assignee("i-1", IssueStatus::Open, Some("alice"))],
             ..DashboardState::default()
@@ -5452,17 +5446,19 @@ mod tests {
 
         update_assignee_options(&mut state);
 
-        assert_eq!(state.issue_draft.selected_assignee(), Some("pm"));
+        assert_eq!(state.issue_draft.selected_assignee(), None);
+        assert_eq!(state.issue_draft.assignee_index, 0);
     }
 
     #[test]
     fn update_repo_options_keeps_existing_selection() {
         let mut state = DashboardState::default();
         state.issue_draft.repos = vec![
-            RepoName::from_str("dourolabs/metis").unwrap(),
-            RepoName::from_str("dourolabs/api").unwrap(),
+            None,
+            Some(RepoName::from_str("dourolabs/metis").unwrap()),
+            Some(RepoName::from_str("dourolabs/api").unwrap()),
         ];
-        state.issue_draft.repo_index = 1;
+        state.issue_draft.repo_index = 2;
         state.repositories = vec![repo_record("dourolabs/metis"), repo_record("dourolabs/api")];
 
         update_repo_options(&mut state);
@@ -5474,7 +5470,7 @@ mod tests {
     }
 
     #[test]
-    fn update_repo_options_defaults_to_first_option() {
+    fn update_repo_options_defaults_to_none() {
         let mut state = DashboardState {
             repositories: vec![repo_record("dourolabs/metis")],
             ..DashboardState::default()
@@ -5482,10 +5478,8 @@ mod tests {
 
         update_repo_options(&mut state);
 
-        assert_eq!(
-            state.issue_draft.selected_repo(),
-            Some(&RepoName::from_str("dourolabs/metis").unwrap())
-        );
+        assert_eq!(state.issue_draft.selected_repo(), None);
+        assert_eq!(state.issue_draft.repo_index, 0);
     }
 
     #[test]
@@ -5522,8 +5516,10 @@ mod tests {
     fn attempt_issue_submit_sets_loading_state() {
         let mut state = DashboardState::default();
         state.issue_draft.set_prompt("Ship dashboard", true);
-        state.issue_draft.assignees = vec!["pm".to_string()];
-        state.issue_draft.repos = vec![RepoName::from_str("dourolabs/metis").unwrap()];
+        state.issue_draft.assignees = vec![None, Some("pm".to_string())];
+        state.issue_draft.assignee_index = 1;
+        state.issue_draft.repos = vec![None, Some(RepoName::from_str("dourolabs/metis").unwrap())];
+        state.issue_draft.repo_index = 1;
 
         let submission = attempt_issue_submit(&mut state).expect("submission missing");
 
@@ -5533,6 +5529,19 @@ mod tests {
             submission.repo_name,
             Some(RepoName::from_str("dourolabs/metis").unwrap())
         );
+        assert!(state.issue_draft.is_submitting);
+    }
+
+    #[test]
+    fn attempt_issue_submit_with_none_selected() {
+        let mut state = DashboardState::default();
+        state.issue_draft.set_prompt("Ship dashboard", true);
+
+        let submission = attempt_issue_submit(&mut state).expect("submission missing");
+
+        assert_eq!(submission.prompt, "Ship dashboard");
+        assert_eq!(submission.assignee, "");
+        assert_eq!(submission.repo_name, None);
         assert!(state.issue_draft.is_submitting);
     }
 
@@ -5554,7 +5563,8 @@ mod tests {
     #[test]
     fn alt_a_cycles_assignee_in_new_issue_panel() {
         let mut state = DashboardState::default();
-        state.issue_draft.assignees = vec!["pm".to_string(), "alice".to_string()];
+        state.issue_draft.assignees =
+            vec![None, Some("alice".to_string()), Some("bob".to_string())];
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT)),
@@ -5570,50 +5580,9 @@ mod tests {
     fn alt_r_cycles_repo_in_new_issue_panel() {
         let mut state = DashboardState::default();
         state.issue_draft.repos = vec![
-            RepoName::from_str("dourolabs/metis").unwrap(),
-            RepoName::from_str("dourolabs/api").unwrap(),
-        ];
-
-        let outcome = handle_event(
-            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT)),
-            &mut state,
-        );
-
-        assert!(!outcome.should_quit);
-        assert!(outcome.submission.is_none());
-        assert_eq!(
-            state.issue_draft.selected_repo(),
-            Some(&RepoName::from_str("dourolabs/api").unwrap())
-        );
-    }
-
-    #[test]
-    fn alt_a_does_not_cycle_assignee_when_not_focused() {
-        let mut state = DashboardState {
-            selected_panel: PanelFocus::Running,
-            ..DashboardState::default()
-        };
-        state.issue_draft.assignees = vec!["pm".to_string(), "alice".to_string()];
-
-        let outcome = handle_event(
-            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT)),
-            &mut state,
-        );
-
-        assert!(!outcome.should_quit);
-        assert!(outcome.submission.is_none());
-        assert_eq!(state.issue_draft.selected_assignee(), Some("pm"));
-    }
-
-    #[test]
-    fn alt_r_does_not_cycle_repo_when_not_focused() {
-        let mut state = DashboardState {
-            selected_panel: PanelFocus::Running,
-            ..DashboardState::default()
-        };
-        state.issue_draft.repos = vec![
-            RepoName::from_str("dourolabs/metis").unwrap(),
-            RepoName::from_str("dourolabs/api").unwrap(),
+            None,
+            Some(RepoName::from_str("dourolabs/metis").unwrap()),
+            Some(RepoName::from_str("dourolabs/api").unwrap()),
         ];
 
         let outcome = handle_event(
@@ -5627,6 +5596,46 @@ mod tests {
             state.issue_draft.selected_repo(),
             Some(&RepoName::from_str("dourolabs/metis").unwrap())
         );
+    }
+
+    #[test]
+    fn alt_a_does_not_cycle_assignee_when_not_focused() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Running,
+            ..DashboardState::default()
+        };
+        state.issue_draft.assignees = vec![None, Some("pm".to_string()), Some("alice".to_string())];
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.issue_draft.selected_assignee(), None);
+    }
+
+    #[test]
+    fn alt_r_does_not_cycle_repo_when_not_focused() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Running,
+            ..DashboardState::default()
+        };
+        state.issue_draft.repos = vec![
+            None,
+            Some(RepoName::from_str("dourolabs/metis").unwrap()),
+            Some(RepoName::from_str("dourolabs/api").unwrap()),
+        ];
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.issue_draft.selected_repo(), None);
     }
 
     #[test]
@@ -6096,7 +6105,8 @@ mod tests {
     fn alt_enter_submits_issue_prompt() {
         let mut state = DashboardState::default();
         state.issue_draft.set_prompt("Ship dashboard", true);
-        state.issue_draft.assignees = vec!["pm".to_string()];
+        state.issue_draft.assignees = vec![None, Some("pm".to_string())];
+        state.issue_draft.assignee_index = 1;
 
         let submission =
             handle_issue_draft_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT), &mut state)
