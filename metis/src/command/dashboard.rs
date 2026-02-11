@@ -3780,13 +3780,24 @@ fn has_open_children(node: &IssueNode, nodes: &HashMap<IssueId, IssueNode>) -> b
     node.children.iter().any(|child_id| {
         nodes
             .get(child_id)
-            .map(|child| child.record.status != IssueStatus::Closed)
+            .map(|child| {
+                !matches!(
+                    child.record.status,
+                    IssueStatus::Closed
+                        | IssueStatus::Dropped
+                        | IssueStatus::Rejected
+                        | IssueStatus::Failed
+                )
+            })
             .unwrap_or(true)
     })
 }
 
 fn issue_readiness(node: &IssueNode, nodes: &HashMap<IssueId, IssueNode>) -> IssueReadiness {
-    if node.record.status == IssueStatus::Dropped {
+    if matches!(
+        node.record.status,
+        IssueStatus::Dropped | IssueStatus::Rejected | IssueStatus::Failed
+    ) {
         return IssueReadiness::Dropped;
     }
 
@@ -3852,8 +3863,10 @@ fn issue_status_order(status: IssueStatus) -> usize {
         IssueStatus::InProgress => 0,
         IssueStatus::Open => 1,
         IssueStatus::Dropped => 2,
-        IssueStatus::Closed => 3,
-        _ => 4,
+        IssueStatus::Rejected => 3,
+        IssueStatus::Failed => 4,
+        IssueStatus::Closed => 5,
+        _ => 6,
     }
 }
 
@@ -3944,6 +3957,8 @@ fn issue_status_style(status: IssueStatus) -> Style {
         IssueStatus::InProgress => Style::default().fg(Color::Yellow),
         IssueStatus::Closed => Style::default().fg(Color::Green),
         IssueStatus::Dropped => Style::default().fg(Color::Rgb(139, 0, 0)),
+        IssueStatus::Rejected => Style::default().fg(Color::Rgb(255, 140, 0)),
+        IssueStatus::Failed => Style::default().fg(Color::Red),
         _ => Style::default(),
     }
 }
@@ -3954,6 +3969,8 @@ fn issue_status_label(status: IssueStatus) -> &'static str {
         IssueStatus::InProgress => "in-progress",
         IssueStatus::Closed => "closed",
         IssueStatus::Dropped => "dropped",
+        IssueStatus::Rejected => "rejected",
+        IssueStatus::Failed => "failed",
         _ => "unknown",
     }
 }
@@ -3963,6 +3980,14 @@ fn issue_status_display(status: IssueStatus, readiness: &IssueReadiness) -> (Str
         (IssueStatus::Dropped, _) => (
             "dropped".to_string(),
             issue_status_style(IssueStatus::Dropped),
+        ),
+        (IssueStatus::Rejected, _) => (
+            "rejected".to_string(),
+            issue_status_style(IssueStatus::Rejected),
+        ),
+        (IssueStatus::Failed, _) => (
+            "failed".to_string(),
+            issue_status_style(IssueStatus::Failed),
         ),
         (IssueStatus::Open, IssueReadiness::Blocked(blockers)) => (
             format!("blocked: {}", blockers.join(", ")),
