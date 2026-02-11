@@ -1845,7 +1845,7 @@ fn render_issue_creator(
 
     let assignee_display = match draft.selected_assignee() {
         Some(assignee) => format!("@{assignee}"),
-        None => "--".to_string(),
+        None => "<auto>".to_string(),
     };
     let assignee_line = Line::from(vec![
         Span::styled("Assignee: ", Style::default().add_modifier(Modifier::BOLD)),
@@ -1854,7 +1854,7 @@ fn render_issue_creator(
     let repo_label = draft
         .selected_repo()
         .map(ToString::to_string)
-        .unwrap_or_else(|| "--".to_string());
+        .unwrap_or_else(|| "<auto>".to_string());
     let repo_line = Line::from(vec![
         Span::styled("Repo: ", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled(repo_label, Style::default().fg(Color::Yellow)),
