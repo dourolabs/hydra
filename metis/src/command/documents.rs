@@ -11,10 +11,13 @@ use metis_common::{
     },
     DocumentId, TaskId,
 };
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
+    collections::{BTreeMap, HashSet},
     fs,
     io::{self, IsTerminal, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 #[derive(Debug, Subcommand)]
@@ -37,6 +40,8 @@ pub enum DocumentsCommand {
         #[arg(value_name = "ID_OR_PATH")]
         id_or_path: String,
     },
+    /// Sync documents to a local directory.
+    Sync(SyncArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -102,6 +107,21 @@ pub struct UpdateDocumentArgs {
     pub body: DocumentBodyInput,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct SyncArgs {
+    /// Local directory to sync documents into.
+    #[arg(value_name = "DIRECTORY")]
+    pub directory: PathBuf,
+
+    /// Only sync documents whose path starts with this prefix.
+    #[arg(long = "path-prefix", value_name = "PREFIX")]
+    pub path_prefix: Option<String>,
+
+    /// Remove local files not present on the server.
+    #[arg(long = "clean")]
+    pub clean: bool,
+}
+
 #[derive(Debug, Clone, Default, Args)]
 pub struct DocumentBodyInput {
     /// Inline markdown body text.
@@ -147,6 +167,9 @@ pub async fn run(
                 .await
                 .with_context(|| format!("failed to delete document '{}'", document.id))?;
             println!("Deleted document '{}'", deleted.id);
+        }
+        DocumentsCommand::Sync(args) => {
+            sync_documents(client, args).await?;
         }
     }
 
@@ -311,6 +334,164 @@ async fn update_document(
 
     record.document = document;
     Ok(record)
+}
+
+const MANIFEST_FILENAME: &str = ".metis-documents.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SyncManifest {
+    synced_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_prefix: Option<String>,
+    documents: BTreeMap<String, SyncManifestEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SyncManifestEntry {
+    document_id: DocumentId,
+    content_hash: String,
+}
+
+fn compute_content_hash(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    let result = hasher.finalize();
+    format!("sha256:{result:x}")
+}
+
+fn load_manifest(directory: &Path) -> Result<Option<SyncManifest>> {
+    let manifest_path = directory.join(MANIFEST_FILENAME);
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+    let contents = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read manifest at '{}'", manifest_path.display()))?;
+    let manifest: SyncManifest = serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse manifest at '{}'", manifest_path.display()))?;
+    Ok(Some(manifest))
+}
+
+fn save_manifest(directory: &Path, manifest: &SyncManifest) -> Result<()> {
+    let manifest_path = directory.join(MANIFEST_FILENAME);
+    let contents =
+        serde_json::to_string_pretty(manifest).context("failed to serialize manifest")?;
+    fs::write(&manifest_path, contents)
+        .with_context(|| format!("failed to write manifest to '{}'", manifest_path.display()))?;
+    Ok(())
+}
+
+async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -> Result<()> {
+    let directory = &args.directory;
+
+    // Create directory if it doesn't exist
+    fs::create_dir_all(directory)
+        .with_context(|| format!("failed to create directory '{}'", directory.display()))?;
+
+    // Load existing manifest for incremental sync
+    let existing_manifest = load_manifest(directory)?;
+
+    // List documents from server
+    let query = SearchDocumentsQuery::new(None, args.path_prefix.clone(), None, None, None);
+    let response = client
+        .list_documents(&query)
+        .await
+        .context("failed to list documents")?;
+
+    // Filter to only documents with a path
+    let pathed_documents: Vec<&DocumentRecord> = response
+        .documents
+        .iter()
+        .filter(|d| d.document.path.is_some())
+        .collect();
+
+    let mut new_entries = BTreeMap::new();
+    let mut server_paths = HashSet::new();
+    let mut synced_count = 0u64;
+    let mut skipped_count = 0u64;
+
+    for record in &pathed_documents {
+        let doc_path = record.document.path.as_deref().unwrap();
+        // Strip leading slash if present for filesystem path
+        let relative_path = doc_path.strip_prefix('/').unwrap_or(doc_path);
+        server_paths.insert(relative_path.to_string());
+
+        let content_hash = compute_content_hash(&record.document.body_markdown);
+
+        // Check if we can skip this document (incremental sync)
+        if let Some(ref manifest) = existing_manifest {
+            if let Some(existing_entry) = manifest.documents.get(relative_path) {
+                if existing_entry.content_hash == content_hash
+                    && existing_entry.document_id == record.id
+                {
+                    // Content unchanged, skip download
+                    new_entries.insert(
+                        relative_path.to_string(),
+                        SyncManifestEntry {
+                            document_id: record.id.clone(),
+                            content_hash,
+                        },
+                    );
+                    skipped_count += 1;
+                    continue;
+                }
+            }
+        }
+
+        // Write file to disk
+        let file_path = directory.join(relative_path);
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory '{}'", parent.display()))?;
+        }
+        fs::write(&file_path, &record.document.body_markdown)
+            .with_context(|| format!("failed to write file '{}'", file_path.display()))?;
+
+        new_entries.insert(
+            relative_path.to_string(),
+            SyncManifestEntry {
+                document_id: record.id.clone(),
+                content_hash,
+            },
+        );
+        synced_count += 1;
+    }
+
+    // Clean up local files not on server if --clean is set
+    let mut removed_count = 0u64;
+    if args.clean {
+        if let Some(ref manifest) = existing_manifest {
+            for local_path in manifest.documents.keys() {
+                if !server_paths.contains(local_path.as_str()) {
+                    let file_path = directory.join(local_path);
+                    if file_path.exists() {
+                        fs::remove_file(&file_path).with_context(|| {
+                            format!("failed to remove file '{}'", file_path.display())
+                        })?;
+                        removed_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // Write manifest
+    let manifest = SyncManifest {
+        synced_at: chrono::Utc::now().to_rfc3339(),
+        path_prefix: args.path_prefix,
+        documents: new_entries,
+    };
+    save_manifest(directory, &manifest)?;
+
+    println!(
+        "Synced {} document(s) to '{}' ({} written, {} unchanged, {} removed)",
+        pathed_documents.len(),
+        directory.display(),
+        synced_count,
+        skipped_count,
+        removed_count,
+    );
+
+    Ok(())
 }
 
 impl DocumentBodyInput {
@@ -656,5 +837,357 @@ mod tests {
 
         assert!(error.to_string().contains("docs/nonexistent.md"));
         list_mock.assert();
+    }
+
+    #[test]
+    fn manifest_serialization_roundtrip() {
+        let doc_id = DocumentId::new();
+        let mut documents = BTreeMap::new();
+        documents.insert(
+            "playbooks/deploy.md".to_string(),
+            SyncManifestEntry {
+                document_id: doc_id.clone(),
+                content_hash: "sha256:abc123".to_string(),
+            },
+        );
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: Some("/playbooks".to_string()),
+            documents,
+        };
+
+        let json = serde_json::to_string_pretty(&manifest).unwrap();
+        let deserialized: SyncManifest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(manifest, deserialized);
+        assert_eq!(
+            deserialized.documents["playbooks/deploy.md"].document_id,
+            doc_id
+        );
+        assert_eq!(deserialized.path_prefix, Some("/playbooks".to_string()));
+    }
+
+    #[test]
+    fn manifest_serialization_omits_null_path_prefix() {
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents: BTreeMap::new(),
+        };
+
+        let json = serde_json::to_string(&manifest).unwrap();
+        assert!(!json.contains("path_prefix"));
+    }
+
+    #[test]
+    fn content_hash_is_deterministic() {
+        let hash1 = compute_content_hash("# Hello World");
+        let hash2 = compute_content_hash("# Hello World");
+        assert_eq!(hash1, hash2);
+        assert!(hash1.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn content_hash_differs_for_different_content() {
+        let hash1 = compute_content_hash("# Hello");
+        let hash2 = compute_content_hash("# World");
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn load_manifest_returns_none_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = load_manifest(dir.path()).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn save_and_load_manifest_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let mut documents = BTreeMap::new();
+        documents.insert(
+            "docs/readme.md".to_string(),
+            SyncManifestEntry {
+                document_id: doc_id.clone(),
+                content_hash: "sha256:def456".to_string(),
+            },
+        );
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T12:00:00Z".to_string(),
+            path_prefix: None,
+            documents,
+        };
+
+        save_manifest(dir.path(), &manifest).unwrap();
+        let loaded = load_manifest(dir.path()).unwrap().unwrap();
+
+        assert_eq!(loaded, manifest);
+    }
+
+    #[tokio::test]
+    async fn sync_documents_downloads_pathed_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let document = DocumentPayload::new(
+            "Deploy Guide".to_string(),
+            "# Deploy\nStep 1: Run deploy".to_string(),
+            false,
+        )
+        .with_path("guides/deploy.md");
+        let record = DocumentRecord::new(doc_id.clone(), document);
+        let response = ListDocumentsResponse::new(vec![record]);
+
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&response);
+        });
+        let client = mock_client(&server);
+
+        sync_documents(
+            &client,
+            SyncArgs {
+                directory: dir.path().to_path_buf(),
+                path_prefix: None,
+                clean: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        list_mock.assert();
+
+        // Verify file was written
+        let file_path = dir.path().join("guides/deploy.md");
+        assert!(file_path.exists());
+        let contents = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(contents, "# Deploy\nStep 1: Run deploy");
+
+        // Verify manifest was written
+        let manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert_eq!(manifest.documents.len(), 1);
+        assert!(manifest.documents.contains_key("guides/deploy.md"));
+        assert_eq!(manifest.documents["guides/deploy.md"].document_id, doc_id);
+    }
+
+    #[tokio::test]
+    async fn sync_documents_skips_unpathed_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let pathed_id = DocumentId::new();
+        let unpathed_id = DocumentId::new();
+
+        let pathed = DocumentRecord::new(
+            pathed_id.clone(),
+            DocumentPayload::new("Pathed".to_string(), "body".to_string(), false)
+                .with_path("docs/pathed.md"),
+        );
+        let unpathed = DocumentRecord::new(
+            unpathed_id,
+            DocumentPayload::new("Unpathed".to_string(), "body".to_string(), false),
+        );
+        let response = ListDocumentsResponse::new(vec![pathed, unpathed]);
+
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&response);
+        });
+        let client = mock_client(&server);
+
+        sync_documents(
+            &client,
+            SyncArgs {
+                directory: dir.path().to_path_buf(),
+                path_prefix: None,
+                clean: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        let manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert_eq!(manifest.documents.len(), 1);
+        assert!(manifest.documents.contains_key("docs/pathed.md"));
+    }
+
+    #[tokio::test]
+    async fn sync_documents_incremental_skips_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let body = "# Steps\nDo the thing";
+        let document = DocumentPayload::new("Guide".to_string(), body.to_string(), false)
+            .with_path("guides/steps.md");
+        let record = DocumentRecord::new(doc_id.clone(), document);
+        let response = ListDocumentsResponse::new(vec![record]);
+
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&response);
+        });
+        let client = mock_client(&server);
+
+        // First sync
+        sync_documents(
+            &client,
+            SyncArgs {
+                directory: dir.path().to_path_buf(),
+                path_prefix: None,
+                clean: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Overwrite the file with different content to verify it doesn't get re-written
+        let file_path = dir.path().join("guides/steps.md");
+        fs::write(&file_path, "local changes").unwrap();
+
+        // Second sync — should skip because manifest hash matches server content
+        sync_documents(
+            &client,
+            SyncArgs {
+                directory: dir.path().to_path_buf(),
+                path_prefix: None,
+                clean: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        // File should still have local changes because sync skipped it
+        let contents = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(contents, "local changes");
+    }
+
+    #[tokio::test]
+    async fn sync_documents_clean_removes_stale_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let document = DocumentPayload::new("Keep".to_string(), "keep body".to_string(), false)
+            .with_path("docs/keep.md");
+        let record = DocumentRecord::new(doc_id.clone(), document);
+
+        let removed_id = DocumentId::new();
+        let removed_doc =
+            DocumentPayload::new("Remove".to_string(), "remove body".to_string(), false)
+                .with_path("docs/remove.md");
+        let removed_record = DocumentRecord::new(removed_id.clone(), removed_doc);
+
+        // First sync with both documents
+        let response = ListDocumentsResponse::new(vec![record.clone(), removed_record]);
+        let server = MockServer::start();
+        let mut mock1 = server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&response);
+        });
+        let client = mock_client(&server);
+
+        sync_documents(
+            &client,
+            SyncArgs {
+                directory: dir.path().to_path_buf(),
+                path_prefix: None,
+                clean: false,
+            },
+        )
+        .await
+        .unwrap();
+        mock1.assert();
+
+        assert!(dir.path().join("docs/keep.md").exists());
+        assert!(dir.path().join("docs/remove.md").exists());
+
+        // Second sync with only one document and --clean
+        let response2 = ListDocumentsResponse::new(vec![record]);
+        mock1.delete();
+        let mock2 = server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&response2);
+        });
+
+        sync_documents(
+            &client,
+            SyncArgs {
+                directory: dir.path().to_path_buf(),
+                path_prefix: None,
+                clean: true,
+            },
+        )
+        .await
+        .unwrap();
+        mock2.assert();
+
+        assert!(dir.path().join("docs/keep.md").exists());
+        assert!(!dir.path().join("docs/remove.md").exists());
+    }
+
+    #[tokio::test]
+    async fn sync_documents_with_path_prefix_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let document = DocumentPayload::new("Guide".to_string(), "body".to_string(), false)
+            .with_path("playbooks/guide.md");
+        let record = DocumentRecord::new(doc_id, document);
+        let response = ListDocumentsResponse::new(vec![record]);
+
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/documents")
+                .query_param("path_prefix", "/playbooks");
+            then.status(200).json_body_obj(&response);
+        });
+        let client = mock_client(&server);
+
+        sync_documents(
+            &client,
+            SyncArgs {
+                directory: dir.path().to_path_buf(),
+                path_prefix: Some("/playbooks".to_string()),
+                clean: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        list_mock.assert();
+
+        let manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert_eq!(manifest.path_prefix, Some("/playbooks".to_string()));
+    }
+
+    #[tokio::test]
+    async fn sync_documents_handles_leading_slash_in_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let document = DocumentPayload::new("Guide".to_string(), "body".to_string(), false)
+            .with_path("/playbooks/guide.md");
+        let record = DocumentRecord::new(doc_id, document);
+        let response = ListDocumentsResponse::new(vec![record]);
+
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&response);
+        });
+        let client = mock_client(&server);
+
+        sync_documents(
+            &client,
+            SyncArgs {
+                directory: dir.path().to_path_buf(),
+                path_prefix: None,
+                clean: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Should strip leading slash
+        assert!(dir.path().join("playbooks/guide.md").exists());
+        let manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert!(manifest.documents.contains_key("playbooks/guide.md"));
     }
 }
