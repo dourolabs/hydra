@@ -414,7 +414,7 @@ async fn changes_requested_closes_merge_request_issues() -> anyhow::Result<()> {
 
     assert_eq!(
         fetched_issue.issue.status,
-        metis_common::api::v1::issues::IssueStatus::Closed
+        metis_common::api::v1::issues::IssueStatus::Failed
     );
     Ok(())
 }
@@ -585,7 +585,7 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
 
     assert_eq!(
         fetched_issue.issue.status,
-        metis_common::api::v1::issues::IssueStatus::Closed
+        metis_common::api::v1::issues::IssueStatus::Failed
     );
 
     let mut reopened_patch = base_patch.clone();

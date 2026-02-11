@@ -1534,6 +1534,7 @@ impl AppState {
         let mut patch: Patch = patch.into();
 
         let mut should_close_merge_requests = false;
+        let mut status_changed_to_changes_requested = false;
         let mut should_create_merge_request = false;
         let store = self.store.as_ref();
         let patch_id = match patch_id {
@@ -1550,8 +1551,7 @@ impl AppState {
                             other => UpsertPatchError::Store { source: other },
                         })?;
                 let new_status = patch.status;
-                let status_changed_to_changes_requested = new_status
-                    == PatchStatus::ChangesRequested
+                status_changed_to_changes_requested = new_status == PatchStatus::ChangesRequested
                     && existing_patch.item.status != PatchStatus::ChangesRequested;
                 should_close_merge_requests =
                     matches!(
@@ -1662,7 +1662,7 @@ impl AppState {
                         source,
                     })?;
 
-            let mut closed_issue_ids = Vec::new();
+            let mut updated_issue_ids = Vec::new();
             for issue_id in merge_request_issue_ids {
                 let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
                     UpsertPatchError::MergeRequestUpdate {
@@ -1674,12 +1674,19 @@ impl AppState {
                 let mut issue = issue.item;
 
                 if issue.issue_type != IssueType::MergeRequest
-                    || matches!(issue.status, IssueStatus::Closed | IssueStatus::Dropped)
+                    || matches!(
+                        issue.status,
+                        IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
+                    )
                 {
                     continue;
                 }
 
-                issue.status = IssueStatus::Closed;
+                issue.status = if status_changed_to_changes_requested {
+                    IssueStatus::Failed
+                } else {
+                    IssueStatus::Closed
+                };
                 store
                     .update_issue(&issue_id, issue)
                     .await
@@ -1688,19 +1695,25 @@ impl AppState {
                         issue_id: issue_id.clone(),
                         source,
                     })?;
-                closed_issue_ids.push(issue_id);
+                updated_issue_ids.push(issue_id);
             }
 
-            if !closed_issue_ids.is_empty() {
-                let issues = closed_issue_ids
+            if !updated_issue_ids.is_empty() {
+                let issues = updated_issue_ids
                     .iter()
                     .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", ");
+                let new_status = if status_changed_to_changes_requested {
+                    "failed"
+                } else {
+                    "closed"
+                };
                 tracing::info!(
                     patch_id = %patch_id,
                     issues = %issues,
-                    "closed merge-request issues for patch"
+                    status = new_status,
+                    "updated merge-request issues for patch"
                 );
             }
         }
