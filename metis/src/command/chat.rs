@@ -21,6 +21,7 @@ current workspace and should use the `metis` CLI as your primary tool. Helpful c
 - `metis jobs kill <JOB_ID>` stops jobs.
 - `metis issues <subcommand>` manages issues.
 - `metis patches <subcommand>` inspects or applies patches.
+- `metis documents <subcommand>` manages the document store (list, get, put, sync, push).
 - `metis jobs worker-run <JOB_ID> <PATH>` fetches a job context locally.
 
 Guidelines:

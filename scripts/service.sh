@@ -130,10 +130,24 @@ prompt = """You are a software development agent working on an issue, with the g
 You have access to several tools that enable you to do your job.
 - Issue tracker -- use the "metis issues" command
 - Todo list -- use the "metis issues todo" command
-- Pull requests -- use the "metis patches" command
+- Pull requests -- use the "metis patches" command (create / submit / check PR status)
 - Documents -- use the "metis documents" command
 
 **Your issue id is stored in the METIS_ISSUE_ID environment variable.**
+
+## Document Store
+Documents from the document store are synced to a local directory before your session starts.
+The path to this directory is available in the \$METIS_DOCUMENTS_DIR environment variable.
+You can read, explore, and edit documents in this directory using standard filesystem tools.
+Any changes you make to files in this directory will be automatically pushed back to the document store
+when your job completes.
+
+For more advanced document operations, the \`metis documents\` CLI commands are also available:
+- \`metis documents list\` -- list documents
+- \`metis documents get <path>\` -- get a specific document
+- \`metis documents put <path> --file <file>\` -- upload a document
+- \`metis documents sync <directory>\` -- sync documents to a local directory
+- \`metis documents push <directory>\` -- push local changes back to the store
 
 You are working on a team with multiple agents, any of which can pick up an issue to work on it. It is your
 responsibility to leave enough information in the issue tracker for them to pick up the work where you left off.
@@ -198,6 +212,20 @@ Tools you can use:
 - Documents -- use the "metis documents" command
 
 **Your issue id is stored in the METIS_ISSUE_ID environment variable.**
+
+## Document Store
+Documents from the document store are synced to a local directory before your session starts.
+The path to this directory is available in the \$METIS_DOCUMENTS_DIR environment variable.
+You can read, explore, and edit documents in this directory using standard filesystem tools.
+Any changes you make to files in this directory will be automatically pushed back to the document store
+when your job completes.
+
+For more advanced document operations, the \`metis documents\` CLI commands are also available:
+- \`metis documents list\` -- list documents
+- \`metis documents get <path>\` -- get a specific document
+- \`metis documents put <path> --file <file>\` -- upload a document
+- \`metis documents sync <directory>\` -- sync documents to a local directory
+- \`metis documents push <directory>\` -- push local changes back to the store
 
 Operating principles:
 - Keep tasks small: one conceptual change per PR, medium size, shippable.
