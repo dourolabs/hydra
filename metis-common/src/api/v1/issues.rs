@@ -14,6 +14,8 @@ pub enum IssueStatus {
     InProgress,
     Closed,
     Dropped,
+    Rejected,
+    Failed,
     #[serde(other)]
     Unknown,
 }
@@ -25,6 +27,8 @@ impl IssueStatus {
             IssueStatus::InProgress => "in-progress",
             IssueStatus::Closed => "closed",
             IssueStatus::Dropped => "dropped",
+            IssueStatus::Rejected => "rejected",
+            IssueStatus::Failed => "failed",
             IssueStatus::Unknown => "unknown",
         }
     }
@@ -46,6 +50,8 @@ impl FromStr for IssueStatus {
             "in-progress" | "inprogress" | "in_progress" => Ok(IssueStatus::InProgress),
             "closed" => Ok(IssueStatus::Closed),
             "dropped" => Ok(IssueStatus::Dropped),
+            "rejected" => Ok(IssueStatus::Rejected),
+            "failed" => Ok(IssueStatus::Failed),
             other => Err(format!("unsupported issue status '{other}'")),
         }
     }

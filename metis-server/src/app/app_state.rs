@@ -2279,7 +2279,10 @@ async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, Stor
     let issue = issue.item;
 
     match issue.status {
-        IssueStatus::Closed | IssueStatus::Dropped => Ok(false),
+        IssueStatus::Closed
+        | IssueStatus::Dropped
+        | IssueStatus::Rejected
+        | IssueStatus::Failed => Ok(false),
         IssueStatus::Open => {
             for dependency in issue
                 .dependencies

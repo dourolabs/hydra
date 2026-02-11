@@ -13,6 +13,8 @@ pub enum IssueStatus {
     InProgress,
     Closed,
     Dropped,
+    Rejected,
+    Failed,
 }
 
 impl IssueStatus {
@@ -22,6 +24,8 @@ impl IssueStatus {
             IssueStatus::InProgress => "in-progress",
             IssueStatus::Closed => "closed",
             IssueStatus::Dropped => "dropped",
+            IssueStatus::Rejected => "rejected",
+            IssueStatus::Failed => "failed",
         }
     }
 }
@@ -42,6 +46,8 @@ impl FromStr for IssueStatus {
             "in-progress" | "inprogress" | "in_progress" => Ok(IssueStatus::InProgress),
             "closed" => Ok(IssueStatus::Closed),
             "dropped" => Ok(IssueStatus::Dropped),
+            "rejected" => Ok(IssueStatus::Rejected),
+            "failed" => Ok(IssueStatus::Failed),
             other => Err(format!("unsupported issue status '{other}'")),
         }
     }
@@ -446,6 +452,8 @@ impl From<api::issues::IssueStatus> for IssueStatus {
             api::issues::IssueStatus::InProgress => IssueStatus::InProgress,
             api::issues::IssueStatus::Closed => IssueStatus::Closed,
             api::issues::IssueStatus::Dropped => IssueStatus::Dropped,
+            api::issues::IssueStatus::Rejected => IssueStatus::Rejected,
+            api::issues::IssueStatus::Failed => IssueStatus::Failed,
             _ => unreachable!("unsupported IssueStatus variant"),
         }
     }
@@ -458,6 +466,8 @@ impl From<IssueStatus> for api::issues::IssueStatus {
             IssueStatus::InProgress => api::issues::IssueStatus::InProgress,
             IssueStatus::Closed => api::issues::IssueStatus::Closed,
             IssueStatus::Dropped => api::issues::IssueStatus::Dropped,
+            IssueStatus::Rejected => api::issues::IssueStatus::Rejected,
+            IssueStatus::Failed => api::issues::IssueStatus::Failed,
         }
     }
 }
