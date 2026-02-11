@@ -1788,7 +1788,10 @@ impl AppState {
                 if updated_issue.creator.as_ref().trim().is_empty() {
                     return Err(UpsertIssueError::MissingCreator);
                 }
-                let is_dropping = updated_issue.status == IssueStatus::Dropped;
+                let is_dropping = matches!(
+                    updated_issue.status,
+                    IssueStatus::Dropped | IssueStatus::Rejected | IssueStatus::Failed
+                );
 
                 if let Err(source) =
                     validate_issue_lifecycle(store, Some(&id), &updated_issue).await
@@ -1811,6 +1814,11 @@ impl AppState {
                     });
                 }
 
+                let is_rejected_or_failed = matches!(
+                    updated_issue.status,
+                    IssueStatus::Rejected | IssueStatus::Failed
+                );
+
                 match store.update_issue(&id, updated_issue).await {
                     Ok(_version) => {
                         if is_dropping {
@@ -1825,6 +1833,56 @@ impl AppState {
                             let child_tasks = drop_issue_children(store, &id).await?;
                             tasks_to_kill.extend(child_tasks);
                         }
+
+                        if is_rejected_or_failed {
+                            let dependent_ids =
+                                store.get_issue_blocked_on(&id).await.map_err(|source| {
+                                    UpsertIssueError::Store {
+                                        source,
+                                        issue_id: Some(id.clone()),
+                                    }
+                                })?;
+
+                            for dep_id in dependent_ids {
+                                let dep_issue =
+                                    store.get_issue(&dep_id, false).await.map_err(|source| {
+                                        UpsertIssueError::Store {
+                                            source,
+                                            issue_id: Some(dep_id.clone()),
+                                        }
+                                    })?;
+                                let mut dep_issue = dep_issue.item;
+
+                                if !matches!(
+                                    dep_issue.status,
+                                    IssueStatus::Dropped
+                                        | IssueStatus::Closed
+                                        | IssueStatus::Rejected
+                                        | IssueStatus::Failed
+                                ) {
+                                    dep_issue.status = IssueStatus::Dropped;
+                                    store.update_issue(&dep_id, dep_issue).await.map_err(
+                                        |source| UpsertIssueError::Store {
+                                            source,
+                                            issue_id: Some(dep_id.clone()),
+                                        },
+                                    )?;
+
+                                    let dep_active_tasks = active_tasks_for_issue(store, &dep_id)
+                                        .await
+                                        .map_err(|source| UpsertIssueError::TaskLookup {
+                                            source,
+                                            issue_id: dep_id.clone(),
+                                        })?;
+                                    tasks_to_kill.extend(dep_active_tasks);
+
+                                    let dep_child_tasks =
+                                        drop_issue_children(store, &dep_id).await?;
+                                    tasks_to_kill.extend(dep_child_tasks);
+                                }
+                            }
+                        }
+
                         id
                     }
                     Err(source @ StoreError::IssueNotFound(_)) => {
@@ -2300,7 +2358,13 @@ async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, Stor
         IssueStatus::InProgress => {
             for child_id in store.get_issue_children(issue_id).await? {
                 let child = store.get_issue(&child_id, false).await?;
-                if child.item.status != IssueStatus::Closed {
+                if !matches!(
+                    child.item.status,
+                    IssueStatus::Closed
+                        | IssueStatus::Dropped
+                        | IssueStatus::Rejected
+                        | IssueStatus::Failed
+                ) {
                     return Ok(false);
                 }
             }
@@ -2336,7 +2400,13 @@ async fn validate_issue_lifecycle(
                     other => other,
                 })?;
 
-        if blocker.item.status != IssueStatus::Closed {
+        if !matches!(
+            blocker.item.status,
+            IssueStatus::Closed
+                | IssueStatus::Dropped
+                | IssueStatus::Rejected
+                | IssueStatus::Failed
+        ) {
             open_blockers.push(dependency.issue_id.clone());
         }
     }
@@ -3938,5 +4008,414 @@ mod tests {
         handles.state.upsert_patch(None, None, request2).await?;
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejected_issue_is_not_ready() {
+        let state = test_state();
+
+        let (issue_id, _) = {
+            let store = state.store.as_ref();
+            store
+                .add_issue(issue_with_status("rejected", IssueStatus::Rejected, vec![]))
+                .await
+                .unwrap()
+        };
+
+        assert!(!state.is_issue_ready(&issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn failed_issue_is_not_ready() {
+        let state = test_state();
+
+        let (issue_id, _) = {
+            let store = state.store.as_ref();
+            store
+                .add_issue(issue_with_status("failed", IssueStatus::Failed, vec![]))
+                .await
+                .unwrap()
+        };
+
+        assert!(!state.is_issue_ready(&issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_parent_ready_when_child_rejected() {
+        let state = test_state();
+
+        let store = state.store.as_ref();
+        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child = issue_with_status("child", IssueStatus::Rejected, vec![child_dep]);
+        store.add_issue(child).await.unwrap();
+
+        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_parent_ready_when_child_failed() {
+        let state = test_state();
+
+        let store = state.store.as_ref();
+        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child = issue_with_status("child", IssueStatus::Failed, vec![child_dep]);
+        store.add_issue(child).await.unwrap();
+
+        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_parent_ready_when_children_mixed_terminal() {
+        let state = test_state();
+
+        let store = state.store.as_ref();
+        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        store
+            .add_issue(issue_with_status(
+                "closed child",
+                IssueStatus::Closed,
+                vec![child_dep.clone()],
+            ))
+            .await
+            .unwrap();
+        store
+            .add_issue(issue_with_status(
+                "dropped child",
+                IssueStatus::Dropped,
+                vec![child_dep.clone()],
+            ))
+            .await
+            .unwrap();
+        store
+            .add_issue(issue_with_status(
+                "rejected child",
+                IssueStatus::Rejected,
+                vec![child_dep.clone()],
+            ))
+            .await
+            .unwrap();
+        store
+            .add_issue(issue_with_status(
+                "failed child",
+                IssueStatus::Failed,
+                vec![child_dep],
+            ))
+            .await
+            .unwrap();
+
+        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn rejected_blocker_keeps_issue_blocked() {
+        let state = test_state();
+
+        let (blocked_issue_id, _) = {
+            let store = state.store.as_ref();
+            let (blocker_id, _) = store
+                .add_issue(issue_with_status("blocker", IssueStatus::Rejected, vec![]))
+                .await
+                .unwrap();
+            store
+                .add_issue(issue_with_status(
+                    "blocked",
+                    IssueStatus::Open,
+                    vec![IssueDependency::new(
+                        IssueDependencyType::BlockedOn,
+                        blocker_id,
+                    )],
+                ))
+                .await
+                .unwrap()
+        };
+
+        assert!(!state.is_issue_ready(&blocked_issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn failed_blocker_keeps_issue_blocked() {
+        let state = test_state();
+
+        let (blocked_issue_id, _) = {
+            let store = state.store.as_ref();
+            let (blocker_id, _) = store
+                .add_issue(issue_with_status("blocker", IssueStatus::Failed, vec![]))
+                .await
+                .unwrap();
+            store
+                .add_issue(issue_with_status(
+                    "blocked",
+                    IssueStatus::Open,
+                    vec![IssueDependency::new(
+                        IssueDependencyType::BlockedOn,
+                        blocker_id,
+                    )],
+                ))
+                .await
+                .unwrap()
+        };
+
+        assert!(!state.is_issue_ready(&blocked_issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn rejected_issue_cascades_to_children() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent_id = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
+            )
+            .await
+            .unwrap();
+
+        let child_dependency =
+            IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child_issue =
+            issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
+        let child_id = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child_issue.into(), None),
+            )
+            .await
+            .unwrap();
+
+        let (child_task_id,) = {
+            let store = state.store.as_ref();
+            let (child_task_id, _) = store
+                .add_task(task_for_issue(&child_id), Utc::now())
+                .await
+                .unwrap();
+            (child_task_id,)
+        };
+
+        job_engine
+            .insert_job(&child_task_id, JobStatus::Running)
+            .await;
+
+        let mut rejected_parent = parent_issue;
+        rejected_parent.status = IssueStatus::Rejected;
+        state
+            .upsert_issue(
+                Some(parent_id.clone()),
+                api::issues::UpsertIssueRequest::new(rejected_parent.into(), None),
+            )
+            .await
+            .unwrap();
+
+        {
+            let store = state.store.as_ref();
+            assert_eq!(
+                store.get_issue(&child_id, false).await.unwrap().item.status,
+                IssueStatus::Dropped
+            );
+        }
+
+        let job = job_engine
+            .find_job_by_metis_id(&child_task_id)
+            .await
+            .expect("job should exist");
+        assert_eq!(job.status, JobStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn failed_issue_cascades_to_children() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent_id = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
+            )
+            .await
+            .unwrap();
+
+        let child_dependency =
+            IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child_issue =
+            issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
+        let child_id = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child_issue.into(), None),
+            )
+            .await
+            .unwrap();
+
+        let mut failed_parent = parent_issue;
+        failed_parent.status = IssueStatus::Failed;
+        state
+            .upsert_issue(
+                Some(parent_id.clone()),
+                api::issues::UpsertIssueRequest::new(failed_parent.into(), None),
+            )
+            .await
+            .unwrap();
+
+        {
+            let store = state.store.as_ref();
+            assert_eq!(
+                store.get_issue(&child_id, false).await.unwrap().item.status,
+                IssueStatus::Dropped
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_blocker_auto_drops_dependents() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        let blocker_issue = issue_with_status("blocker", IssueStatus::Open, vec![]);
+        let blocker_id = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(blocker_issue.clone().into(), None),
+            )
+            .await
+            .unwrap();
+
+        let blocked_dep = IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone());
+        let dependent_issue =
+            issue_with_status("dependent", IssueStatus::Open, vec![blocked_dep.clone()]);
+        let dependent_id = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(dependent_issue.into(), None),
+            )
+            .await
+            .unwrap();
+
+        let dep_child_dep =
+            IssueDependency::new(IssueDependencyType::ChildOf, dependent_id.clone());
+        let dep_child_issue =
+            issue_with_status("dep-child", IssueStatus::Open, vec![dep_child_dep]);
+        let dep_child_id = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(dep_child_issue.into(), None),
+            )
+            .await
+            .unwrap();
+
+        let (dep_task_id, dep_child_task_id) = {
+            let store = state.store.as_ref();
+            let (dep_task_id, _) = store
+                .add_task(task_for_issue(&dependent_id), Utc::now())
+                .await
+                .unwrap();
+            let (dep_child_task_id, _) = store
+                .add_task(task_for_issue(&dep_child_id), Utc::now())
+                .await
+                .unwrap();
+            (dep_task_id, dep_child_task_id)
+        };
+
+        job_engine
+            .insert_job(&dep_task_id, JobStatus::Running)
+            .await;
+        job_engine
+            .insert_job(&dep_child_task_id, JobStatus::Running)
+            .await;
+
+        let mut rejected_blocker = blocker_issue;
+        rejected_blocker.status = IssueStatus::Rejected;
+        state
+            .upsert_issue(
+                Some(blocker_id.clone()),
+                api::issues::UpsertIssueRequest::new(rejected_blocker.into(), None),
+            )
+            .await
+            .unwrap();
+
+        {
+            let store = state.store.as_ref();
+            assert_eq!(
+                store
+                    .get_issue(&dependent_id, false)
+                    .await
+                    .unwrap()
+                    .item
+                    .status,
+                IssueStatus::Dropped
+            );
+            assert_eq!(
+                store
+                    .get_issue(&dep_child_id, false)
+                    .await
+                    .unwrap()
+                    .item
+                    .status,
+                IssueStatus::Dropped
+            );
+        }
+
+        for task_id in [dep_task_id, dep_child_task_id] {
+            let job = job_engine
+                .find_job_by_metis_id(&task_id)
+                .await
+                .expect("job should exist");
+            assert_eq!(job.status, JobStatus::Failed);
+        }
+    }
+
+    #[tokio::test]
+    async fn closing_issue_allowed_with_terminal_blockers() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+
+        for terminal_status in [
+            IssueStatus::Closed,
+            IssueStatus::Dropped,
+            IssueStatus::Rejected,
+            IssueStatus::Failed,
+        ] {
+            let blocker_issue = issue_with_status("blocker", terminal_status, vec![]);
+            let blocker_id = state
+                .upsert_issue(
+                    None,
+                    api::issues::UpsertIssueRequest::new(blocker_issue.into(), None),
+                )
+                .await
+                .unwrap();
+
+            let blocked_dep =
+                IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone());
+            let blocked_issue =
+                issue_with_status("blocked", IssueStatus::Open, vec![blocked_dep.clone()]);
+            let blocked_id = state
+                .upsert_issue(
+                    None,
+                    api::issues::UpsertIssueRequest::new(blocked_issue.into(), None),
+                )
+                .await
+                .unwrap();
+
+            state
+                .upsert_issue(
+                    Some(blocked_id),
+                    api::issues::UpsertIssueRequest::new(
+                        issue_with_status("blocked", IssueStatus::Closed, vec![blocked_dep]).into(),
+                        None,
+                    ),
+                )
+                .await
+                .unwrap();
+        }
     }
 }
