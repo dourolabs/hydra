@@ -207,8 +207,14 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            // Do not spawn tasks for closed or dropped issues.
-            if matches!(issue.status, IssueStatus::Closed | IssueStatus::Dropped) {
+            // Do not spawn tasks for terminal issues.
+            if matches!(
+                issue.status,
+                IssueStatus::Closed
+                    | IssueStatus::Dropped
+                    | IssueStatus::Rejected
+                    | IssueStatus::Failed
+            ) {
                 continue;
             }
 
@@ -1104,6 +1110,46 @@ mod tests {
         assert_eq!(queue.prompt, "Handle issues");
         assert_eq!(queue.max_tries, DEFAULT_AGENT_MAX_TRIES);
         assert_eq!(queue.max_simultaneous, DEFAULT_AGENT_MAX_SIMULTANEOUS);
+    }
+
+    #[tokio::test]
+    async fn does_not_spawn_for_rejected_issues() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        handles
+            .store
+            .add_issue(issue(
+                "Rejected issue",
+                IssueStatus::Rejected,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
+
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn does_not_spawn_for_failed_issues() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        handles
+            .store
+            .add_issue(issue(
+                "Failed issue",
+                IssueStatus::Failed,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
+
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
     }
 
     #[tokio::test]
