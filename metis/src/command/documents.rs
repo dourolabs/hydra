@@ -42,6 +42,8 @@ pub enum DocumentsCommand {
     },
     /// Sync documents to a local directory.
     Sync(SyncArgs),
+    /// Push local document changes back to the server.
+    Push(PushArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -122,6 +124,21 @@ pub struct SyncArgs {
     pub clean: bool,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct PushArgs {
+    /// Local directory previously synced with `metis documents sync`.
+    #[arg(value_name = "DIRECTORY")]
+    pub directory: PathBuf,
+
+    /// Show what would be uploaded without making changes.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+
+    /// Only push documents whose path starts with this prefix.
+    #[arg(long = "path-prefix", value_name = "PREFIX")]
+    pub path_prefix: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Args)]
 pub struct DocumentBodyInput {
     /// Inline markdown body text.
@@ -170,6 +187,9 @@ pub async fn run(
         }
         DocumentsCommand::Sync(args) => {
             sync_documents(client, args).await?;
+        }
+        DocumentsCommand::Push(args) => {
+            push_documents(client, args).await?;
         }
     }
 
@@ -489,6 +509,208 @@ async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -> Re
         synced_count,
         skipped_count,
         removed_count,
+    );
+
+    Ok(())
+}
+
+/// Derive a document title from a filename by removing the extension
+/// and replacing hyphens/underscores with spaces, then capitalizing the first letter.
+fn title_from_filename(filename: &str) -> String {
+    let stem = filename
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(filename);
+    let title: String = stem
+        .chars()
+        .map(|c| if c == '-' || c == '_' { ' ' } else { c })
+        .collect();
+    let mut chars = title.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().to_string() + chars.as_str(),
+    }
+}
+
+/// Collect local files in a directory, returning relative paths (excluding the manifest).
+fn collect_local_files(directory: &Path, path_prefix: Option<&str>) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    collect_local_files_recursive(directory, directory, path_prefix, &mut files)?;
+    Ok(files)
+}
+
+fn collect_local_files_recursive(
+    base: &Path,
+    current: &Path,
+    path_prefix: Option<&str>,
+    files: &mut Vec<String>,
+) -> Result<()> {
+    let entries = fs::read_dir(current)
+        .with_context(|| format!("failed to read directory '{}'", current.display()))?;
+
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!("failed to read directory entry in '{}'", current.display())
+        })?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_local_files_recursive(base, &path, path_prefix, files)?;
+        } else {
+            let relative = path
+                .strip_prefix(base)
+                .with_context(|| {
+                    format!("failed to compute relative path for '{}'", path.display())
+                })?
+                .to_string_lossy()
+                .to_string();
+
+            // Skip the manifest file
+            if relative == MANIFEST_FILENAME {
+                continue;
+            }
+
+            // Apply path prefix filter if specified
+            if let Some(prefix) = path_prefix {
+                let prefix_stripped = prefix.strip_prefix('/').unwrap_or(prefix);
+                if !relative.starts_with(prefix_stripped) {
+                    continue;
+                }
+            }
+
+            files.push(relative);
+        }
+    }
+    Ok(())
+}
+
+async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -> Result<()> {
+    let directory = &args.directory;
+
+    // Safety guard: refuse to operate without a manifest
+    let manifest = load_manifest(directory)?.with_context(|| {
+        format!(
+            "no manifest file found at '{}'. Run 'metis documents sync' first.",
+            directory.join(MANIFEST_FILENAME).display()
+        )
+    })?;
+
+    // Collect all local files
+    let local_files = collect_local_files(directory, args.path_prefix.as_deref())?;
+
+    let mut updated_count = 0u64;
+    let mut created_count = 0u64;
+    let mut unchanged_count = 0u64;
+    let mut conflict_count = 0u64;
+
+    let mut new_entries = manifest.documents.clone();
+
+    for relative_path in &local_files {
+        let file_path = directory.join(relative_path);
+        let content = fs::read_to_string(&file_path)
+            .with_context(|| format!("failed to read file '{}'", file_path.display()))?;
+        let local_hash = compute_content_hash(&content);
+
+        if let Some(entry) = manifest.documents.get(relative_path.as_str()) {
+            // Existing document — check if changed locally
+            if entry.content_hash == local_hash {
+                unchanged_count += 1;
+                continue;
+            }
+
+            // Check for server-side conflict by fetching current server content
+            let server_record =
+                client
+                    .get_document(&entry.document_id)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to fetch document '{}' from server",
+                            entry.document_id
+                        )
+                    })?;
+            let server_hash = compute_content_hash(&server_record.document.body_markdown);
+            if server_hash != entry.content_hash {
+                let doc_id = &entry.document_id;
+                eprintln!(
+                    "Warning: server document '{relative_path}' ({doc_id}) has changed since last sync; pushing local version anyway"
+                );
+                conflict_count += 1;
+            }
+
+            if args.dry_run {
+                let doc_id = &entry.document_id;
+                println!("Would update: {relative_path} ({doc_id})");
+            } else {
+                let mut document = server_record.document.clone();
+                document.body_markdown = content.clone();
+                client
+                    .update_document(&entry.document_id, &UpsertDocumentRequest::new(document))
+                    .await
+                    .with_context(|| {
+                        format!("failed to update document '{}'", entry.document_id)
+                    })?;
+
+                new_entries.insert(
+                    relative_path.to_string(),
+                    SyncManifestEntry {
+                        document_id: entry.document_id.clone(),
+                        content_hash: local_hash,
+                    },
+                );
+                let doc_id = &entry.document_id;
+                println!("Updated: {relative_path} ({doc_id})");
+            }
+            updated_count += 1;
+        } else {
+            // New file — create a new document on the server
+            let doc_path = format!("/{relative_path}");
+            let filename = Path::new(relative_path)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| relative_path.clone());
+            let title = title_from_filename(&filename);
+
+            if args.dry_run {
+                println!("Would create: {relative_path} (title: \"{title}\")");
+            } else {
+                let document =
+                    DocumentPayload::new(title.clone(), content.clone(), false).with_path(doc_path);
+                let response = client
+                    .create_document(&UpsertDocumentRequest::new(document))
+                    .await
+                    .with_context(|| {
+                        format!("failed to create document for '{relative_path}'")
+                    })?;
+
+                new_entries.insert(
+                    relative_path.to_string(),
+                    SyncManifestEntry {
+                        document_id: response.document_id.clone(),
+                        content_hash: local_hash,
+                    },
+                );
+                let doc_id = &response.document_id;
+                println!("Created: {relative_path} ({doc_id}, title: \"{title}\")");
+            }
+            created_count += 1;
+        }
+    }
+
+    // Update manifest (only if not dry-run)
+    if !args.dry_run {
+        let updated_manifest = SyncManifest {
+            synced_at: chrono::Utc::now().to_rfc3339(),
+            path_prefix: manifest.path_prefix.clone(),
+            documents: new_entries,
+        };
+        save_manifest(directory, &updated_manifest)?;
+    }
+
+    let prefix = if args.dry_run { "Dry run: " } else { "" };
+    let total = updated_count + created_count;
+    let dir_display = directory.display();
+    println!(
+        "{prefix}Pushed {total} document(s) from '{dir_display}' ({updated_count} updated, {created_count} created, {unchanged_count} unchanged, {conflict_count} conflicts)"
     );
 
     Ok(())
@@ -1189,5 +1411,415 @@ mod tests {
         assert!(dir.path().join("playbooks/guide.md").exists());
         let manifest = load_manifest(dir.path()).unwrap().unwrap();
         assert!(manifest.documents.contains_key("playbooks/guide.md"));
+    }
+
+    #[test]
+    fn title_from_filename_strips_extension_and_capitalizes() {
+        assert_eq!(title_from_filename("deploy-guide.md"), "Deploy guide");
+        assert_eq!(title_from_filename("my_notes.md"), "My notes");
+        assert_eq!(title_from_filename("README"), "README");
+        assert_eq!(title_from_filename("hello-world.txt"), "Hello world");
+    }
+
+    #[test]
+    fn title_from_filename_handles_empty_and_no_extension() {
+        assert_eq!(title_from_filename(""), "");
+        assert_eq!(title_from_filename("notes"), "Notes");
+    }
+
+    #[tokio::test]
+    async fn push_documents_refuses_without_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = MockServer::start();
+        let client = mock_client(&server);
+
+        let error = push_documents(
+            &client,
+            PushArgs {
+                directory: dir.path().to_path_buf(),
+                dry_run: false,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("no manifest file found"));
+    }
+
+    #[tokio::test]
+    async fn push_documents_uploads_modified_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let original_body = "# Original content";
+
+        // Create manifest and file
+        let mut documents = BTreeMap::new();
+        documents.insert(
+            "docs/guide.md".to_string(),
+            SyncManifestEntry {
+                document_id: doc_id.clone(),
+                content_hash: compute_content_hash(original_body),
+            },
+        );
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents,
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        // Write modified local file
+        fs::create_dir_all(dir.path().join("docs")).unwrap();
+        let modified_body = "# Updated content";
+        fs::write(dir.path().join("docs/guide.md"), modified_body).unwrap();
+
+        // Mock server: GET document (for conflict check), PUT update
+        let server = MockServer::start();
+        let server_record = DocumentRecord::new(
+            doc_id.clone(),
+            DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
+                .with_path("/docs/guide.md"),
+        );
+        let doc_id_for_get = doc_id.clone();
+        let get_mock = server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{doc_id_for_get}").as_str());
+            then.status(200).json_body_obj(&server_record);
+        });
+        let doc_id_for_update = doc_id.clone();
+        let update_mock = server.mock(move |when, then| {
+            when.method(PUT)
+                .path(format!("/v1/documents/{doc_id_for_update}").as_str());
+            then.status(200)
+                .json_body_obj(&UpsertDocumentResponse::new(doc_id_for_update.clone()));
+        });
+        let client = mock_client(&server);
+
+        push_documents(
+            &client,
+            PushArgs {
+                directory: dir.path().to_path_buf(),
+                dry_run: false,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        get_mock.assert();
+        update_mock.assert();
+
+        // Verify manifest was updated with new hash
+        let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert_eq!(
+            updated_manifest.documents["docs/guide.md"].content_hash,
+            compute_content_hash(modified_body)
+        );
+    }
+
+    #[tokio::test]
+    async fn push_documents_skips_unchanged_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let body = "# Unchanged content";
+
+        // Create manifest and file with same content
+        let mut documents = BTreeMap::new();
+        documents.insert(
+            "docs/stable.md".to_string(),
+            SyncManifestEntry {
+                document_id: doc_id.clone(),
+                content_hash: compute_content_hash(body),
+            },
+        );
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents,
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        fs::create_dir_all(dir.path().join("docs")).unwrap();
+        fs::write(dir.path().join("docs/stable.md"), body).unwrap();
+
+        let server = MockServer::start();
+        // No mocks needed — server should not be called
+        let client = mock_client(&server);
+
+        push_documents(
+            &client,
+            PushArgs {
+                directory: dir.path().to_path_buf(),
+                dry_run: false,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Manifest should be updated (synced_at changes) but content unchanged
+        let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert_eq!(
+            updated_manifest.documents["docs/stable.md"].content_hash,
+            compute_content_hash(body)
+        );
+    }
+
+    #[tokio::test]
+    async fn push_documents_creates_new_files() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create manifest with no documents
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents: BTreeMap::new(),
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        // Create a new local file
+        fs::create_dir_all(dir.path().join("guides")).unwrap();
+        let new_body = "# New Guide\nSome content";
+        fs::write(dir.path().join("guides/new-guide.md"), new_body).unwrap();
+
+        let new_doc_id = DocumentId::new();
+        let server = MockServer::start();
+        let new_doc_id_for_mock = new_doc_id.clone();
+        let create_mock = server.mock(move |when, then| {
+            when.method(POST).path("/v1/documents");
+            then.status(200)
+                .json_body_obj(&UpsertDocumentResponse::new(new_doc_id_for_mock.clone()));
+        });
+        let client = mock_client(&server);
+
+        push_documents(
+            &client,
+            PushArgs {
+                directory: dir.path().to_path_buf(),
+                dry_run: false,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        create_mock.assert();
+
+        // Verify manifest now contains the new document
+        let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert!(updated_manifest
+            .documents
+            .contains_key("guides/new-guide.md"));
+        assert_eq!(
+            updated_manifest.documents["guides/new-guide.md"].document_id,
+            new_doc_id
+        );
+    }
+
+    #[tokio::test]
+    async fn push_documents_dry_run_does_not_modify() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let original_body = "# Original";
+
+        // Create manifest and modified file
+        let mut documents = BTreeMap::new();
+        documents.insert(
+            "docs/guide.md".to_string(),
+            SyncManifestEntry {
+                document_id: doc_id.clone(),
+                content_hash: compute_content_hash(original_body),
+            },
+        );
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents,
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        fs::create_dir_all(dir.path().join("docs")).unwrap();
+        fs::write(dir.path().join("docs/guide.md"), "# Modified").unwrap();
+
+        // Also add a new file
+        fs::create_dir_all(dir.path().join("guides")).unwrap();
+        fs::write(dir.path().join("guides/new.md"), "# New").unwrap();
+
+        let server = MockServer::start();
+        // Mock GET for conflict check on the modified file
+        let server_record = DocumentRecord::new(
+            doc_id.clone(),
+            DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
+                .with_path("/docs/guide.md"),
+        );
+        let doc_id_for_get = doc_id.clone();
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{doc_id_for_get}").as_str());
+            then.status(200).json_body_obj(&server_record);
+        });
+        // No PUT or POST mocks — should not be called in dry-run
+        let client = mock_client(&server);
+
+        push_documents(
+            &client,
+            PushArgs {
+                directory: dir.path().to_path_buf(),
+                dry_run: true,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Manifest should NOT have been updated
+        let loaded_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert_eq!(loaded_manifest.synced_at, "2026-02-11T00:00:00Z");
+        assert_eq!(loaded_manifest.documents.len(), 1);
+        assert!(!loaded_manifest.documents.contains_key("guides/new.md"));
+    }
+
+    #[tokio::test]
+    async fn push_documents_detects_server_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let original_body = "# Original synced content";
+        let server_body = "# Server has changed this";
+
+        // Create manifest with original hash
+        let mut documents = BTreeMap::new();
+        documents.insert(
+            "docs/guide.md".to_string(),
+            SyncManifestEntry {
+                document_id: doc_id.clone(),
+                content_hash: compute_content_hash(original_body),
+            },
+        );
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents,
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        // Write locally modified file
+        fs::create_dir_all(dir.path().join("docs")).unwrap();
+        fs::write(dir.path().join("docs/guide.md"), "# Local changes").unwrap();
+
+        // Mock server returns different content than what was synced
+        let server = MockServer::start();
+        let server_record = DocumentRecord::new(
+            doc_id.clone(),
+            DocumentPayload::new("Guide".to_string(), server_body.to_string(), false)
+                .with_path("/docs/guide.md"),
+        );
+        let doc_id_for_get = doc_id.clone();
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{doc_id_for_get}").as_str());
+            then.status(200).json_body_obj(&server_record);
+        });
+        let doc_id_for_update = doc_id.clone();
+        server.mock(move |when, then| {
+            when.method(PUT)
+                .path(format!("/v1/documents/{doc_id_for_update}").as_str());
+            then.status(200)
+                .json_body_obj(&UpsertDocumentResponse::new(doc_id_for_update.clone()));
+        });
+        let client = mock_client(&server);
+
+        // Push should succeed but print a warning (we can't easily capture stderr in test,
+        // but we verify it doesn't error out)
+        push_documents(
+            &client,
+            PushArgs {
+                directory: dir.path().to_path_buf(),
+                dry_run: false,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Manifest should be updated with local content hash
+        let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert_eq!(
+            updated_manifest.documents["docs/guide.md"].content_hash,
+            compute_content_hash("# Local changes")
+        );
+    }
+
+    #[tokio::test]
+    async fn push_documents_with_path_prefix_filter() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create manifest with no docs
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents: BTreeMap::new(),
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        // Create files in different directories
+        fs::create_dir_all(dir.path().join("playbooks")).unwrap();
+        fs::create_dir_all(dir.path().join("guides")).unwrap();
+        fs::write(dir.path().join("playbooks/deploy.md"), "# Deploy").unwrap();
+        fs::write(dir.path().join("guides/intro.md"), "# Intro").unwrap();
+
+        let new_doc_id = DocumentId::new();
+        let server = MockServer::start();
+        let new_doc_id_for_mock = new_doc_id.clone();
+        let create_mock = server.mock(move |when, then| {
+            when.method(POST).path("/v1/documents");
+            then.status(200)
+                .json_body_obj(&UpsertDocumentResponse::new(new_doc_id_for_mock.clone()));
+        });
+        let client = mock_client(&server);
+
+        push_documents(
+            &client,
+            PushArgs {
+                directory: dir.path().to_path_buf(),
+                dry_run: false,
+                path_prefix: Some("/playbooks".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Only playbooks/deploy.md should have been pushed
+        create_mock.assert_hits(1);
+
+        let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert!(updated_manifest
+            .documents
+            .contains_key("playbooks/deploy.md"));
+        assert!(!updated_manifest.documents.contains_key("guides/intro.md"));
+    }
+
+    #[test]
+    fn collect_local_files_excludes_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(MANIFEST_FILENAME), "{}").unwrap();
+        fs::write(dir.path().join("doc.md"), "content").unwrap();
+
+        let files = collect_local_files(dir.path(), None).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files.contains(&"doc.md".to_string()));
+    }
+
+    #[test]
+    fn collect_local_files_with_path_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("playbooks")).unwrap();
+        fs::create_dir_all(dir.path().join("guides")).unwrap();
+        fs::write(dir.path().join("playbooks/deploy.md"), "content").unwrap();
+        fs::write(dir.path().join("guides/intro.md"), "content").unwrap();
+
+        let files = collect_local_files(dir.path(), Some("/playbooks")).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files.contains(&"playbooks/deploy.md".to_string()));
     }
 }
