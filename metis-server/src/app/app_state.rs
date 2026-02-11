@@ -1534,7 +1534,7 @@ impl AppState {
         let mut patch: Patch = patch.into();
 
         let mut should_close_merge_requests = false;
-        let mut status_changed_to_changes_requested = false;
+        let mut status_changed_to_merged = false;
         let mut should_create_merge_request = false;
         let store = self.store.as_ref();
         let patch_id = match patch_id {
@@ -1551,13 +1551,16 @@ impl AppState {
                             other => UpsertPatchError::Store { source: other },
                         })?;
                 let new_status = patch.status;
-                status_changed_to_changes_requested = new_status == PatchStatus::ChangesRequested
+                let status_changed_to_changes_requested = new_status
+                    == PatchStatus::ChangesRequested
                     && existing_patch.item.status != PatchStatus::ChangesRequested;
                 should_close_merge_requests =
                     matches!(
                         existing_patch.item.status,
                         PatchStatus::Open | PatchStatus::ChangesRequested
                     ) && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
+                status_changed_to_merged =
+                    should_close_merge_requests && new_status == PatchStatus::Merged;
                 should_close_merge_requests |= status_changed_to_changes_requested;
                 should_create_merge_request = existing_patch.item.status
                     == PatchStatus::ChangesRequested
@@ -1682,10 +1685,10 @@ impl AppState {
                     continue;
                 }
 
-                issue.status = if status_changed_to_changes_requested {
-                    IssueStatus::Failed
-                } else {
+                issue.status = if status_changed_to_merged {
                     IssueStatus::Closed
+                } else {
+                    IssueStatus::Failed
                 };
                 store
                     .update_issue(&issue_id, issue)
@@ -1704,10 +1707,10 @@ impl AppState {
                     .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", ");
-                let new_status = if status_changed_to_changes_requested {
-                    "failed"
-                } else {
+                let new_status = if status_changed_to_merged {
                     "closed"
+                } else {
+                    "failed"
                 };
                 tracing::info!(
                     patch_id = %patch_id,
