@@ -2562,17 +2562,11 @@ fn merge_request_issue_title(patch: &Patch) -> String {
         .to_string()
 }
 
-/// Returns true if any component of the given path starts with a dot character,
-/// indicating a hidden file or directory.
-fn has_hidden_segment(path: &str) -> bool {
-    path.split('/').any(|seg| seg.starts_with('.'))
-}
+use metis_common::documents::has_hidden_segment;
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        LoginError, UpsertDocumentError, UpsertIssueError, UpsertPatchError, has_hidden_segment,
-    };
+    use super::{LoginError, UpsertDocumentError, UpsertIssueError, UpsertPatchError};
     use crate::{
         app::{AppState, ServerEvent, ServiceState},
         domain::{
@@ -4440,17 +4434,6 @@ mod tests {
                 .await
                 .unwrap();
         }
-    }
-
-    #[test]
-    fn has_hidden_segment_detects_dot_prefixed_components() {
-        assert!(has_hidden_segment(".hidden"));
-        assert!(has_hidden_segment(".hidden/file.md"));
-        assert!(has_hidden_segment("dir/.hidden/file.md"));
-        assert!(has_hidden_segment("dir/.git/config"));
-        assert!(!has_hidden_segment("visible.md"));
-        assert!(!has_hidden_segment("dir/file.md"));
-        assert!(!has_hidden_segment("dir/sub/file.txt"));
     }
 
     #[tokio::test]

@@ -7,7 +7,8 @@ use clap::{Args, Subcommand};
 use metis_common::{
     constants::ENV_METIS_ID,
     documents::{
-        Document as DocumentPayload, DocumentRecord, SearchDocumentsQuery, UpsertDocumentRequest,
+        has_hidden_segment, Document as DocumentPayload, DocumentRecord, SearchDocumentsQuery,
+        UpsertDocumentRequest,
     },
     DocumentId, TaskId,
 };
@@ -544,12 +545,6 @@ fn title_from_filename(filename: &str) -> String {
         None => String::new(),
         Some(first) => first.to_uppercase().to_string() + chars.as_str(),
     }
-}
-
-/// Returns true if any component of the given path starts with a dot character,
-/// indicating a hidden file or directory.
-fn has_hidden_segment(path: &str) -> bool {
-    path.split('/').any(|seg| seg.starts_with('.'))
 }
 
 /// Collect local files in a directory, returning relative paths (excluding the manifest
@@ -1903,17 +1898,6 @@ mod tests {
         let files = collect_local_files(dir.path(), None).unwrap();
         assert_eq!(files.len(), 1);
         assert!(files.contains(&"visible_dir/doc.md".to_string()));
-    }
-
-    #[test]
-    fn has_hidden_segment_detects_dot_prefixed_components() {
-        assert!(has_hidden_segment(".hidden"));
-        assert!(has_hidden_segment(".hidden/file.md"));
-        assert!(has_hidden_segment("dir/.hidden/file.md"));
-        assert!(has_hidden_segment("dir/.git/config"));
-        assert!(!has_hidden_segment("visible.md"));
-        assert!(!has_hidden_segment("dir/file.md"));
-        assert!(!has_hidden_segment("dir/sub/file.txt"));
     }
 
     #[tokio::test]
