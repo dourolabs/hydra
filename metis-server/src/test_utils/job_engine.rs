@@ -15,6 +15,8 @@ pub struct MockJobEngine {
     resource_limits: Arc<Mutex<HashMap<TaskId, (String, String)>>>,
     resource_requests: Arc<Mutex<HashMap<TaskId, (String, String)>>>,
     secrets: Arc<Mutex<HashMap<TaskId, Vec<String>>>>,
+    /// When set, `create_job` returns this error instead of creating the job.
+    create_job_error: Arc<Mutex<Option<String>>>,
 }
 
 impl MockJobEngine {
@@ -86,6 +88,12 @@ impl MockJobEngine {
         let secrets = self.secrets.lock().unwrap();
         secrets.get(metis_id).cloned()
     }
+
+    /// Configure `create_job` to fail with a `Kubernetes` error containing the
+    /// given message. Pass `None` to restore normal behavior.
+    pub fn set_create_job_error(&self, error_message: Option<String>) {
+        *self.create_job_error.lock().unwrap() = error_message;
+    }
 }
 
 #[async_trait]
@@ -103,6 +111,13 @@ impl JobEngine for MockJobEngine {
         memory_request: String,
         secrets: Option<&[String]>,
     ) -> Result<(), JobEngineError> {
+        // If a create_job_error is configured, return it without creating a job.
+        // This simulates transient K8s API errors (e.g. etcdserver timeouts)
+        // where create_job fails but the job may or may not have been created.
+        if let Some(msg) = self.create_job_error.lock().unwrap().clone() {
+            return Err(JobEngineError::Internal(msg));
+        }
+
         let mut jobs = self.jobs.lock().unwrap();
         if jobs.iter().any(|job| &job.id == metis_id) {
             return Err(JobEngineError::AlreadyExists(metis_id.clone()));

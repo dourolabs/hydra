@@ -1208,6 +1208,47 @@ impl AppState {
                 }
             },
             Err(err) => {
+                // For non-AlreadyExists errors (e.g. etcdserver timeouts), the job
+                // may have actually been created despite the error. Wait briefly for
+                // etcd to settle, then check whether the job exists in K8s before
+                // marking the task as Failed.
+                if !matches!(err, JobEngineError::AlreadyExists(_)) {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    match self.job_engine.find_job_by_metis_id(&task_id).await {
+                        Ok(job)
+                            if job.status == JobStatus::Pending
+                                || job.status == JobStatus::Running =>
+                        {
+                            warn!(
+                                metis_id = %task_id,
+                                create_error = %err,
+                                job_status = %job.status,
+                                "create_job failed but job exists in K8s; treating as successful"
+                            );
+                            match self.transition_task_to_pending(&task_id).await {
+                                Ok(_) => {
+                                    info!(
+                                        metis_id = %task_id,
+                                        "set task status to Pending (job found after create error)"
+                                    );
+                                }
+                                Err(transition_err) => {
+                                    warn!(
+                                        metis_id = %task_id,
+                                        error = %transition_err,
+                                        "failed to set task to Pending after finding existing job"
+                                    );
+                                }
+                            }
+                            return;
+                        }
+                        _ => {
+                            // Job not found or in a terminal state — fall through
+                            // to the existing failure path below.
+                        }
+                    }
+                }
+
                 let failure_reason = format!("Failed to create Kubernetes job: {err}");
                 if let Err(update_err) = self
                     .transition_task_to_completion(
@@ -3158,6 +3199,52 @@ mod tests {
             .resource_limits_for_job(&task_id)
             .expect("resource limits should be recorded");
         assert_eq!(limits, ("750m".to_string(), "2Gi".to_string()));
+    }
+
+    #[tokio::test]
+    async fn start_pending_task_timeout_but_job_exists_transitions_to_pending() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let task = sample_task();
+
+        let (task_id, _) = {
+            let store = state.store.as_ref();
+            store.add_task(task, Utc::now()).await.unwrap()
+        };
+
+        // Pre-insert the job so find_job_by_metis_id finds it, and configure
+        // create_job to fail (simulating an etcdserver timeout where the job
+        // was actually created).
+        job_engine.insert_job(&task_id, JobStatus::Running).await;
+        job_engine.set_create_job_error(Some("etcdserver: request timed out".to_string()));
+
+        state.start_pending_task(task_id.clone()).await;
+
+        let store = state.store.as_ref();
+        let status = store.get_task(&task_id, false).await.unwrap().item.status;
+        assert_eq!(status, Status::Pending);
+    }
+
+    #[tokio::test]
+    async fn start_pending_task_timeout_and_job_missing_transitions_to_failed() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let task = sample_task();
+
+        let (task_id, _) = {
+            let store = state.store.as_ref();
+            store.add_task(task, Utc::now()).await.unwrap()
+        };
+
+        // Configure create_job to fail without pre-inserting the job, so
+        // find_job_by_metis_id will return NotFound.
+        job_engine.set_create_job_error(Some("etcdserver: request timed out".to_string()));
+
+        state.start_pending_task(task_id.clone()).await;
+
+        let store = state.store.as_ref();
+        let status = store.get_task(&task_id, false).await.unwrap().item.status;
+        assert_eq!(status, Status::Failed);
     }
 
     #[test]
