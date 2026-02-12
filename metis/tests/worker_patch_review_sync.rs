@@ -1,11 +1,3 @@
-// First test migrated from old-style using init_test_server_with_remote_and_github + manual
-// GitHub mock reconfiguration + manual issue/patch/merge-request creation.
-// Original: ~107 lines with git_output helpers, create_branch_with_commit, two GitHubMockBuilder
-// calls, manual state.github_app assignment, and verbose issue/patch/job assertions.
-// Migrated: ~55 lines using TestHarness, UserHandle, GitRemote, and step_github_sync.
-//
-// The remaining two tests are kept in the original style for unmigrated comparison.
-
 mod harness;
 
 use anyhow::{Context, Result};

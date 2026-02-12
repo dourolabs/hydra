@@ -1,8 +1,3 @@
-// Migrated from the old-style test using init_test_server_with_remote + run_as_user + run_as_worker.
-// Original: ~70 lines with manual env var construction, CLI subprocess job creation,
-// job_id_for_prompt polling, and manual patch/job list inspection.
-// Migrated: ~25 lines using TestHarness, UserHandle, and run_worker.
-
 mod harness;
 
 use anyhow::Result;
