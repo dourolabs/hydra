@@ -16,9 +16,9 @@ use chrono::Utc;
 use metis_common::{
     IssueId, PatchId,
     api::v1::issues::{
-        AddTodoItemRequest, IssueVersionRecord, ListIssueVersionsResponse,
-        ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
-        TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+        AddTodoItemRequest, IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse,
+        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse,
+        UpsertIssueRequest, UpsertIssueResponse,
     },
 };
 use reqwest::StatusCode;
@@ -1222,7 +1222,12 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    assert!(!list_without.issues.iter().any(|i| i.issue_id == created.issue_id));
+    assert!(
+        !list_without
+            .issues
+            .iter()
+            .any(|i| i.issue_id == created.issue_id)
+    );
 
     // List with include_deleted=true - verify present with deleted=true
     let list_with: ListIssuesResponse = client
@@ -1240,7 +1245,10 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    let deleted_issue = list_with.issues.iter().find(|i| i.issue_id == created.issue_id);
+    let deleted_issue = list_with
+        .issues
+        .iter()
+        .find(|i| i.issue_id == created.issue_id);
 
     assert!(deleted_issue.is_some());
     assert!(deleted_issue.unwrap().issue.deleted);

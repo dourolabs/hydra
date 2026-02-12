@@ -22,10 +22,7 @@ use metis_common::{
     BuildCacheStorageConfig, TaskId,
     api::v1::{
         self,
-        jobs::{
-            CreateJobResponse, JobVersionRecord, ListJobVersionsResponse,
-            ListJobsResponse,
-        },
+        jobs::{CreateJobResponse, JobVersionRecord, ListJobVersionsResponse, ListJobsResponse},
     },
     job_status::GetJobStatusResponse,
 };

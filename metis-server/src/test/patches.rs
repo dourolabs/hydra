@@ -1368,7 +1368,10 @@ async fn delete_patch_include_deleted_in_listing() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    let deleted_patch = list_with.patches.iter().find(|p| p.patch_id == created.patch_id);
+    let deleted_patch = list_with
+        .patches
+        .iter()
+        .find(|p| p.patch_id == created.patch_id);
 
     assert!(deleted_patch.is_some());
     assert!(deleted_patch.unwrap().patch.deleted);

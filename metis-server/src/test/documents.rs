@@ -404,7 +404,12 @@ async fn delete_document_basic_operation() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    assert!(!list.documents.iter().any(|d| d.document_id == created.document_id));
+    assert!(
+        !list
+            .documents
+            .iter()
+            .any(|d| d.document_id == created.document_id)
+    );
 
     Ok(())
 }

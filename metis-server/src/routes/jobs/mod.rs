@@ -147,12 +147,8 @@ pub async fn get_job(
     } else {
         api_task
     };
-    let record = v1::jobs::JobVersionRecord::new(
-        job_id.clone(),
-        latest.version,
-        latest.timestamp,
-        api_task,
-    );
+    let record =
+        v1::jobs::JobVersionRecord::new(job_id.clone(), latest.version, latest.timestamp, api_task);
     info!(job_id = %record.job_id, "get_job completed successfully");
     Ok(Json(record))
 }

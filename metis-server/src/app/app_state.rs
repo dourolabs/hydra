@@ -1612,16 +1612,17 @@ impl AppState {
                         .await?;
                 }
 
-                let version = store
-                    .update_patch(&id, patch)
-                    .await
-                    .map_err(|source| match source {
-                        StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
-                            patch_id: id.clone(),
-                            source,
-                        },
-                        other => UpsertPatchError::Store { source: other },
-                    })?;
+                let version =
+                    store
+                        .update_patch(&id, patch)
+                        .await
+                        .map_err(|source| match source {
+                            StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
+                                patch_id: id.clone(),
+                                source,
+                            },
+                            other => UpsertPatchError::Store { source: other },
+                        })?;
 
                 (id, version)
             }
