@@ -8,6 +8,7 @@ use crate::app::event_bus::ServerEvent;
 use async_trait::async_trait;
 use context::{AutomationContext, RestrictionContext};
 use std::fmt;
+use std::mem;
 
 /// A structured error returned when a restriction rejects a proposed mutation.
 ///
@@ -39,8 +40,8 @@ pub enum AutomationError {
 /// Describes which events an automation subscribes to.
 #[derive(Debug, Clone, Default)]
 pub struct EventFilter {
-    /// Which event types to match. Empty means match all.
-    pub event_types: Vec<EventType>,
+    /// Which event variant discriminants to match. Empty means match all.
+    pub event_types: Vec<mem::Discriminant<ServerEvent>>,
 }
 
 impl EventFilter {
@@ -49,42 +50,7 @@ impl EventFilter {
         if self.event_types.is_empty() {
             return true;
         }
-        let event_type = EventType::from(event);
-        self.event_types.contains(&event_type)
-    }
-}
-
-/// The set of event types that automations can subscribe to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EventType {
-    IssueCreated,
-    IssueUpdated,
-    IssueDeleted,
-    PatchCreated,
-    PatchUpdated,
-    PatchDeleted,
-    JobCreated,
-    JobUpdated,
-    DocumentCreated,
-    DocumentUpdated,
-    DocumentDeleted,
-}
-
-impl From<&ServerEvent> for EventType {
-    fn from(event: &ServerEvent) -> Self {
-        match event {
-            ServerEvent::IssueCreated { .. } => EventType::IssueCreated,
-            ServerEvent::IssueUpdated { .. } => EventType::IssueUpdated,
-            ServerEvent::IssueDeleted { .. } => EventType::IssueDeleted,
-            ServerEvent::PatchCreated { .. } => EventType::PatchCreated,
-            ServerEvent::PatchUpdated { .. } => EventType::PatchUpdated,
-            ServerEvent::PatchDeleted { .. } => EventType::PatchDeleted,
-            ServerEvent::JobCreated { .. } => EventType::JobCreated,
-            ServerEvent::JobUpdated { .. } => EventType::JobUpdated,
-            ServerEvent::DocumentCreated { .. } => EventType::DocumentCreated,
-            ServerEvent::DocumentUpdated { .. } => EventType::DocumentUpdated,
-            ServerEvent::DocumentDeleted { .. } => EventType::DocumentDeleted,
-        }
+        self.event_types.contains(&mem::discriminant(event))
     }
 }
 

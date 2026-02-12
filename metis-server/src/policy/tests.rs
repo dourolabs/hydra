@@ -1,5 +1,7 @@
 use super::*;
 use crate::app::event_bus::ServerEvent;
+use crate::domain::actors::UserOrWorker;
+use crate::domain::users::Username;
 use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
 use crate::policy::context::{AutomationContext, Operation, OperationPayload, RestrictionContext};
 use crate::policy::registry::PolicyRegistry;
@@ -102,9 +104,12 @@ impl Automation for FailingAutomation {
 // ---------------------------------------------------------------------------
 // Helper to build a minimal RestrictionContext for testing
 // ---------------------------------------------------------------------------
+fn make_test_actor() -> UserOrWorker {
+    UserOrWorker::Username(Username::from("tester"))
+}
+
 fn make_issue_payload() -> OperationPayload {
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
-    use crate::domain::users::Username;
 
     OperationPayload::Issue {
         issue_id: Some(IssueId::new()),
@@ -133,9 +138,10 @@ async fn check_restrictions_passes_with_no_restrictions() {
     let engine = PolicyEngine::empty();
     let store = MemoryStore::new();
     let payload = make_issue_payload();
+    let actor = make_test_actor();
     let ctx = RestrictionContext {
         operation: Operation::CreateIssue,
-        actor: "tester",
+        actor: &actor,
         repo: None,
         payload: &payload,
         store: &store,
@@ -153,9 +159,10 @@ async fn check_restrictions_passes_when_all_allow() {
     );
     let store = MemoryStore::new();
     let payload = make_issue_payload();
+    let actor = make_test_actor();
     let ctx = RestrictionContext {
         operation: Operation::CreateIssue,
-        actor: "tester",
+        actor: &actor,
         repo: None,
         payload: &payload,
         store: &store,
@@ -179,9 +186,10 @@ async fn check_restrictions_returns_first_violation() {
     );
     let store = MemoryStore::new();
     let payload = make_issue_payload();
+    let actor = make_test_actor();
     let ctx = RestrictionContext {
         operation: Operation::UpdateIssue,
-        actor: "tester",
+        actor: &actor,
         repo: None,
         payload: &payload,
         store: &store,
@@ -219,12 +227,18 @@ async fn policy_violation_has_descriptive_message() {
 #[tokio::test]
 async fn run_automations_executes_matching_automations() {
     let count = Arc::new(AtomicUsize::new(0));
+    let sentinel = ServerEvent::IssueCreated {
+        seq: 0,
+        issue_id: IssueId::new(),
+        version: 0,
+        timestamp: Utc::now(),
+    };
     let engine = PolicyEngine::new(
         Vec::new(),
         vec![Box::new(CountingAutomation {
             count: count.clone(),
             filter: EventFilter {
-                event_types: vec![EventType::IssueCreated],
+                event_types: vec![mem::discriminant(&sentinel)],
             },
         })],
     );
@@ -251,12 +265,18 @@ async fn run_automations_executes_matching_automations() {
 #[tokio::test]
 async fn run_automations_skips_non_matching_events() {
     let count = Arc::new(AtomicUsize::new(0));
+    let sentinel = ServerEvent::PatchCreated {
+        seq: 0,
+        patch_id: metis_common::PatchId::new(),
+        version: 0,
+        timestamp: Utc::now(),
+    };
     let engine = PolicyEngine::new(
         Vec::new(),
         vec![Box::new(CountingAutomation {
             count: count.clone(),
             filter: EventFilter {
-                event_types: vec![EventType::PatchCreated],
+                event_types: vec![mem::discriminant(&sentinel)],
             },
         })],
     );
@@ -332,8 +352,14 @@ fn event_filter_empty_matches_all() {
 
 #[test]
 fn event_filter_specific_type_matches() {
+    let sentinel = ServerEvent::PatchUpdated {
+        seq: 0,
+        patch_id: metis_common::PatchId::new(),
+        version: 0,
+        timestamp: Utc::now(),
+    };
     let filter = EventFilter {
-        event_types: vec![EventType::PatchUpdated],
+        event_types: vec![mem::discriminant(&sentinel)],
     };
     let matching = ServerEvent::PatchUpdated {
         seq: 1,
