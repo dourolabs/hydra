@@ -22,11 +22,13 @@ use std::{
 use tokio::{sync::RwLock, task::JoinHandle, time::sleep};
 
 pub mod github_mock;
+pub mod git_remote;
 pub mod github_test_utils;
 pub mod job_engine;
 pub mod store;
 
 pub use github_mock::{GitHubMockBuilder, MockPr, MockReview};
+pub use git_remote::GitRemote;
 pub use github_test_utils::{
     github_user_response, test_state_with_github_api_base_url, test_state_with_github_urls,
     test_state_with_github_urls_and_allowed_orgs,

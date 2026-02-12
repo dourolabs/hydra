@@ -21,11 +21,10 @@ use metis_server::{
     background::scheduler::{ScheduledWorker, WorkerOutcome},
     background::spawner::AgentQueue,
     store::{MemoryStore, Store},
-    test_utils::{spawn_test_server_with_state, test_app_config, MockJobEngine},
+    test_utils::{spawn_test_server_with_state, test_app_config, GitRemote, MockJobEngine},
 };
 use octocrab::Octocrab;
-use std::{path::Path, process::Command, str::FromStr, sync::Arc};
-use tempfile::TempDir;
+use std::{str::FromStr, sync::Arc};
 use tokio::sync::RwLock;
 
 use super::bash_commands::{BashCommands, CommandOutput};
@@ -34,7 +33,7 @@ pub struct TestEnvironment {
     pub server: metis_server::test_utils::TestServer,
     pub app_config: AppConfig,
     pub client: MetisClient,
-    pub _tempdir: TempDir,
+    pub _git_remote: GitRemote,
     pub service_repo_name: RepoName,
     pub auth_token: String,
     pub current_issue_id: metis_common::IssueId,
@@ -257,8 +256,8 @@ async fn init_test_server_with_remote_internal(
     github_app: Option<Octocrab>,
     claude_code_oauth_token: Option<String>,
 ) -> Result<TestEnvironment> {
-    let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
-    let remote_url = init_service_remote(tempdir.path())?;
+    let git_remote = GitRemote::new().context("failed to create git remote for test")?;
+    let remote_url = git_remote.url().to_string();
     let service_repo_name = RepoName::from_str(repo_name)
         .with_context(|| format!("failed to parse service repo name: {repo_name}"))?;
     let (state, store, auth_token, agents) =
@@ -304,7 +303,7 @@ async fn init_test_server_with_remote_internal(
         server,
         app_config,
         client,
-        _tempdir: tempdir,
+        _git_remote: git_remote,
         service_repo_name,
         auth_token,
         current_issue_id,
@@ -342,111 +341,6 @@ pub async fn wait_for_status(
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-}
-
-fn init_service_remote(base_dir: &Path) -> Result<String> {
-    let workdir = base_dir.join("workdir");
-    let remote_dir = base_dir.join("remote.git");
-    let workdir_str = workdir
-        .to_str()
-        .ok_or_else(|| anyhow!("workdir path contains invalid UTF-8"))?;
-    let remote_dir_str = remote_dir
-        .to_str()
-        .ok_or_else(|| anyhow!("remote dir path contains invalid UTF-8"))?;
-
-    Command::new("git")
-        .args(["init", workdir_str])
-        .status()
-        .context("failed to init workdir")?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("git init returned non-zero exit code"))?;
-    Command::new("git")
-        .args(["-C", workdir_str, "checkout", "-b", "main"])
-        .status()
-        .context("failed to create main branch in workdir")?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("git checkout returned non-zero exit code"))?;
-    Command::new("git")
-        .args([
-            "-C",
-            workdir_str,
-            "config",
-            "user.name",
-            "Worker Integration",
-        ])
-        .status()
-        .context("failed to set git user.name")?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
-    Command::new("git")
-        .args([
-            "-C",
-            workdir_str,
-            "config",
-            "user.email",
-            "worker@example.com",
-        ])
-        .status()
-        .context("failed to set git user.email")?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
-    std::fs::write(workdir.join("README.md"), "base content\n")
-        .context("failed to write initial README")?;
-    Command::new("git")
-        .args(["-C", workdir_str, "add", "README.md"])
-        .status()
-        .context("failed to add README.md")?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
-    Command::new("git")
-        .args(["-C", workdir_str, "commit", "-m", "initial commit"])
-        .status()
-        .context("failed to commit README")?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
-
-    Command::new("git")
-        .args(["init", "--bare", remote_dir_str])
-        .status()
-        .context("failed to init bare remote")?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("git init --bare returned non-zero exit code"))?;
-    Command::new("git")
-        .args(["-C", workdir_str, "remote", "add", "origin", remote_dir_str])
-        .status()
-        .context("failed to add remote")?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("git remote add returned non-zero exit code"))?;
-    Command::new("git")
-        .args(["-C", workdir_str, "push", "-u", "origin", "main"])
-        .status()
-        .context("failed to push initial commit to remote")?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("git push returned non-zero exit code"))?;
-    Command::new("git")
-        .args([
-            "--git-dir",
-            remote_dir_str,
-            "symbolic-ref",
-            "HEAD",
-            "refs/heads/main",
-        ])
-        .status()
-        .context("failed to set remote HEAD")?
-        .success()
-        .then_some(())
-        .ok_or_else(|| anyhow!("git symbolic-ref returned non-zero exit code"))?;
-
-    Ok(remote_dir_str.to_string())
 }
 
 async fn app_state_with_repo(
