@@ -1,8 +1,12 @@
 mod harness;
 
 use anyhow::Result;
+use harness::{IssueAssertions, JobAssertions, PatchAssertions};
 use metis_common::issues::{IssueStatus, SearchIssuesQuery};
+use metis_common::patches::PatchStatus;
+use metis_common::task_status::Status;
 use std::str::FromStr;
+use std::time::Duration;
 
 /// Verify that `TestHarness::new().await` succeeds and produces a reachable server.
 #[tokio::test]
@@ -197,6 +201,167 @@ async fn user_handle_cli_expect_failure() -> Result<()> {
     // A clearly invalid subcommand should fail
     let output = user.cli_expect_failure(&["--invalid-flag"]).await?;
     assert!(!output.status.success());
+
+    Ok(())
+}
+
+// ── Assertion trait smoke tests ─────────────────────────────────────
+
+/// Verify `IssueAssertions::assert_status` passes for correct status.
+#[tokio::test]
+async fn issue_assert_status() -> Result<()> {
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    let issue_id = user.create_issue("assert status test").await?;
+    let issue = user.get_issue(&issue_id).await?;
+    issue.assert_status(IssueStatus::Open);
+
+    user.update_issue_status(&issue_id, IssueStatus::InProgress)
+        .await?;
+    let issue = user.get_issue(&issue_id).await?;
+    issue.assert_status(IssueStatus::InProgress);
+
+    Ok(())
+}
+
+/// Verify `IssueAssertions::assert_has_child_with_status` finds matching children.
+#[tokio::test]
+async fn issue_assert_has_child_with_status() -> Result<()> {
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    let parent_id = user.create_issue("parent for child assertion").await?;
+    let _child_id = user
+        .create_child_issue(&parent_id, "child task one")
+        .await?;
+
+    let all_issues = user.list_issues().await?.issues;
+    let parent = user.get_issue(&parent_id).await?;
+
+    // Child exists with Open status and matching description
+    parent.assert_has_child_with_status(&all_issues, "child task", IssueStatus::Open);
+
+    Ok(())
+}
+
+/// Verify `IssueAssertions::assert_todo_count` checks the count correctly.
+#[tokio::test]
+async fn issue_assert_todo_count() -> Result<()> {
+    let harness = harness::TestHarness::new().await?;
+    let user = harness.default_user();
+
+    let issue_id = user.create_issue("todo count test").await?;
+    let issue = user.get_issue(&issue_id).await?;
+
+    // New issue has no todos
+    issue.assert_todo_count(0);
+
+    Ok(())
+}
+
+/// Verify `PatchAssertions::assert_status` works on patches.
+#[tokio::test]
+async fn patch_assert_status() -> Result<()> {
+    let harness = harness::TestHarness::builder()
+        .with_repo("acme/patch-test")
+        .build()
+        .await?;
+    let user = harness.default_user();
+
+    let repo = metis_common::RepoName::from_str("acme/patch-test")?;
+    let patch_id = user
+        .create_patch("test patch", "a description", &repo)
+        .await?;
+    let patch = user.get_patch(&patch_id).await?;
+
+    patch.assert_status(PatchStatus::Open);
+
+    Ok(())
+}
+
+/// Verify `JobAssertions::assert_status` works on job records.
+#[tokio::test]
+async fn job_assert_status() -> Result<()> {
+    let harness = harness::TestHarness::builder()
+        .with_repo("acme/job-test")
+        .build()
+        .await?;
+    let user = harness.default_user();
+
+    let repo = metis_common::RepoName::from_str("acme/job-test")?;
+    let job_id = user.create_job(&repo, "assertion test job").await?;
+    let job = user.client().get_job(&job_id).await?;
+
+    job.assert_status(Status::Created);
+
+    Ok(())
+}
+
+/// Verify `wait_until` returns Ok when the condition is immediately true.
+#[tokio::test]
+async fn wait_until_immediate_success() -> Result<()> {
+    harness::wait_until(
+        Duration::from_secs(1),
+        Duration::from_millis(10),
+        "condition that is immediately true",
+        || async { true },
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// Verify `wait_until` returns an error on timeout.
+#[tokio::test]
+async fn wait_until_timeout_error() -> Result<()> {
+    let result = harness::wait_until(
+        Duration::from_millis(100),
+        Duration::from_millis(10),
+        "condition that never becomes true",
+        || async { false },
+    )
+    .await;
+
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("timed out"),
+        "error should mention timeout: {err_msg}"
+    );
+    assert!(
+        err_msg.contains("condition that never becomes true"),
+        "error should include description: {err_msg}"
+    );
+
+    Ok(())
+}
+
+/// Verify `wait_until` polls until condition becomes true.
+#[tokio::test]
+async fn wait_until_polls_until_true() -> Result<()> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    let counter = Arc::new(AtomicU32::new(0));
+    let counter_clone = counter.clone();
+
+    harness::wait_until(
+        Duration::from_secs(2),
+        Duration::from_millis(10),
+        "counter to reach 3",
+        move || {
+            let c = counter_clone.clone();
+            async move {
+                let val = c.fetch_add(1, Ordering::SeqCst);
+                val >= 3
+            }
+        },
+    )
+    .await?;
+
+    // Counter should have been incremented at least 4 times (0, 1, 2, 3 -> true at 3)
+    assert!(counter.load(Ordering::SeqCst) >= 4);
 
     Ok(())
 }

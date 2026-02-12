@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod assertions;
 pub mod user_handle;
 
 use anyhow::{Context, Result};
@@ -24,6 +25,7 @@ use std::{collections::HashMap, str::FromStr, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 
+pub use assertions::{wait_until, IssueAssertions, JobAssertions, PatchAssertions};
 pub use user_handle::UserHandle;
 
 /// Holds the GitHub mock server and the Octocrab client configured to use it.
