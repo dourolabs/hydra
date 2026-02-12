@@ -14,7 +14,14 @@ use metis_common::{
 };
 use metis_server::{
     app::{AppState, ServiceState},
-    background::spawner::AgentQueue,
+    background::{
+        monitor_running_jobs::MonitorRunningJobsWorker,
+        poll_github_patches::GithubPollerWorker,
+        process_pending_jobs::ProcessPendingJobsWorker,
+        run_spawners::RunSpawnersWorker,
+        scheduler::{ScheduledWorker, WorkerOutcome},
+        spawner::AgentQueue,
+    },
     domain::actors::Actor,
     store::{MemoryStore, Store},
     test_utils::{
@@ -22,7 +29,7 @@ use metis_server::{
         TestServer,
     },
 };
-use std::{collections::HashMap, str::FromStr, sync::Arc};
+use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 
@@ -203,6 +210,106 @@ impl TestHarness {
         commands: Vec<&str>,
     ) -> Result<WorkerFailure> {
         worker::run_worker_expect_failure_impl(self, job_id, commands).await
+    }
+
+    // ── Background worker stepping ──────────────────────────────────
+
+    /// Run one iteration of the spawner worker.
+    ///
+    /// Finds ready issues, creates tasks for them, and returns the IDs of
+    /// newly created tasks. Returns an empty vec when no issues are ready.
+    pub async fn step_spawner(&self) -> Result<Vec<TaskId>> {
+        let before: HashSet<TaskId> = self
+            .state
+            .list_tasks()
+            .await
+            .context("failed to list tasks before step_spawner")?
+            .into_iter()
+            .collect();
+
+        let worker = RunSpawnersWorker::new(self.state.clone());
+        let outcome = worker.run_iteration().await;
+
+        if let WorkerOutcome::TransientError { reason } = outcome {
+            anyhow::bail!("step_spawner failed: {reason}");
+        }
+
+        let after = self
+            .state
+            .list_tasks()
+            .await
+            .context("failed to list tasks after step_spawner")?;
+
+        let new_ids: Vec<TaskId> = after
+            .into_iter()
+            .filter(|id| !before.contains(id))
+            .collect();
+
+        Ok(new_ids)
+    }
+
+    /// Run one iteration of the pending-jobs processor.
+    ///
+    /// Transitions tasks from Created to Pending status and kicks off
+    /// engine processing. Returns the IDs of tasks that were processed.
+    pub async fn step_pending_jobs(&self) -> Result<Vec<TaskId>> {
+        let before: Vec<TaskId> = self
+            .state
+            .list_tasks_with_status(metis_server::store::Status::Created)
+            .await
+            .context("failed to list created tasks before step_pending_jobs")?;
+
+        let worker = ProcessPendingJobsWorker::new(self.state.clone());
+        let outcome = worker.run_iteration().await;
+
+        if let WorkerOutcome::TransientError { reason } = outcome {
+            anyhow::bail!("step_pending_jobs failed: {reason}");
+        }
+
+        Ok(before)
+    }
+
+    /// Run one iteration of the GitHub poller worker.
+    ///
+    /// Synchronizes open patches with their GitHub PR state (reviews, CI
+    /// status, merge status). Requires the harness to have been built with
+    /// `.with_github()`.
+    pub async fn step_github_sync(&self) -> Result<()> {
+        let worker = GithubPollerWorker::new(self.state.clone(), 60);
+        let outcome = worker.run_iteration().await;
+
+        if let WorkerOutcome::TransientError { reason } = outcome {
+            anyhow::bail!("step_github_sync failed: {reason}");
+        }
+
+        Ok(())
+    }
+
+    /// Run one iteration of the running-jobs monitor.
+    ///
+    /// Reconciles task status with the job engine, reaps orphaned jobs,
+    /// and cleans up tasks whose parent issues have been deleted.
+    pub async fn step_monitor_jobs(&self) -> Result<()> {
+        let worker = MonitorRunningJobsWorker::new(self.state.clone());
+        let outcome = worker.run_iteration().await;
+
+        if let WorkerOutcome::TransientError { reason } = outcome {
+            anyhow::bail!("step_monitor_jobs failed: {reason}");
+        }
+
+        Ok(())
+    }
+
+    /// Convenience: run spawner + pending-jobs processor.
+    ///
+    /// This is the common pattern for "schedule work": first the spawner
+    /// creates tasks from ready issues, then the pending-jobs processor
+    /// transitions them from Created to Pending/Running. Returns all task
+    /// IDs created by the spawner.
+    pub async fn step_schedule(&self) -> Result<Vec<TaskId>> {
+        let created = self.step_spawner().await?;
+        self.step_pending_jobs().await?;
+        Ok(created)
     }
 }
 
