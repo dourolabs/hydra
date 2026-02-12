@@ -23,7 +23,37 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
 
+/// Payload carrying before/after entity state for mutation events.
+///
+/// Wrapped in `Arc` inside `ServerEvent` so that cloning events to multiple
+/// broadcast receivers is cheap regardless of payload size.
+#[derive(Debug, Clone)]
+pub enum MutationPayload {
+    Issue {
+        old: Option<Issue>,
+        new: Issue,
+    },
+    Patch {
+        old: Option<Patch>,
+        new: Patch,
+    },
+    Job {
+        old: Option<Task>,
+        new: Task,
+    },
+    Document {
+        old: Option<Document>,
+        new: Document,
+    },
+}
+
 /// Events emitted when server-side entities are mutated.
+///
+/// Each variant carries an optional `payload` wrapped in `Arc<MutationPayload>`
+/// containing the before/after entity state. For update events, `old` is the
+/// state before the mutation; for create events, only `new` is set; for delete
+/// events, `old` holds the entity as it was before deletion and `new` holds
+/// the deleted (soft-deleted) version.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub enum ServerEvent {
@@ -32,66 +62,77 @@ pub enum ServerEvent {
         issue_id: IssueId,
         version: u64,
         timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
     IssueUpdated {
         seq: u64,
         issue_id: IssueId,
         version: u64,
         timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
     IssueDeleted {
         seq: u64,
         issue_id: IssueId,
         version: u64,
         timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
     PatchCreated {
         seq: u64,
         patch_id: PatchId,
         version: u64,
         timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
     PatchUpdated {
         seq: u64,
         patch_id: PatchId,
         version: u64,
         timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
     PatchDeleted {
         seq: u64,
         patch_id: PatchId,
         version: u64,
         timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
     JobCreated {
         seq: u64,
         task_id: TaskId,
         version: u64,
         timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
     JobUpdated {
         seq: u64,
         task_id: TaskId,
         version: u64,
         timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
     DocumentCreated {
         seq: u64,
         document_id: DocumentId,
         version: u64,
         timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
     DocumentUpdated {
         seq: u64,
         document_id: DocumentId,
         version: u64,
         timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
     DocumentDeleted {
         seq: u64,
         document_id: DocumentId,
         version: u64,
         timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
 }
 
@@ -153,102 +194,158 @@ impl EventBus {
         let _ = self.sender.send(event);
     }
 
-    pub fn emit_issue_created(&self, issue_id: IssueId, version: u64) {
+    pub fn emit_issue_created(
+        &self,
+        issue_id: IssueId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
         self.send(ServerEvent::IssueCreated {
             seq: self.next_seq(),
             issue_id,
             version,
             timestamp: Utc::now(),
+            payload,
         });
     }
 
-    pub fn emit_issue_updated(&self, issue_id: IssueId, version: u64) {
+    pub fn emit_issue_updated(
+        &self,
+        issue_id: IssueId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
         self.send(ServerEvent::IssueUpdated {
             seq: self.next_seq(),
             issue_id,
             version,
             timestamp: Utc::now(),
+            payload,
         });
     }
 
-    pub fn emit_issue_deleted(&self, issue_id: IssueId, version: u64) {
+    pub fn emit_issue_deleted(
+        &self,
+        issue_id: IssueId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
         self.send(ServerEvent::IssueDeleted {
             seq: self.next_seq(),
             issue_id,
             version,
             timestamp: Utc::now(),
+            payload,
         });
     }
 
-    pub fn emit_patch_created(&self, patch_id: PatchId, version: u64) {
+    pub fn emit_patch_created(
+        &self,
+        patch_id: PatchId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
         self.send(ServerEvent::PatchCreated {
             seq: self.next_seq(),
             patch_id,
             version,
             timestamp: Utc::now(),
+            payload,
         });
     }
 
-    pub fn emit_patch_updated(&self, patch_id: PatchId, version: u64) {
+    pub fn emit_patch_updated(
+        &self,
+        patch_id: PatchId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
         self.send(ServerEvent::PatchUpdated {
             seq: self.next_seq(),
             patch_id,
             version,
             timestamp: Utc::now(),
+            payload,
         });
     }
 
-    pub fn emit_patch_deleted(&self, patch_id: PatchId, version: u64) {
+    pub fn emit_patch_deleted(
+        &self,
+        patch_id: PatchId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
         self.send(ServerEvent::PatchDeleted {
             seq: self.next_seq(),
             patch_id,
             version,
             timestamp: Utc::now(),
+            payload,
         });
     }
 
-    pub fn emit_job_created(&self, task_id: TaskId, version: u64) {
+    pub fn emit_job_created(&self, task_id: TaskId, version: u64, payload: Arc<MutationPayload>) {
         self.send(ServerEvent::JobCreated {
             seq: self.next_seq(),
             task_id,
             version,
             timestamp: Utc::now(),
+            payload,
         });
     }
 
-    pub fn emit_job_updated(&self, task_id: TaskId, version: u64) {
+    pub fn emit_job_updated(&self, task_id: TaskId, version: u64, payload: Arc<MutationPayload>) {
         self.send(ServerEvent::JobUpdated {
             seq: self.next_seq(),
             task_id,
             version,
             timestamp: Utc::now(),
+            payload,
         });
     }
 
-    pub fn emit_document_created(&self, document_id: DocumentId, version: u64) {
+    pub fn emit_document_created(
+        &self,
+        document_id: DocumentId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
         self.send(ServerEvent::DocumentCreated {
             seq: self.next_seq(),
             document_id,
             version,
             timestamp: Utc::now(),
+            payload,
         });
     }
 
-    pub fn emit_document_updated(&self, document_id: DocumentId, version: u64) {
+    pub fn emit_document_updated(
+        &self,
+        document_id: DocumentId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
         self.send(ServerEvent::DocumentUpdated {
             seq: self.next_seq(),
             document_id,
             version,
             timestamp: Utc::now(),
+            payload,
         });
     }
 
-    pub fn emit_document_deleted(&self, document_id: DocumentId, version: u64) {
+    pub fn emit_document_deleted(
+        &self,
+        document_id: DocumentId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
         self.send(ServerEvent::DocumentDeleted {
             seq: self.next_seq(),
             document_id,
             version,
             timestamp: Utc::now(),
+            payload,
         });
     }
 }
@@ -315,8 +412,14 @@ impl Store for StoreWithEvents {
     // ---- Issue ----
 
     async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
+        let new_issue = issue.clone();
         let (issue_id, version) = self.inner.add_issue(issue).await?;
-        self.event_bus.emit_issue_created(issue_id.clone(), version);
+        let payload = Arc::new(MutationPayload::Issue {
+            old: None,
+            new: new_issue,
+        });
+        self.event_bus
+            .emit_issue_created(issue_id.clone(), version, payload);
         Ok((issue_id, version))
     }
 
@@ -333,8 +436,15 @@ impl Store for StoreWithEvents {
     }
 
     async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
+        let old_issue = self.inner.get_issue(id, false).await.ok().map(|v| v.item);
+        let new_issue = issue.clone();
         let version = self.inner.update_issue(id, issue).await?;
-        self.event_bus.emit_issue_updated(id.clone(), version);
+        let payload = Arc::new(MutationPayload::Issue {
+            old: old_issue,
+            new: new_issue,
+        });
+        self.event_bus
+            .emit_issue_updated(id.clone(), version, payload);
         Ok(version)
     }
 
@@ -346,8 +456,23 @@ impl Store for StoreWithEvents {
     }
 
     async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
+        // Capture pre-deletion state
+        let old_issue = self.inner.get_issue(id, false).await.ok().map(|v| v.item);
         let version = self.inner.delete_issue(id).await?;
-        self.event_bus.emit_issue_deleted(id.clone(), version);
+        // Post-deletion: fetch the soft-deleted entity
+        let new_issue = self
+            .inner
+            .get_issue(id, true)
+            .await
+            .ok()
+            .map(|v| v.item)
+            .or_else(|| old_issue.clone());
+        let payload = Arc::new(MutationPayload::Issue {
+            old: old_issue,
+            new: new_issue.expect("entity must exist after successful delete"),
+        });
+        self.event_bus
+            .emit_issue_deleted(id.clone(), version, payload);
         Ok(version)
     }
 
@@ -361,8 +486,14 @@ impl Store for StoreWithEvents {
     // ---- Patch ----
 
     async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
+        let new_patch = patch.clone();
         let (patch_id, version) = self.inner.add_patch(patch).await?;
-        self.event_bus.emit_patch_created(patch_id.clone(), version);
+        let payload = Arc::new(MutationPayload::Patch {
+            old: None,
+            new: new_patch,
+        });
+        self.event_bus
+            .emit_patch_created(patch_id.clone(), version, payload);
         Ok((patch_id, version))
     }
 
@@ -379,8 +510,15 @@ impl Store for StoreWithEvents {
     }
 
     async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
+        let old_patch = self.inner.get_patch(id, false).await.ok().map(|v| v.item);
+        let new_patch = patch.clone();
         let version = self.inner.update_patch(id, patch).await?;
-        self.event_bus.emit_patch_updated(id.clone(), version);
+        let payload = Arc::new(MutationPayload::Patch {
+            old: old_patch,
+            new: new_patch,
+        });
+        self.event_bus
+            .emit_patch_updated(id.clone(), version, payload);
         Ok(version)
     }
 
@@ -392,8 +530,21 @@ impl Store for StoreWithEvents {
     }
 
     async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
+        let old_patch = self.inner.get_patch(id, false).await.ok().map(|v| v.item);
         let version = self.inner.delete_patch(id).await?;
-        self.event_bus.emit_patch_deleted(id.clone(), version);
+        let new_patch = self
+            .inner
+            .get_patch(id, true)
+            .await
+            .ok()
+            .map(|v| v.item)
+            .or_else(|| old_patch.clone());
+        let payload = Arc::new(MutationPayload::Patch {
+            old: old_patch,
+            new: new_patch.expect("entity must exist after successful delete"),
+        });
+        self.event_bus
+            .emit_patch_deleted(id.clone(), version, payload);
         Ok(version)
     }
 
@@ -407,9 +558,14 @@ impl Store for StoreWithEvents {
         &self,
         document: Document,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
+        let new_document = document.clone();
         let (document_id, version) = self.inner.add_document(document).await?;
+        let payload = Arc::new(MutationPayload::Document {
+            old: None,
+            new: new_document,
+        });
         self.event_bus
-            .emit_document_created(document_id.clone(), version);
+            .emit_document_created(document_id.clone(), version, payload);
         Ok((document_id, version))
     }
 
@@ -433,14 +589,44 @@ impl Store for StoreWithEvents {
         id: &DocumentId,
         document: Document,
     ) -> Result<VersionNumber, StoreError> {
+        let old_document = self
+            .inner
+            .get_document(id, false)
+            .await
+            .ok()
+            .map(|v| v.item);
+        let new_document = document.clone();
         let version = self.inner.update_document(id, document).await?;
-        self.event_bus.emit_document_updated(id.clone(), version);
+        let payload = Arc::new(MutationPayload::Document {
+            old: old_document,
+            new: new_document,
+        });
+        self.event_bus
+            .emit_document_updated(id.clone(), version, payload);
         Ok(version)
     }
 
     async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
+        let old_document = self
+            .inner
+            .get_document(id, false)
+            .await
+            .ok()
+            .map(|v| v.item);
         let version = self.inner.delete_document(id).await?;
-        self.event_bus.emit_document_deleted(id.clone(), version);
+        let new_document = self
+            .inner
+            .get_document(id, true)
+            .await
+            .ok()
+            .map(|v| v.item)
+            .or_else(|| old_document.clone());
+        let payload = Arc::new(MutationPayload::Document {
+            old: old_document,
+            new: new_document.expect("entity must exist after successful delete"),
+        });
+        self.event_bus
+            .emit_document_deleted(id.clone(), version, payload);
         Ok(version)
     }
 
@@ -479,8 +665,14 @@ impl Store for StoreWithEvents {
         task: Task,
         creation_time: DateTime<Utc>,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
+        let new_task = task.clone();
         let (task_id, version) = self.inner.add_task(task, creation_time).await?;
-        self.event_bus.emit_job_created(task_id.clone(), version);
+        let payload = Arc::new(MutationPayload::Job {
+            old: None,
+            new: new_task,
+        });
+        self.event_bus
+            .emit_job_created(task_id.clone(), version, payload);
         Ok((task_id, version))
     }
 
@@ -489,9 +681,20 @@ impl Store for StoreWithEvents {
         metis_id: &TaskId,
         task: Task,
     ) -> Result<Versioned<Task>, StoreError> {
+        let old_task = self
+            .inner
+            .get_task(metis_id, false)
+            .await
+            .ok()
+            .map(|v| v.item);
+        let new_task = task.clone();
         let result = self.inner.update_task(metis_id, task).await?;
+        let payload = Arc::new(MutationPayload::Job {
+            old: old_task,
+            new: new_task,
+        });
         self.event_bus
-            .emit_job_updated(metis_id.clone(), result.version);
+            .emit_job_updated(metis_id.clone(), result.version, payload);
         Ok(result)
     }
 
@@ -597,13 +800,35 @@ mod tests {
         assert_eq!(s3, 3);
     }
 
+    fn dummy_issue() -> Issue {
+        use crate::domain::issues::{IssueStatus, IssueType};
+        use crate::domain::users::Username;
+
+        Issue::new(
+            IssueType::Task,
+            "test".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
     #[tokio::test]
     async fn subscribe_receives_emitted_events() {
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
 
         let issue_id = IssueId::new();
-        bus.emit_issue_created(issue_id.clone(), 1);
+        let payload = Arc::new(MutationPayload::Issue {
+            old: None,
+            new: dummy_issue(),
+        });
+        bus.emit_issue_created(issue_id.clone(), 1, payload);
 
         let event = rx.recv().await.expect("should receive event");
         assert_eq!(event.seq(), 1);
@@ -627,9 +852,18 @@ mod tests {
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
 
+        let issue = dummy_issue();
         let issue_id = IssueId::new();
-        bus.emit_issue_created(issue_id.clone(), 1);
-        bus.emit_issue_updated(issue_id, 2);
+        let payload1 = Arc::new(MutationPayload::Issue {
+            old: None,
+            new: issue.clone(),
+        });
+        bus.emit_issue_created(issue_id.clone(), 1, payload1);
+        let payload2 = Arc::new(MutationPayload::Issue {
+            old: Some(issue.clone()),
+            new: issue,
+        });
+        bus.emit_issue_updated(issue_id, 2, payload2);
 
         let e1 = rx.recv().await.unwrap();
         let e2 = rx.recv().await.unwrap();
@@ -760,6 +994,197 @@ mod tests {
                 assert_eq!(*version, 2);
             }
             other => panic!("expected IssueDeleted, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_event_carries_new_entity_payload() {
+        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::users::Username;
+
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue = Issue::new(
+            IssueType::Task,
+            "payload test".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        store.add_issue(issue.clone()).await.unwrap();
+
+        let event = rx.recv().await.expect("should receive IssueCreated");
+        match &event {
+            ServerEvent::IssueCreated { payload, .. } => match payload.as_ref() {
+                MutationPayload::Issue { old, new } => {
+                    assert!(old.is_none(), "create event should have no old state");
+                    assert_eq!(new.description, "payload test");
+                    assert_eq!(new.status, IssueStatus::Open);
+                }
+                other => panic!("expected Issue payload, got {other:?}"),
+            },
+            other => panic!("expected IssueCreated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_event_carries_old_and_new_entity_payload() {
+        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::users::Username;
+
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue = Issue::new(
+            IssueType::Task,
+            "before update".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let (issue_id, _) = store.add_issue(issue.clone()).await.unwrap();
+        let _ = rx.recv().await.unwrap(); // consume IssueCreated
+
+        let mut updated = issue;
+        updated.status = IssueStatus::InProgress;
+        updated.description = "after update".to_string();
+        store.update_issue(&issue_id, updated).await.unwrap();
+
+        let event = rx.recv().await.expect("should receive IssueUpdated");
+        match &event {
+            ServerEvent::IssueUpdated { payload, .. } => match payload.as_ref() {
+                MutationPayload::Issue { old, new } => {
+                    let old = old.as_ref().expect("update event should carry old state");
+                    assert_eq!(old.status, IssueStatus::Open);
+                    assert_eq!(old.description, "before update");
+                    assert_eq!(new.status, IssueStatus::InProgress);
+                    assert_eq!(new.description, "after update");
+                }
+                other => panic!("expected Issue payload, got {other:?}"),
+            },
+            other => panic!("expected IssueUpdated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_event_carries_old_entity_payload() {
+        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::users::Username;
+
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue = Issue::new(
+            IssueType::Task,
+            "to be deleted".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let (issue_id, _) = store.add_issue(issue).await.unwrap();
+        let _ = rx.recv().await.unwrap(); // consume IssueCreated
+
+        store.delete_issue(&issue_id).await.unwrap();
+
+        let event = rx.recv().await.expect("should receive IssueDeleted");
+        match &event {
+            ServerEvent::IssueDeleted { payload, .. } => match payload.as_ref() {
+                MutationPayload::Issue { old, new } => {
+                    let old = old.as_ref().expect("delete event should carry old state");
+                    assert_eq!(old.description, "to be deleted");
+                    assert!(!old.deleted, "old state should not be deleted");
+                    assert!(new.deleted, "new state should be soft-deleted");
+                }
+                other => panic!("expected Issue payload, got {other:?}"),
+            },
+            other => panic!("expected IssueDeleted, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn job_update_event_carries_old_and_new_payload() {
+        use crate::store::Task as StoreTask;
+
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+        let mut rx = bus.subscribe();
+
+        let task = StoreTask {
+            prompt: "test task".to_string(),
+            context: crate::domain::jobs::BundleSpec::None,
+            spawned_from: None,
+            image: None,
+            model: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            status: Status::Created,
+            last_message: None,
+            error: None,
+            deleted: false,
+        };
+
+        let (task_id, _) = store.add_task(task, chrono::Utc::now()).await.unwrap();
+        let _ = rx.recv().await.unwrap(); // consume JobCreated
+
+        let updated_task = StoreTask {
+            prompt: "test task".to_string(),
+            context: crate::domain::jobs::BundleSpec::None,
+            spawned_from: None,
+            image: None,
+            model: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            status: Status::Running,
+            last_message: Some("doing work".to_string()),
+            error: None,
+            deleted: false,
+        };
+
+        store.update_task(&task_id, updated_task).await.unwrap();
+
+        let event = rx.recv().await.expect("should receive JobUpdated");
+        match &event {
+            ServerEvent::JobUpdated { payload, .. } => match payload.as_ref() {
+                MutationPayload::Job { old, new } => {
+                    let old = old.as_ref().expect("update event should carry old state");
+                    assert_eq!(old.status, Status::Created);
+                    assert!(old.last_message.is_none());
+                    assert_eq!(new.status, Status::Running);
+                    assert_eq!(new.last_message.as_deref(), Some("doing work"));
+                }
+                other => panic!("expected Job payload, got {other:?}"),
+            },
+            other => panic!("expected JobUpdated, got {other:?}"),
         }
     }
 }
