@@ -144,6 +144,134 @@ impl PolicyEngine {
     pub fn automation_count(&self) -> usize {
         self.automations.len()
     }
+
+    // ----- Shortcut methods for each mutation type -----
+
+    /// Check restrictions for creating an issue.
+    pub async fn check_create_issue(
+        &self,
+        new: &crate::domain::issues::Issue,
+        store: &dyn crate::store::Store,
+    ) -> Result<(), PolicyViolation> {
+        let payload = context::OperationPayload::Issue {
+            issue_id: None,
+            new: new.clone(),
+            old: None,
+        };
+        let ctx = RestrictionContext {
+            operation: context::Operation::CreateIssue,
+            repo: None,
+            payload: &payload,
+            store,
+        };
+        self.check_restrictions(&ctx).await
+    }
+
+    /// Check restrictions for updating an issue.
+    pub async fn check_update_issue(
+        &self,
+        issue_id: &metis_common::IssueId,
+        new: &crate::domain::issues::Issue,
+        old: Option<&crate::domain::issues::Issue>,
+        store: &dyn crate::store::Store,
+    ) -> Result<(), PolicyViolation> {
+        let payload = context::OperationPayload::Issue {
+            issue_id: Some(issue_id.clone()),
+            new: new.clone(),
+            old: old.cloned(),
+        };
+        let ctx = RestrictionContext {
+            operation: context::Operation::UpdateIssue,
+            repo: None,
+            payload: &payload,
+            store,
+        };
+        self.check_restrictions(&ctx).await
+    }
+
+    /// Check restrictions for creating a patch.
+    pub async fn check_create_patch(
+        &self,
+        new: &crate::domain::patches::Patch,
+        store: &dyn crate::store::Store,
+    ) -> Result<(), PolicyViolation> {
+        let payload = context::OperationPayload::Patch {
+            patch_id: None,
+            new: new.clone(),
+            old: None,
+        };
+        let ctx = RestrictionContext {
+            operation: context::Operation::CreatePatch,
+            repo: None,
+            payload: &payload,
+            store,
+        };
+        self.check_restrictions(&ctx).await
+    }
+
+    /// Check restrictions for creating a document.
+    pub async fn check_create_document(
+        &self,
+        new: &crate::domain::documents::Document,
+        store: &dyn crate::store::Store,
+    ) -> Result<(), PolicyViolation> {
+        let payload = context::OperationPayload::Document {
+            document_id: None,
+            new: new.clone(),
+            old: None,
+        };
+        let ctx = RestrictionContext {
+            operation: context::Operation::CreateDocument,
+            repo: None,
+            payload: &payload,
+            store,
+        };
+        self.check_restrictions(&ctx).await
+    }
+
+    /// Check restrictions for updating a document.
+    pub async fn check_update_document(
+        &self,
+        document_id: &metis_common::DocumentId,
+        new: &crate::domain::documents::Document,
+        old: Option<&crate::domain::documents::Document>,
+        store: &dyn crate::store::Store,
+    ) -> Result<(), PolicyViolation> {
+        let payload = context::OperationPayload::Document {
+            document_id: Some(document_id.clone()),
+            new: new.clone(),
+            old: old.cloned(),
+        };
+        let ctx = RestrictionContext {
+            operation: context::Operation::UpdateDocument,
+            repo: None,
+            payload: &payload,
+            store,
+        };
+        self.check_restrictions(&ctx).await
+    }
+
+    /// Check restrictions for updating a job/task status.
+    pub async fn check_update_job(
+        &self,
+        task_id: &metis_common::TaskId,
+        new: &crate::store::Task,
+        old: Option<&crate::store::Task>,
+        store: &dyn crate::store::Store,
+    ) -> Result<(), PolicyViolation> {
+        let payload = context::OperationPayload::Job {
+            task_id: Some(task_id.clone()),
+            new: new.clone(),
+            old: old.cloned(),
+        };
+        let ctx = RestrictionContext {
+            operation: context::Operation::UpdateJob,
+            repo: None,
+            payload: &payload,
+            store,
+        };
+        self.check_restrictions(&ctx).await
+    }
 }
 
 #[cfg(test)]
