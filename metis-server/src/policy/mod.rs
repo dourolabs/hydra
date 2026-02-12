@@ -1,0 +1,149 @@
+pub mod automations;
+pub mod config;
+pub mod context;
+pub mod registry;
+pub mod restrictions;
+
+use crate::app::event_bus::ServerEvent;
+use async_trait::async_trait;
+use context::{AutomationContext, RestrictionContext};
+use std::fmt;
+use std::mem;
+
+/// A structured error returned when a restriction rejects a proposed mutation.
+///
+/// The `message` field must be descriptive and actionable — agents rely on it
+/// to determine how to resolve the problem (e.g., "Cannot close issue i-abc123:
+/// 2 child issues are still open (i-def456, i-ghi789). Close or drop all
+/// children first.").
+#[derive(Debug, Clone)]
+pub struct PolicyViolation {
+    pub policy_name: String,
+    pub message: String,
+}
+
+impl fmt::Display for PolicyViolation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[{}] {}", self.policy_name, self.message)
+    }
+}
+
+impl std::error::Error for PolicyViolation {}
+
+/// Error type returned by automations.
+#[derive(Debug, thiserror::Error)]
+pub enum AutomationError {
+    #[error("{0}")]
+    Other(#[from] anyhow::Error),
+}
+
+/// Describes which events an automation subscribes to.
+#[derive(Debug, Clone, Default)]
+pub struct EventFilter {
+    /// Which event variant discriminants to match. Empty means match all.
+    pub event_types: Vec<mem::Discriminant<ServerEvent>>,
+}
+
+impl EventFilter {
+    /// Returns `true` if this filter matches the given event.
+    pub fn matches(&self, event: &ServerEvent) -> bool {
+        if self.event_types.is_empty() {
+            return true;
+        }
+        self.event_types.contains(&mem::discriminant(event))
+    }
+}
+
+/// A policy that validates a proposed mutation before it is persisted.
+/// Returning `Err` rejects the mutation with a descriptive violation.
+#[async_trait]
+pub trait Restriction: Send + Sync {
+    /// A unique name for this restriction (used in config and logging).
+    fn name(&self) -> &str;
+
+    /// Evaluate the restriction against a proposed mutation.
+    /// Return `Ok(())` to allow or `Err(PolicyViolation)` to reject.
+    async fn evaluate(&self, ctx: &RestrictionContext<'_>) -> Result<(), PolicyViolation>;
+}
+
+/// A policy that reacts to a successfully persisted event by performing
+/// side effects.
+#[async_trait]
+pub trait Automation: Send + Sync {
+    /// A unique name for this automation (used in config and logging).
+    fn name(&self) -> &str;
+
+    /// Which events this automation subscribes to.
+    fn event_filter(&self) -> EventFilter;
+
+    /// Execute the automation's side effects.
+    async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError>;
+}
+
+/// The core policy engine that holds all active restrictions and automations.
+pub struct PolicyEngine {
+    restrictions: Vec<Box<dyn Restriction>>,
+    automations: Vec<Box<dyn Automation>>,
+}
+
+impl PolicyEngine {
+    /// Create a new policy engine with the given restrictions and automations.
+    pub fn new(
+        restrictions: Vec<Box<dyn Restriction>>,
+        automations: Vec<Box<dyn Automation>>,
+    ) -> Self {
+        Self {
+            restrictions,
+            automations,
+        }
+    }
+
+    /// Create an empty policy engine with no restrictions or automations.
+    pub fn empty() -> Self {
+        Self {
+            restrictions: Vec::new(),
+            automations: Vec::new(),
+        }
+    }
+
+    /// Evaluate all restrictions for a proposed operation.
+    /// Returns the first violation encountered, if any.
+    pub async fn check_restrictions(
+        &self,
+        ctx: &RestrictionContext<'_>,
+    ) -> Result<(), PolicyViolation> {
+        for restriction in &self.restrictions {
+            restriction.evaluate(ctx).await?;
+        }
+        Ok(())
+    }
+
+    /// Run all automations whose event filter matches the given event.
+    /// Errors are logged but do not fail the original operation.
+    pub async fn run_automations(&self, ctx: &AutomationContext<'_>) {
+        for automation in &self.automations {
+            if automation.event_filter().matches(ctx.event) {
+                if let Err(e) = automation.execute(ctx).await {
+                    tracing::error!(
+                        automation = automation.name(),
+                        error = %e,
+                        "automation failed"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Returns the number of registered restrictions.
+    pub fn restriction_count(&self) -> usize {
+        self.restrictions.len()
+    }
+
+    /// Returns the number of registered automations.
+    pub fn automation_count(&self) -> usize {
+        self.automations.len()
+    }
+}
+
+#[cfg(test)]
+mod tests;

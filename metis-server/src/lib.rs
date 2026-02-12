@@ -6,6 +6,7 @@ pub mod config;
 pub mod domain;
 pub mod job_engine;
 pub mod merge_queue;
+pub mod policy;
 pub mod routes;
 pub mod store;
 
