@@ -64,17 +64,11 @@ impl Restriction for DuplicateBranchRestriction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::actors::UserOrWorker;
     use crate::domain::patches::{Patch, PatchStatus};
-    use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, Store};
     use metis_common::RepoName;
     use std::str::FromStr;
-
-    fn test_actor() -> UserOrWorker {
-        UserOrWorker::Username(Username::from("test-user"))
-    }
 
     fn make_patch(branch_name: Option<&str>) -> Patch {
         Patch {
@@ -97,7 +91,7 @@ mod tests {
     async fn allows_unique_branch_name() {
         let restriction = DuplicateBranchRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
+
         let payload = OperationPayload::Patch {
             patch_id: None,
             new: make_patch(Some("feature/new-branch")),
@@ -105,7 +99,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreatePatch,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
@@ -117,7 +111,6 @@ mod tests {
     async fn rejects_duplicate_branch_name() {
         let restriction = DuplicateBranchRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
 
         // Add an existing open patch with the same branch name
         let existing_patch = make_patch(Some("feature/duplicate"));
@@ -133,7 +126,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreatePatch,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
@@ -150,7 +143,7 @@ mod tests {
     async fn allows_patch_without_branch_name() {
         let restriction = DuplicateBranchRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
+
         let payload = OperationPayload::Patch {
             patch_id: None,
             new: make_patch(None),
@@ -158,7 +151,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreatePatch,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,

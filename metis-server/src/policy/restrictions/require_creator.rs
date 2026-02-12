@@ -46,15 +46,10 @@ impl Restriction for RequireCreatorRestriction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::actors::UserOrWorker;
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::MemoryStore;
-
-    fn test_actor() -> UserOrWorker {
-        UserOrWorker::Username(Username::from("test-user"))
-    }
 
     fn make_issue(creator: &str) -> Issue {
         Issue::new(
@@ -75,7 +70,7 @@ mod tests {
     async fn allows_issue_with_creator() {
         let restriction = RequireCreatorRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
+
         let payload = OperationPayload::Issue {
             issue_id: None,
             new: make_issue("jayantk"),
@@ -83,7 +78,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
@@ -95,7 +90,7 @@ mod tests {
     async fn rejects_empty_creator() {
         let restriction = RequireCreatorRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
+
         let payload = OperationPayload::Issue {
             issue_id: None,
             new: make_issue(""),
@@ -103,7 +98,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
@@ -119,7 +114,7 @@ mod tests {
     async fn rejects_whitespace_only_creator() {
         let restriction = RequireCreatorRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
+
         let payload = OperationPayload::Issue {
             issue_id: None,
             new: make_issue("   "),
@@ -127,7 +122,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,

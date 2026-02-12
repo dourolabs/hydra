@@ -1,6 +1,5 @@
 use crate::app::AppState;
 use crate::app::event_bus::ServerEvent;
-use crate::domain::actors::UserOrWorker;
 use crate::store::Store;
 
 /// The type of mutation being proposed.
@@ -51,7 +50,6 @@ pub enum OperationPayload {
 /// Context provided to restrictions for evaluating a proposed mutation.
 pub struct RestrictionContext<'a> {
     pub operation: Operation,
-    pub actor: &'a UserOrWorker,
     pub repo: Option<&'a metis_common::RepoName>,
     pub payload: &'a OperationPayload,
     pub store: &'a dyn Store,

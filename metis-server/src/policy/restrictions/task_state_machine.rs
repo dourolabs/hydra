@@ -85,16 +85,10 @@ impl Restriction for TaskStateMachineRestriction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::actors::UserOrWorker;
     use crate::domain::jobs::{BundleSpec, Task};
-    use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::MemoryStore;
     use std::collections::HashMap;
-
-    fn test_actor() -> UserOrWorker {
-        UserOrWorker::Username(Username::from("test-user"))
-    }
 
     fn make_task_with_status(status: Status) -> Task {
         let mut task = Task::new(
@@ -116,7 +110,6 @@ mod tests {
     async fn allows_valid_transition_pending_to_running() {
         let restriction = TaskStateMachineRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
         let old = make_task_with_status(Status::Pending);
         let new = make_task_with_status(Status::Running);
         let payload = OperationPayload::Job {
@@ -126,7 +119,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::UpdateJob,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
@@ -138,7 +131,6 @@ mod tests {
     async fn allows_idempotent_terminal_transition() {
         let restriction = TaskStateMachineRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
         let old = make_task_with_status(Status::Complete);
         let new = make_task_with_status(Status::Complete);
         let payload = OperationPayload::Job {
@@ -148,7 +140,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::UpdateJob,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
@@ -160,7 +152,6 @@ mod tests {
     async fn rejects_invalid_transition() {
         let restriction = TaskStateMachineRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
         let old = make_task_with_status(Status::Complete);
         let new = make_task_with_status(Status::Running);
         let payload = OperationPayload::Job {
@@ -170,7 +161,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::UpdateJob,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
@@ -188,7 +179,6 @@ mod tests {
     async fn ignores_non_update_operations() {
         let restriction = TaskStateMachineRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
         let new = make_task_with_status(Status::Running);
         let payload = OperationPayload::Job {
             task_id: None,
@@ -197,7 +187,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateJob,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,

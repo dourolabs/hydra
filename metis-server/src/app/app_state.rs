@@ -590,12 +590,8 @@ impl AppState {
         };
 
         // Run restriction policies before persisting
-        let actor = crate::domain::actors::UserOrWorker::Username(
-            crate::domain::users::Username::from("system"),
-        );
         let restriction_ctx = crate::policy::context::RestrictionContext {
             operation,
-            actor: &actor,
             repo: None,
             payload: &crate::policy::context::OperationPayload::Document {
                 document_id: document_id.clone(),
@@ -1639,12 +1635,8 @@ impl AppState {
             None => {
                 // Run restriction policies before persisting
                 {
-                    let actor = crate::domain::actors::UserOrWorker::Username(
-                        crate::domain::users::Username::from("system"),
-                    );
                     let restriction_ctx = crate::policy::context::RestrictionContext {
                         operation: crate::policy::context::Operation::CreatePatch,
-                        actor: &actor,
                         repo: None,
                         payload: &crate::policy::context::OperationPayload::Patch {
                             patch_id: None,
@@ -1885,12 +1877,8 @@ impl AppState {
 
                 // Run restriction policies (require_creator, issue_lifecycle_validation)
                 {
-                    let actor = crate::domain::actors::UserOrWorker::Username(
-                        crate::domain::users::Username::from("system"),
-                    );
                     let restriction_ctx = crate::policy::context::RestrictionContext {
                         operation: crate::policy::context::Operation::UpdateIssue,
-                        actor: &actor,
                         repo: None,
                         payload: &crate::policy::context::OperationPayload::Issue {
                             issue_id: Some(id.clone()),
@@ -2051,12 +2039,8 @@ impl AppState {
                 }
                 // Run restriction policies (require_creator, issue_lifecycle_validation)
                 {
-                    let actor = crate::domain::actors::UserOrWorker::Username(
-                        crate::domain::users::Username::from("system"),
-                    );
                     let restriction_ctx = crate::policy::context::RestrictionContext {
                         operation: crate::policy::context::Operation::CreateIssue,
-                        actor: &actor,
                         repo: None,
                         payload: &crate::policy::context::OperationPayload::Issue {
                             issue_id: None,

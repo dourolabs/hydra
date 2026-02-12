@@ -1,6 +1,5 @@
 use super::*;
 use crate::app::event_bus::{MutationPayload, ServerEvent};
-use crate::domain::actors::UserOrWorker;
 use crate::domain::issues::{Issue, IssueStatus, IssueType};
 use crate::domain::users::Username;
 use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
@@ -154,13 +153,6 @@ impl Automation for FailingAutomation {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helper to build a minimal RestrictionContext for testing
-// ---------------------------------------------------------------------------
-fn make_test_actor() -> UserOrWorker {
-    UserOrWorker::Username(Username::from("tester"))
-}
-
 fn make_issue_payload() -> OperationPayload {
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
 
@@ -191,10 +183,9 @@ async fn check_restrictions_passes_with_no_restrictions() {
     let engine = PolicyEngine::empty();
     let store = MemoryStore::new();
     let payload = make_issue_payload();
-    let actor = make_test_actor();
     let ctx = RestrictionContext {
         operation: Operation::CreateIssue,
-        actor: &actor,
+
         repo: None,
         payload: &payload,
         store: &store,
@@ -212,10 +203,9 @@ async fn check_restrictions_passes_when_all_allow() {
     );
     let store = MemoryStore::new();
     let payload = make_issue_payload();
-    let actor = make_test_actor();
     let ctx = RestrictionContext {
         operation: Operation::CreateIssue,
-        actor: &actor,
+
         repo: None,
         payload: &payload,
         store: &store,
@@ -239,10 +229,9 @@ async fn check_restrictions_returns_first_violation() {
     );
     let store = MemoryStore::new();
     let payload = make_issue_payload();
-    let actor = make_test_actor();
     let ctx = RestrictionContext {
         operation: Operation::UpdateIssue,
-        actor: &actor,
+
         repo: None,
         payload: &payload,
         store: &store,

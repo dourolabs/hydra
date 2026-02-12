@@ -138,15 +138,10 @@ fn join_issue_ids(ids: &[IssueId]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::actors::UserOrWorker;
     use crate::domain::issues::{Issue, IssueDependency, IssueType, TodoItem};
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, Store};
-
-    fn test_actor() -> UserOrWorker {
-        UserOrWorker::Username(Username::from("test-user"))
-    }
 
     fn make_issue(status: IssueStatus) -> Issue {
         Issue::new(
@@ -167,7 +162,7 @@ mod tests {
     async fn allows_non_closing_status() {
         let restriction = IssueLifecycleRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
+
         let issue = make_issue(IssueStatus::Open);
         let payload = OperationPayload::Issue {
             issue_id: None,
@@ -176,7 +171,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
@@ -188,7 +183,7 @@ mod tests {
     async fn allows_closing_with_no_deps_or_todos() {
         let restriction = IssueLifecycleRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
+
         let issue = make_issue(IssueStatus::Closed);
         let payload = OperationPayload::Issue {
             issue_id: None,
@@ -197,7 +192,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
@@ -209,7 +204,7 @@ mod tests {
     async fn rejects_closing_with_incomplete_todos() {
         let restriction = IssueLifecycleRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
+
         let mut issue = make_issue(IssueStatus::Closed);
         issue.todo_list = vec![
             TodoItem::new("done task".to_string(), true),
@@ -222,7 +217,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::UpdateIssue,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
@@ -242,7 +237,6 @@ mod tests {
     async fn rejects_closing_with_open_children() {
         let restriction = IssueLifecycleRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
 
         // Create parent and child
         let parent = make_issue(IssueStatus::Open);
@@ -265,7 +259,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::UpdateIssue,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
@@ -284,7 +278,6 @@ mod tests {
     async fn rejects_closing_with_open_blockers() {
         let restriction = IssueLifecycleRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
 
         // Create blocker that is still open
         let blocker = make_issue(IssueStatus::Open);
@@ -302,7 +295,7 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-            actor: &actor,
+
             repo: None,
             payload: &payload,
             store: &store,
