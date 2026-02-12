@@ -311,6 +311,8 @@ pub enum LoginError {
     InvalidGithubToken(String),
     #[error("github user '{username}' is not in an allowed organization")]
     ForbiddenGithubOrg { username: String },
+    #[error("login rejected by policy: {0}")]
+    PolicyViolation(#[from] crate::policy::PolicyViolation),
     #[error("login store operation failed")]
     Store {
         #[source]
@@ -328,7 +330,7 @@ impl AppState {
         agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     ) -> Self {
         let event_bus = Arc::new(EventBus::new());
-        let policy_engine = Self::build_default_policy_engine();
+        let policy_engine = Self::build_default_policy_engine(&config.metis.allowed_orgs);
         Self {
             config,
             github_app,
@@ -342,9 +344,24 @@ impl AppState {
 
     /// Build the default policy engine with all built-in restrictions and
     /// automations enabled.
-    fn build_default_policy_engine() -> crate::policy::PolicyEngine {
+    fn build_default_policy_engine(allowed_orgs: &[String]) -> crate::policy::PolicyEngine {
         use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
         use crate::policy::registry::build_default_registry;
+
+        let github_org_entry = if allowed_orgs.is_empty() {
+            PolicyEntry::Name("github_org_check".to_string())
+        } else {
+            let mut table = toml::map::Map::new();
+            let arr: Vec<toml::Value> = allowed_orgs
+                .iter()
+                .map(|s| toml::Value::String(s.clone()))
+                .collect();
+            table.insert("allowed_orgs".to_string(), toml::Value::Array(arr));
+            PolicyEntry::WithParams {
+                name: "github_org_check".to_string(),
+                params: toml::Value::Table(table),
+            }
+        };
 
         let config = PolicyConfig {
             global: PolicyList {
@@ -355,6 +372,7 @@ impl AppState {
                     PolicyEntry::Name("hidden_document_path".to_string()),
                     PolicyEntry::Name("running_job_validation".to_string()),
                     PolicyEntry::Name("require_creator".to_string()),
+                    github_org_entry,
                 ],
                 automations: vec![
                     PolicyEntry::Name("cascade_issue_status".to_string()),
@@ -435,30 +453,20 @@ impl AppState {
             .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
         let username = Username::from(github_user.login);
 
-        let allowed_orgs = &self.config.metis.allowed_orgs;
-        if !allowed_orgs.is_empty() {
-            #[derive(Deserialize)]
-            struct GithubOrg {
-                login: String,
-            }
-
-            let orgs: Vec<GithubOrg> = github_client
-                .get("/user/orgs", None::<&()>)
-                .await
-                .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
-
-            let is_allowed = orgs.iter().any(|org| {
-                allowed_orgs
-                    .iter()
-                    .any(|allowed| org.login.eq_ignore_ascii_case(allowed))
-            });
-
-            if !is_allowed {
-                return Err(LoginError::ForbiddenGithubOrg {
-                    username: username.to_string(),
-                });
-            }
+        // Fetch GitHub org memberships for login restriction evaluation.
+        #[derive(Deserialize)]
+        struct GithubOrg {
+            login: String,
         }
+        let orgs: Vec<GithubOrg> = github_client
+            .get("/user/orgs", None::<&()>)
+            .await
+            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+        let github_org_logins: Vec<String> = orgs.into_iter().map(|o| o.login).collect();
+
+        self.policy_engine()
+            .check_login(username.as_str(), github_org_logins, self.store())
+            .await?;
 
         let user = User {
             username: username.clone(),
@@ -2284,6 +2292,12 @@ mod tests {
             then.status(200)
                 .header("content-type", "application/json")
                 .json_body(github_user_response("octo", 42));
+        });
+        let _orgs_mock = github_server.mock(|when, then| {
+            when.method(GET).path("/user/orgs");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(serde_json::json!([]));
         });
 
         let handles = test_state_with_github_api_base_url(github_server.base_url());

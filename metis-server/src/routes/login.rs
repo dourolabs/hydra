@@ -41,6 +41,10 @@ fn map_login_error(error: LoginError) -> ApiError {
             error!(username = %username, "login rejected by allowed orgs");
             ApiError::unauthorized("GitHub user is not in an allowed organization")
         }
+        LoginError::PolicyViolation(violation) => {
+            error!(policy = %violation.policy_name, message = %violation.message, "login rejected by policy");
+            ApiError::unauthorized(violation.message)
+        }
         LoginError::Store { source } => {
             error!(error = %source, "login failed to store actor");
             ApiError::internal(format!("failed to login: {source}"))

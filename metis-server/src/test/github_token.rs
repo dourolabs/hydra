@@ -39,6 +39,12 @@ async fn github_token_returns_for_username_actor() -> anyhow::Result<()> {
             .header("content-type", "application/json")
             .json_body(github_user_response("octo", 42));
     });
+    let _orgs_mock = server.mock(|when, then| {
+        when.method(GET).path("/user/orgs");
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(serde_json::json!([]));
+    });
 
     let handles = test_state_with_github_urls(server.base_url(), server.base_url());
     let auth_token = handles

@@ -19,6 +19,12 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
             .header("content-type", "application/json")
             .json_body(github_user_response("octo", 42));
     });
+    let _orgs_mock = github_server.mock(|when, then| {
+        when.method(GET).path("/user/orgs");
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(serde_json::json!([]));
+    });
 
     let handles = test_state_with_github_api_base_url(github_server.base_url());
     let check_store = handles.store.clone();
@@ -71,6 +77,12 @@ async fn login_persists_refresh_token() -> anyhow::Result<()> {
         then.status(200)
             .header("content-type", "application/json")
             .json_body(github_user_response("octo", 42));
+    });
+    let _orgs_mock = github_server.mock(|when, then| {
+        when.method(GET).path("/user/orgs");
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(serde_json::json!([]));
     });
 
     let handles = test_state_with_github_api_base_url(github_server.base_url());

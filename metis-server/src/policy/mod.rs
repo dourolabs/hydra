@@ -1,6 +1,7 @@
 pub mod automations;
 pub mod config;
 pub mod context;
+pub mod integrations;
 pub mod registry;
 pub mod restrictions;
 pub mod runner;
@@ -243,6 +244,26 @@ impl PolicyEngine {
         };
         let ctx = RestrictionContext {
             operation: context::Operation::UpdateDocument,
+            repo: None,
+            payload: &payload,
+            store,
+        };
+        self.check_restrictions(&ctx).await
+    }
+
+    /// Check restrictions for a login operation.
+    pub async fn check_login(
+        &self,
+        username: &str,
+        github_org_logins: Vec<String>,
+        store: &dyn crate::store::Store,
+    ) -> Result<(), PolicyViolation> {
+        let payload = context::OperationPayload::Login {
+            username: username.to_string(),
+            github_org_logins,
+        };
+        let ctx = RestrictionContext {
+            operation: context::Operation::Login,
             repo: None,
             payload: &payload,
             store,
