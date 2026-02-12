@@ -4273,6 +4273,7 @@ dependencies = [
  "metis-common",
  "mime",
  "octocrab",
+ "openssl",
  "openssl-sys",
  "regex",
  "reqwest",
