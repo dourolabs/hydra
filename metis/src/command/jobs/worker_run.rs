@@ -397,7 +397,7 @@ async fn submit_patch_artifact_if_present(
     base_commit: Option<GitOid>,
 ) -> Result<()> {
     let (title, description) = patch_metadata(job, last_message);
-    let create_github_pr = false;
+    let create_github_pr = true;
     let is_automatic_backup = true;
 
     let Some(_) = base_commit else {
@@ -850,6 +850,18 @@ mod tests {
         // Push to origin so merge-base resolution works.
         push_branch(&repo_path, "main", None, false)?;
 
+        // Switch to a metis/-prefixed branch so GitHub PR creation succeeds.
+        let metis_branch = "metis/t-job-123/head";
+        let head_commit = repo
+            .head()
+            .context("failed to resolve HEAD")?
+            .peel_to_commit()
+            .context("failed to peel HEAD to commit")?;
+        repo.branch(metis_branch, &head_commit, false)
+            .context("failed to create metis branch")?;
+        repo.set_head(&format!("refs/heads/{metis_branch}"))
+            .context("failed to switch to metis branch")?;
+
         std::fs::write(repo_path.join("README.md"), "updated content\n")?;
         std::fs::write(repo_path.join("untracked.txt"), "untracked content\n")?;
 
@@ -869,13 +881,14 @@ mod tests {
             None,
             false,
         );
-        expected_patch.branch_name = Some(branch_name);
+        expected_patch.branch_name = Some(branch_name.clone());
         // Merge-base of HEAD with origin/main is the initial commit (same as HEAD here).
         expected_patch.commit_range = Some(metis_common::patches::CommitRange::new(
             base_commit,
             base_commit,
         ));
-        let expected_request = UpsertPatchRequest::new(expected_patch);
+        let expected_request =
+            UpsertPatchRequest::new(expected_patch).with_sync_github_branch(&branch_name);
         let server = MockServer::start();
         let patch_mock = server.mock(|when, then| {
             when.method(POST)
@@ -884,10 +897,11 @@ mod tests {
             then.status(200)
                 .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123")));
         });
-        // Mock the github token endpoint (always called now, but returns 401).
+        // Mock a successful github token response (needed now that create_github_pr defaults to true).
         server.mock(|when, then| {
             when.method(GET).path("/v1/github/token");
-            then.status(401);
+            then.status(200)
+                .json_body(serde_json::json!({"github_token": "test-gh-token"}));
         });
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;

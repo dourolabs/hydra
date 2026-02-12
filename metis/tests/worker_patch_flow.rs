@@ -32,7 +32,7 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
             "echo \"worker content\" >> README.md".to_string(),
             "git add README.md".to_string(),
             "git commit -m \"worker changes\"".to_string(),
-            "metis patches create --title \"integration worker patch\" --description \"created by worker override\"".to_string(),
+            "metis patches create --title \"integration worker patch\" --description \"created by worker override\" --no-github".to_string(),
             "echo \"worker run finished\"".to_string(),
         ],
         job_id,

@@ -34,7 +34,7 @@ Please explicitly call out anything that may be confusing or design questions wh
 choice with tradeoffs, and what the alternatives were. Attach screenshots or CLI snippets for UX changes and highlight configuration, migration, or security impacts.
 Any visual changes in `metis-ui` or `metis-component-library` must include screenshots in the PR description.
 - Capture with Puppeteer (install if needed): `node -e "const p=require('puppeteer');(async()=>{const b=await p.launch();const pg=await b.newPage();await pg.setViewport({width:1280,height:720});await pg.goto('http://localhost:3000',{waitUntil:'networkidle0'});await pg.screenshot({path:'screenshots/ui.png',fullPage:true});await b.close();})();"`
-- Submit the patch with `metis patches create ...` and capture the new patch id in the response.
+- Submit the patch with `metis patches create ...` and capture the new patch id in the response. A GitHub PR is created by default; pass `--no-github` to skip PR creation.
 - Upload the screenshot with `metis patches assets create --patch-id <patch id> --file screenshots/ui.png` and capture the returned URL.
 - Update the PR comment with `metis patches update --patch-id <patch id> --description "...include screenshots here..."` so the screenshots render inline.
 

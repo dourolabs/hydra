@@ -62,9 +62,9 @@ pub enum PatchesCommand {
         #[arg(long = "job", value_name = "METIS_ID", env = ENV_METIS_ID)]
         job: Option<TaskId>,
 
-        /// Create a GitHub pull request with the patch contents.
-        #[arg(long = "github")]
-        github: bool,
+        /// Skip creating a GitHub pull request.
+        #[arg(long = "no-github")]
+        no_github: bool,
 
         /// Assign the merge-request issue to a user and automatically create it.
         #[arg(long = "assignee", value_name = "ASSIGNEE")]
@@ -211,7 +211,7 @@ pub async fn run(
             title,
             description,
             job,
-            github,
+            no_github,
             assignee,
             issue_id,
             allow_uncommitted,
@@ -223,7 +223,7 @@ pub async fn run(
                 title,
                 description,
                 job,
-                github,
+                !no_github,
                 assignee,
                 issue_id,
                 allow_uncommitted,
@@ -848,12 +848,12 @@ pub async fn create_patch_artifact_from_repo(
         if !branch_name.starts_with("metis/") {
             bail!(
                 "Cannot push to GitHub: current branch '{branch_name}' does not have the required 'metis/' prefix. \
-                Please checkout a branch named 'metis/<issue-id>/...' before creating a patch with --github."
+                Please checkout a branch named 'metis/<issue-id>/...' before creating a patch."
             );
         }
         push_branch(repo_root, &branch_name, Some(token), force)?;
     } else {
-        // Push even without --github, using the token if available.
+        // Push even without a GitHub PR, using the token if available.
         push_branch(repo_root, &branch_name, github_token.as_deref(), force)?;
     }
 
@@ -1398,7 +1398,7 @@ mod tests {
             ),
         );
         let job_mock = mock_get_job(&server, job_record);
-        // Return 401 for github token -- create with --github should fail.
+        // Return 401 for github token -- create with GitHub PR should fail.
         mock_get_github_token_failure(&server);
 
         let result = create_patch(
