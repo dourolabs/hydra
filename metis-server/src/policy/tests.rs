@@ -1,6 +1,7 @@
 use super::*;
-use crate::app::event_bus::ServerEvent;
+use crate::app::event_bus::{MutationPayload, ServerEvent};
 use crate::domain::actors::UserOrWorker;
+use crate::domain::issues::{Issue, IssueStatus, IssueType};
 use crate::domain::users::Username;
 use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
 use crate::policy::context::{AutomationContext, Operation, OperationPayload, RestrictionContext};
@@ -11,6 +12,58 @@ use chrono::Utc;
 use metis_common::IssueId;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+fn dummy_issue() -> Issue {
+    Issue::new(
+        IssueType::Task,
+        "test".to_string(),
+        Username::from("creator"),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )
+}
+
+fn dummy_issue_payload() -> Arc<MutationPayload> {
+    Arc::new(MutationPayload::Issue {
+        old: None,
+        new: dummy_issue(),
+    })
+}
+
+fn dummy_patch_payload() -> Arc<MutationPayload> {
+    Arc::new(MutationPayload::Patch {
+        old: None,
+        new: crate::domain::patches::Patch::new(
+            "title".to_string(),
+            "desc".to_string(),
+            String::new(),
+            crate::domain::patches::PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            metis_common::RepoName::new("test", "repo").unwrap(),
+            None,
+        ),
+    })
+}
+
+fn dummy_document_payload() -> Arc<MutationPayload> {
+    Arc::new(MutationPayload::Document {
+        old: None,
+        new: crate::domain::documents::Document {
+            title: "test".to_string(),
+            body_markdown: String::new(),
+            path: None,
+            created_by: None,
+            deleted: false,
+        },
+    })
+}
 
 // ---------------------------------------------------------------------------
 // Mock restriction that always allows
@@ -232,6 +285,7 @@ async fn run_automations_executes_matching_automations() {
         issue_id: IssueId::new(),
         version: 0,
         timestamp: Utc::now(),
+        payload: dummy_issue_payload(),
     };
     let engine = PolicyEngine::new(
         Vec::new(),
@@ -248,6 +302,7 @@ async fn run_automations_executes_matching_automations() {
         issue_id: IssueId::new(),
         version: 1,
         timestamp: Utc::now(),
+        payload: dummy_issue_payload(),
     };
 
     let handles = test_utils::test_state_handles();
@@ -270,6 +325,7 @@ async fn run_automations_skips_non_matching_events() {
         patch_id: metis_common::PatchId::new(),
         version: 0,
         timestamp: Utc::now(),
+        payload: dummy_patch_payload(),
     };
     let engine = PolicyEngine::new(
         Vec::new(),
@@ -286,6 +342,7 @@ async fn run_automations_skips_non_matching_events() {
         issue_id: IssueId::new(),
         version: 1,
         timestamp: Utc::now(),
+        payload: dummy_issue_payload(),
     };
 
     let handles = test_utils::test_state_handles();
@@ -319,6 +376,7 @@ async fn run_automations_logs_errors_but_continues() {
         issue_id: IssueId::new(),
         version: 3,
         timestamp: Utc::now(),
+        payload: dummy_issue_payload(),
     };
 
     let handles = test_utils::test_state_handles();
@@ -346,6 +404,7 @@ fn event_filter_empty_matches_all() {
         document_id: metis_common::DocumentId::new(),
         version: 1,
         timestamp: Utc::now(),
+        payload: dummy_document_payload(),
     };
     assert!(filter.matches(&event));
 }
@@ -357,6 +416,7 @@ fn event_filter_specific_type_matches() {
         patch_id: metis_common::PatchId::new(),
         version: 0,
         timestamp: Utc::now(),
+        payload: dummy_patch_payload(),
     };
     let filter = EventFilter {
         event_types: vec![mem::discriminant(&sentinel)],
@@ -366,12 +426,14 @@ fn event_filter_specific_type_matches() {
         patch_id: metis_common::PatchId::new(),
         version: 1,
         timestamp: Utc::now(),
+        payload: dummy_patch_payload(),
     };
     let non_matching = ServerEvent::PatchCreated {
         seq: 2,
         patch_id: metis_common::PatchId::new(),
         version: 1,
         timestamp: Utc::now(),
+        payload: dummy_patch_payload(),
     };
     assert!(filter.matches(&matching));
     assert!(!filter.matches(&non_matching));
