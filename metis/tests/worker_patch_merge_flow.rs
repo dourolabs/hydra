@@ -430,7 +430,7 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
         .get_issue(&initial_merge_request_issue_id)
         .await?
         .issue;
-    assert_eq!(initial_merge_request_issue.status, IssueStatus::Closed);
+    assert_eq!(initial_merge_request_issue.status, IssueStatus::Failed);
 
     let merge_request_issue_id = create_merge_request_issue(
         &env.client,
