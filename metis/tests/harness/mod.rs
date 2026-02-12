@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod user_handle;
+
 use anyhow::{Context, Result};
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
@@ -22,12 +24,7 @@ use std::{collections::HashMap, str::FromStr, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 
-/// A simple user handle holding a name and auth token.
-/// The full `UserHandle` typed API is introduced in a later task.
-pub struct UserHandle {
-    pub name: String,
-    pub token: String,
-}
+pub use user_handle::UserHandle;
 
 /// Holds the GitHub mock server and the Octocrab client configured to use it.
 pub struct GitHubMock {
@@ -100,11 +97,18 @@ impl TestHarness {
         self.server.base_url()
     }
 
+    /// Return a reference to the default user's `UserHandle`.
+    ///
+    /// The default user is always created and named `"default"`.
+    pub fn default_user(&self) -> &UserHandle {
+        self.user("default")
+    }
+
     /// Return the auth token of the default user.
     ///
     /// The default user is always created and named `"default"`.
     pub fn default_user_token(&self) -> &str {
-        &self.users["default"].token
+        self.users["default"].token()
     }
 
     /// Return a reference to the user handle with the given name.
@@ -164,7 +168,7 @@ impl TestHarness {
                 default: true,
             }],
         };
-        MetisClient::from_config(&config, &user.token)
+        MetisClient::from_config(&config, user.token())
     }
 }
 
@@ -277,8 +281,10 @@ impl TestHarnessBuilder {
             agents.clone(),
         );
 
-        // Create users: always create a "default" user, plus any extras.
-        let mut users = HashMap::new();
+        // Collect user credentials. We need to create actors and users in the
+        // store before spawning the server, but UserHandle construction needs
+        // the server URL. So we collect (name, token) pairs first.
+        let mut user_credentials: Vec<(String, String)> = Vec::new();
 
         // Default user
         let (default_actor, default_token) = Actor::new_for_task(TaskId::new());
@@ -290,13 +296,7 @@ impl TestHarnessBuilder {
             "gh-refresh-default".to_string(),
         );
         store.add_user(default_user.into()).await?;
-        users.insert(
-            "default".to_string(),
-            UserHandle {
-                name: "default".to_string(),
-                token: default_token,
-            },
-        );
+        user_credentials.push(("default".to_string(), default_token));
 
         // Additional named users
         for (i, user_name) in self.users.iter().enumerate() {
@@ -312,19 +312,22 @@ impl TestHarnessBuilder {
                 format!("gh-refresh-{user_name}"),
             );
             store.add_user(user.into()).await?;
-            users.insert(
-                user_name.clone(),
-                UserHandle {
-                    name: user_name.clone(),
-                    token,
-                },
-            );
+            user_credentials.push((user_name.clone(), token));
         }
 
         // Spawn the test server.
         let server = spawn_test_server_with_state(state.clone(), store.clone())
             .await
             .context("failed to spawn test server for TestHarness")?;
+
+        // Now that we have the server URL, construct UserHandle instances.
+        let server_url = server.base_url();
+        let mut users = HashMap::new();
+        for (name, token) in user_credentials {
+            let handle = UserHandle::new(name.clone(), token, &server_url)
+                .with_context(|| format!("failed to create UserHandle for '{name}'"))?;
+            users.insert(name, handle);
+        }
 
         Ok(TestHarness {
             server,
