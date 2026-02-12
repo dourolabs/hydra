@@ -1,17 +1,134 @@
+// First test migrated from old-style using init_test_server_with_remote_and_github + manual
+// GitHub mock reconfiguration + manual issue/patch/merge-request creation.
+// Original: ~107 lines with git_output helpers, create_branch_with_commit, two GitHubMockBuilder
+// calls, manual state.github_app assignment, and verbose issue/patch/job assertions.
+// Migrated: ~55 lines using TestHarness, UserHandle, GitRemote, and step_github_sync.
+//
+// The remaining two tests are kept in the original style for unmigrated comparison.
+
+mod harness;
+
 use anyhow::{Context, Result};
 use metis::command::patches::create_merge_request_issue;
 use metis_common::{
     issues::{IssueStatus, IssueType, JobSettings},
-    jobs::SearchJobsQuery,
     patches::{GithubPr, PatchStatus},
 };
 use metis_server::test_utils::{GitHubMockBuilder, MockPr, MockReview};
+use std::str::FromStr;
+
+#[tokio::test]
+async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> Result<()> {
+    let pr_number = 99;
+    let repo_owner = "octo";
+    let repo_name = "repo";
+    let review_branch = "feature/review";
+    let repo = metis_common::RepoName::from_str("octo/repo")?;
+
+    let mut harness = harness::TestHarness::builder()
+        .with_repo("octo/repo")
+        .with_github()
+        .build()
+        .await?;
+
+    // Create a branch with a commit in the git remote.
+    let head_sha = harness
+        .remote("octo/repo")
+        .create_branch(review_branch, "README.md", "base content\nreview change\n")
+        .context("failed to create review branch")?;
+
+    // Reconfigure GitHub mock with a PR that has a CHANGES_REQUESTED review.
+    let (_github_server, github_app) = GitHubMockBuilder::new()
+        .with_pr(
+            repo_owner,
+            repo_name,
+            MockPr::new(pr_number, review_branch, &head_sha).with_review(
+                MockReview::new("reviewer", "CHANGES_REQUESTED", "please update")
+                    .with_author_id(1001),
+            ),
+        )
+        .build()?;
+    harness.state_mut().github_app = Some(github_app);
+
+    // Create parent issue with job settings, patch with GitHub PR, and merge request issue.
+    let user = harness.default_user();
+
+    let mut job_settings = JobSettings::default();
+    job_settings.repo_name = Some(repo.clone());
+    job_settings.image = Some("worker:latest".to_string());
+    job_settings.branch = Some("main".to_string());
+
+    let parent_issue_id = user
+        .create_issue_with_settings(
+            "parent task",
+            IssueType::Task,
+            IssueStatus::Open,
+            Some("requester"),
+            Some(job_settings),
+        )
+        .await?;
+
+    let patch_id = user
+        .create_patch_with_github(
+            "Review patch",
+            "Review description",
+            &repo,
+            GithubPr::new(
+                repo_owner.to_string(),
+                repo_name.to_string(),
+                pr_number,
+                None,
+                None,
+                None,
+                None,
+            ),
+        )
+        .await?;
+
+    let merge_request_issue_id = create_merge_request_issue(
+        user.client(),
+        patch_id.clone(),
+        "requester".to_string(),
+        parent_issue_id.clone(),
+        "Review patch".to_string(),
+        "Review description".to_string(),
+    )
+    .await?
+    .id;
+
+    // Run GitHub sync and verify outcomes.
+    harness
+        .step_github_sync()
+        .await
+        .context("sync_open_patches failed")?;
+
+    let updated_patch = user.get_patch(&patch_id).await?;
+    assert_eq!(updated_patch.patch.status, PatchStatus::ChangesRequested);
+    assert!(updated_patch
+        .patch
+        .reviews
+        .iter()
+        .any(|review| review.author == "reviewer" && review.contents == "please update"));
+
+    let merge_request_issue = user.get_issue(&merge_request_issue_id).await?;
+    assert_eq!(merge_request_issue.issue.status, IssueStatus::Failed);
+
+    let jobs = user.list_jobs_for_issue(&merge_request_issue_id).await?;
+    assert!(
+        jobs.is_empty(),
+        "expected no followup job when merge request issue is failed"
+    );
+
+    Ok(())
+}
+
+// ── Unmigrated tests below (kept in original style) ─────────────────
+
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
 mod common;
-
 use common::test_helpers::init_test_server_with_remote_and_github;
 
 fn git_output(args: &[&str], cwd: &Path) -> Result<String> {
@@ -46,116 +163,6 @@ fn create_branch_with_commit(remote_url: &str, branch: &str, line: &str) -> Resu
     git_output(&["push", "-u", "origin", branch], repo_path)?;
 
     git_output(&["rev-parse", "HEAD"], repo_path)
-}
-
-#[tokio::test]
-async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> Result<()> {
-    let pr_number = 99;
-    let repo_owner = "octo";
-    let repo_name = "repo";
-    let review_branch = "feature/review";
-
-    let (_github_server, github_app) = GitHubMockBuilder::new()
-        .with_installation(repo_owner, repo_name)
-        .build()?;
-
-    let mut env = init_test_server_with_remote_and_github("octo/repo", Some(github_app)).await?;
-    let repository = env
-        .state
-        .repository_from_store(&env.service_repo_name)
-        .await
-        .context("failed to load service repository config")?;
-    let head_sha =
-        create_branch_with_commit(&repository.remote_url, review_branch, "review change\n")
-            .context("failed to create review branch")?;
-
-    // Replace with mocks that include the PR and review
-    let (_github_server, github_app) = GitHubMockBuilder::new()
-        .with_pr(
-            repo_owner,
-            repo_name,
-            MockPr::new(pr_number, review_branch, &head_sha).with_review(
-                MockReview::new("reviewer", "CHANGES_REQUESTED", "please update")
-                    .with_author_id(1001),
-            ),
-        )
-        .build()?;
-    env.state.github_app = Some(github_app);
-
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(env.service_repo_name.clone());
-    job_settings.image = Some("worker:latest".to_string());
-    job_settings.branch = Some("main".to_string());
-
-    let parent_issue_id = env
-        .create_issue(
-            "parent task",
-            IssueType::Task,
-            IssueStatus::Open,
-            Some("requester".to_string()),
-            Some(job_settings.clone()),
-        )
-        .await?;
-
-    let patch_id = env
-        .create_patch(
-            "Review patch",
-            "Review description",
-            "diff",
-            PatchStatus::Open,
-            Some(GithubPr::new(
-                repo_owner.to_string(),
-                repo_name.to_string(),
-                pr_number,
-                None,
-                None,
-                None,
-                None,
-            )),
-            None,
-        )
-        .await?;
-
-    let merge_request_issue_id = create_merge_request_issue(
-        &env.client,
-        patch_id.clone(),
-        "requester".to_string(),
-        parent_issue_id.clone(),
-        "Review patch".to_string(),
-        "Review description".to_string(),
-    )
-    .await?
-    .id;
-
-    env.run_github_sync(60)
-        .await
-        .context("sync_open_patches failed")?;
-
-    let updated_patch = env.client.get_patch(&patch_id).await?.patch;
-    assert_eq!(updated_patch.status, PatchStatus::ChangesRequested);
-    assert!(updated_patch
-        .reviews
-        .iter()
-        .any(|review| review.author == "reviewer" && review.contents == "please update"));
-
-    let merge_request_issue = env.client.get_issue(&merge_request_issue_id).await?.issue;
-    assert_eq!(merge_request_issue.status, IssueStatus::Failed);
-
-    let jobs = env
-        .client
-        .list_jobs(&SearchJobsQuery::new(
-            None,
-            Some(merge_request_issue_id.clone()),
-            None,
-        ))
-        .await?
-        .jobs;
-    assert!(
-        jobs.is_empty(),
-        "expected no followup job when merge request issue is failed"
-    );
-
-    Ok(())
 }
 
 #[tokio::test]

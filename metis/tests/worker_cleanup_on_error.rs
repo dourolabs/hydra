@@ -1,58 +1,46 @@
-use anyhow::{bail, Context, Result};
-use metis_common::{
-    jobs::{BundleSpec, SearchJobsQuery},
-    task_status::Status,
-};
+// Migrated from the old-style test using init_test_server_with_remote + run_as_worker_with_failure.
+// Original: ~57 lines with manual env var construction, CLI subprocess job creation,
+// wait_for_status polling, manual job list inspection, and BundleSpec assertion.
+// Migrated: ~20 lines using TestHarness, UserHandle, and run_worker_expect_failure.
 
-mod common;
+mod harness;
 
-use common::test_helpers::{init_test_server_with_remote, job_id_for_prompt, wait_for_status};
+use anyhow::Result;
+use metis_common::task_status::Status;
+use std::str::FromStr;
 
 #[tokio::test]
 async fn worker_run_executes_cleanup_on_error() -> Result<()> {
-    let env = init_test_server_with_remote("acme/worker-cleanup-error").await?;
-    let prompt = "worker cleanup executes on error";
-    let repo_arg = env.service_repo_name.to_string();
-    let server_url = env.server.base_url();
+    let harness = harness::TestHarness::builder()
+        .with_repo("acme/worker-cleanup-error")
+        .build()
+        .await?;
+    let user = harness.default_user();
+    let repo = metis_common::RepoName::from_str("acme/worker-cleanup-error")?;
 
-    env.run_as_user(vec![format!(
-        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var METIS_ISSUE_ID={} {}",
-        repo_arg, server_url, env.current_issue_id, prompt
-    )])
-    .await?;
+    let issue_id = user
+        .create_issue("worker cleanup executes on error")
+        .await?;
+    let job_id = user
+        .create_job_for_issue(&repo, "worker cleanup executes on error", &issue_id)
+        .await?;
 
-    let job_id = job_id_for_prompt(&env.client, prompt)
-        .await
-        .context("expected job to be created for worker cleanup error test")?;
-    wait_for_status(&env.client, &job_id, Status::Running).await?;
-    let job = env
-        .client
-        .list_jobs(&SearchJobsQuery::default())
-        .await?
-        .jobs
-        .into_iter()
-        .find(|job| job.id == job_id)
-        .context("expected job to exist after creation")?;
-    match job.task.context {
-        BundleSpec::ServiceRepository { .. } => {}
-        other => bail!("job missing service repository context: {other:?}"),
-    };
-
-    let run_error = env
-        .run_as_worker_with_failure(
+    let failure = harness
+        .run_worker_expect_failure(
+            &job_id,
             vec![
-                "echo \"cleanup with error\" >> README.md".to_string(),
-                "git add README.md".to_string(),
+                "echo 'cleanup with error' >> README.md",
+                "git add README.md",
+                "exit 1",
             ],
-            job_id.clone(),
-            true,
         )
-        .await
-        .expect_err("worker_run should return an error when commands are configured to fail");
+        .await?;
 
-    wait_for_status(&env.client, &job_id, Status::Failed)
-        .await
-        .with_context(|| format!("job did not transition to failed: {run_error}"))?;
+    assert_eq!(failure.final_status, Status::Failed);
+    assert!(
+        !failure.error.to_string().is_empty(),
+        "failure should contain an error message"
+    );
 
     Ok(())
 }
