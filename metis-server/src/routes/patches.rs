@@ -547,6 +547,7 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
              for branch '{branch_name}'. Consider updating that patch with: \
              metis patches update {existing_patch_id}"
         )),
+        UpsertPatchError::PolicyViolation(violation) => ApiError::bad_request(violation.message),
     }
 }
 

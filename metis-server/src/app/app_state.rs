@@ -52,6 +52,7 @@ pub struct AppState {
     store: Arc<StoreWithEvents>,
     pub job_engine: Arc<dyn JobEngine>,
     agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
+    policy_engine: Arc<crate::policy::PolicyEngine>,
 }
 
 #[derive(Debug, Error)]
@@ -87,6 +88,8 @@ pub enum SetJobStatusError {
         source: StoreError,
         job_id: TaskId,
     },
+    #[error("{0}")]
+    PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
 
 #[derive(Debug, Error)]
@@ -176,6 +179,8 @@ pub enum UpsertPatchError {
         existing_patch_id: PatchId,
         branch_name: String,
     },
+    #[error("{0}")]
+    PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
 
 #[derive(Debug, Error)]
@@ -210,6 +215,8 @@ pub enum UpsertDocumentError {
         #[source]
         source: StoreError,
     },
+    #[error("{0}")]
+    PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
 
 #[derive(Debug, Error)]
@@ -266,6 +273,8 @@ pub enum UpsertIssueError {
         issue_id: IssueId,
         job_id: TaskId,
     },
+    #[error("{0}")]
+    PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
 
 #[derive(Debug, Error)]
@@ -320,6 +329,7 @@ impl AppState {
         agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     ) -> Self {
         let event_bus = Arc::new(EventBus::new());
+        let policy_engine = Self::build_default_policy_engine();
         Self {
             config,
             github_app,
@@ -327,7 +337,41 @@ impl AppState {
             store: Arc::new(StoreWithEvents::new(store, event_bus)),
             job_engine,
             agents,
+            policy_engine: Arc::new(policy_engine),
         }
+    }
+
+    /// Build the default policy engine with all built-in restrictions enabled.
+    fn build_default_policy_engine() -> crate::policy::PolicyEngine {
+        use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
+        use crate::policy::registry::build_default_registry;
+
+        let config = PolicyConfig {
+            global: PolicyList {
+                restrictions: vec![
+                    PolicyEntry::Name("issue_lifecycle_validation".to_string()),
+                    PolicyEntry::Name("task_state_machine".to_string()),
+                    PolicyEntry::Name("duplicate_branch_name".to_string()),
+                    PolicyEntry::Name("hidden_document_path".to_string()),
+                    PolicyEntry::Name("running_job_validation".to_string()),
+                    PolicyEntry::Name("require_creator".to_string()),
+                ],
+                automations: Vec::new(),
+            },
+            repos: Default::default(),
+        };
+
+        let registry = build_default_registry();
+        registry
+            .build(&config)
+            .expect("built-in policy configuration should be valid")
+    }
+
+    /// Create an AppState with a custom policy engine (useful for testing).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn with_policy_engine(mut self, engine: crate::policy::PolicyEngine) -> Self {
+        self.policy_engine = Arc::new(engine);
+        self
     }
 
     /// Returns a new broadcast receiver for server events.
@@ -338,6 +382,11 @@ impl AppState {
     /// Returns a reference to the event bus.
     pub fn event_bus(&self) -> &EventBus {
         self.store.event_bus()
+    }
+
+    /// Returns a reference to the policy engine.
+    pub fn policy_engine(&self) -> &crate::policy::PolicyEngine {
+        &self.policy_engine
     }
 
     pub async fn login_with_github_token(
@@ -515,19 +564,13 @@ impl AppState {
         document_id: Option<DocumentId>,
         document: Document,
     ) -> Result<DocumentId, UpsertDocumentError> {
-        if let Some(path) = &document.path {
-            let normalized = path.strip_prefix('/').unwrap_or(path);
-            if has_hidden_segment(normalized) {
-                return Err(UpsertDocumentError::InvalidPath { path: path.clone() });
-            }
-        }
-
         let store = self.store.as_ref();
-        match document_id {
+
+        let (operation, old_document) = match &document_id {
             Some(id) => {
                 let existing =
                     store
-                        .get_document(&id, false)
+                        .get_document(id, false)
                         .await
                         .map_err(|source| match source {
                             StoreError::DocumentNotFound(_) => {
@@ -538,9 +581,38 @@ impl AppState {
                             }
                             other => UpsertDocumentError::Store { source: other },
                         })?;
+                (
+                    crate::policy::context::Operation::UpdateDocument,
+                    Some(existing.item),
+                )
+            }
+            None => (crate::policy::context::Operation::CreateDocument, None),
+        };
 
+        // Run restriction policies before persisting
+        let actor = crate::domain::actors::UserOrWorker::Username(
+            crate::domain::users::Username::from("system"),
+        );
+        let restriction_ctx = crate::policy::context::RestrictionContext {
+            operation,
+            actor: &actor,
+            repo: None,
+            payload: &crate::policy::context::OperationPayload::Document {
+                document_id: document_id.clone(),
+                new: document.clone(),
+                old: old_document.clone(),
+            },
+            store,
+        };
+        self.policy_engine
+            .check_restrictions(&restriction_ctx)
+            .await?;
+
+        match document_id {
+            Some(id) => {
                 let mut document = document;
-                document.created_by = existing.item.created_by;
+                // old_document is Some in update path
+                document.created_by = old_document.unwrap().created_by;
 
                 store
                     .update_document(&id, document)
@@ -557,35 +629,9 @@ impl AppState {
                 Ok(id)
             }
             None => {
-                let new_document = document;
-                if let Some(job_id) = new_document.created_by.clone() {
-                    let status = store
-                        .get_task(&job_id, false)
-                        .await
-                        .map_err(|source| match source {
-                            StoreError::TaskNotFound(_) => UpsertDocumentError::JobNotFound {
-                                job_id: job_id.clone(),
-                                source,
-                            },
-                            other => UpsertDocumentError::JobStatusLookup {
-                                job_id: job_id.clone(),
-                                source: other,
-                            },
-                        })?
-                        .item
-                        .status;
-
-                    if status != Status::Running {
-                        return Err(UpsertDocumentError::JobNotRunning {
-                            job_id: job_id.clone(),
-                            status: Some(status),
-                        });
-                    }
-                }
-
-                let created_by = new_document.created_by.clone();
+                let created_by = document.created_by.clone();
                 let (document_id, _version) = store
-                    .add_document(new_document)
+                    .add_document(document)
                     .await
                     .map_err(|source| UpsertDocumentError::Store { source })?;
 
@@ -1591,47 +1637,25 @@ impl AppState {
                 id
             }
             None => {
-                if let Some(ref job_id) = patch.created_by {
-                    let status = store
-                        .get_task(job_id, false)
-                        .await
-                        .map_err(|source| match source {
-                            StoreError::TaskNotFound(_) => UpsertPatchError::JobNotFound {
-                                job_id: job_id.clone(),
-                                source,
-                            },
-                            other => UpsertPatchError::JobStatusLookup {
-                                job_id: job_id.clone(),
-                                source: other,
-                            },
-                        })?
-                        .item
-                        .status;
-
-                    if status != Status::Running {
-                        return Err(UpsertPatchError::JobNotRunning {
-                            job_id: job_id.clone(),
-                            status: Some(status),
-                        });
-                    }
-                }
-
-                // Check for duplicate branch_name among open patches.
-                if let Some(ref branch_name) = patch.branch_name {
-                    use metis_common::api::v1::patches::PatchStatus as ApiPatchStatus;
-                    let query = SearchPatchesQuery::new(None, None)
-                        .with_status(vec![ApiPatchStatus::Open, ApiPatchStatus::ChangesRequested])
-                        .with_branch_name(branch_name.clone());
-                    let existing = store
-                        .list_patches(&query)
-                        .await
-                        .map_err(|source| UpsertPatchError::Store { source })?;
-                    if let Some((existing_id, _)) = existing.first() {
-                        return Err(UpsertPatchError::DuplicateBranchName {
-                            existing_patch_id: existing_id.clone(),
-                            branch_name: branch_name.clone(),
-                        });
-                    }
+                // Run restriction policies before persisting
+                {
+                    let actor = crate::domain::actors::UserOrWorker::Username(
+                        crate::domain::users::Username::from("system"),
+                    );
+                    let restriction_ctx = crate::policy::context::RestrictionContext {
+                        operation: crate::policy::context::Operation::CreatePatch,
+                        actor: &actor,
+                        repo: None,
+                        payload: &crate::policy::context::OperationPayload::Patch {
+                            patch_id: None,
+                            new: patch.clone(),
+                            old: None,
+                        },
+                        store,
+                    };
+                    self.policy_engine
+                        .check_restrictions(&restriction_ctx)
+                        .await?;
                 }
 
                 if let Some(sync_github_branch) = sync_github_branch {
@@ -1858,34 +1882,32 @@ impl AppState {
                 }
 
                 let updated_issue = issue.clone();
-                if updated_issue.creator.as_ref().trim().is_empty() {
-                    return Err(UpsertIssueError::MissingCreator);
+
+                // Run restriction policies (require_creator, issue_lifecycle_validation)
+                {
+                    let actor = crate::domain::actors::UserOrWorker::Username(
+                        crate::domain::users::Username::from("system"),
+                    );
+                    let restriction_ctx = crate::policy::context::RestrictionContext {
+                        operation: crate::policy::context::Operation::UpdateIssue,
+                        actor: &actor,
+                        repo: None,
+                        payload: &crate::policy::context::OperationPayload::Issue {
+                            issue_id: Some(id.clone()),
+                            new: updated_issue.clone(),
+                            old: None,
+                        },
+                        store,
+                    };
+                    self.policy_engine
+                        .check_restrictions(&restriction_ctx)
+                        .await?;
                 }
+
                 let is_dropping = matches!(
                     updated_issue.status,
                     IssueStatus::Dropped | IssueStatus::Rejected | IssueStatus::Failed
                 );
-
-                if let Err(source) =
-                    validate_issue_lifecycle(store, Some(&id), &updated_issue).await
-                {
-                    return Err(match source {
-                        StoreError::IssueNotFound(_) => UpsertIssueError::IssueNotFound {
-                            issue_id: id.clone(),
-                            source,
-                        },
-                        StoreError::InvalidDependency(dependency_id) => {
-                            UpsertIssueError::MissingDependency {
-                                dependency_id: dependency_id.clone(),
-                                source: StoreError::InvalidDependency(dependency_id),
-                            }
-                        }
-                        other => UpsertIssueError::Store {
-                            source: other,
-                            issue_id: Some(id),
-                        },
-                    });
-                }
 
                 let is_rejected_or_failed = matches!(
                     updated_issue.status,
@@ -2027,23 +2049,25 @@ impl AppState {
                         }
                     }
                 }
-                if issue.creator.as_ref().trim().is_empty() {
-                    return Err(UpsertIssueError::MissingCreator);
-                }
-
-                if let Err(source) = validate_issue_lifecycle(store, None, &issue).await {
-                    return Err(match source {
-                        StoreError::InvalidDependency(dependency_id) => {
-                            UpsertIssueError::MissingDependency {
-                                dependency_id: dependency_id.clone(),
-                                source: StoreError::InvalidDependency(dependency_id),
-                            }
-                        }
-                        other => UpsertIssueError::Store {
-                            source: other,
+                // Run restriction policies (require_creator, issue_lifecycle_validation)
+                {
+                    let actor = crate::domain::actors::UserOrWorker::Username(
+                        crate::domain::users::Username::from("system"),
+                    );
+                    let restriction_ctx = crate::policy::context::RestrictionContext {
+                        operation: crate::policy::context::Operation::CreateIssue,
+                        actor: &actor,
+                        repo: None,
+                        payload: &crate::policy::context::OperationPayload::Issue {
                             issue_id: None,
+                            new: issue.clone(),
+                            old: None,
                         },
-                    });
+                        store,
+                    };
+                    self.policy_engine
+                        .check_restrictions(&restriction_ctx)
+                        .await?;
                 }
 
                 let (id, _version) =
@@ -2401,22 +2425,6 @@ impl AppState {
     }
 }
 
-fn join_issue_ids(ids: &[IssueId]) -> String {
-    let mut values: Vec<String> = ids.iter().map(ToString::to_string).collect();
-    values.sort();
-    values.join(", ")
-}
-
-fn join_item_numbers(numbers: &[usize]) -> String {
-    let mut values = numbers.to_vec();
-    values.sort();
-    values
-        .into_iter()
-        .map(|value| value.to_string())
-        .collect::<Vec<String>>()
-        .join(", ")
-}
-
 async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, StoreError> {
     let issue = store.get_issue(issue_id, false).await?;
     let issue = issue.item;
@@ -2457,84 +2465,6 @@ async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, Stor
             Ok(true)
         }
     }
-}
-
-async fn validate_issue_lifecycle(
-    store: &dyn Store,
-    issue_id: Option<&IssueId>,
-    issue: &Issue,
-) -> Result<(), StoreError> {
-    if issue.status != IssueStatus::Closed {
-        return Ok(());
-    }
-
-    let mut open_blockers = Vec::new();
-    for dependency in issue
-        .dependencies
-        .iter()
-        .filter(|dependency| dependency.dependency_type == IssueDependencyType::BlockedOn)
-    {
-        let blocker =
-            store
-                .get_issue(&dependency.issue_id, false)
-                .await
-                .map_err(|err| match err {
-                    StoreError::IssueNotFound(missing_id) => {
-                        StoreError::InvalidDependency(missing_id)
-                    }
-                    other => other,
-                })?;
-
-        if !matches!(
-            blocker.item.status,
-            IssueStatus::Closed
-                | IssueStatus::Dropped
-                | IssueStatus::Rejected
-                | IssueStatus::Failed
-        ) {
-            open_blockers.push(dependency.issue_id.clone());
-        }
-    }
-
-    let mut open_todos = Vec::new();
-    for (index, item) in issue.todo_list.iter().enumerate() {
-        if !item.is_done {
-            open_todos.push(index + 1);
-        }
-    }
-
-    if !open_todos.is_empty() {
-        return Err(StoreError::InvalidIssueStatus(format!(
-            "cannot close issue with incomplete todo items: {}",
-            join_item_numbers(&open_todos)
-        )));
-    }
-
-    if let Some(issue_id) = issue_id {
-        let mut open_children = Vec::new();
-        for child_id in store.get_issue_children(issue_id).await? {
-            let child = store.get_issue(&child_id, false).await?;
-            if child.item.status != IssueStatus::Closed {
-                open_children.push(child_id);
-            }
-        }
-
-        if !open_children.is_empty() {
-            return Err(StoreError::InvalidIssueStatus(format!(
-                "cannot close issue with open child issues: {}",
-                join_issue_ids(&open_children)
-            )));
-        }
-    }
-
-    if !open_blockers.is_empty() {
-        return Err(StoreError::InvalidIssueStatus(format!(
-            "blocked issues cannot close until blockers are closed: {}",
-            join_issue_ids(&open_blockers)
-        )));
-    }
-
-    Ok(())
 }
 
 async fn drop_issue_children(
@@ -2632,8 +2562,6 @@ fn merge_request_issue_title(patch: &Patch) -> String {
         .unwrap_or("Patch review")
         .to_string()
 }
-
-use metis_common::documents::has_hidden_segment;
 
 #[cfg(test)]
 mod tests {
@@ -3534,13 +3462,16 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(
-            err,
-            UpsertIssueError::Store {
-                source: StoreError::InvalidIssueStatus(message),
-                issue_id: Some(id),
-            } if id == blocked_issue_id && message.contains(&blocker_id.to_string())
-        ));
+        match &err {
+            UpsertIssueError::PolicyViolation(violation) => {
+                assert!(
+                    violation.message.contains(&blocker_id.to_string()),
+                    "expected violation to reference blocker id, got: {}",
+                    violation.message
+                );
+            }
+            other => panic!("expected PolicyViolation, got: {other:?}"),
+        }
 
         state
             .upsert_issue(
@@ -3602,13 +3533,16 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(
-            err,
-            UpsertIssueError::Store {
-                source: StoreError::InvalidIssueStatus(message),
-                issue_id: Some(id),
-            } if id == parent_id && message.contains(&child_id.to_string())
-        ));
+        match &err {
+            UpsertIssueError::PolicyViolation(violation) => {
+                assert!(
+                    violation.message.contains(&child_id.to_string()),
+                    "expected violation to reference child id, got: {}",
+                    violation.message
+                );
+            }
+            other => panic!("expected PolicyViolation, got: {other:?}"),
+        }
 
         state
             .upsert_issue(
@@ -3662,13 +3596,16 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(
-            err,
-            UpsertIssueError::Store {
-                source: StoreError::InvalidIssueStatus(message),
-                issue_id: Some(id),
-            } if id == issue_id && message.contains("incomplete todo items")
-        ));
+        match &err {
+            UpsertIssueError::PolicyViolation(violation) => {
+                assert!(
+                    violation.message.contains("incomplete todo items"),
+                    "expected violation about incomplete todos, got: {}",
+                    violation.message
+                );
+            }
+            other => panic!("expected PolicyViolation, got: {other:?}"),
+        }
 
         state
             .set_todo_item_status(issue_id.clone(), 1, true)
@@ -3770,7 +3707,16 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert!(matches!(err, UpsertIssueError::MissingCreator));
+        match &err {
+            UpsertIssueError::PolicyViolation(violation) => {
+                assert!(
+                    violation.message.contains("creator"),
+                    "expected violation about missing creator, got: {}",
+                    violation.message
+                );
+            }
+            other => panic!("expected PolicyViolation, got: {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -4006,15 +3952,20 @@ mod tests {
             .await
             .unwrap_err();
 
-        match err {
-            UpsertPatchError::DuplicateBranchName {
-                existing_patch_id,
-                branch_name,
-            } => {
-                assert_eq!(existing_patch_id, patch1_id);
-                assert_eq!(branch_name, "feature/foo");
+        match &err {
+            UpsertPatchError::PolicyViolation(violation) => {
+                assert!(
+                    violation.message.contains("feature/foo"),
+                    "expected violation to reference branch name, got: {}",
+                    violation.message
+                );
+                assert!(
+                    violation.message.contains(&patch1_id.to_string()),
+                    "expected violation to reference existing patch id, got: {}",
+                    violation.message
+                );
             }
-            other => panic!("expected DuplicateBranchName, got: {other:?}"),
+            other => panic!("expected PolicyViolation, got: {other:?}"),
         }
 
         Ok(())
@@ -4566,9 +4517,16 @@ mod tests {
 
         let result = state.upsert_document(None, document).await;
         assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), UpsertDocumentError::InvalidPath { path } if path == ".hidden/file.md")
-        );
+        match &result.unwrap_err() {
+            UpsertDocumentError::PolicyViolation(violation) => {
+                assert!(
+                    violation.message.contains(".hidden"),
+                    "expected violation about hidden path, got: {}",
+                    violation.message
+                );
+            }
+            other => panic!("expected PolicyViolation, got: {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -4584,9 +4542,16 @@ mod tests {
 
         let result = state.upsert_document(None, document).await;
         assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), UpsertDocumentError::InvalidPath { path } if path == "/.hidden/file.md")
-        );
+        match &result.unwrap_err() {
+            UpsertDocumentError::PolicyViolation(violation) => {
+                assert!(
+                    violation.message.contains(".hidden"),
+                    "expected violation about hidden path, got: {}",
+                    violation.message
+                );
+            }
+            other => panic!("expected PolicyViolation, got: {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -4602,10 +4567,16 @@ mod tests {
 
         let result = state.upsert_document(None, document).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            UpsertDocumentError::InvalidPath { .. }
-        ));
+        match &result.unwrap_err() {
+            UpsertDocumentError::PolicyViolation(violation) => {
+                assert!(
+                    violation.message.contains(".secret"),
+                    "expected violation about hidden path, got: {}",
+                    violation.message
+                );
+            }
+            other => panic!("expected PolicyViolation, got: {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -4636,5 +4607,58 @@ mod tests {
 
         let result = state.upsert_document(None, document).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn disabling_restriction_allows_previously_rejected_operation() {
+        // With default policy engine, a hidden path is rejected
+        let state_default = test_state();
+        let hidden_doc = Document {
+            title: "Secret".to_string(),
+            body_markdown: "body".to_string(),
+            path: Some(".hidden/file.md".to_string()),
+            created_by: None,
+            deleted: false,
+        };
+        let result = state_default
+            .upsert_document(None, hidden_doc.clone())
+            .await;
+        assert!(
+            result.is_err(),
+            "default policy engine should reject hidden paths"
+        );
+
+        // Build a policy engine without the hidden_document_path restriction
+        let engine_without_hidden = {
+            use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
+            use crate::policy::registry::build_default_registry;
+
+            let config = PolicyConfig {
+                global: PolicyList {
+                    restrictions: vec![
+                        // Deliberately omit "hidden_document_path"
+                        PolicyEntry::Name("issue_lifecycle_validation".to_string()),
+                        PolicyEntry::Name("task_state_machine".to_string()),
+                        PolicyEntry::Name("duplicate_branch_name".to_string()),
+                        PolicyEntry::Name("running_job_validation".to_string()),
+                        PolicyEntry::Name("require_creator".to_string()),
+                    ],
+                    automations: Vec::new(),
+                },
+                repos: Default::default(),
+            };
+
+            let registry = build_default_registry();
+            registry
+                .build(&config)
+                .expect("failed to build engine without hidden_document_path")
+        };
+
+        let state_custom = test_state().with_policy_engine(engine_without_hidden);
+        let result = state_custom.upsert_document(None, hidden_doc).await;
+        assert!(
+            result.is_ok(),
+            "policy engine without hidden_document_path restriction should allow hidden paths"
+        );
     }
 }
