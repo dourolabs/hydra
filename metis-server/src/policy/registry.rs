@@ -80,14 +80,15 @@ impl Default for PolicyRegistry {
     }
 }
 
-/// Build a `PolicyRegistry` pre-loaded with all built-in restriction policies.
-///
-/// Automations are not yet registered (they will be added in a future task).
+/// Build a `PolicyRegistry` pre-loaded with all built-in policies
+/// (restrictions and automations).
 pub fn build_default_registry() -> PolicyRegistry {
+    use super::automations::*;
     use super::restrictions::*;
 
     let mut registry = PolicyRegistry::new();
 
+    // Restrictions
     registry.register_restriction("issue_lifecycle_validation", |_params| {
         Ok(Box::new(IssueLifecycleRestriction::new()))
     });
@@ -105,6 +106,23 @@ pub fn build_default_registry() -> PolicyRegistry {
     });
     registry.register_restriction("require_creator", |_params| {
         Ok(Box::new(RequireCreatorRestriction::new()))
+    });
+
+    // Automations (order matters: cascade must run before kill_tasks)
+    registry.register_automation("cascade_issue_status", |params| {
+        Ok(Box::new(CascadeIssueStatusAutomation::new(params)?))
+    });
+    registry.register_automation("kill_tasks_on_issue_failure", |params| {
+        Ok(Box::new(KillTasksOnFailureAutomation::new(params)?))
+    });
+    registry.register_automation("close_merge_request_issues", |params| {
+        Ok(Box::new(CloseMergeRequestIssuesAutomation::new(params)?))
+    });
+    registry.register_automation("create_merge_request_issue", |params| {
+        Ok(Box::new(CreateMergeRequestIssueAutomation::new(params)?))
+    });
+    registry.register_automation("inherit_creator_from_parent", |params| {
+        Ok(Box::new(InheritCreatorAutomation::new(params)?))
     });
 
     registry

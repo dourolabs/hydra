@@ -5,11 +5,10 @@ use crate::{
         actors::Actor,
         documents::Document,
         issues::{
-            Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType, JobSettings,
-            TodoItem,
+            Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, JobSettings, TodoItem,
         },
         jobs::BundleSpec,
-        patches::{GithubPr, Patch, PatchStatus},
+        patches::{GithubPr, Patch},
         users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
@@ -341,7 +340,8 @@ impl AppState {
         }
     }
 
-    /// Build the default policy engine with all built-in restrictions enabled.
+    /// Build the default policy engine with all built-in restrictions and
+    /// automations enabled.
     fn build_default_policy_engine() -> crate::policy::PolicyEngine {
         use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
         use crate::policy::registry::build_default_registry;
@@ -356,7 +356,13 @@ impl AppState {
                     PolicyEntry::Name("running_job_validation".to_string()),
                     PolicyEntry::Name("require_creator".to_string()),
                 ],
-                automations: Vec::new(),
+                automations: vec![
+                    PolicyEntry::Name("cascade_issue_status".to_string()),
+                    PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
+                    PolicyEntry::Name("close_merge_request_issues".to_string()),
+                    PolicyEntry::Name("create_merge_request_issue".to_string()),
+                    PolicyEntry::Name("inherit_creator_from_parent".to_string()),
+                ],
             },
             repos: Default::default(),
         };
@@ -387,6 +393,11 @@ impl AppState {
     /// Returns a reference to the policy engine.
     pub fn policy_engine(&self) -> &crate::policy::PolicyEngine {
         &self.policy_engine
+    }
+
+    /// Returns a reference to the underlying store (as a trait object).
+    pub fn store(&self) -> &dyn Store {
+        self.store.as_ref()
     }
 
     pub async fn login_with_github_token(
@@ -1579,9 +1590,6 @@ impl AppState {
         } = request;
         let mut patch: Patch = patch.into();
 
-        let mut should_close_merge_requests = false;
-        let mut status_changed_to_merged = false;
-        let mut should_create_merge_request = false;
         let store = self.store.as_ref();
         let patch_id = match patch_id {
             Some(id) => {
@@ -1596,21 +1604,6 @@ impl AppState {
                             },
                             other => UpsertPatchError::Store { source: other },
                         })?;
-                let new_status = patch.status;
-                let status_changed_to_changes_requested = new_status
-                    == PatchStatus::ChangesRequested
-                    && existing_patch.item.status != PatchStatus::ChangesRequested;
-                should_close_merge_requests =
-                    matches!(
-                        existing_patch.item.status,
-                        PatchStatus::Open | PatchStatus::ChangesRequested
-                    ) && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
-                status_changed_to_merged =
-                    should_close_merge_requests && new_status == PatchStatus::Merged;
-                should_close_merge_requests |= status_changed_to_changes_requested;
-                should_create_merge_request = existing_patch.item.status
-                    == PatchStatus::ChangesRequested
-                    && new_status == PatchStatus::Open;
 
                 patch.created_by = existing_patch.item.created_by;
                 if let Some(sync_github_branch) = sync_github_branch {
@@ -1679,189 +1672,9 @@ impl AppState {
             }
         };
 
-        if should_close_merge_requests {
-            let merge_request_issue_ids =
-                store
-                    .get_issues_for_patch(&patch_id)
-                    .await
-                    .map_err(|source| UpsertPatchError::MergeRequestLookup {
-                        patch_id: patch_id.clone(),
-                        source,
-                    })?;
-
-            let mut updated_issue_ids = Vec::new();
-            for issue_id in merge_request_issue_ids {
-                let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
-                    UpsertPatchError::MergeRequestUpdate {
-                        patch_id: patch_id.clone(),
-                        issue_id: issue_id.clone(),
-                        source,
-                    }
-                })?;
-                let mut issue = issue.item;
-
-                if issue.issue_type != IssueType::MergeRequest
-                    || matches!(
-                        issue.status,
-                        IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
-                    )
-                {
-                    continue;
-                }
-
-                issue.status = if status_changed_to_merged {
-                    IssueStatus::Closed
-                } else {
-                    IssueStatus::Failed
-                };
-                store
-                    .update_issue(&issue_id, issue)
-                    .await
-                    .map_err(|source| UpsertPatchError::MergeRequestUpdate {
-                        patch_id: patch_id.clone(),
-                        issue_id: issue_id.clone(),
-                        source,
-                    })?;
-                updated_issue_ids.push(issue_id);
-            }
-
-            if !updated_issue_ids.is_empty() {
-                let issues = updated_issue_ids
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let new_status = if status_changed_to_merged {
-                    "closed"
-                } else {
-                    "failed"
-                };
-                tracing::info!(
-                    patch_id = %patch_id,
-                    issues = %issues,
-                    status = new_status,
-                    "updated merge-request issues for patch"
-                );
-            }
-        }
-
-        if should_create_merge_request {
-            self.create_merge_request_issue_for_patch(&patch_id).await?;
-        }
-
         tracing::info!(patch_id = %patch_id, "patch stored successfully");
 
         Ok(patch_id)
-    }
-
-    pub async fn create_merge_request_issue_for_patch(
-        &self,
-        patch_id: &PatchId,
-    ) -> Result<Option<IssueId>, UpsertPatchError> {
-        let store = self.store.as_ref();
-        let patch = store
-            .get_patch(patch_id, false)
-            .await
-            .map_err(|source| match source {
-                StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
-                    patch_id: patch_id.clone(),
-                    source,
-                },
-                other => UpsertPatchError::Store { source: other },
-            })?;
-
-        self.create_merge_request_issue(patch_id, &patch.item).await
-    }
-
-    async fn create_merge_request_issue(
-        &self,
-        patch_id: &PatchId,
-        patch: &Patch,
-    ) -> Result<Option<IssueId>, UpsertPatchError> {
-        let store = self.store.as_ref();
-        let issue_ids = store
-            .get_issues_for_patch(patch_id)
-            .await
-            .map_err(|source| UpsertPatchError::MergeRequestLookup {
-                patch_id: patch_id.clone(),
-                source,
-            })?;
-
-        let mut merge_request_issues = Vec::new();
-        for issue_id in issue_ids {
-            let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
-                UpsertPatchError::MergeRequestLookup {
-                    patch_id: patch_id.clone(),
-                    source,
-                }
-            })?;
-            let issue_timestamp = issue.timestamp;
-            let issue = issue.item;
-
-            if issue.issue_type != IssueType::MergeRequest {
-                continue;
-            }
-
-            merge_request_issues.push((issue_timestamp, issue));
-        }
-
-        if merge_request_issues.is_empty() {
-            warn!(
-                patch_id = %patch_id,
-                "no merge-request issues found for patch update; skipping merge-request issue creation"
-            );
-            return Ok(None);
-        }
-
-        if merge_request_issues
-            .iter()
-            .any(|(_, issue)| matches!(issue.status, IssueStatus::Open | IssueStatus::InProgress))
-        {
-            info!(
-                patch_id = %patch_id,
-                "merge-request issue already open for patch; skipping merge-request issue creation"
-            );
-            return Ok(None);
-        }
-
-        merge_request_issues.sort_by_key(|(timestamp, _)| *timestamp);
-        let (_, template_issue) = merge_request_issues
-            .pop()
-            .expect("merge_request_issues is non-empty");
-
-        let title = merge_request_issue_title(patch);
-        let description = format!("Review patch {}: {title}", patch_id.as_ref());
-        let issue = Issue::new(
-            IssueType::MergeRequest,
-            description,
-            template_issue.creator,
-            String::new(),
-            IssueStatus::Open,
-            template_issue.assignee,
-            Some(template_issue.job_settings),
-            Vec::new(),
-            template_issue.dependencies,
-            vec![patch_id.clone()],
-        );
-
-        let issue_id = self
-            .upsert_issue(
-                None,
-                api::issues::UpsertIssueRequest::new(issue.into(), None),
-            )
-            .await
-            .map_err(|source| UpsertPatchError::MergeRequestCreate {
-                patch_id: patch_id.clone(),
-                source,
-            })?;
-
-        info!(
-            patch_id = %patch_id,
-            issue_id = %issue_id,
-            "created merge-request issue for patch update"
-        );
-
-        Ok(Some(issue_id))
     }
 
     pub async fn upsert_issue(
@@ -1871,7 +1684,6 @@ impl AppState {
     ) -> Result<IssueId, UpsertIssueError> {
         let api::issues::UpsertIssueRequest { issue, job_id, .. } = request;
         let mut issue: Issue = issue.into();
-        let mut tasks_to_kill = Vec::new();
 
         let store = self.store.as_ref();
 
@@ -1904,82 +1716,8 @@ impl AppState {
                         .await?;
                 }
 
-                let is_dropping = matches!(
-                    updated_issue.status,
-                    IssueStatus::Dropped | IssueStatus::Rejected | IssueStatus::Failed
-                );
-
-                let is_rejected_or_failed = matches!(
-                    updated_issue.status,
-                    IssueStatus::Rejected | IssueStatus::Failed
-                );
-
                 match store.update_issue(&id, updated_issue).await {
-                    Ok(_version) => {
-                        if is_dropping {
-                            tasks_to_kill =
-                                active_tasks_for_issue(store, &id).await.map_err(|source| {
-                                    UpsertIssueError::TaskLookup {
-                                        source,
-                                        issue_id: id.clone(),
-                                    }
-                                })?;
-
-                            let child_tasks = drop_issue_children(store, &id).await?;
-                            tasks_to_kill.extend(child_tasks);
-                        }
-
-                        if is_rejected_or_failed {
-                            let dependent_ids =
-                                store.get_issue_blocked_on(&id).await.map_err(|source| {
-                                    UpsertIssueError::Store {
-                                        source,
-                                        issue_id: Some(id.clone()),
-                                    }
-                                })?;
-
-                            for dep_id in dependent_ids {
-                                let dep_issue =
-                                    store.get_issue(&dep_id, false).await.map_err(|source| {
-                                        UpsertIssueError::Store {
-                                            source,
-                                            issue_id: Some(dep_id.clone()),
-                                        }
-                                    })?;
-                                let mut dep_issue = dep_issue.item;
-
-                                if !matches!(
-                                    dep_issue.status,
-                                    IssueStatus::Dropped
-                                        | IssueStatus::Closed
-                                        | IssueStatus::Rejected
-                                        | IssueStatus::Failed
-                                ) {
-                                    dep_issue.status = IssueStatus::Dropped;
-                                    store.update_issue(&dep_id, dep_issue).await.map_err(
-                                        |source| UpsertIssueError::Store {
-                                            source,
-                                            issue_id: Some(dep_id.clone()),
-                                        },
-                                    )?;
-
-                                    let dep_active_tasks = active_tasks_for_issue(store, &dep_id)
-                                        .await
-                                        .map_err(|source| UpsertIssueError::TaskLookup {
-                                            source,
-                                            issue_id: dep_id.clone(),
-                                        })?;
-                                    tasks_to_kill.extend(dep_active_tasks);
-
-                                    let dep_child_tasks =
-                                        drop_issue_children(store, &dep_id).await?;
-                                    tasks_to_kill.extend(dep_child_tasks);
-                                }
-                            }
-                        }
-
-                        id
-                    }
+                    Ok(_version) => id,
                     Err(source @ StoreError::IssueNotFound(_)) => {
                         return Err(UpsertIssueError::IssueNotFound {
                             issue_id: id.clone(),
@@ -2026,6 +1764,10 @@ impl AppState {
                     }
                 }
 
+                // Inherit creator from parent is now handled by the
+                // inherit_creator_from_parent automation, but we still do it
+                // inline for create to ensure the restriction check sees the
+                // correct creator before persisting.
                 if issue.creator.as_ref().trim().is_empty() {
                     if let Some(parent_dependency) = issue.dependencies.iter().find(|dependency| {
                         dependency.dependency_type == IssueDependencyType::ChildOf
@@ -2089,28 +1831,6 @@ impl AppState {
                 id
             }
         };
-
-        for job_id in tasks_to_kill {
-            match self.job_engine.kill_job(&job_id).await {
-                Ok(()) => info!(
-                    issue_id = %issue_id,
-                    job_id = %job_id,
-                    "killed task for dropped issue"
-                ),
-                Err(JobEngineError::NotFound(_)) => info!(
-                    issue_id = %issue_id,
-                    job_id = %job_id,
-                    "task already missing while dropping issue"
-                ),
-                Err(source) => {
-                    return Err(UpsertIssueError::KillTask {
-                        issue_id: issue_id.clone(),
-                        job_id,
-                        source,
-                    });
-                }
-            }
-        }
 
         info!(issue_id = %issue_id, "issue stored successfully");
 
@@ -2467,102 +2187,6 @@ async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, Stor
     }
 }
 
-async fn drop_issue_children(
-    store: &dyn Store,
-    issue_id: &IssueId,
-) -> Result<Vec<TaskId>, UpsertIssueError> {
-    let mut tasks_to_kill = Vec::new();
-    let mut to_visit =
-        store
-            .get_issue_children(issue_id)
-            .await
-            .map_err(|source| UpsertIssueError::Store {
-                source,
-                issue_id: Some(issue_id.clone()),
-            })?;
-    let mut visited: HashSet<IssueId> = HashSet::new();
-
-    while let Some(child_id) = to_visit.pop() {
-        if !visited.insert(child_id.clone()) {
-            continue;
-        }
-
-        let child_issue =
-            store
-                .get_issue(&child_id, false)
-                .await
-                .map_err(|source| UpsertIssueError::Store {
-                    source,
-                    issue_id: Some(child_id.clone()),
-                })?;
-        let mut child_issue = child_issue.item;
-
-        if child_issue.status != IssueStatus::Dropped {
-            child_issue.status = IssueStatus::Dropped;
-            store
-                .update_issue(&child_id, child_issue)
-                .await
-                .map_err(|source| UpsertIssueError::Store {
-                    source,
-                    issue_id: Some(child_id.clone()),
-                })?;
-        }
-
-        let active_child_tasks =
-            active_tasks_for_issue(store, &child_id)
-                .await
-                .map_err(|source| UpsertIssueError::TaskLookup {
-                    source,
-                    issue_id: child_id.clone(),
-                })?;
-        tasks_to_kill.extend(active_child_tasks);
-
-        let grandchildren = store
-            .get_issue_children(&child_id)
-            .await
-            .map_err(|source| UpsertIssueError::Store {
-                source,
-                issue_id: Some(child_id.clone()),
-            })?;
-        to_visit.extend(grandchildren);
-    }
-
-    Ok(tasks_to_kill)
-}
-
-async fn active_tasks_for_issue(
-    store: &dyn Store,
-    issue_id: &IssueId,
-) -> Result<Vec<TaskId>, StoreError> {
-    let task_ids = store.get_tasks_for_issue(issue_id).await?;
-
-    let mut active_task_ids = Vec::new();
-    for task_id in task_ids {
-        let status = store.get_task(&task_id, false).await?.item.status;
-        if matches!(status, Status::Created | Status::Pending | Status::Running) {
-            active_task_ids.push(task_id);
-        }
-    }
-
-    Ok(active_task_ids)
-}
-
-fn merge_request_issue_title(patch: &Patch) -> String {
-    let summary = patch.title.trim();
-    if !summary.is_empty() {
-        return summary.to_string();
-    }
-
-    patch
-        .description
-        .lines()
-        .next()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .unwrap_or("Patch review")
-        .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{LoginError, UpsertDocumentError, UpsertIssueError, UpsertPatchError};
@@ -2674,6 +2298,36 @@ mod tests {
             dependencies,
             Vec::new(),
         )
+    }
+
+    /// Start the automation runner for a test, returning a guard that shuts
+    /// it down on drop.
+    fn start_test_automation_runner(state: &AppState) -> TestAutomationRunner {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let handle = crate::policy::runner::spawn_automation_runner(state.clone(), shutdown_rx);
+        TestAutomationRunner {
+            shutdown_tx,
+            handle: Some(handle),
+        }
+    }
+
+    struct TestAutomationRunner {
+        shutdown_tx: tokio::sync::watch::Sender<bool>,
+        handle: Option<tokio::task::JoinHandle<()>>,
+    }
+
+    impl TestAutomationRunner {
+        async fn shutdown(mut self) {
+            let _ = self.shutdown_tx.send(true);
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.await;
+            }
+        }
+    }
+
+    /// Wait briefly for automations to process events.
+    async fn wait_for_automations() {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
     #[tokio::test]
@@ -3322,6 +2976,7 @@ mod tests {
     async fn dropping_issue_cascades_to_children() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
+        let runner = start_test_automation_runner(&state);
 
         let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         let parent_id = state
@@ -3396,6 +3051,8 @@ mod tests {
             .await
             .unwrap();
 
+        wait_for_automations().await;
+
         {
             let store = state.store.as_ref();
             assert_eq!(
@@ -3420,6 +3077,8 @@ mod tests {
                 .expect("job should exist");
             assert_eq!(job.status, JobStatus::Failed);
         }
+
+        runner.shutdown().await;
     }
 
     #[tokio::test]
@@ -4256,6 +3915,7 @@ mod tests {
     async fn rejected_issue_cascades_to_children() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
+        let runner = start_test_automation_runner(&state);
 
         let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         let parent_id = state
@@ -4301,6 +3961,8 @@ mod tests {
             .await
             .unwrap();
 
+        wait_for_automations().await;
+
         {
             let store = state.store.as_ref();
             assert_eq!(
@@ -4314,12 +3976,15 @@ mod tests {
             .await
             .expect("job should exist");
         assert_eq!(job.status, JobStatus::Failed);
+
+        runner.shutdown().await;
     }
 
     #[tokio::test]
     async fn failed_issue_cascades_to_children() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
+        let runner = start_test_automation_runner(&state);
 
         let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         let parent_id = state
@@ -4352,6 +4017,8 @@ mod tests {
             .await
             .unwrap();
 
+        wait_for_automations().await;
+
         {
             let store = state.store.as_ref();
             assert_eq!(
@@ -4359,12 +4026,15 @@ mod tests {
                 IssueStatus::Dropped
             );
         }
+
+        runner.shutdown().await;
     }
 
     #[tokio::test]
     async fn rejected_blocker_auto_drops_dependents() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
+        let runner = start_test_automation_runner(&state);
 
         let blocker_issue = issue_with_status("blocker", IssueStatus::Open, vec![]);
         let blocker_id = state
@@ -4428,6 +4098,8 @@ mod tests {
             .await
             .unwrap();
 
+        wait_for_automations().await;
+
         {
             let store = state.store.as_ref();
             assert_eq!(
@@ -4457,6 +4129,8 @@ mod tests {
                 .expect("job should exist");
             assert_eq!(job.status, JobStatus::Failed);
         }
+
+        runner.shutdown().await;
     }
 
     #[tokio::test]

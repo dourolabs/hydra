@@ -49,6 +49,11 @@ pub async fn run_with_state(
     // Run scheduler-backed workers for background processing (jobs, agents, GitHub poller)
     let scheduler = start_background_scheduler(state.clone());
 
+    // Start automation runner (event-driven side effects from the policy engine)
+    let (automation_shutdown_tx, automation_shutdown_rx) = tokio::sync::watch::channel(false);
+    let automation_handle =
+        crate::policy::runner::spawn_automation_runner(state.clone(), automation_shutdown_rx);
+
     let public_routes = Router::new()
         .route("/health", get(health_check))
         .route("/v1/login", post(routes::login::login))
@@ -199,6 +204,8 @@ pub async fn run_with_state(
 
     let serve_result = axum::serve(listener, app).await;
     scheduler.shutdown().await;
+    let _ = automation_shutdown_tx.send(true);
+    let _ = automation_handle.await;
     serve_result?;
 
     Ok(())
