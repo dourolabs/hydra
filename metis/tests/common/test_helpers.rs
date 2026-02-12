@@ -17,9 +17,9 @@ use metis_common::{
 };
 use metis_server::{
     app::{AppState, ServiceState},
-    background::poll_github_patches::GithubPollerWorker,
     background::scheduler::{ScheduledWorker, WorkerOutcome},
     background::spawner::AgentQueue,
+    policy::integrations::github_pr_poller::GithubPollerWorker,
     store::{MemoryStore, Store},
     test_utils::{spawn_test_server_with_state, test_app_config, GitRemote, MockJobEngine},
 };
