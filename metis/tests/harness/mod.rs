@@ -1,6 +1,7 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 pub mod user_handle;
+mod worker;
 
 use anyhow::{Context, Result};
 use metis::client::MetisClient;
@@ -25,6 +26,7 @@ use tempfile::TempDir;
 use tokio::sync::RwLock;
 
 pub use user_handle::UserHandle;
+pub use worker::{CommandOutput, WorkerFailure, WorkerResult};
 
 /// Holds the GitHub mock server and the Octocrab client configured to use it.
 pub struct GitHubMock {
@@ -169,6 +171,36 @@ impl TestHarness {
             }],
         };
         MetisClient::from_config(&config, user.token())
+    }
+
+    /// Run a worker for the given job, executing the provided shell commands
+    /// in place of the AI model. Uses the real `worker_run::run()` pipeline.
+    ///
+    /// The worker executes through the full real pipeline: git clone, branch
+    /// setup, env var injection, command execution, branch push, patch
+    /// creation, and status update. Only the AI model invocation is replaced
+    /// (via `BashCommands`).
+    ///
+    /// The job must already exist (e.g. via `user.create_job()`). This method
+    /// ensures the required environment variables (`METIS_SERVER_URL`,
+    /// `METIS_TOKEN`, `METIS_ISSUE_ID`) are set in the job context so that
+    /// subprocess commands (like `metis patches create`) can reach the test
+    /// server.
+    pub async fn run_worker(&self, job_id: &TaskId, commands: Vec<&str>) -> Result<WorkerResult> {
+        worker::run_worker_impl(self, job_id, commands, false).await
+    }
+
+    /// Run a worker that is expected to fail.
+    ///
+    /// Like [`run_worker`](Self::run_worker) but expects the worker commands
+    /// to fail. Returns a [`WorkerFailure`] containing the error and any
+    /// command outputs captured before the failure.
+    pub async fn run_worker_expect_failure(
+        &self,
+        job_id: &TaskId,
+        commands: Vec<&str>,
+    ) -> Result<WorkerFailure> {
+        worker::run_worker_expect_failure_impl(self, job_id, commands).await
     }
 }
 
