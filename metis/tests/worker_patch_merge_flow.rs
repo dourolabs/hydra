@@ -1,147 +1,23 @@
-use anyhow::{anyhow, Context, Result};
-use metis::command::output::{CommandContext, ResolvedOutputFormat};
+// Migrated from old-style using init_test_server_with_remote_and_github + TestEnvironment +
+// manual git helpers + manual spawner/scheduler instantiation.
+// Migrated to TestHarness, UserHandle, GitRemote, step_spawner, step_github_sync, and run_worker.
+
+mod harness;
+
+use anyhow::{Context, Result};
 use metis::command::patches::create_merge_request_issue;
 use metis_common::{
     issues::{IssueStatus, IssueType, JobSettings},
     jobs::SearchJobsQuery,
     patches::{GithubPr, PatchStatus},
 };
-use metis_server::background::run_spawners::RunSpawnersWorker;
-use metis_server::background::scheduler::ScheduledWorker;
 use metis_server::background::spawner::AgentQueue;
 use metis_server::config::{
     AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES,
 };
 use metis_server::test_utils::{GitHubMockBuilder, MockPr, MockReview};
-use std::io::Write;
-use std::path::Path;
-use std::process::Command;
+use std::str::FromStr;
 use std::sync::Arc;
-use tempfile::TempDir;
-
-mod common;
-
-use common::bash_commands::BashCommands;
-use common::test_helpers::init_test_server_with_remote_and_github;
-
-fn git_output(args: &[&str], cwd: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .with_context(|| format!("failed to run git {args:?}"))?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
-            args,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn git_output_raw(args: &[&str], cwd: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .with_context(|| format!("failed to run git {args:?}"))?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
-            args,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-fn create_branch_with_diff(remote_url: &str, branch: &str, line: &str) -> Result<(String, String)> {
-    let tempdir = TempDir::new().context("failed to create tempdir for branch setup")?;
-    let repo_path = tempdir.path();
-
-    git_output(&["clone", remote_url, "."], repo_path)?;
-    git_output(&["config", "user.name", "Test User"], repo_path)?;
-    git_output(&["config", "user.email", "test@example.com"], repo_path)?;
-    git_output(&["checkout", "-b", branch], repo_path)?;
-    std::fs::OpenOptions::new()
-        .append(true)
-        .open(repo_path.join("README.md"))
-        .context("failed to open README for branch setup")?
-        .write_all(line.as_bytes())
-        .context("failed to write README content")?;
-    git_output(&["add", "README.md"], repo_path)?;
-    git_output(&["commit", "-m", "feature change"], repo_path)?;
-    git_output(&["push", "-u", "origin", branch], repo_path)?;
-
-    let head_sha = git_output(&["rev-parse", "HEAD"], repo_path)?;
-    let diff = git_output_raw(
-        &["diff", "--no-ext-diff", "--no-color", "origin/main..HEAD"],
-        repo_path,
-    )?;
-
-    Ok((head_sha, diff))
-}
-
-fn set_remote_head(remote_url: &str, branch: &str) -> Result<()> {
-    let output = Command::new("git")
-        .args([
-            "--git-dir",
-            remote_url,
-            "symbolic-ref",
-            "HEAD",
-            &format!("refs/heads/{branch}"),
-        ])
-        .output()
-        .context("failed to update remote HEAD")?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "git symbolic-ref failed\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(())
-}
-
-fn push_additional_commit(remote_url: &str, branch: &str, line: &str) -> Result<String> {
-    let tempdir = TempDir::new().context("failed to create tempdir for extra commit")?;
-    let repo_path = tempdir.path();
-
-    git_output(&["clone", remote_url, "."], repo_path)?;
-    git_output(&["config", "user.name", "Extra Commit"], repo_path)?;
-    git_output(&["config", "user.email", "extra@example.com"], repo_path)?;
-    git_output(&["fetch", "origin", branch], repo_path)?;
-    git_output(
-        &["checkout", "-B", branch, &format!("origin/{branch}")],
-        repo_path,
-    )?;
-    std::fs::OpenOptions::new()
-        .append(true)
-        .open(repo_path.join("README.md"))
-        .context("failed to open README for extra commit")?
-        .write_all(line.as_bytes())
-        .context("failed to write extra README content")?;
-    git_output(&["add", "README.md"], repo_path)?;
-    git_output(&["commit", "-m", "additional change"], repo_path)?;
-    git_output(&["push", "origin", branch], repo_path)?;
-
-    git_output(&["rev-parse", "HEAD"], repo_path)
-}
-
-fn branch_head(remote_url: &str, branch: &str) -> Result<String> {
-    let repo = git2::Repository::open(remote_url)
-        .with_context(|| format!("failed to open repo at {remote_url}"))?;
-    let reference = repo
-        .find_reference(&format!("refs/heads/{branch}"))
-        .with_context(|| format!("failed to find branch {branch} in remote repo"))?;
-    let oid = reference
-        .target()
-        .ok_or_else(|| anyhow!("branch {branch} has no target"))?;
-    Ok(oid.to_string())
-}
 
 #[tokio::test]
 async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
@@ -149,23 +25,23 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
     let repo_name = "repo";
     let pr_number = 99;
     let head_ref = "repo/t-abc123/head";
+    let repo = metis_common::RepoName::from_str("octo/repo")?;
 
-    let (_github_server, github_app) = GitHubMockBuilder::new()
-        .with_installation(repo_owner, repo_name)
-        .build()?;
+    let mut harness = harness::TestHarness::builder()
+        .with_repo("octo/repo")
+        .with_github()
+        .build()
+        .await?;
 
-    let mut env = init_test_server_with_remote_and_github("octo/repo", Some(github_app)).await?;
-    let repo_config = env
-        .state
-        .repository_from_store(&env.service_repo_name)
-        .await
-        .context("failed to load repository config")?;
+    // Create a branch with a commit and capture both sha and diff.
+    let head_sha = harness
+        .remote("octo/repo")
+        .create_branch(head_ref, "README.md", "initial content\nfeature change\n")
+        .context("failed to create head branch")?;
+    let patch_diff = harness.remote("octo/repo").diff("main", head_ref)?;
+    harness.remote("octo/repo").set_head("main")?;
 
-    let (head_sha, patch_diff) =
-        create_branch_with_diff(&repo_config.remote_url, head_ref, "feature change\n")?;
-    set_remote_head(&repo_config.remote_url, "main")?;
-
-    // Replace github_app with one whose mocks include the PR
+    // Reconfigure GitHub mock with a PR that has a CHANGES_REQUESTED review.
     let (_github_server, github_app) = GitHubMockBuilder::new()
         .with_pr(
             repo_owner,
@@ -177,30 +53,35 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
             )),
         )
         .build()?;
-    env.state.github_app = Some(github_app);
+    harness.state_mut().github_app = Some(github_app);
+
+    // Use a standalone client for operations that span across state_mut() calls,
+    // since UserHandle borrows the harness and prevents mutable borrows.
+    let client = harness.client()?;
 
     let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(env.service_repo_name.clone());
+    job_settings.repo_name = Some(repo.clone());
     job_settings.image = Some("worker:latest".to_string());
     job_settings.branch = Some("main".to_string());
 
-    let parent_issue_id = env
-        .create_issue(
+    let parent_issue_id = harness
+        .default_user()
+        .create_issue_with_settings(
             "parent task",
             IssueType::Task,
             IssueStatus::Open,
-            Some("requester".to_string()),
-            Some(job_settings.clone()),
+            Some("requester"),
+            Some(job_settings),
         )
         .await?;
 
-    let patch_id = env
-        .create_patch(
+    let patch_id = harness
+        .default_user()
+        .create_patch_with_github(
             "Code change summary",
             "Code change description",
-            patch_diff,
-            PatchStatus::Open,
-            Some(GithubPr::new(
+            &repo,
+            GithubPr::new(
                 repo_owner.to_string(),
                 repo_name.to_string(),
                 pr_number,
@@ -208,13 +89,20 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
                 None,
                 None,
                 None,
-            )),
-            None,
+            ),
         )
         .await?;
 
+    // Update the patch diff to match what was created in the branch.
+    {
+        let mut patch_record = client.get_patch(&patch_id).await?;
+        patch_record.patch.diff = patch_diff;
+        let update_request = metis_common::patches::UpsertPatchRequest::new(patch_record.patch);
+        client.update_patch(&patch_id, &update_request).await?;
+    }
+
     let initial_merge_request_issue_id = create_merge_request_issue(
-        &env.client,
+        &client,
         patch_id.clone(),
         "reviewer".to_string(),
         parent_issue_id.clone(),
@@ -224,6 +112,7 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
     .await?
     .issue_id;
 
+    // Register an agent queue for the "reviewer" spawner.
     let queue_config = AgentQueueConfig {
         name: "reviewer".to_string(),
         prompt: "Review patch".to_string(),
@@ -231,37 +120,38 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
         max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
     };
     {
-        let mut agents = env.agents.write().await;
+        let mut agents = harness.agents().write().await;
         *agents = vec![Arc::new(AgentQueue::from_config(&queue_config))];
     }
 
-    // run the spawner once before syncing and picking up patch changes
-    let spawner = RunSpawnersWorker::new(env.state.clone());
-    spawner.run_iteration().await;
+    // Run the spawner once before syncing.
+    harness.step_spawner().await?;
 
-    env.run_github_sync(60)
+    harness
+        .step_github_sync()
         .await
         .context("sync_open_patches failed")?;
 
-    let updated_patch = env.client.get_patch(&patch_id).await?.patch;
-    assert_eq!(updated_patch.status, PatchStatus::ChangesRequested);
+    let updated_patch = client.get_patch(&patch_id).await?;
+    assert_eq!(updated_patch.patch.status, PatchStatus::ChangesRequested);
     assert_eq!(
         updated_patch
+            .patch
             .github
             .as_ref()
             .and_then(|github| github.head_ref.as_deref()),
         Some(head_ref)
     );
 
-    let initial_merge_request_issue = env
-        .client
-        .get_issue(&initial_merge_request_issue_id)
-        .await?
-        .issue;
-    assert_eq!(initial_merge_request_issue.status, IssueStatus::Failed);
+    let initial_merge_request_issue = client.get_issue(&initial_merge_request_issue_id).await?;
+    assert_eq!(
+        initial_merge_request_issue.issue.status,
+        IssueStatus::Failed
+    );
 
+    // Create a new merge request issue for the re-review cycle.
     let merge_request_issue_id = create_merge_request_issue(
-        &env.client,
+        &client,
         patch_id.clone(),
         "reviewer".to_string(),
         parent_issue_id.clone(),
@@ -271,10 +161,9 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
     .await?
     .issue_id;
 
-    spawner.run_iteration().await;
+    harness.step_spawner().await?;
 
-    let jobs = env
-        .client
+    let jobs = client
         .list_jobs(&SearchJobsQuery::new(
             None,
             Some(merge_request_issue_id.clone()),
@@ -287,41 +176,33 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
         .context("expected review task to be spawned for merge request")?;
     let job_id = job.job_id.clone();
 
-    env.state.start_pending_task(job_id.clone()).await;
+    harness.state().start_pending_task(job_id.clone()).await;
 
-    let main_head_before = branch_head(&repo_config.remote_url, "main")?;
-    let worker_dir = tempfile::tempdir().context("failed to create worker tempdir")?;
-    let bash_commands = BashCommands::new_with_failure(
-        vec![
-            "echo \"worker fix\" >> README.md".to_string(),
-            "git add README.md".to_string(),
-            "git commit -m \"worker fix\"".to_string(),
-        ],
-        false,
-    );
-    let context = CommandContext::new(ResolvedOutputFormat::Pretty);
-    metis::command::jobs::worker_run::run(
-        &env.client,
-        job_id,
-        worker_dir.path().to_path_buf(),
-        None,
-        None,
-        None,
-        Some(merge_request_issue_id.clone()),
-        &bash_commands,
-        &context,
-    )
-    .await?;
+    let main_head_before = harness.remote("octo/repo").branch_sha("main")?;
+
+    let _result = harness
+        .run_worker(
+            &job_id,
+            vec![
+                "echo \"worker fix\" >> README.md",
+                "git add README.md",
+                "git commit -m \"worker fix\"",
+            ],
+        )
+        .await?;
 
     let issue_head_branch = format!("metis/{merge_request_issue_id}/head");
-    let head_after_worker = branch_head(&repo_config.remote_url, &issue_head_branch)?;
+    let head_after_worker = harness.remote("octo/repo").branch_sha(&issue_head_branch)?;
     assert_ne!(head_after_worker, main_head_before);
 
+    // Push an additional commit to the PR head branch.
     let head_after_extra =
-        push_additional_commit(&repo_config.remote_url, head_ref, "additional fix\n")?;
+        harness
+            .remote("octo/repo")
+            .push_commit(head_ref, "README.md", "additional fix\n")?;
     assert_ne!(head_after_extra, head_after_worker);
 
-    // Build a new GitHub mock with the updated head SHA
+    // Reconfigure GitHub mock with updated head SHA.
     let (_github_server_updated, github_app_updated) = GitHubMockBuilder::new()
         .with_pr(
             repo_owner,
@@ -333,28 +214,43 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
             )),
         )
         .build()?;
-    env.state.github_app = Some(github_app_updated);
+    harness.state_mut().github_app = Some(github_app_updated);
 
-    env.run_github_sync(60)
+    harness
+        .step_github_sync()
         .await
         .context("sync_open_patches failed after extra commit")?;
 
-    env.run_as_user(vec![
-        format!(
-            "metis patches review {} --author reviewer --contents \"looks good\" --approve",
-            patch_id
-        ),
-        format!(
-            "metis patches merge --repo {} --branch main --patch-id {}",
-            env.service_repo_name, patch_id
-        ),
-    ])
-    .await?;
-
-    let merge_queue = env
-        .client
-        .get_merge_queue(&env.service_repo_name, "main")
+    // Approve and merge the patch via CLI.
+    harness
+        .default_user()
+        .cli(&[
+            "patches",
+            "review",
+            patch_id.as_ref(),
+            "--author",
+            "reviewer",
+            "--contents",
+            "looks good",
+            "--approve",
+        ])
         .await?;
+
+    harness
+        .default_user()
+        .cli(&[
+            "patches",
+            "merge",
+            "--repo",
+            "octo/repo",
+            "--branch",
+            "main",
+            "--patch-id",
+            patch_id.as_ref(),
+        ])
+        .await?;
+
+    let merge_queue = client.get_merge_queue(&repo, "main").await?;
     assert!(merge_queue.patches.contains(&patch_id));
 
     Ok(())
