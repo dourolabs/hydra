@@ -18,13 +18,6 @@ impl RunningJobValidationRestriction {
 impl RunningJobValidationRestriction {
     fn extract_job_id<'a>(&self, ctx: &'a RestrictionContext<'_>) -> Option<&'a TaskId> {
         match (ctx.operation, ctx.payload) {
-            (Operation::CreateIssue, _) => {
-                // For issues, if the actor is a task, validate it's running.
-                match ctx.actor {
-                    crate::domain::actors::UserOrWorker::Task(task_id) => Some(task_id),
-                    _ => None,
-                }
-            }
             (Operation::CreatePatch, OperationPayload::Patch { new, .. }) => {
                 new.created_by.as_ref()
             }
@@ -84,18 +77,12 @@ impl Restriction for RunningJobValidationRestriction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::actors::UserOrWorker;
     use crate::domain::documents::Document;
     use crate::domain::jobs::{BundleSpec, Task};
-    use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, Store};
     use chrono::Utc;
     use std::collections::HashMap;
-
-    fn test_actor() -> UserOrWorker {
-        UserOrWorker::Username(Username::from("test-user"))
-    }
 
     fn make_task() -> Task {
         Task::new(
@@ -125,7 +112,6 @@ mod tests {
     async fn allows_when_no_job_id() {
         let restriction = RunningJobValidationRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
         let payload = OperationPayload::Document {
             document_id: None,
             new: make_doc(None),
@@ -133,7 +119,6 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateDocument,
-            actor: &actor,
             repo: None,
             payload: &payload,
             store: &store,
@@ -145,7 +130,6 @@ mod tests {
     async fn allows_running_job() {
         let restriction = RunningJobValidationRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
 
         let task = make_task();
         let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
@@ -164,7 +148,6 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateDocument,
-            actor: &actor,
             repo: None,
             payload: &payload,
             store: &store,
@@ -176,7 +159,6 @@ mod tests {
     async fn rejects_non_running_job() {
         let restriction = RunningJobValidationRestriction::new();
         let store = MemoryStore::new();
-        let actor = test_actor();
 
         let task = make_task();
         let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
@@ -188,7 +170,6 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateDocument,
-            actor: &actor,
             repo: None,
             payload: &payload,
             store: &store,
