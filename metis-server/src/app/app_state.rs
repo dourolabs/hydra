@@ -8,7 +8,7 @@ use crate::{
             Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, JobSettings, TodoItem,
         },
         jobs::BundleSpec,
-        patches::{GithubPr, Patch},
+        patches::Patch,
         users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
@@ -435,6 +435,7 @@ impl AppState {
             .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
         let username = Username::from(github_user.login);
 
+        // Check GitHub org membership via the policy engine's org restriction.
         let allowed_orgs = &self.config.metis.allowed_orgs;
         if !allowed_orgs.is_empty() {
             #[derive(Deserialize)]
@@ -447,13 +448,25 @@ impl AppState {
                 .await
                 .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
 
-            let is_allowed = orgs.iter().any(|org| {
-                allowed_orgs
-                    .iter()
-                    .any(|allowed| org.login.eq_ignore_ascii_case(allowed))
-            });
+            let org_logins: Vec<String> = orgs.into_iter().map(|o| o.login).collect();
 
-            if !is_allowed {
+            let restriction =
+                crate::policy::integrations::GithubOrgCheckRestriction::with_allowed_orgs(
+                    allowed_orgs.clone(),
+                );
+            let payload = crate::policy::context::OperationPayload::Login {
+                username: username.to_string(),
+                github_org_logins: org_logins,
+            };
+            let restriction_ctx = crate::policy::context::RestrictionContext {
+                operation: crate::policy::context::Operation::Login,
+                repo: None,
+                payload: &payload,
+                store: self.store.as_ref(),
+            };
+
+            use crate::policy::Restriction;
+            if let Err(_violation) = restriction.evaluate(&restriction_ctx).await {
                 return Err(LoginError::ForbiddenGithubOrg {
                     username: username.to_string(),
                 });
@@ -735,106 +748,52 @@ impl AppState {
         patch: &mut Patch,
         head_ref: &str,
     ) -> Result<(), UpsertPatchError> {
-        let (owner, repo) = match patch.github.as_ref() {
-            Some(github) => (github.owner.clone(), github.repo.clone()),
-            None => (
-                patch.service_repo_name.organization.clone(),
-                patch.service_repo_name.repo.clone(),
-            ),
-        };
-        let client = self.github_user_client(actor).await?;
+        use crate::policy::integrations::github_pr_sync;
 
-        if let Some(existing) = patch.github.as_ref() {
-            let pr = client
-                .pulls(&owner, &repo)
-                .update(existing.number)
-                .title(patch.title.clone())
-                .body(patch.description.clone())
-                .send()
-                .await
-                .map_err(|source| UpsertPatchError::GithubPullRequestUpdate {
-                    source,
-                    owner: owner.clone(),
-                    repo: repo.clone(),
-                    number: existing.number,
-                })?;
-
-            let mut updated = existing.clone();
-            updated.head_ref = Some(pr.head.ref_field.clone());
-            updated.base_ref = Some(pr.base.ref_field.clone());
-            updated.url = pr.html_url.as_ref().map(ToString::to_string);
-            patch.github = Some(updated);
-            return Ok(());
-        }
-
-        let base_ref = match patch
-            .github
-            .as_ref()
-            .and_then(|github| github.base_ref.as_ref())
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-        {
-            Some(base_ref) => base_ref,
-            None => {
-                let repository = self
-                    .repository_from_store(&patch.service_repo_name)
-                    .await
-                    .map_err(|source| UpsertPatchError::GithubRepositoryLookup {
-                        source,
-                        repo_name: patch.service_repo_name.clone(),
-                    })?;
-                repository
-                    .default_branch
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                    .ok_or(UpsertPatchError::GithubBaseRefMissing)?
-            }
-        };
-
-        let pr = client
-            .pulls(&owner, &repo)
-            .create(patch.title.clone(), head_ref, base_ref)
-            .body(patch.description.clone())
-            .send()
+        let client = github_pr_sync::github_user_client(self, actor)
             .await
-            .map_err(|source| UpsertPatchError::GithubPullRequestCreate {
-                source,
-                owner: owner.clone(),
-                repo: repo.clone(),
+            .map_err(|e| match e {
+                github_pr_sync::SyncError::TokenLookup { actor, message } => {
+                    UpsertPatchError::GithubTokenLookup { actor, message }
+                }
+                github_pr_sync::SyncError::ClientBuild { source, actor } => {
+                    UpsertPatchError::GithubUserClient { source, actor }
+                }
+                other => UpsertPatchError::Store {
+                    source: StoreError::Internal(other.to_string()),
+                },
             })?;
 
-        patch.github = Some(GithubPr::new(
-            owner,
-            repo,
-            pr.number,
-            Some(pr.head.ref_field.clone()),
-            Some(pr.base.ref_field.clone()),
-            pr.html_url.as_ref().map(ToString::to_string),
-            patch.github.as_ref().and_then(|github| github.ci.clone()),
-        ));
-
-        Ok(())
-    }
-
-    async fn github_user_client(&self, actor: &Actor) -> Result<Octocrab, UpsertPatchError> {
-        let token = actor.get_github_token(self).await.map_err(|err| {
-            UpsertPatchError::GithubTokenLookup {
-                actor: actor.name(),
-                message: err.message().to_string(),
-            }
-        })?;
-
-        Octocrab::builder()
-            .base_uri(self.config.github_app.api_base_url().to_string())
-            .map_err(|source| UpsertPatchError::GithubUserClient {
-                source,
-                actor: actor.name(),
-            })?
-            .personal_token(token.github_token)
-            .build()
-            .map_err(|source| UpsertPatchError::GithubUserClient {
-                source,
-                actor: actor.name(),
+        github_pr_sync::sync_patch_with_github(self, &client, patch, head_ref)
+            .await
+            .map_err(|e| match e {
+                github_pr_sync::SyncError::PullRequestUpdate {
+                    source,
+                    owner,
+                    repo,
+                    number,
+                } => UpsertPatchError::GithubPullRequestUpdate {
+                    source,
+                    owner,
+                    repo,
+                    number,
+                },
+                github_pr_sync::SyncError::PullRequestCreate {
+                    source,
+                    owner,
+                    repo,
+                } => UpsertPatchError::GithubPullRequestCreate {
+                    source,
+                    owner,
+                    repo,
+                },
+                github_pr_sync::SyncError::BaseRefMissing => UpsertPatchError::GithubBaseRefMissing,
+                github_pr_sync::SyncError::RepositoryLookup { source, repo_name } => {
+                    UpsertPatchError::GithubRepositoryLookup { source, repo_name }
+                }
+                other => UpsertPatchError::Store {
+                    source: StoreError::Internal(other.to_string()),
+                },
             })
     }
 

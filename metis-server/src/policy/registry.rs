@@ -84,6 +84,7 @@ impl Default for PolicyRegistry {
 /// (restrictions and automations).
 pub fn build_default_registry() -> PolicyRegistry {
     use super::automations::*;
+    use super::integrations::{GithubOrgCheckRestriction, GithubPrSyncAutomation};
     use super::restrictions::*;
 
     let mut registry = PolicyRegistry::new();
@@ -107,6 +108,9 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_restriction("require_creator", |_params| {
         Ok(Box::new(RequireCreatorRestriction::new()))
     });
+    registry.register_restriction("github_org_check", |params| {
+        Ok(Box::new(GithubOrgCheckRestriction::new(params)?))
+    });
 
     // Automations (order matters: cascade must run before kill_tasks)
     registry.register_automation("cascade_issue_status", |params| {
@@ -123,6 +127,9 @@ pub fn build_default_registry() -> PolicyRegistry {
     });
     registry.register_automation("inherit_creator_from_parent", |params| {
         Ok(Box::new(InheritCreatorAutomation::new(params)?))
+    });
+    registry.register_automation("github_pr_sync", |params| {
+        Ok(Box::new(GithubPrSyncAutomation::new(params)?))
     });
 
     registry

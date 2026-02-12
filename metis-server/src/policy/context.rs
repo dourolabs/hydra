@@ -16,6 +16,7 @@ pub enum Operation {
     CreateDocument,
     UpdateDocument,
     DeleteDocument,
+    Login,
 }
 
 /// The payload describing the proposed change for restriction evaluation.
@@ -44,6 +45,11 @@ pub enum OperationPayload {
         document_id: Option<metis_common::DocumentId>,
         new: crate::domain::documents::Document,
         old: Option<crate::domain::documents::Document>,
+    },
+    /// A login operation with the user's GitHub organization memberships.
+    Login {
+        username: String,
+        github_org_logins: Vec<String>,
     },
 }
 
