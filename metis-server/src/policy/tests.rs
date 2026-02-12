@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::event_bus::{MutationPayload, ServerEvent};
+use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::issues::{Issue, IssueStatus, IssueType};
 use crate::domain::users::Username;
 use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
@@ -269,19 +269,12 @@ async fn policy_violation_has_descriptive_message() {
 #[tokio::test]
 async fn run_automations_executes_matching_automations() {
     let count = Arc::new(AtomicUsize::new(0));
-    let sentinel = ServerEvent::IssueCreated {
-        seq: 0,
-        issue_id: IssueId::new(),
-        version: 0,
-        timestamp: Utc::now(),
-        payload: dummy_issue_payload(),
-    };
     let engine = PolicyEngine::new(
         Vec::new(),
         vec![Box::new(CountingAutomation {
             count: count.clone(),
             filter: EventFilter {
-                event_types: vec![mem::discriminant(&sentinel)],
+                event_types: vec![EventType::IssueCreated],
             },
         })],
     );
@@ -309,19 +302,12 @@ async fn run_automations_executes_matching_automations() {
 #[tokio::test]
 async fn run_automations_skips_non_matching_events() {
     let count = Arc::new(AtomicUsize::new(0));
-    let sentinel = ServerEvent::PatchCreated {
-        seq: 0,
-        patch_id: metis_common::PatchId::new(),
-        version: 0,
-        timestamp: Utc::now(),
-        payload: dummy_patch_payload(),
-    };
     let engine = PolicyEngine::new(
         Vec::new(),
         vec![Box::new(CountingAutomation {
             count: count.clone(),
             filter: EventFilter {
-                event_types: vec![mem::discriminant(&sentinel)],
+                event_types: vec![EventType::PatchCreated],
             },
         })],
     );
@@ -400,15 +386,8 @@ fn event_filter_empty_matches_all() {
 
 #[test]
 fn event_filter_specific_type_matches() {
-    let sentinel = ServerEvent::PatchUpdated {
-        seq: 0,
-        patch_id: metis_common::PatchId::new(),
-        version: 0,
-        timestamp: Utc::now(),
-        payload: dummy_patch_payload(),
-    };
     let filter = EventFilter {
-        event_types: vec![mem::discriminant(&sentinel)],
+        event_types: vec![EventType::PatchUpdated],
     };
     let matching = ServerEvent::PatchUpdated {
         seq: 1,

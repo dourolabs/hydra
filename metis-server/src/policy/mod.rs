@@ -5,11 +5,10 @@ pub mod registry;
 pub mod restrictions;
 pub mod runner;
 
-use crate::app::event_bus::ServerEvent;
+use crate::app::event_bus::{EventType, ServerEvent};
 use async_trait::async_trait;
 use context::{AutomationContext, RestrictionContext};
 use std::fmt;
-use std::mem;
 
 /// A structured error returned when a restriction rejects a proposed mutation.
 ///
@@ -41,8 +40,8 @@ pub enum AutomationError {
 /// Describes which events an automation subscribes to.
 #[derive(Debug, Clone, Default)]
 pub struct EventFilter {
-    /// Which event variant discriminants to match. Empty means match all.
-    pub event_types: Vec<mem::Discriminant<ServerEvent>>,
+    /// Which event types to match. Empty means match all.
+    pub event_types: Vec<EventType>,
 }
 
 impl EventFilter {
@@ -51,7 +50,7 @@ impl EventFilter {
         if self.event_types.is_empty() {
             return true;
         }
-        self.event_types.contains(&mem::discriminant(event))
+        self.event_types.contains(&event.event_type())
     }
 }
 

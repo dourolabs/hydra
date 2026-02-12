@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::app::event_bus::{MutationPayload, ServerEvent};
+use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::issues::{IssueStatus, IssueType};
 use crate::domain::patches::PatchStatus;
 use crate::policy::context::AutomationContext;
@@ -27,7 +27,7 @@ impl Automation for CloseMergeRequestIssuesAutomation {
 
     fn event_filter(&self) -> EventFilter {
         EventFilter {
-            event_types: vec![super::patch_updated_discriminant()],
+            event_types: vec![EventType::PatchUpdated],
         }
     }
 
