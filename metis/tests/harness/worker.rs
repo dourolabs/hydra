@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use metis::command::output::{CommandContext, ResolvedOutputFormat};
 use metis::worker_commands::WorkerCommands;
 use metis_common::{
-    constants::{ENV_METIS_SERVER_URL, ENV_METIS_TOKEN},
+    constants::{ENV_METIS_ISSUE_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN},
     jobs::SearchJobsQuery,
     patches::SearchPatchesQuery,
     task_status::Status,
@@ -153,9 +153,10 @@ fn metis_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_metis"))
 }
 
-/// Ensure the job's environment variables include the server URL and auth
-/// token so that subprocess commands (e.g. `metis patches create`) can reach
-/// the test server. Updates the task record in the store directly.
+/// Ensure the job's environment variables include the server URL, auth
+/// token, and issue ID so that subprocess commands (e.g. `metis patches
+/// create`) can reach the test server and resolve the current issue.
+/// Updates the task record in the store directly.
 async fn ensure_worker_env_vars(harness: &TestHarness, job_id: &TaskId) -> Result<()> {
     let store = harness.store();
     let versioned_task = store
@@ -177,6 +178,13 @@ async fn ensure_worker_env_vars(harness: &TestHarness, job_id: &TaskId) -> Resul
             harness.default_user_token().to_string(),
         );
         changed = true;
+    }
+    if !task.env_vars.contains_key(ENV_METIS_ISSUE_ID) {
+        if let Some(issue_id) = &task.spawned_from {
+            task.env_vars
+                .insert(ENV_METIS_ISSUE_ID.to_string(), issue_id.to_string());
+            changed = true;
+        }
     }
 
     if changed {

@@ -15,8 +15,9 @@ async fn run_worker_creates_patch() -> Result<()> {
     let user = harness.default_user();
 
     let repo = metis_common::RepoName::from_str("acme/worker-test")?;
+    let issue_id = user.create_issue("worker patch integration test").await?;
     let job_id = user
-        .create_job(&repo, "worker patch integration test")
+        .create_job_for_issue(&repo, "worker patch integration test", &issue_id)
         .await?;
 
     let result = harness

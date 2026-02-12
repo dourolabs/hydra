@@ -237,6 +237,35 @@ impl UserHandle {
         Ok(response.job_id)
     }
 
+    /// Create a job for the given repo, prompt, and issue.
+    ///
+    /// Like [`create_job`](Self::create_job) but links the job to the given
+    /// issue, which sets the `spawned_from` field on the task. This ensures
+    /// that `METIS_ISSUE_ID` is available for subprocess commands.
+    pub async fn create_job_for_issue(
+        &self,
+        repo: &RepoName,
+        prompt: &str,
+        issue_id: &IssueId,
+    ) -> Result<TaskId> {
+        let mut request = CreateJobRequest::new(
+            prompt.to_string(),
+            None,
+            BundleSpec::ServiceRepository {
+                name: repo.clone(),
+                rev: None,
+            },
+            HashMap::new(),
+        );
+        request.issue_id = Some(issue_id.clone());
+        let response = self
+            .client
+            .create_job(&request)
+            .await
+            .context("UserHandle::create_job_for_issue failed")?;
+        Ok(response.job_id)
+    }
+
     // ── CLI operations ───────────────────────────────────────────────
 
     /// Execute the `metis` CLI binary as a subprocess with the given arguments.
