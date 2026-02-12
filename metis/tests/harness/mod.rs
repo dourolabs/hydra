@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod assertions;
+pub mod concurrency;
 pub mod user_handle;
 mod worker;
 
@@ -34,6 +35,7 @@ use tempfile::TempDir;
 use tokio::sync::RwLock;
 
 pub use assertions::{wait_until, IssueAssertions, JobAssertions, PatchAssertions};
+pub use concurrency::{concurrent, test_all_orderings, Step};
 pub use user_handle::UserHandle;
 pub use worker::{CommandOutput, WorkerFailure, WorkerResult};
 
