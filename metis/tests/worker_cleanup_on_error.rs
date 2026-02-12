@@ -1,8 +1,3 @@
-// Migrated from the old-style test using init_test_server_with_remote + run_as_worker_with_failure.
-// Original: ~57 lines with manual env var construction, CLI subprocess job creation,
-// wait_for_status polling, manual job list inspection, and BundleSpec assertion.
-// Migrated: ~20 lines using TestHarness, UserHandle, and run_worker_expect_failure.
-
 mod harness;
 
 use anyhow::Result;
