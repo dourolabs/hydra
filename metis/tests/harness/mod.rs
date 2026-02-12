@@ -95,6 +95,14 @@ impl TestHarness {
         &self.state
     }
 
+    /// Return a mutable reference to the `AppState`.
+    ///
+    /// This is useful for reconfiguring the GitHub mock after initial setup
+    /// (e.g. replacing the `github_app` with one that has PRs configured).
+    pub fn state_mut(&mut self) -> &mut AppState {
+        &mut self.state
+    }
+
     /// Return a reference to the shared store.
     pub fn store(&self) -> &Arc<dyn Store> {
         &self.store

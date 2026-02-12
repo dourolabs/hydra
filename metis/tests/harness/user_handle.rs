@@ -6,11 +6,11 @@ use metis::config::{AppConfig, ServerSection};
 use metis_common::{
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
-        ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
+        JobSettings, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
     },
-    jobs::{BundleSpec, CreateJobRequest},
+    jobs::{BundleSpec, CreateJobRequest, SearchJobsQuery},
     patches::{
-        ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
+        GithubPr, ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
         UpsertPatchRequest,
     },
     users::Username,
@@ -207,12 +207,94 @@ impl UserHandle {
             .context("UserHandle::get_patch failed")
     }
 
+    /// Create a patch with GitHub PR metadata attached.
+    ///
+    /// Used for tests that exercise GitHub sync (review sync, merge flow).
+    pub async fn create_patch_with_github(
+        &self,
+        title: &str,
+        description: &str,
+        repo: &RepoName,
+        github_pr: GithubPr,
+    ) -> Result<PatchId> {
+        let patch = Patch::new(
+            title.to_string(),
+            description.to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo.clone(),
+            Some(github_pr),
+            false,
+        );
+        let request = UpsertPatchRequest::new(patch);
+        let response = self
+            .client
+            .create_patch(&request)
+            .await
+            .context("UserHandle::create_patch_with_github failed")?;
+        Ok(response.patch_id)
+    }
+
     /// List all patches matching the default (empty) query.
     pub async fn list_patches(&self) -> Result<ListPatchesResponse> {
         self.client
             .list_patches(&SearchPatchesQuery::default())
             .await
             .context("UserHandle::list_patches failed")
+    }
+
+    /// List jobs, optionally filtered by issue ID.
+    pub async fn list_jobs_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<metis_common::jobs::JobRecord>> {
+        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None);
+        let response = self
+            .client
+            .list_jobs(&query)
+            .await
+            .context("UserHandle::list_jobs_for_issue failed")?;
+        Ok(response.jobs)
+    }
+
+    // ── Issue operations (extended) ──────────────────────────────────
+
+    /// Create an issue with full control over type, status, assignee, and job settings.
+    ///
+    /// This is the lower-level variant of [`create_issue`](Self::create_issue)
+    /// for tests that need to set specific job settings (e.g. repo_name, image,
+    /// branch) or a specific assignee.
+    pub async fn create_issue_with_settings(
+        &self,
+        description: &str,
+        issue_type: IssueType,
+        status: IssueStatus,
+        assignee: Option<&str>,
+        job_settings: Option<JobSettings>,
+    ) -> Result<IssueId> {
+        let issue = Issue::new(
+            issue_type,
+            description.to_string(),
+            Username::from(self.name.as_str()),
+            String::new(),
+            status,
+            assignee.map(|s| s.to_string()),
+            job_settings,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            false,
+        );
+        let request = UpsertIssueRequest::new(issue, None);
+        let response = self
+            .client
+            .create_issue(&request)
+            .await
+            .context("UserHandle::create_issue_with_settings failed")?;
+        Ok(response.issue_id)
     }
 
     // ── Job operations ───────────────────────────────────────────────
