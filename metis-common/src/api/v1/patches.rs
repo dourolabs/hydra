@@ -255,19 +255,6 @@ impl Patch {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct PatchRecord {
-    pub id: PatchId,
-    pub patch: Patch,
-}
-
-impl PatchRecord {
-    pub fn new(id: PatchId, patch: Patch) -> Self {
-        Self { id, patch }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct PatchVersionRecord {
     pub patch_id: PatchId,
     pub version: VersionNumber,
@@ -317,11 +304,12 @@ impl UpsertPatchRequest {
 #[non_exhaustive]
 pub struct UpsertPatchResponse {
     pub patch_id: PatchId,
+    pub version: VersionNumber,
 }
 
 impl UpsertPatchResponse {
-    pub fn new(patch_id: PatchId) -> Self {
-        Self { patch_id }
+    pub fn new(patch_id: PatchId, version: VersionNumber) -> Self {
+        Self { patch_id, version }
     }
 }
 
@@ -433,11 +421,11 @@ impl GithubCiStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ListPatchesResponse {
-    pub patches: Vec<PatchRecord>,
+    pub patches: Vec<PatchVersionRecord>,
 }
 
 impl ListPatchesResponse {
-    pub fn new(patches: Vec<PatchRecord>) -> Self {
+    pub fn new(patches: Vec<PatchVersionRecord>) -> Self {
         Self { patches }
     }
 }

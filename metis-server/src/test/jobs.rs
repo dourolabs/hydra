@@ -23,7 +23,7 @@ use metis_common::{
     api::v1::{
         self,
         jobs::{
-            CreateJobResponse, JobRecord, JobVersionRecord, ListJobVersionsResponse,
+            CreateJobResponse, JobVersionRecord, ListJobVersionsResponse,
             ListJobsResponse,
         },
     },
@@ -672,7 +672,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
     let body: ListJobsResponse = response.json().await?;
-    let ids: Vec<TaskId> = body.jobs.into_iter().map(|job| job.id).collect();
+    let ids: Vec<TaskId> = body.jobs.into_iter().map(|job| job.job_id).collect();
     assert_eq!(ids, vec![newest_id, middle_id, oldest_id]);
     Ok(())
 }
@@ -715,8 +715,8 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let summary: JobRecord = response.json().await?;
-    assert_eq!(summary.id, job_id);
+    let summary: JobVersionRecord = response.json().await?;
+    assert_eq!(summary.job_id, job_id);
     assert_eq!(summary.task.status, v1::task_status::Status::Running);
     Ok(())
 }
@@ -1283,7 +1283,7 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let summary: JobRecord = response.json().await?;
+    let summary: JobVersionRecord = response.json().await?;
     assert_eq!(summary.task.status, v1::task_status::Status::Complete);
 
     let patch_response = client
@@ -1291,8 +1291,8 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
         .send()
         .await?;
     assert!(patch_response.status().is_success());
-    let patch_record: metis_common::patches::PatchRecord = patch_response.json().await?;
-    assert_eq!(patch_record.id, patch_id);
+    let patch_record: metis_common::patches::PatchVersionRecord = patch_response.json().await?;
+    assert_eq!(patch_record.patch_id, patch_id);
     let metis_common::patches::Patch {
         title,
         description,

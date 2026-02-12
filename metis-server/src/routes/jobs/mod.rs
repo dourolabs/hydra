@@ -7,7 +7,6 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use chrono::{DateTime, Utc};
 use metis_common::{TaskId, VersionNumber, api::v1};
 use tracing::{error, info};
 
@@ -79,31 +78,32 @@ pub async fn list_jobs(
     })?;
 
     // Build job records with timing fields, sorted by version timestamp
-    let mut records_with_times: Vec<(v1::jobs::JobRecord, DateTime<Utc>)> = tasks
+    let mut records: Vec<v1::jobs::JobVersionRecord> = tasks
         .into_iter()
         .map(|(task_id, versioned_task)| {
-            let timestamp = versioned_task.timestamp;
             let api_task: v1::jobs::Task = versioned_task.item.into();
             let api_task = if let Some(log) = status_logs.get(&task_id) {
                 api_task.with_timing(log.creation_time(), log.start_time(), log.end_time())
             } else {
                 api_task
             };
-            let record = v1::jobs::JobRecord::new(task_id, api_task);
-            (record, timestamp)
+            v1::jobs::JobVersionRecord::new(
+                task_id,
+                versioned_task.version,
+                versioned_task.timestamp,
+                api_task,
+            )
         })
         .collect();
 
     // Sort by version timestamp, most recent first
-    records_with_times.sort_by(|a, b| b.1.cmp(&a.1));
+    records.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
-    let summaries: Vec<v1::jobs::JobRecord> = records_with_times
-        .into_iter()
-        .map(|(mut record, _)| {
-            record.strip_large_fields();
-            record
-        })
-        .collect();
+    for record in &mut records {
+        record.strip_large_fields();
+    }
+
+    let summaries = records;
 
     info!(
         namespace = %namespace,
@@ -118,7 +118,7 @@ pub async fn list_jobs(
 pub async fn get_job(
     State(state): State<AppState>,
     JobIdPath(job_id): JobIdPath,
-) -> Result<Json<v1::jobs::JobRecord>, ApiError> {
+) -> Result<Json<v1::jobs::JobVersionRecord>, ApiError> {
     info!(job_id = %job_id, "get_job invoked");
 
     let versions = state
@@ -147,8 +147,13 @@ pub async fn get_job(
     } else {
         api_task
     };
-    let record = v1::jobs::JobRecord::new(job_id.clone(), api_task);
-    info!(job_id = %record.id, "get_job completed successfully");
+    let record = v1::jobs::JobVersionRecord::new(
+        job_id.clone(),
+        latest.version,
+        latest.timestamp,
+        api_task,
+    );
+    info!(job_id = %record.job_id, "get_job completed successfully");
     Ok(Json(record))
 }
 

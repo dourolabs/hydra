@@ -40,19 +40,6 @@ impl Document {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct DocumentRecord {
-    pub id: DocumentId,
-    pub document: Document,
-}
-
-impl DocumentRecord {
-    pub fn new(id: DocumentId, document: Document) -> Self {
-        Self { id, document }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct DocumentVersionRecord {
     pub document_id: DocumentId,
     pub version: VersionNumber,
@@ -130,22 +117,26 @@ impl UpsertDocumentRequest {
 #[non_exhaustive]
 pub struct UpsertDocumentResponse {
     pub document_id: DocumentId,
+    pub version: VersionNumber,
 }
 
 impl UpsertDocumentResponse {
-    pub fn new(document_id: DocumentId) -> Self {
-        Self { document_id }
+    pub fn new(document_id: DocumentId, version: VersionNumber) -> Self {
+        Self {
+            document_id,
+            version,
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ListDocumentsResponse {
-    pub documents: Vec<DocumentRecord>,
+    pub documents: Vec<DocumentVersionRecord>,
 }
 
 impl ListDocumentsResponse {
-    pub fn new(documents: Vec<DocumentRecord>) -> Self {
+    pub fn new(documents: Vec<DocumentVersionRecord>) -> Self {
         Self { documents }
     }
 }

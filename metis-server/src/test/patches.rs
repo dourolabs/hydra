@@ -18,9 +18,9 @@ use httpmock::{Method::GET, Method::POST, MockServer};
 use metis_common::{
     PatchId,
     api::v1::{
-        issues::{IssueRecord, UpsertIssueRequest, UpsertIssueResponse},
+        issues::{IssueVersionRecord, UpsertIssueRequest, UpsertIssueResponse},
         patches::{
-            CreatePatchAssetResponse, ListPatchVersionsResponse, ListPatchesResponse, PatchRecord,
+            CreatePatchAssetResponse, ListPatchVersionsResponse, ListPatchesResponse,
             PatchVersionRecord, SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
         },
     },
@@ -56,7 +56,7 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
     let created: UpsertPatchResponse = response.json().await?;
     assert!(!created.patch_id.as_ref().is_empty());
 
-    let fetched: PatchRecord = client
+    let fetched: PatchVersionRecord = client
         .get(format!(
             "{}/v1/patches/{}",
             server.base_url(),
@@ -67,7 +67,7 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    assert_eq!(fetched.id, created.patch_id);
+    assert_eq!(fetched.patch_id, created.patch_id);
     let expected_patch: metis_common::api::v1::patches::Patch = patch.into();
     assert_eq!(fetched.patch, expected_patch);
     Ok(())
@@ -324,7 +324,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    let fetched_issue: IssueRecord = client
+    let fetched_issue: IssueVersionRecord = client
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
@@ -401,7 +401,7 @@ async fn closed_patch_fails_merge_request_issues() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    let fetched_issue: IssueRecord = client
+    let fetched_issue: IssueVersionRecord = client
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
@@ -478,7 +478,7 @@ async fn changes_requested_closes_merge_request_issues() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    let fetched_issue: IssueRecord = client
+    let fetched_issue: IssueVersionRecord = client
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
@@ -649,7 +649,7 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
 
     assert_eq!(changes_response.patch_id, created_patch.patch_id);
 
-    let fetched_issue: IssueRecord = client
+    let fetched_issue: IssueVersionRecord = client
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
@@ -1281,7 +1281,7 @@ async fn delete_patch_basic_operation() -> anyhow::Result<()> {
         .await?;
 
     // Delete the patch
-    let deleted: PatchRecord = client
+    let deleted: PatchVersionRecord = client
         .delete(format!(
             "{}/v1/patches/{}",
             server.base_url(),
@@ -1303,7 +1303,7 @@ async fn delete_patch_basic_operation() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    assert!(!list.patches.iter().any(|p| p.id == created.patch_id));
+    assert!(!list.patches.iter().any(|p| p.patch_id == created.patch_id));
 
     Ok(())
 }
@@ -1356,7 +1356,7 @@ async fn delete_patch_include_deleted_in_listing() -> anyhow::Result<()> {
         !list_without
             .patches
             .iter()
-            .any(|p| p.id == created.patch_id)
+            .any(|p| p.patch_id == created.patch_id)
     );
 
     // List with include_deleted=true - verify present with deleted=true
@@ -1368,7 +1368,7 @@ async fn delete_patch_include_deleted_in_listing() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    let deleted_patch = list_with.patches.iter().find(|p| p.id == created.patch_id);
+    let deleted_patch = list_with.patches.iter().find(|p| p.patch_id == created.patch_id);
 
     assert!(deleted_patch.is_some());
     assert!(deleted_patch.unwrap().patch.deleted);

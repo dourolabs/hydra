@@ -9,7 +9,7 @@ use chrono::Utc;
 use metis_common::{
     DocumentId, TaskId,
     api::v1::documents::{
-        Document, DocumentRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
+        Document, DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
         SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
     },
 };
@@ -49,7 +49,7 @@ async fn documents_can_be_created_listed_and_retrieved() -> anyhow::Result<()> {
 
     assert!(!created.document_id.as_ref().is_empty());
 
-    let fetched: DocumentRecord = client
+    let fetched: DocumentVersionRecord = client
         .get(format!(
             "{}/v1/documents/{}",
             server.base_url(),
@@ -59,7 +59,7 @@ async fn documents_can_be_created_listed_and_retrieved() -> anyhow::Result<()> {
         .await?
         .json()
         .await?;
-    assert_eq!(fetched.id, created.document_id);
+    assert_eq!(fetched.document_id, created.document_id);
     assert_eq!(fetched.document, document);
 
     let list: ListDocumentsResponse = client
@@ -71,7 +71,7 @@ async fn documents_can_be_created_listed_and_retrieved() -> anyhow::Result<()> {
     assert!(
         list.documents
             .iter()
-            .any(|record| record.id == created.document_id)
+            .any(|record| record.document_id == created.document_id)
     );
 
     Ok(())
@@ -386,7 +386,7 @@ async fn delete_document_basic_operation() -> anyhow::Result<()> {
         .await?;
 
     // Delete the document
-    let deleted: DocumentRecord = client
+    let deleted: DocumentVersionRecord = client
         .delete(format!("{base}/v1/documents/{}", created.document_id))
         .send()
         .await?
@@ -404,7 +404,7 @@ async fn delete_document_basic_operation() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    assert!(!list.documents.iter().any(|d| d.id == created.document_id));
+    assert!(!list.documents.iter().any(|d| d.document_id == created.document_id));
 
     Ok(())
 }
@@ -448,7 +448,7 @@ async fn delete_document_include_deleted_in_listing() -> anyhow::Result<()> {
         !list_without
             .documents
             .iter()
-            .any(|d| d.id == created.document_id)
+            .any(|d| d.document_id == created.document_id)
     );
 
     // List with include_deleted=true - verify present with deleted=true
@@ -469,7 +469,7 @@ async fn delete_document_include_deleted_in_listing() -> anyhow::Result<()> {
     let deleted_doc = list_with
         .documents
         .iter()
-        .find(|d| d.id == created.document_id);
+        .find(|d| d.document_id == created.document_id);
 
     assert!(deleted_doc.is_some());
     assert!(deleted_doc.unwrap().document.deleted);

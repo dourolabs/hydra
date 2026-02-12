@@ -327,40 +327,12 @@ impl CreateJobResponse {
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ListJobsResponse {
-    pub jobs: Vec<JobRecord>,
+    pub jobs: Vec<JobVersionRecord>,
 }
 
 impl ListJobsResponse {
-    pub fn new(jobs: Vec<JobRecord>) -> Self {
+    pub fn new(jobs: Vec<JobVersionRecord>) -> Self {
         Self { jobs }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct JobRecord {
-    pub id: TaskId,
-    pub task: Task,
-}
-
-impl JobRecord {
-    pub fn new(id: TaskId, task: Task) -> Self {
-        Self { id, task }
-    }
-
-    /// Clears large fields that are unnecessary for list responses.
-    ///
-    /// Specifically: truncates `task.prompt` to the first 100 characters
-    /// and sets `task.last_message` to `None`.
-    pub fn strip_large_fields(&mut self) {
-        // Truncate prompt to first 100 chars
-        if self.task.prompt.len() > 100 {
-            let truncated: String = self.task.prompt.chars().take(100).collect();
-            self.task.prompt = truncated;
-        }
-
-        // Clear last_message from task
-        self.task.last_message = None;
     }
 }
 
@@ -386,6 +358,19 @@ impl JobVersionRecord {
             timestamp,
             task,
         }
+    }
+
+    /// Clears large fields that are unnecessary for list responses.
+    ///
+    /// Specifically: truncates `task.prompt` to the first 100 characters
+    /// and sets `task.last_message` to `None`.
+    pub fn strip_large_fields(&mut self) {
+        if self.task.prompt.len() > 100 {
+            let truncated: String = self.task.prompt.chars().take(100).collect();
+            self.task.prompt = truncated;
+        }
+
+        self.task.last_message = None;
     }
 }
 
@@ -495,7 +480,7 @@ mod tests {
         );
 
         let task_id = crate::TaskId::new();
-        let mut record = JobRecord::new(task_id, task);
+        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task);
 
         record.strip_large_fields();
 
@@ -527,7 +512,7 @@ mod tests {
         );
 
         let task_id = crate::TaskId::new();
-        let mut record = JobRecord::new(task_id, task);
+        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task);
 
         record.strip_large_fields();
 
