@@ -3,6 +3,7 @@ pub mod config;
 pub mod context;
 pub mod registry;
 pub mod restrictions;
+pub mod runner;
 
 use crate::app::event_bus::ServerEvent;
 use async_trait::async_trait;
