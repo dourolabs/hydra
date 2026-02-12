@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::event_bus::{MutationPayload, ServerEvent};
+use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::issues::{Issue, IssueStatus, IssueType};
 use crate::domain::users::Username;
 use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
@@ -269,19 +269,12 @@ async fn policy_violation_has_descriptive_message() {
 #[tokio::test]
 async fn run_automations_executes_matching_automations() {
     let count = Arc::new(AtomicUsize::new(0));
-    let sentinel = ServerEvent::IssueCreated {
-        seq: 0,
-        issue_id: IssueId::new(),
-        version: 0,
-        timestamp: Utc::now(),
-        payload: dummy_issue_payload(),
-    };
     let engine = PolicyEngine::new(
         Vec::new(),
         vec![Box::new(CountingAutomation {
             count: count.clone(),
             filter: EventFilter {
-                event_types: vec![mem::discriminant(&sentinel)],
+                event_types: vec![EventType::IssueCreated],
             },
         })],
     );
@@ -309,19 +302,12 @@ async fn run_automations_executes_matching_automations() {
 #[tokio::test]
 async fn run_automations_skips_non_matching_events() {
     let count = Arc::new(AtomicUsize::new(0));
-    let sentinel = ServerEvent::PatchCreated {
-        seq: 0,
-        patch_id: metis_common::PatchId::new(),
-        version: 0,
-        timestamp: Utc::now(),
-        payload: dummy_patch_payload(),
-    };
     let engine = PolicyEngine::new(
         Vec::new(),
         vec![Box::new(CountingAutomation {
             count: count.clone(),
             filter: EventFilter {
-                event_types: vec![mem::discriminant(&sentinel)],
+                event_types: vec![EventType::PatchCreated],
             },
         })],
     );
@@ -400,15 +386,8 @@ fn event_filter_empty_matches_all() {
 
 #[test]
 fn event_filter_specific_type_matches() {
-    let sentinel = ServerEvent::PatchUpdated {
-        seq: 0,
-        patch_id: metis_common::PatchId::new(),
-        version: 0,
-        timestamp: Utc::now(),
-        payload: dummy_patch_payload(),
-    };
     let filter = EventFilter {
-        event_types: vec![mem::discriminant(&sentinel)],
+        event_types: vec![EventType::PatchUpdated],
     };
     let matching = ServerEvent::PatchUpdated {
         seq: 1,
@@ -601,4 +580,163 @@ fn policy_config_default_is_empty() {
     assert!(config.global.restrictions.is_empty());
     assert!(config.global.automations.is_empty());
     assert!(config.repos.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Shortcut method tests
+// ---------------------------------------------------------------------------
+
+fn make_dummy_document() -> crate::domain::documents::Document {
+    crate::domain::documents::Document {
+        title: "test".to_string(),
+        body_markdown: String::new(),
+        path: None,
+        created_by: None,
+        deleted: false,
+    }
+}
+
+fn make_dummy_patch() -> crate::domain::patches::Patch {
+    crate::domain::patches::Patch::new(
+        "title".to_string(),
+        "desc".to_string(),
+        String::new(),
+        crate::domain::patches::PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        metis_common::RepoName::new("test", "repo").unwrap(),
+        None,
+    )
+}
+
+fn make_dummy_task() -> crate::store::Task {
+    crate::store::Task::new(
+        "test prompt".to_string(),
+        crate::domain::jobs::BundleSpec::None,
+        None,
+        None,
+        None,
+        Default::default(),
+        None,
+        None,
+        None,
+    )
+}
+
+#[tokio::test]
+async fn check_create_issue_delegates_to_check_restrictions() {
+    let engine = PolicyEngine::new(
+        vec![Box::new(RejectRestriction::new("blocked"))],
+        Vec::new(),
+    );
+    let store = MemoryStore::new();
+    let issue = dummy_issue();
+
+    let result = engine.check_create_issue(&issue, &store).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("blocked"));
+}
+
+#[tokio::test]
+async fn check_create_issue_passes_when_allowed() {
+    let engine = PolicyEngine::new(vec![Box::new(AllowAllRestriction)], Vec::new());
+    let store = MemoryStore::new();
+    let issue = dummy_issue();
+
+    let result = engine.check_create_issue(&issue, &store).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn check_update_issue_delegates_to_check_restrictions() {
+    let engine = PolicyEngine::new(
+        vec![Box::new(RejectRestriction::new("blocked"))],
+        Vec::new(),
+    );
+    let store = MemoryStore::new();
+    let issue = dummy_issue();
+    let issue_id = IssueId::new();
+
+    let result = engine
+        .check_update_issue(&issue_id, &issue, None, &store)
+        .await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn check_create_patch_delegates_to_check_restrictions() {
+    let engine = PolicyEngine::new(
+        vec![Box::new(RejectRestriction::new("blocked"))],
+        Vec::new(),
+    );
+    let store = MemoryStore::new();
+    let patch = make_dummy_patch();
+
+    let result = engine.check_create_patch(&patch, &store).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn check_create_patch_passes_when_allowed() {
+    let engine = PolicyEngine::new(vec![Box::new(AllowAllRestriction)], Vec::new());
+    let store = MemoryStore::new();
+    let patch = make_dummy_patch();
+
+    let result = engine.check_create_patch(&patch, &store).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn check_create_document_delegates_to_check_restrictions() {
+    let engine = PolicyEngine::new(
+        vec![Box::new(RejectRestriction::new("blocked"))],
+        Vec::new(),
+    );
+    let store = MemoryStore::new();
+    let doc = make_dummy_document();
+
+    let result = engine.check_create_document(&doc, &store).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn check_update_document_delegates_to_check_restrictions() {
+    let engine = PolicyEngine::new(
+        vec![Box::new(RejectRestriction::new("blocked"))],
+        Vec::new(),
+    );
+    let store = MemoryStore::new();
+    let doc = make_dummy_document();
+    let doc_id = metis_common::DocumentId::new();
+
+    let result = engine
+        .check_update_document(&doc_id, &doc, None, &store)
+        .await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn check_update_job_delegates_to_check_restrictions() {
+    let engine = PolicyEngine::new(
+        vec![Box::new(RejectRestriction::new("blocked"))],
+        Vec::new(),
+    );
+    let store = MemoryStore::new();
+    let task = make_dummy_task();
+    let task_id = metis_common::TaskId::new();
+
+    let result = engine.check_update_job(&task_id, &task, None, &store).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn check_update_job_passes_when_allowed() {
+    let engine = PolicyEngine::new(vec![Box::new(AllowAllRestriction)], Vec::new());
+    let store = MemoryStore::new();
+    let task = make_dummy_task();
+    let task_id = metis_common::TaskId::new();
+
+    let result = engine.check_update_job(&task_id, &task, None, &store).await;
+    assert!(result.is_ok());
 }

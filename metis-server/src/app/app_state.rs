@@ -577,7 +577,7 @@ impl AppState {
     ) -> Result<(DocumentId, VersionNumber), UpsertDocumentError> {
         let store = self.store.as_ref();
 
-        let (operation, old_document) = match &document_id {
+        let old_document = match &document_id {
             Some(id) => {
                 let existing =
                     store
@@ -592,28 +592,24 @@ impl AppState {
                             }
                             other => UpsertDocumentError::Store { source: other },
                         })?;
-                (
-                    crate::policy::context::Operation::UpdateDocument,
-                    Some(existing.item),
-                )
+                Some(existing.item)
             }
-            None => (crate::policy::context::Operation::CreateDocument, None),
+            None => None,
         };
 
         // Run restriction policies before persisting
-        let restriction_ctx = crate::policy::context::RestrictionContext {
-            operation,
-            repo: None,
-            payload: &crate::policy::context::OperationPayload::Document {
-                document_id: document_id.clone(),
-                new: document.clone(),
-                old: old_document.clone(),
-            },
-            store,
-        };
-        self.policy_engine
-            .check_restrictions(&restriction_ctx)
-            .await?;
+        match &document_id {
+            Some(id) => {
+                self.policy_engine
+                    .check_update_document(id, &document, old_document.as_ref(), store)
+                    .await?;
+            }
+            None => {
+                self.policy_engine
+                    .check_create_document(&document, store)
+                    .await?;
+            }
+        }
 
         match document_id {
             Some(id) => {
@@ -1629,19 +1625,7 @@ impl AppState {
             None => {
                 // Run restriction policies before persisting
                 {
-                    let restriction_ctx = crate::policy::context::RestrictionContext {
-                        operation: crate::policy::context::Operation::CreatePatch,
-                        repo: None,
-                        payload: &crate::policy::context::OperationPayload::Patch {
-                            patch_id: None,
-                            new: patch.clone(),
-                            old: None,
-                        },
-                        store,
-                    };
-                    self.policy_engine
-                        .check_restrictions(&restriction_ctx)
-                        .await?;
+                    self.policy_engine.check_create_patch(&patch, store).await?;
                 }
 
                 if let Some(sync_github_branch) = sync_github_branch {
@@ -1690,18 +1674,8 @@ impl AppState {
 
                 // Run restriction policies (require_creator, issue_lifecycle_validation)
                 {
-                    let restriction_ctx = crate::policy::context::RestrictionContext {
-                        operation: crate::policy::context::Operation::UpdateIssue,
-                        repo: None,
-                        payload: &crate::policy::context::OperationPayload::Issue {
-                            issue_id: Some(id.clone()),
-                            new: updated_issue.clone(),
-                            old: None,
-                        },
-                        store,
-                    };
                     self.policy_engine
-                        .check_restrictions(&restriction_ctx)
+                        .check_update_issue(&id, &updated_issue, None, store)
                         .await?;
                 }
 
@@ -1782,19 +1756,7 @@ impl AppState {
                 }
                 // Run restriction policies (require_creator, issue_lifecycle_validation)
                 {
-                    let restriction_ctx = crate::policy::context::RestrictionContext {
-                        operation: crate::policy::context::Operation::CreateIssue,
-                        repo: None,
-                        payload: &crate::policy::context::OperationPayload::Issue {
-                            issue_id: None,
-                            new: issue.clone(),
-                            old: None,
-                        },
-                        store,
-                    };
-                    self.policy_engine
-                        .check_restrictions(&restriction_ctx)
-                        .await?;
+                    self.policy_engine.check_create_issue(&issue, store).await?;
                 }
 
                 let (id, version) =
