@@ -47,6 +47,23 @@ pub enum MutationPayload {
     },
 }
 
+/// Data-free mirror of [`ServerEvent`] used for event filtering without
+/// needing to construct dummy/sentinel instances.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EventType {
+    IssueCreated,
+    IssueUpdated,
+    IssueDeleted,
+    PatchCreated,
+    PatchUpdated,
+    PatchDeleted,
+    JobCreated,
+    JobUpdated,
+    DocumentCreated,
+    DocumentUpdated,
+    DocumentDeleted,
+}
+
 /// Events emitted when server-side entities are mutated.
 ///
 /// Each variant carries an optional `payload` wrapped in `Arc<MutationPayload>`
@@ -151,6 +168,23 @@ impl ServerEvent {
             | ServerEvent::DocumentCreated { seq, .. }
             | ServerEvent::DocumentUpdated { seq, .. }
             | ServerEvent::DocumentDeleted { seq, .. } => *seq,
+        }
+    }
+
+    /// Returns the data-free [`EventType`] corresponding to this event variant.
+    pub fn event_type(&self) -> EventType {
+        match self {
+            ServerEvent::IssueCreated { .. } => EventType::IssueCreated,
+            ServerEvent::IssueUpdated { .. } => EventType::IssueUpdated,
+            ServerEvent::IssueDeleted { .. } => EventType::IssueDeleted,
+            ServerEvent::PatchCreated { .. } => EventType::PatchCreated,
+            ServerEvent::PatchUpdated { .. } => EventType::PatchUpdated,
+            ServerEvent::PatchDeleted { .. } => EventType::PatchDeleted,
+            ServerEvent::JobCreated { .. } => EventType::JobCreated,
+            ServerEvent::JobUpdated { .. } => EventType::JobUpdated,
+            ServerEvent::DocumentCreated { .. } => EventType::DocumentCreated,
+            ServerEvent::DocumentUpdated { .. } => EventType::DocumentUpdated,
+            ServerEvent::DocumentDeleted { .. } => EventType::DocumentDeleted,
         }
     }
 }

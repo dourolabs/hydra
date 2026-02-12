@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::app::event_bus::{MutationPayload, ServerEvent};
+use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::issues::IssueStatus;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
@@ -27,7 +27,7 @@ impl Automation for KillTasksOnFailureAutomation {
 
     fn event_filter(&self) -> EventFilter {
         EventFilter {
-            event_types: vec![super::issue_updated_discriminant()],
+            event_types: vec![EventType::IssueUpdated],
         }
     }
 
