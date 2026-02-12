@@ -37,6 +37,9 @@ pub async fn set_job_status(
                 error!(error = %source, job_id = %job_id, "failed to update task status");
                 ApiError::internal(anyhow!("Failed to update task status: {source}"))
             }
+            SetJobStatusError::PolicyViolation(violation) => {
+                ApiError::bad_request(violation.message)
+            }
         })?;
 
     info!(job_id = %response.job_id, "job status stored successfully");

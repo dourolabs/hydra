@@ -79,3 +79,33 @@ impl Default for PolicyRegistry {
         Self::new()
     }
 }
+
+/// Build a `PolicyRegistry` pre-loaded with all built-in restriction policies.
+///
+/// Automations are not yet registered (they will be added in a future task).
+pub fn build_default_registry() -> PolicyRegistry {
+    use super::restrictions::*;
+
+    let mut registry = PolicyRegistry::new();
+
+    registry.register_restriction("issue_lifecycle_validation", |_params| {
+        Ok(Box::new(IssueLifecycleRestriction::new()))
+    });
+    registry.register_restriction("task_state_machine", |_params| {
+        Ok(Box::new(TaskStateMachineRestriction::new()))
+    });
+    registry.register_restriction("duplicate_branch_name", |_params| {
+        Ok(Box::new(DuplicateBranchRestriction::new()))
+    });
+    registry.register_restriction("hidden_document_path", |_params| {
+        Ok(Box::new(HiddenDocumentPathRestriction::new()))
+    });
+    registry.register_restriction("running_job_validation", |_params| {
+        Ok(Box::new(RunningJobValidationRestriction::new()))
+    });
+    registry.register_restriction("require_creator", |_params| {
+        Ok(Box::new(RequireCreatorRestriction::new()))
+    });
+
+    registry
+}

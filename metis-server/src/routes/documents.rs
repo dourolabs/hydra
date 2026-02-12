@@ -239,6 +239,7 @@ fn map_upsert_document_error(err: UpsertDocumentError) -> ApiError {
             error!(error = %source, "document store operation failed");
             ApiError::internal(anyhow!("document store operation failed: {source}"))
         }
+        UpsertDocumentError::PolicyViolation(violation) => ApiError::bad_request(violation.message),
     }
 }
 
