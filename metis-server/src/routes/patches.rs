@@ -69,13 +69,15 @@ pub async fn create_patch(
     Json(payload): Json<v1::patches::UpsertPatchRequest>,
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!("create_patch invoked");
-    let patch_id = state
+    let (patch_id, version) = state
         .upsert_patch(Some(&actor), None, payload)
         .await
         .map_err(map_upsert_patch_error)?;
 
     info!(patch_id = %patch_id, "create_patch completed");
-    Ok(Json(v1::patches::UpsertPatchResponse::new(patch_id)))
+    Ok(Json(v1::patches::UpsertPatchResponse::new(
+        patch_id, version,
+    )))
 }
 
 pub async fn update_patch(
@@ -85,19 +87,21 @@ pub async fn update_patch(
     Json(payload): Json<v1::patches::UpsertPatchRequest>,
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!(patch_id = %patch_id, "update_patch invoked");
-    let patch_id = state
+    let (patch_id, version) = state
         .upsert_patch(Some(&actor), Some(patch_id), payload)
         .await
         .map_err(map_upsert_patch_error)?;
 
     info!(patch_id = %patch_id, "update_patch completed");
-    Ok(Json(v1::patches::UpsertPatchResponse::new(patch_id)))
+    Ok(Json(v1::patches::UpsertPatchResponse::new(
+        patch_id, version,
+    )))
 }
 
 pub async fn get_patch(
     State(state): State<AppState>,
     PatchIdPath(patch_id): PatchIdPath,
-) -> Result<Json<v1::patches::PatchRecord>, ApiError> {
+) -> Result<Json<v1::patches::PatchVersionRecord>, ApiError> {
     info!(patch_id = %patch_id, "get_patch invoked");
     let patch = state
         .get_patch(&patch_id, false)
@@ -105,7 +109,12 @@ pub async fn get_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     info!(patch_id = %patch_id, "get_patch completed");
-    let response = v1::patches::PatchRecord::new(patch_id, patch.item.into());
+    let response = v1::patches::PatchVersionRecord::new(
+        patch_id,
+        patch.version,
+        patch.timestamp,
+        patch.item.into(),
+    );
     Ok(Json(response))
 }
 
@@ -178,9 +187,16 @@ pub async fn list_patches(
         .await
         .map_err(|err| map_patch_error(err, None))?;
 
-    let records: Vec<v1::patches::PatchRecord> = patches
+    let records: Vec<v1::patches::PatchVersionRecord> = patches
         .into_iter()
-        .map(|(id, patch)| v1::patches::PatchRecord::new(id, patch.item.into()))
+        .map(|(id, versioned)| {
+            v1::patches::PatchVersionRecord::new(
+                id,
+                versioned.version,
+                versioned.timestamp,
+                versioned.item.into(),
+            )
+        })
         .collect();
 
     let response = v1::patches::ListPatchesResponse::new(records);
@@ -572,7 +588,7 @@ fn map_patch_error(err: StoreError, patch_id: Option<&PatchId>) -> ApiError {
 pub async fn delete_patch(
     State(state): State<AppState>,
     PatchIdPath(patch_id): PatchIdPath,
-) -> Result<Json<v1::patches::PatchRecord>, ApiError> {
+) -> Result<Json<v1::patches::PatchVersionRecord>, ApiError> {
     info!(patch_id = %patch_id, "delete_patch invoked");
     state
         .delete_patch(&patch_id)
@@ -585,6 +601,11 @@ pub async fn delete_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     info!(patch_id = %patch_id, "delete_patch completed");
-    let response = v1::patches::PatchRecord::new(patch_id, patch.item.into());
+    let response = v1::patches::PatchVersionRecord::new(
+        patch_id,
+        patch.version,
+        patch.timestamp,
+        patch.item.into(),
+    );
     Ok(Json(response))
 }

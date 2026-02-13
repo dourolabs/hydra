@@ -138,7 +138,9 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         when.method(GET).path(job_path_clone.as_str());
         then.status(200).json_body(json!({
             "extra": "job",
-            "id": job_id_for_get_clone,
+            "job_id": job_id_for_get_clone,
+            "version": 0,
+            "timestamp": Utc::now(),
             "task": job_record_body_for_get_clone["task"].clone(),
             "notes": "note",
             "status_log": job_record_body_for_get_clone["status_log"].clone()
@@ -192,16 +194,18 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let issue_id_for_create_clone = issue_id_for_create.clone();
     server.mock(move |when, then| {
         when.method(POST).path("/v1/issues");
-        then.status(200)
-            .json_body(json!({ "issue_id": issue_id_for_create_clone, "extra": "create-issue" }));
+        then.status(200).json_body(
+            json!({ "issue_id": issue_id_for_create_clone, "version": 0, "extra": "create-issue" }),
+        );
     });
 
     let issue_update_path = issue_path.clone();
     let issue_id_for_update_clone = issue_id_for_update.clone();
     server.mock(move |when, then| {
         when.method(PUT).path(issue_update_path.as_str());
-        then.status(200)
-            .json_body(json!({ "issue_id": issue_id_for_update_clone, "future": true }));
+        then.status(200).json_body(
+            json!({ "issue_id": issue_id_for_update_clone, "version": 1, "future": true }),
+        );
     });
 
     let issue_get_path = issue_path.clone();
@@ -244,7 +248,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     server.mock(move |when, then| {
         when.method(POST).path("/v1/patches");
         then.status(200).json_body(
-            json!({ "patch_id": patch_id_for_create_clone, "additional": "create-patch" }),
+            json!({ "patch_id": patch_id_for_create_clone, "version": 0, "additional": "create-patch" }),
         );
     });
 
@@ -252,8 +256,9 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let patch_id_for_update_clone = patch_id_for_update.clone();
     server.mock(move |when, then| {
         when.method(PUT).path(patch_update_path.as_str());
-        then.status(200)
-            .json_body(json!({ "patch_id": patch_id_for_update_clone, "note": "update" }));
+        then.status(200).json_body(
+            json!({ "patch_id": patch_id_for_update_clone, "version": 1, "note": "update" }),
+        );
     });
 
     let patch_get_path = patch_path.clone();
@@ -275,6 +280,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         when.method(POST).path("/v1/documents");
         then.status(200).json_body(json!({
             "document_id": document_id_for_create_clone,
+            "version": 0,
             "note": "create-document"
         }));
     });
@@ -285,6 +291,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         when.method(PUT).path(document_update_path.as_str());
         then.status(200).json_body(json!({
             "document_id": document_id_for_update_clone,
+            "version": 1,
             "extra": "update-document"
         }));
     });
@@ -559,7 +566,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(updated_document.document_id, document_id);
 
     let fetched_document = client.get_document(&document_id).await?;
-    assert_eq!(fetched_document.id, document_id);
+    assert_eq!(fetched_document.document_id, document_id);
     assert_eq!(
         fetched_document.document.path.as_deref(),
         Some("docs/runbook.md")
@@ -649,7 +656,9 @@ fn forward_status_log_json(now: DateTime<Utc>) -> Value {
 
 fn forward_job_json(job_id: &TaskId, status_log: Value) -> Value {
     json!({
-        "id": job_id,
+        "job_id": job_id,
+        "version": 0,
+        "timestamp": Utc::now(),
         "task": {
             "prompt": "future job",
             "context": {
@@ -669,7 +678,9 @@ fn forward_job_json(job_id: &TaskId, status_log: Value) -> Value {
 
 fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &PatchId) -> Value {
     json!({
-        "id": issue_id,
+        "issue_id": issue_id,
+        "version": 0,
+        "timestamp": Utc::now(),
         "issue": {
             "type": "epic",
             "description": "future issue",
@@ -697,7 +708,9 @@ fn forward_patch_json(
     now: DateTime<Utc>,
 ) -> Value {
     json!({
-        "id": patch_id,
+        "patch_id": patch_id,
+        "version": 0,
+        "timestamp": Utc::now(),
         "patch": {
             "title": "future patch",
             "description": "desc",
@@ -735,7 +748,9 @@ fn forward_patch_json(
 
 fn forward_document_json(document_id: &DocumentId, job_id: &TaskId) -> Value {
     json!({
-        "id": document_id,
+        "document_id": document_id,
+        "version": 0,
+        "timestamp": Utc::now(),
         "document": {
             "title": "forward doc",
             "body_markdown": "# Runbook",

@@ -11,12 +11,12 @@ use metis_common::{
     constants::ENV_METIS_ISSUE_ID,
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
-        IssueGraphSelector, IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType,
-        JobSettings, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
-        UpsertIssueRequest,
+        IssueGraphSelector, IssueGraphWildcard, IssueId, IssueStatus, IssueType,
+        IssueVersionRecord, JobSettings, ReplaceTodoListRequest, SearchIssuesQuery,
+        SetTodoItemStatusRequest, TodoItem, UpsertIssueRequest,
     },
-    jobs::{JobRecord, SearchJobsQuery, Task},
-    patches::{PatchRecord, PatchStatus, Review},
+    jobs::{JobVersionRecord, SearchJobsQuery, Task},
+    patches::{PatchStatus, PatchVersionRecord, Review},
     task_status::Status,
     users::Username,
     whoami::ActorIdentity,
@@ -443,7 +443,7 @@ pub async fn run(
                 .delete_issue(&id)
                 .await
                 .with_context(|| format!("failed to delete issue '{id}'"))?;
-            println!("Deleted issue '{}'", deleted.id);
+            println!("Deleted issue '{}'", deleted.issue_id);
             Ok(())
         }
     }
@@ -451,8 +451,8 @@ pub async fn run(
 
 #[derive(Debug, Serialize, PartialEq, Eq, Clone)]
 struct IssueWithPatches {
-    issue: IssueRecord,
-    patches: Vec<PatchRecord>,
+    issue: IssueVersionRecord,
+    patches: Vec<PatchVersionRecord>,
 }
 
 #[derive(Debug, Serialize)]
@@ -575,7 +575,7 @@ async fn collect_issue_description(
         .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
     let parents = fetch_parent_issues(client, &issue).await?;
-    let children = fetch_child_issues(client, &issue.id).await?;
+    let children = fetch_child_issues(client, &issue.issue_id).await?;
     let mut patch_cache = HashMap::new();
 
     let issue_with_patches = issue_with_patches(client, issue, &mut patch_cache).await?;
@@ -603,12 +603,12 @@ fn summarize_issue_description(description: &IssueDescription) -> Result<IssueDe
         parents: description
             .parents
             .iter()
-            .map(|parent| parent.issue.id.clone())
+            .map(|parent| parent.issue.issue_id.clone())
             .collect(),
         children: description
             .children
             .iter()
-            .map(|child| child.issue.id.clone())
+            .map(|child| child.issue.issue_id.clone())
             .collect(),
         activity_log: summarize_activity_log(&description.activity_log)?,
     })
@@ -857,8 +857,8 @@ fn decode_activity_object<T: DeserializeOwned>(entry: &ActivityLogEntry) -> Resu
 
 async fn fetch_parent_issues(
     client: &dyn MetisClientInterface,
-    issue: &IssueRecord,
-) -> Result<Vec<IssueRecord>> {
+    issue: &IssueVersionRecord,
+) -> Result<Vec<IssueVersionRecord>> {
     let mut parents = Vec::new();
     let mut seen = HashSet::new();
 
@@ -883,7 +883,7 @@ async fn fetch_parent_issues(
 async fn fetch_child_issues(
     client: &dyn MetisClientInterface,
     issue_id: &IssueId,
-) -> Result<Vec<IssueRecord>> {
+) -> Result<Vec<IssueVersionRecord>> {
     let filter = IssueGraphFilter::new(
         IssueGraphSelector::Wildcard(IssueGraphWildcard::Transitive),
         IssueDependencyType::ChildOf,
@@ -908,8 +908,8 @@ async fn fetch_child_issues(
 
 async fn issues_with_patches(
     client: &dyn MetisClientInterface,
-    issues: Vec<IssueRecord>,
-    cache: &mut HashMap<PatchId, PatchRecord>,
+    issues: Vec<IssueVersionRecord>,
+    cache: &mut HashMap<PatchId, PatchVersionRecord>,
 ) -> Result<Vec<IssueWithPatches>> {
     let mut enriched = Vec::with_capacity(issues.len());
     for issue in issues {
@@ -920,19 +920,19 @@ async fn issues_with_patches(
 
 async fn issue_with_patches(
     client: &dyn MetisClientInterface,
-    issue: IssueRecord,
-    cache: &mut HashMap<PatchId, PatchRecord>,
+    issue: IssueVersionRecord,
+    cache: &mut HashMap<PatchId, PatchVersionRecord>,
 ) -> Result<IssueWithPatches> {
-    let patches = fetch_patch_records(client, &issue.issue.patches, cache, &issue.id).await?;
+    let patches = fetch_patch_records(client, &issue.issue.patches, cache, &issue.issue_id).await?;
     Ok(IssueWithPatches { issue, patches })
 }
 
 async fn fetch_patch_records(
     client: &dyn MetisClientInterface,
     patch_ids: &[PatchId],
-    cache: &mut HashMap<PatchId, PatchRecord>,
+    cache: &mut HashMap<PatchId, PatchVersionRecord>,
     issue_id: &IssueId,
-) -> Result<Vec<PatchRecord>> {
+) -> Result<Vec<PatchVersionRecord>> {
     let mut patches = Vec::with_capacity(patch_ids.len());
     for patch_id in patch_ids {
         if let Some(record) = cache.get(patch_id) {
@@ -956,14 +956,14 @@ async fn collect_activity_log(
     parents: &[IssueWithPatches],
     children: &[IssueWithPatches],
 ) -> Result<Vec<ActivityLogEntry>> {
-    let issue_id = &issue.issue.id;
+    let issue_id = &issue.issue.issue_id;
     let issue_versions = fetch_issue_versions(client, issue_id).await?;
     let root_created_at = issue_versions.iter().map(|version| version.timestamp).min();
 
     let mut entries = activity_log_for_issue_versions(issue_id.clone(), &issue_versions);
 
     for related in parents.iter().chain(children.iter()) {
-        let related_id = &related.issue.id;
+        let related_id = &related.issue.issue_id;
         let versions = fetch_issue_versions(client, related_id).await?;
         let log = activity_log_for_issue_versions(related_id.clone(), &versions);
         entries.extend(filter_activity_entries(log, root_created_at));
@@ -978,8 +978,8 @@ async fn collect_activity_log(
 
     let jobs = fetch_jobs_for_issue(client, issue_id).await?;
     for job in jobs {
-        let versions = fetch_job_versions(client, &job.id).await?;
-        let log = activity_log_for_job_versions(job.id.clone(), &versions);
+        let versions = fetch_job_versions(client, &job.job_id).await?;
+        let log = activity_log_for_job_versions(job.job_id.clone(), &versions);
         entries.extend(filter_activity_entries(log, root_created_at));
     }
 
@@ -1053,7 +1053,7 @@ async fn fetch_job_versions(
 async fn fetch_jobs_for_issue(
     client: &dyn MetisClientInterface,
     issue_id: &IssueId,
-) -> Result<Vec<JobRecord>> {
+) -> Result<Vec<JobVersionRecord>> {
     let response = client
         .list_jobs(&SearchJobsQuery::new(None, Some(issue_id.clone()), None))
         .await
@@ -1104,7 +1104,7 @@ async fn fetch_issues(
     query: Option<String>,
     graph_filters: Vec<IssueGraphFilter>,
     include_deleted: bool,
-) -> Result<Vec<IssueRecord>> {
+) -> Result<Vec<IssueVersionRecord>> {
     if let Some(issue_id) = id {
         let record = client
             .get_issue(&issue_id)
@@ -1171,18 +1171,27 @@ async fn fetch_issues(
     for issue in &issues {
         if let Some(expected_type) = issue_type {
             if issue.issue.issue_type != expected_type {
-                bail!("Issue {} does not match the requested type.", issue.id);
+                bail!(
+                    "Issue {} does not match the requested type.",
+                    issue.issue_id
+                );
             }
         }
         if let Some(expected_status) = status {
             if issue.issue.status != expected_status {
-                bail!("Issue {} does not match the requested status.", issue.id);
+                bail!(
+                    "Issue {} does not match the requested status.",
+                    issue.issue_id
+                );
             }
         }
         if let Some(ref expected_assignee) = trimmed_assignee {
             match issue.issue.assignee.as_deref() {
                 Some(current) if current.eq_ignore_ascii_case(expected_assignee) => {}
-                _ => bail!("Issue {} is not assigned to {expected_assignee}", issue.id),
+                _ => bail!(
+                    "Issue {} is not assigned to {expected_assignee}",
+                    issue.issue_id
+                ),
             }
         }
     }
@@ -1329,7 +1338,7 @@ async fn create_issue(
     max_retries: Option<u32>,
     secrets: Vec<String>,
     current_issue_id: Option<IssueId>,
-) -> Result<IssueRecord> {
+) -> Result<IssueVersionRecord> {
     let description = description.trim();
     if description.is_empty() {
         bail!("Issue description must not be empty.");
@@ -1387,7 +1396,12 @@ async fn create_issue(
         .await
         .context("failed to create issue")?;
 
-    Ok(IssueRecord::new(response.issue_id, issue))
+    Ok(IssueVersionRecord::new(
+        response.issue_id,
+        response.version,
+        Utc::now(),
+        issue,
+    ))
 }
 
 async fn update_issue(
@@ -1413,7 +1427,7 @@ async fn update_issue(
     secrets: Vec<String>,
     clear_secrets: bool,
     clear_job_settings: bool,
-) -> Result<IssueRecord> {
+) -> Result<IssueVersionRecord> {
     let issue_id = id;
 
     let description = match description {
@@ -1528,7 +1542,12 @@ async fn update_issue(
         .await
         .with_context(|| format!("failed to update issue '{issue_id}'"))?;
 
-    Ok(IssueRecord::new(response.issue_id, updated_issue))
+    Ok(IssueVersionRecord::new(
+        response.issue_id,
+        response.version,
+        Utc::now(),
+        updated_issue,
+    ))
 }
 
 async fn resolve_creator_username(
@@ -1752,7 +1771,7 @@ fn render_todo_list(
     Ok(())
 }
 
-fn write_issue_records(format: ResolvedOutputFormat, issues: &[IssueRecord]) -> Result<()> {
+fn write_issue_records(format: ResolvedOutputFormat, issues: &[IssueVersionRecord]) -> Result<()> {
     let mut buffer = Vec::new();
     render_issue_records(format, issues, &mut buffer)?;
     io::stdout().write_all(&buffer)?;
@@ -1840,7 +1859,7 @@ fn write_issue_details_pretty(
     writeln!(
         writer,
         "{indent}Issue {} ({issue_type}, {status})",
-        issue_record.id
+        issue_record.issue_id
     )?;
     writeln!(writer, "{indent}Creator: {}", creator.as_ref())?;
     writeln!(
@@ -1894,7 +1913,11 @@ fn write_issue_details_pretty(
             } else {
                 patch.patch.title.as_str()
             };
-            writeln!(writer, "{indent}  - {title} ({}) [{status}]", patch.id)?;
+            writeln!(
+                writer,
+                "{indent}  - {title} ({}) [{status}]",
+                patch.patch_id
+            )?;
             writeln!(writer, "{indent}    Description:")?;
             if patch.patch.description.trim().is_empty() {
                 writeln!(writer, "{indent}      -")?;
@@ -2449,16 +2472,14 @@ mod tests {
     use chrono::{Duration, TimeZone, Utc};
     use httpmock::prelude::*;
     use metis_common::issues::{
-        AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord,
-        IssueVersionRecord, JobSettings, ListIssueVersionsResponse, ListIssuesResponse,
-        ReplaceTodoListRequest, SetTodoItemStatusRequest, TodoItem, TodoListResponse,
-        UpsertIssueRequest, UpsertIssueResponse,
+        AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueVersionRecord,
+        JobSettings, ListIssueVersionsResponse, ListIssuesResponse, ReplaceTodoListRequest,
+        SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
+        UpsertIssueResponse,
     };
     use metis_common::{
         jobs::{BundleSpec, ListJobsResponse, Task},
-        patches::{
-            ListPatchVersionsResponse, Patch, PatchRecord, PatchStatus, PatchVersionRecord, Review,
-        },
+        patches::{ListPatchVersionsResponse, Patch, PatchStatus, PatchVersionRecord, Review},
         task_status::Status,
         users::Username,
         whoami::{ActorIdentity, WhoAmIResponse},
@@ -2526,9 +2547,11 @@ mod tests {
         assignee: Option<&str>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
-    ) -> IssueRecord {
-        IssueRecord::new(
+    ) -> IssueVersionRecord {
+        IssueVersionRecord::new(
             issue_id(id),
+            0,
+            Utc::now(),
             Issue::new(
                 issue_type,
                 description.into(),
@@ -2549,8 +2572,10 @@ mod tests {
     async fn list_issues_filters_by_query_and_prints_jsonl() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let issues_response = ListIssuesResponse::new(vec![IssueRecord::new(
+        let issues_response = ListIssuesResponse::new(vec![IssueVersionRecord::new(
             issue_id("i-1"),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Bug,
                 "First issue".into(),
@@ -2595,8 +2620,8 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         let first_id = issue_id("i-1").to_string();
         let second_id = issue_id("i-2").to_string();
-        assert!(output.contains(&format!("\"id\":\"{first_id}\"")));
-        assert!(!output.contains(&format!("\"id\":\"{second_id}\"")));
+        assert!(output.contains(&format!("\"issue_id\":\"{first_id}\"")));
+        assert!(!output.contains(&format!("\"issue_id\":\"{second_id}\"")));
     }
 
     #[tokio::test]
@@ -2604,8 +2629,10 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let issue_id = issue_id("i-123");
-        let issue_record = IssueRecord::new(
+        let issue_record = IssueVersionRecord::new(
             issue_id.clone(),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Task,
                 "Edge case bug".into(),
@@ -2642,15 +2669,17 @@ mod tests {
         get_mock.assert();
         assert_eq!(get_mock.hits(), 1);
         assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].id, issue_id);
+        assert_eq!(issues[0].issue_id, issue_id);
     }
 
     #[tokio::test]
     async fn list_issues_filters_by_assignee() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let issues_response = ListIssuesResponse::new(vec![IssueRecord::new(
+        let issues_response = ListIssuesResponse::new(vec![IssueVersionRecord::new(
             issue_id("i-7"),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Task,
                 "Edge case bug".into(),
@@ -2688,7 +2717,7 @@ mod tests {
         list_mock.assert();
         assert_eq!(list_mock.hits(), 1);
         assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].id, issue_id("i-7"));
+        assert_eq!(issues[0].issue_id, issue_id("i-7"));
     }
 
     #[tokio::test]
@@ -2799,8 +2828,10 @@ mod tests {
             then.status(200)
                 .json_body_obj(&ListIssuesResponse::new(vec![child_issue.clone()]));
         });
-        let root_patch_record = PatchRecord::new(
+        let root_patch_record = PatchVersionRecord::new(
             root_patch_id.clone(),
+            0,
+            Utc::now(),
             Patch::new(
                 "root patch".into(),
                 "desc".into(),
@@ -2814,8 +2845,10 @@ mod tests {
                 false,
             ),
         );
-        let parent_patch_record = PatchRecord::new(
+        let parent_patch_record = PatchVersionRecord::new(
             parent_patch_id.clone(),
+            0,
+            Utc::now(),
             Patch::new(
                 "parent patch".into(),
                 "desc".into(),
@@ -2829,8 +2862,10 @@ mod tests {
                 false,
             ),
         );
-        let child_patch_record = PatchRecord::new(
+        let child_patch_record = PatchVersionRecord::new(
             child_patch_id.clone(),
+            0,
+            Utc::now(),
             Patch::new(
                 "child patch".into(),
                 "desc".into(),
@@ -2858,7 +2893,7 @@ mod tests {
             parent_issue.issue.clone(),
         )]);
         let child_versions = ListIssueVersionsResponse::new(vec![IssueVersionRecord::new(
-            child_issue.id.clone(),
+            child_issue.issue_id.clone(),
             1,
             version_timestamp,
             child_issue.issue.clone(),
@@ -2908,7 +2943,7 @@ mod tests {
         });
         let child_versions_mock = server.mock(|when, then| {
             when.method(GET)
-                .path(format!("/v1/issues/{}/versions", child_issue.id).as_str());
+                .path(format!("/v1/issues/{}/versions", child_issue.issue_id).as_str());
             then.status(200).json_body_obj(&child_versions);
         });
         let root_patch_versions_mock = server.mock(|when, then| {
@@ -3014,7 +3049,7 @@ mod tests {
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456")));
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456"), 0));
         });
 
         create_issue(
@@ -3075,7 +3110,7 @@ mod tests {
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456")));
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456"), 0));
         });
 
         create_issue(
@@ -3115,8 +3150,10 @@ mod tests {
         inherited_settings.remote_url = Some("https://example.com/service.git".into());
         inherited_settings.image = Some("worker:latest".into());
         inherited_settings.branch = Some("feature/job-settings".into());
-        let current_issue = IssueRecord::new(
+        let current_issue = IssueVersionRecord::new(
             current_issue_id.clone(),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Task,
                 "Existing issue".into(),
@@ -3157,7 +3194,7 @@ mod tests {
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new")));
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new"), 0));
         });
 
         create_issue(
@@ -3199,8 +3236,10 @@ mod tests {
         inherited_settings.remote_url = Some("https://example.com/service.git".into());
         inherited_settings.image = Some("worker:latest".into());
         inherited_settings.branch = Some("feature/job-settings".into());
-        let current_issue = IssueRecord::new(
+        let current_issue = IssueVersionRecord::new(
             current_issue_id.clone(),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Task,
                 "Existing issue".into(),
@@ -3247,7 +3286,7 @@ mod tests {
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new")));
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new"), 0));
         });
 
         create_issue(
@@ -3306,7 +3345,7 @@ mod tests {
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-secrets")));
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-secrets"), 0));
         });
 
         create_issue(
@@ -3343,8 +3382,10 @@ mod tests {
         let current_issue_id = issue_id("i-current");
         let mut inherited_settings = JobSettings::default();
         inherited_settings.secrets = Some(vec!["inherited-secret".into()]);
-        let current_issue = IssueRecord::new(
+        let current_issue = IssueVersionRecord::new(
             current_issue_id.clone(),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Task,
                 "Parent issue".into(),
@@ -3385,7 +3426,7 @@ mod tests {
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-child")));
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-child"), 0));
         });
 
         create_issue(
@@ -3523,8 +3564,10 @@ mod tests {
             when.method(GET).path("/v1/whoami");
             then.status(200).json_body_obj(&whoami_response);
         });
-        let parent_issue = IssueRecord::new(
+        let parent_issue = IssueVersionRecord::new(
             parent_id.clone(),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Task,
                 "Parent issue".into(),
@@ -3572,8 +3615,10 @@ mod tests {
             when.method(GET).path("/v1/whoami");
             then.status(200).json_body_obj(&whoami_response);
         });
-        let current_issue = IssueRecord::new(
+        let current_issue = IssueVersionRecord::new(
             current_id.clone(),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Task,
                 "Current issue".into(),
@@ -3657,7 +3702,7 @@ mod tests {
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
                 .json_body_obj(&updated_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
+                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
         });
 
         update_issue(
@@ -3701,8 +3746,10 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let target_issue_id = issue_id("i-10");
-        let current_issue = IssueRecord::new(
+        let current_issue = IssueVersionRecord::new(
             target_issue_id.clone(),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Feature,
                 "Existing issue".into(),
@@ -3746,7 +3793,7 @@ mod tests {
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
                 .json_body_obj(&update_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
+                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
         });
 
         update_issue(
@@ -3788,8 +3835,10 @@ mod tests {
         let client = metis_client(&server);
         let target_issue_id = issue_id("i-11");
         let job_settings = sample_job_settings();
-        let current_issue = IssueRecord::new(
+        let current_issue = IssueVersionRecord::new(
             target_issue_id.clone(),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Feature,
                 "Existing issue".into(),
@@ -3836,7 +3885,7 @@ mod tests {
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
                 .json_body_obj(&update_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
+                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
         });
 
         update_issue(
@@ -3877,8 +3926,10 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let target_issue_id = issue_id("i-secrets");
-        let current_issue = IssueRecord::new(
+        let current_issue = IssueVersionRecord::new(
             target_issue_id.clone(),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Task,
                 "Existing issue".into(),
@@ -3921,7 +3972,7 @@ mod tests {
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
                 .json_body_obj(&update_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
+                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
         });
 
         update_issue(
@@ -3964,8 +4015,10 @@ mod tests {
         let target_issue_id = issue_id("i-clear-secrets");
         let mut existing_settings = JobSettings::default();
         existing_settings.secrets = Some(vec!["old-secret".into()]);
-        let current_issue = IssueRecord::new(
+        let current_issue = IssueVersionRecord::new(
             target_issue_id.clone(),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Task,
                 "Existing issue".into(),
@@ -4006,7 +4059,7 @@ mod tests {
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
                 .json_body_obj(&update_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
+                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
         });
 
         update_issue(
@@ -4045,8 +4098,10 @@ mod tests {
     #[test]
     fn pretty_prints_human_readable_issues() {
         let issues = vec![
-            IssueRecord::new(
+            IssueVersionRecord::new(
                 issue_id("i-1"),
+                0,
+                Utc::now(),
                 Issue::new(
                     IssueType::Bug,
                     "First issue\nwith context".into(),
@@ -4064,8 +4119,10 @@ mod tests {
                     false,
                 ),
             ),
-            IssueRecord::new(
+            IssueVersionRecord::new(
                 issue_id("i-2"),
+                0,
+                Utc::now(),
                 Issue::new(
                     IssueType::Feature,
                     "Follow-up work".into(),
@@ -4113,8 +4170,10 @@ mod tests {
         let get_mock = server.mock(|when, then| {
             when.method(GET)
                 .path(format!("/v1/issues/{issue_id}").as_str());
-            then.status(200).json_body_obj(&IssueRecord::new(
+            then.status(200).json_body_obj(&IssueVersionRecord::new(
                 issue_id.clone(),
+                0,
+                Utc::now(),
                 Issue::new(
                     IssueType::Task,
                     "has todos".into(),
@@ -4273,8 +4332,10 @@ mod tests {
     #[test]
     fn describe_issue_pretty_printer_includes_sections() {
         let main_patch_id = patch_id("p-main");
-        let main_patch_record = PatchRecord::new(
+        let main_patch_record = PatchVersionRecord::new(
             main_patch_id.clone(),
+            0,
+            Utc::now(),
             Patch::new(
                 "main patch".into(),
                 "desc".into(),
@@ -4290,8 +4351,10 @@ mod tests {
         );
         let description = IssueDescription {
             issue: IssueWithPatches {
-                issue: IssueRecord::new(
+                issue: IssueVersionRecord::new(
                     issue_id("i-main"),
+                    0,
+                    Utc::now(),
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
@@ -4309,8 +4372,10 @@ mod tests {
                 patches: vec![main_patch_record],
             },
             parents: vec![IssueWithPatches {
-                issue: IssueRecord::new(
+                issue: IssueVersionRecord::new(
                     issue_id("i-parent"),
+                    0,
+                    Utc::now(),
                     Issue::new(
                         IssueType::Feature,
                         "Parent".into(),
@@ -4450,7 +4515,12 @@ mod tests {
 
         let description = IssueDescription {
             issue: IssueWithPatches {
-                issue: IssueRecord::new(main_issue_id.clone(), issue_versions[1].item.clone()),
+                issue: IssueVersionRecord::new(
+                    main_issue_id.clone(),
+                    0,
+                    Utc::now(),
+                    issue_versions[1].item.clone(),
+                ),
                 patches: Vec::new(),
             },
             parents: vec![],
@@ -4474,8 +4544,10 @@ mod tests {
     fn describe_issue_pretty_printer_includes_progress() {
         let description = IssueDescription {
             issue: IssueWithPatches {
-                issue: IssueRecord::new(
+                issue: IssueVersionRecord::new(
                     issue_id("i-main"),
+                    0,
+                    Utc::now(),
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
@@ -4493,8 +4565,10 @@ mod tests {
                 patches: Vec::new(),
             },
             parents: vec![IssueWithPatches {
-                issue: IssueRecord::new(
+                issue: IssueVersionRecord::new(
                     issue_id("i-parent"),
+                    0,
+                    Utc::now(),
                     Issue::new(
                         IssueType::Feature,
                         "Parent".into(),
@@ -4512,8 +4586,10 @@ mod tests {
                 patches: Vec::new(),
             }],
             children: vec![IssueWithPatches {
-                issue: IssueRecord::new(
+                issue: IssueVersionRecord::new(
                     issue_id("i-child"),
+                    0,
+                    Utc::now(),
                     Issue::new(
                         IssueType::Bug,
                         "Child".into(),
@@ -4551,8 +4627,10 @@ mod tests {
         ];
         let description = IssueDescription {
             issue: IssueWithPatches {
-                issue: IssueRecord::new(
+                issue: IssueVersionRecord::new(
                     issue_id("i-main"),
+                    0,
+                    Utc::now(),
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
@@ -4570,8 +4648,10 @@ mod tests {
                 patches: Vec::new(),
             },
             parents: vec![IssueWithPatches {
-                issue: IssueRecord::new(
+                issue: IssueVersionRecord::new(
                     issue_id("i-parent"),
+                    0,
+                    Utc::now(),
                     Issue::new(
                         IssueType::Task,
                         "Parent description".into(),
@@ -4589,8 +4669,10 @@ mod tests {
                 patches: Vec::new(),
             }],
             children: vec![IssueWithPatches {
-                issue: IssueRecord::new(
+                issue: IssueVersionRecord::new(
                     issue_id("i-child"),
+                    0,
+                    Utc::now(),
                     Issue::new(
                         IssueType::Bug,
                         "Child description".into(),
@@ -4647,8 +4729,10 @@ mod tests {
         ];
         let description = IssueDescription {
             issue: IssueWithPatches {
-                issue: IssueRecord::new(
+                issue: IssueVersionRecord::new(
                     issue_id("i-main"),
+                    0,
+                    Utc::now(),
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
@@ -4663,8 +4747,10 @@ mod tests {
                         false,
                     ),
                 ),
-                patches: vec![PatchRecord::new(
+                patches: vec![PatchVersionRecord::new(
                     main_patch_id,
+                    0,
+                    Utc::now(),
                     Patch::new(
                         "main patch".into(),
                         "desc".into(),

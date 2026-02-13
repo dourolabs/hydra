@@ -222,7 +222,7 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
         "Code change description".to_string(),
     )
     .await?
-    .id;
+    .issue_id;
 
     let queue_config = AgentQueueConfig {
         name: "reviewer".to_string(),
@@ -269,7 +269,7 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
         "Code change description".to_string(),
     )
     .await?
-    .id;
+    .issue_id;
 
     spawner.run_iteration().await;
 
@@ -285,7 +285,7 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
     let job = jobs
         .first()
         .context("expected review task to be spawned for merge request")?;
-    let job_id = job.id.clone();
+    let job_id = job.job_id.clone();
 
     env.state.start_pending_task(job_id.clone()).await;
 

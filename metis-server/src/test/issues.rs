@@ -16,9 +16,9 @@ use chrono::Utc;
 use metis_common::{
     IssueId, PatchId,
     api::v1::issues::{
-        AddTodoItemRequest, IssueRecord, IssueVersionRecord, ListIssueVersionsResponse,
-        ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
-        TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+        AddTodoItemRequest, IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse,
+        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse,
+        UpsertIssueRequest, UpsertIssueResponse,
     },
 };
 use reqwest::StatusCode;
@@ -123,7 +123,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
 
     assert_eq!(updated.issue_id, created.issue_id);
 
-    let fetched: IssueRecord = client
+    let fetched: IssueVersionRecord = client
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
@@ -352,7 +352,7 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
         .json()
         .await?;
 
-    let fetched: IssueRecord = client
+    let fetched: IssueVersionRecord = client
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
@@ -391,7 +391,7 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
         .json()
         .await?;
 
-    let fetched_explicit: IssueRecord = client
+    let fetched_explicit: IssueVersionRecord = client
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
@@ -1092,7 +1092,7 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
         .await?;
     assert_eq!(replaced.todo_list, replacement.todo_list);
 
-    let fetched: IssueRecord = client
+    let fetched: IssueVersionRecord = client
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
@@ -1149,7 +1149,7 @@ async fn delete_issue_basic_operation() -> anyhow::Result<()> {
         .await?;
 
     // Delete the issue
-    let deleted: IssueRecord = client
+    let deleted: IssueVersionRecord = client
         .delete(format!(
             "{}/v1/issues/{}",
             server.base_url(),
@@ -1171,7 +1171,7 @@ async fn delete_issue_basic_operation() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    assert!(!list.issues.iter().any(|i| i.id == created.issue_id));
+    assert!(!list.issues.iter().any(|i| i.issue_id == created.issue_id));
 
     Ok(())
 }
@@ -1222,7 +1222,12 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    assert!(!list_without.issues.iter().any(|i| i.id == created.issue_id));
+    assert!(
+        !list_without
+            .issues
+            .iter()
+            .any(|i| i.issue_id == created.issue_id)
+    );
 
     // List with include_deleted=true - verify present with deleted=true
     let list_with: ListIssuesResponse = client
@@ -1240,7 +1245,10 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    let deleted_issue = list_with.issues.iter().find(|i| i.id == created.issue_id);
+    let deleted_issue = list_with
+        .issues
+        .iter()
+        .find(|i| i.issue_id == created.issue_id);
 
     assert!(deleted_issue.is_some());
     assert!(deleted_issue.unwrap().issue.deleted);

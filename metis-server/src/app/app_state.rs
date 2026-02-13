@@ -21,7 +21,7 @@ use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::repositories::SearchRepositoriesQuery;
 use metis_common::{
-    DocumentId, PatchId, RepoName, TaskId, Versioned,
+    DocumentId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     api::v1 as api,
     issues::IssueId,
     job_status::{JobStatusUpdate, SetJobStatusResponse},
@@ -574,7 +574,7 @@ impl AppState {
         &self,
         document_id: Option<DocumentId>,
         document: Document,
-    ) -> Result<DocumentId, UpsertDocumentError> {
+    ) -> Result<(DocumentId, VersionNumber), UpsertDocumentError> {
         let store = self.store.as_ref();
 
         let old_document = match &document_id {
@@ -617,7 +617,7 @@ impl AppState {
                 // old_document is Some in update path
                 document.created_by = old_document.unwrap().created_by;
 
-                store
+                let version = store
                     .update_document(&id, document)
                     .await
                     .map_err(|source| match source {
@@ -629,11 +629,11 @@ impl AppState {
                     })?;
 
                 info!(document_id = %id, "document updated");
-                Ok(id)
+                Ok((id, version))
             }
             None => {
                 let created_by = document.created_by.clone();
-                let (document_id, _version) = store
+                let (document_id, version) = store
                     .add_document(document)
                     .await
                     .map_err(|source| UpsertDocumentError::Store { source })?;
@@ -643,7 +643,7 @@ impl AppState {
                     created_by = ?created_by,
                     "document created"
                 );
-                Ok(document_id)
+                Ok((document_id, version))
             }
         }
     }
@@ -1574,7 +1574,7 @@ impl AppState {
         actor: Option<&Actor>,
         patch_id: Option<PatchId>,
         request: api::patches::UpsertPatchRequest,
-    ) -> Result<PatchId, UpsertPatchError> {
+    ) -> Result<(PatchId, VersionNumber), UpsertPatchError> {
         let api::patches::UpsertPatchRequest {
             patch,
             sync_github_branch,
@@ -1583,7 +1583,7 @@ impl AppState {
         let mut patch: Patch = patch.into();
 
         let store = self.store.as_ref();
-        let patch_id = match patch_id {
+        let (patch_id, version) = match patch_id {
             Some(id) => {
                 let existing_patch =
                     store
@@ -1608,18 +1608,19 @@ impl AppState {
                         .await?;
                 }
 
-                store
-                    .update_patch(&id, patch)
-                    .await
-                    .map_err(|source| match source {
-                        StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
-                            patch_id: id.clone(),
-                            source,
-                        },
-                        other => UpsertPatchError::Store { source: other },
-                    })?;
+                let version =
+                    store
+                        .update_patch(&id, patch)
+                        .await
+                        .map_err(|source| match source {
+                            StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
+                                patch_id: id.clone(),
+                                source,
+                            },
+                            other => UpsertPatchError::Store { source: other },
+                        })?;
 
-                id
+                (id, version)
             }
             None => {
                 // Run restriction policies before persisting
@@ -1633,7 +1634,7 @@ impl AppState {
                         .await?;
                 }
 
-                let (id, _version) =
+                let (id, version) =
                     store
                         .add_patch(patch)
                         .await
@@ -1644,26 +1645,26 @@ impl AppState {
                             },
                             other => UpsertPatchError::Store { source: other },
                         })?;
-                id
+                (id, version)
             }
         };
 
         tracing::info!(patch_id = %patch_id, "patch stored successfully");
 
-        Ok(patch_id)
+        Ok((patch_id, version))
     }
 
     pub async fn upsert_issue(
         &self,
         issue_id: Option<IssueId>,
         request: api::issues::UpsertIssueRequest,
-    ) -> Result<IssueId, UpsertIssueError> {
+    ) -> Result<(IssueId, VersionNumber), UpsertIssueError> {
         let api::issues::UpsertIssueRequest { issue, job_id, .. } = request;
         let mut issue: Issue = issue.into();
 
         let store = self.store.as_ref();
 
-        let issue_id = match issue_id {
+        let (issue_id, version) = match issue_id {
             Some(id) => {
                 if job_id.is_some() {
                     return Err(UpsertIssueError::JobIdProvidedForUpdate);
@@ -1679,7 +1680,7 @@ impl AppState {
                 }
 
                 match store.update_issue(&id, updated_issue).await {
-                    Ok(_version) => id,
+                    Ok(version) => (id, version),
                     Err(source @ StoreError::IssueNotFound(_)) => {
                         return Err(UpsertIssueError::IssueNotFound {
                             issue_id: id.clone(),
@@ -1758,7 +1759,7 @@ impl AppState {
                     self.policy_engine.check_create_issue(&issue, store).await?;
                 }
 
-                let (id, _version) =
+                let (id, version) =
                     store
                         .add_issue(issue)
                         .await
@@ -1774,13 +1775,13 @@ impl AppState {
                                 issue_id: None,
                             },
                         })?;
-                id
+                (id, version)
             }
         };
 
         info!(issue_id = %issue_id, "issue stored successfully");
 
-        Ok(issue_id)
+        Ok((issue_id, version))
     }
 
     pub async fn add_todo_item(
@@ -2489,7 +2490,7 @@ mod tests {
         let request = api::patches::UpsertPatchRequest::new(patch.into())
             .with_sync_github_branch("metis-t-test");
 
-        let patch_id = handles
+        let (patch_id, _) = handles
             .state
             .upsert_patch(Some(&actor), None, request)
             .await?;
@@ -2925,7 +2926,7 @@ mod tests {
         let runner = start_test_automation_runner(&state);
 
         let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        let parent_id = state
+        let (parent_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
@@ -2937,7 +2938,7 @@ mod tests {
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child_issue =
             issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
-        let child_id = state
+        let (child_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.clone().into(), None),
@@ -2952,7 +2953,7 @@ mod tests {
             IssueStatus::Open,
             vec![grandchild_dependency.clone()],
         );
-        let grandchild_id = state
+        let (grandchild_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(grandchild_issue.clone().into(), None),
@@ -3033,7 +3034,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let blocker_issue = issue_with_status("blocker", IssueStatus::Open, vec![]);
-        let blocker_id = state
+        let (blocker_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(blocker_issue.into(), None),
@@ -3047,7 +3048,7 @@ mod tests {
         )];
         let blocked_issue =
             issue_with_status("blocked", IssueStatus::Open, blocked_dependencies.clone());
-        let blocked_issue_id = state
+        let (blocked_issue_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(blocked_issue.into(), None),
@@ -3107,7 +3108,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        let parent_id = state
+        let (parent_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
@@ -3119,7 +3120,7 @@ mod tests {
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child_issue =
             issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
-        let child_id = state
+        let (child_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
@@ -3182,7 +3183,7 @@ mod tests {
         issue
             .todo_list
             .push(TodoItem::new("finish task".to_string(), false));
-        let issue_id = state
+        let (issue_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(issue.clone().into(), None),
@@ -3238,7 +3239,7 @@ mod tests {
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         parent_issue.creator = Username::from("parent-creator");
-        let parent_id = state
+        let (parent_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
@@ -3250,7 +3251,7 @@ mod tests {
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
         child_issue.creator = Username::from("");
-        let child_id = state
+        let (child_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
@@ -3270,7 +3271,7 @@ mod tests {
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         parent_issue.creator = Username::from("parent-creator");
-        let parent_id = state
+        let (parent_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
@@ -3282,7 +3283,7 @@ mod tests {
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
         child_issue.creator = Username::from("explicit-creator");
-        let child_id = state
+        let (child_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
@@ -3443,7 +3444,7 @@ mod tests {
 
         let issue = issue_with_status("test issue", IssueStatus::Open, Vec::new());
         let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
-        let issue_id = state
+        let (issue_id, _) = state
             .upsert_issue(None, request)
             .await
             .expect("create should succeed");
@@ -3475,7 +3476,7 @@ mod tests {
 
         let issue = issue_with_status("doomed issue", IssueStatus::Open, Vec::new());
         let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
-        let issue_id = state
+        let (issue_id, _) = state
             .upsert_issue(None, request)
             .await
             .expect("create should succeed");
@@ -3536,7 +3537,7 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let patch1_id = handles.state.upsert_patch(None, None, request1).await?;
+        let (patch1_id, _) = handles.state.upsert_patch(None, None, request1).await?;
 
         let mut patch2 = Patch::new(
             "Second patch".to_string(),
@@ -3594,7 +3595,7 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let patch1_id = handles.state.upsert_patch(None, None, request1).await?;
+        let (patch1_id, _) = handles.state.upsert_patch(None, None, request1).await?;
 
         // Close the first patch
         let mut closed_patch = handles.store.get_patch(&patch1_id, false).await?.item;
@@ -3638,7 +3639,7 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let patch1_id = handles.state.upsert_patch(None, None, request1).await?;
+        let (patch1_id, _) = handles.state.upsert_patch(None, None, request1).await?;
 
         // Updating the same patch should succeed (the uniqueness check is only
         // on creates, not updates).
@@ -3864,7 +3865,7 @@ mod tests {
         let runner = start_test_automation_runner(&state);
 
         let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        let parent_id = state
+        let (parent_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
@@ -3876,7 +3877,7 @@ mod tests {
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child_issue =
             issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
-        let child_id = state
+        let (child_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
@@ -3933,7 +3934,7 @@ mod tests {
         let runner = start_test_automation_runner(&state);
 
         let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        let parent_id = state
+        let (parent_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
@@ -3945,7 +3946,7 @@ mod tests {
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child_issue =
             issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
-        let child_id = state
+        let (child_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
@@ -3983,7 +3984,7 @@ mod tests {
         let runner = start_test_automation_runner(&state);
 
         let blocker_issue = issue_with_status("blocker", IssueStatus::Open, vec![]);
-        let blocker_id = state
+        let (blocker_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(blocker_issue.clone().into(), None),
@@ -3994,7 +3995,7 @@ mod tests {
         let blocked_dep = IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone());
         let dependent_issue =
             issue_with_status("dependent", IssueStatus::Open, vec![blocked_dep.clone()]);
-        let dependent_id = state
+        let (dependent_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(dependent_issue.into(), None),
@@ -4006,7 +4007,7 @@ mod tests {
             IssueDependency::new(IssueDependencyType::ChildOf, dependent_id.clone());
         let dep_child_issue =
             issue_with_status("dep-child", IssueStatus::Open, vec![dep_child_dep]);
-        let dep_child_id = state
+        let (dep_child_id, _) = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(dep_child_issue.into(), None),
@@ -4091,7 +4092,7 @@ mod tests {
             IssueStatus::Failed,
         ] {
             let blocker_issue = issue_with_status("blocker", terminal_status, vec![]);
-            let blocker_id = state
+            let (blocker_id, _) = state
                 .upsert_issue(
                     None,
                     api::issues::UpsertIssueRequest::new(blocker_issue.into(), None),
@@ -4103,7 +4104,7 @@ mod tests {
                 IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone());
             let blocked_issue =
                 issue_with_status("blocked", IssueStatus::Open, vec![blocked_dep.clone()]);
-            let blocked_id = state
+            let (blocked_id, _) = state
                 .upsert_issue(
                     None,
                     api::issues::UpsertIssueRequest::new(blocked_issue.into(), None),

@@ -117,7 +117,7 @@ async fn wait_for_job_completion_via_server(
         if let Some(job) = response
             .jobs
             .iter()
-            .find(|job| job.id.as_ref() == job_id.as_ref())
+            .find(|job| job.job_id.as_ref() == job_id.as_ref())
         {
             match job.task.status {
                 Status::Complete => {
@@ -248,7 +248,7 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::Mock;
     use metis_common::{
-        jobs::{BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, Task},
+        jobs::{BundleSpec, CreateJobResponse, JobVersionRecord, ListJobsResponse, Task},
         task_status::{Status, TaskError},
     };
     use reqwest::Client as HttpClient;
@@ -264,9 +264,15 @@ mod tests {
         ids::task_id(value)
     }
 
-    fn job_record_with_status(id: &str, status: Status, error: Option<TaskError>) -> JobRecord {
-        JobRecord::new(
+    fn job_record_with_status(
+        id: &str,
+        status: Status,
+        error: Option<TaskError>,
+    ) -> JobVersionRecord {
+        JobVersionRecord::new(
             task_id(id),
+            0,
+            chrono::Utc::now(),
             Task::new_with_status(
                 "0".to_string(),
                 BundleSpec::None,
@@ -285,13 +291,13 @@ mod tests {
         )
     }
 
-    fn job_record(id: &str) -> JobRecord {
+    fn job_record(id: &str) -> JobVersionRecord {
         job_record_with_status(id, Status::Created, None)
     }
 
-    fn mock_get_job(server: &MockServer, job: JobRecord) -> Mock {
+    fn mock_get_job(server: &MockServer, job: JobVersionRecord) -> Mock {
         server.mock(|when, then| {
-            when.method(GET).path(format!("/v1/jobs/{}", job.id));
+            when.method(GET).path(format!("/v1/jobs/{}", job.job_id));
             then.status(200).json_body_obj(&job);
         })
     }

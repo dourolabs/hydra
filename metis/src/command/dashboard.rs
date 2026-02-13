@@ -14,11 +14,11 @@ use futures::StreamExt;
 use metis_common::{
     api::v1::events::{EventsQuery, SseEventType},
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueRecord as ApiIssueRecord, IssueStatus,
-        IssueType, JobSettings, SearchIssuesQuery, UpsertIssueRequest,
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
+        IssueVersionRecord as ApiIssueRecord, JobSettings, SearchIssuesQuery, UpsertIssueRequest,
     },
-    jobs::{JobRecord, SearchJobsQuery},
-    patches::{GithubPr, PatchRecord},
+    jobs::{JobVersionRecord, SearchJobsQuery},
+    patches::{GithubPr, PatchVersionRecord},
     repositories::SearchRepositoriesQuery,
     task_status::{Status, TaskError},
     users::Username,
@@ -1505,7 +1505,7 @@ async fn open_issue_pr(
     }
 }
 
-fn patch_pr_url(patch: &PatchRecord) -> Option<String> {
+fn patch_pr_url(patch: &PatchVersionRecord) -> Option<String> {
     patch.patch.github.as_ref().map(github_pr_url)
 }
 
@@ -3103,7 +3103,7 @@ async fn fetch_repositories(client: &dyn MetisClientInterface) -> Result<Vec<Rep
 fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
     let issue = record.issue;
     Some(IssueRecord {
-        id: record.id,
+        id: record.issue_id,
         issue_type: issue.issue_type,
         description: issue.description,
         creator: issue.creator,
@@ -3863,7 +3863,7 @@ fn issue_status_order(status: IssueStatus) -> usize {
     }
 }
 
-fn summarize_job(job: JobRecord, now: DateTime<Utc>) -> JobDisplay {
+fn summarize_job(job: JobVersionRecord, now: DateTime<Utc>) -> JobDisplay {
     let status = job.task.status;
     let runtime = output::format_runtime(&job.task, now);
     let last_change = job
@@ -3874,7 +3874,7 @@ fn summarize_job(job: JobRecord, now: DateTime<Utc>) -> JobDisplay {
     let note = note_or_error(&job);
 
     JobDisplay {
-        id: job.id,
+        id: job.job_id,
         status,
         runtime,
         note,
@@ -3918,7 +3918,7 @@ fn compare_recent(a: Option<DateTime<Utc>>, b: Option<DateTime<Utc>>) -> Orderin
     }
 }
 
-fn note_or_error(job: &JobRecord) -> String {
+fn note_or_error(job: &JobVersionRecord) -> String {
     if let Some(error) = &job.task.error {
         return format_task_error(error);
     }
@@ -4081,7 +4081,7 @@ mod tests {
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
 
-    fn job_with_status(id: &str, status: Status, _offset_seconds: i64) -> JobRecord {
+    fn job_with_status(id: &str, status: Status, _offset_seconds: i64) -> JobVersionRecord {
         let error = if status == Status::Failed {
             Some(TaskError::JobEngineError {
                 reason: "boom".into(),
@@ -4089,8 +4089,10 @@ mod tests {
         } else {
             None
         };
-        JobRecord::new(
+        JobVersionRecord::new(
             task_id(id),
+            0,
+            Utc::now(),
             Task::new_with_status(
                 "0".into(),
                 BundleSpec::None,
@@ -6237,7 +6239,7 @@ mod tests {
                 }
             }));
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new")));
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new"), 0));
         });
 
         let client =

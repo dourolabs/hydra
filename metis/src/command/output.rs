@@ -5,10 +5,10 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::ValueEnum;
 use metis_common::{
     agents::AgentRecord,
-    documents::DocumentRecord,
-    issues::{Issue, IssueRecord},
-    jobs::{JobRecord, Task},
-    patches::{PatchRecord, PatchStatus},
+    documents::DocumentVersionRecord,
+    issues::{Issue, IssueVersionRecord},
+    jobs::{JobVersionRecord, Task},
+    patches::{PatchStatus, PatchVersionRecord},
     repositories::RepositoryRecord,
     task_status::{Status, TaskError},
     whoami::ActorIdentity,
@@ -68,7 +68,7 @@ pub async fn resolve_output_format(
 
 pub fn render_issue_records(
     format: ResolvedOutputFormat,
-    issues: &[IssueRecord],
+    issues: &[IssueVersionRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
     match format {
@@ -79,7 +79,7 @@ pub fn render_issue_records(
 
 pub fn render_patch_records(
     format: ResolvedOutputFormat,
-    patches: &[PatchRecord],
+    patches: &[PatchVersionRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
     match format {
@@ -90,7 +90,7 @@ pub fn render_patch_records(
 
 pub fn render_job_records(
     format: ResolvedOutputFormat,
-    jobs: &[JobRecord],
+    jobs: &[JobVersionRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
     match format {
@@ -123,7 +123,7 @@ pub fn render_repository_records(
 
 pub fn render_document_records(
     format: ResolvedOutputFormat,
-    documents: &[DocumentRecord],
+    documents: &[DocumentVersionRecord],
     full_output: bool,
     writer: &mut impl Write,
 ) -> Result<()> {
@@ -146,7 +146,10 @@ async fn resolve_auto_output_format(
     })
 }
 
-fn render_issue_records_jsonl(issues: &[IssueRecord], writer: &mut impl Write) -> Result<()> {
+fn render_issue_records_jsonl(
+    issues: &[IssueVersionRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
     for issue in issues {
         serde_json::to_writer(&mut *writer, issue)?;
         writer.write_all(b"\n")?;
@@ -155,7 +158,10 @@ fn render_issue_records_jsonl(issues: &[IssueRecord], writer: &mut impl Write) -
     Ok(())
 }
 
-fn render_issue_records_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Result<()> {
+fn render_issue_records_pretty(
+    issues: &[IssueVersionRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
     for (index, issue_record) in issues.iter().enumerate() {
         let Issue {
             issue_type,
@@ -168,7 +174,11 @@ fn render_issue_records_pretty(issues: &[IssueRecord], writer: &mut impl Write) 
             ..
         } = &issue_record.issue;
 
-        writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
+        writeln!(
+            writer,
+            "Issue {} ({issue_type}, {status})",
+            issue_record.issue_id
+        )?;
         writeln!(writer, "Creator: {}", creator.as_ref())?;
         writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
         writeln!(writer, "Description:")?;
@@ -210,7 +220,10 @@ fn render_issue_records_pretty(issues: &[IssueRecord], writer: &mut impl Write) 
     Ok(())
 }
 
-fn render_patch_records_jsonl(patches: &[PatchRecord], writer: &mut impl Write) -> Result<()> {
+fn render_patch_records_jsonl(
+    patches: &[PatchVersionRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
     for patch in patches {
         serde_json::to_writer(&mut *writer, patch)?;
         writer.write_all(b"\n")?;
@@ -219,7 +232,10 @@ fn render_patch_records_jsonl(patches: &[PatchRecord], writer: &mut impl Write) 
     Ok(())
 }
 
-fn render_patch_records_pretty(patches: &[PatchRecord], writer: &mut impl Write) -> Result<()> {
+fn render_patch_records_pretty(
+    patches: &[PatchVersionRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
     for patch in patches {
         write_patch_record_pretty(patch, writer)?;
     }
@@ -227,14 +243,14 @@ fn render_patch_records_pretty(patches: &[PatchRecord], writer: &mut impl Write)
     Ok(())
 }
 
-fn write_patch_record_pretty(record: &PatchRecord, writer: &mut impl Write) -> Result<()> {
+fn write_patch_record_pretty(record: &PatchVersionRecord, writer: &mut impl Write) -> Result<()> {
     let title = extract_patch_title(record);
     let status = extract_patch_status(record);
     let description = extract_patch_description(record);
     writeln!(
         writer,
         "Patch {} [{}]: {}",
-        record.id,
+        record.patch_id,
         format_patch_status(status),
         title
     )?;
@@ -269,15 +285,15 @@ fn pretty_print_patch(patch: &str, writer: &mut impl Write) -> Result<()> {
     Ok(())
 }
 
-fn extract_patch_title(record: &PatchRecord) -> &str {
+fn extract_patch_title(record: &PatchVersionRecord) -> &str {
     record.patch.title.as_str()
 }
 
-fn extract_patch_status(record: &PatchRecord) -> PatchStatus {
+fn extract_patch_status(record: &PatchVersionRecord) -> PatchStatus {
     record.patch.status
 }
 
-fn extract_patch_description(record: &PatchRecord) -> &str {
+fn extract_patch_description(record: &PatchVersionRecord) -> &str {
     record.patch.description.as_str()
 }
 
@@ -291,7 +307,7 @@ fn format_patch_status(status: PatchStatus) -> &'static str {
     }
 }
 
-fn render_job_records_jsonl(jobs: &[JobRecord], writer: &mut impl Write) -> Result<()> {
+fn render_job_records_jsonl(jobs: &[JobVersionRecord], writer: &mut impl Write) -> Result<()> {
     for job in jobs {
         serde_json::to_writer(&mut *writer, job)?;
         writer.write_all(b"\n")?;
@@ -300,7 +316,7 @@ fn render_job_records_jsonl(jobs: &[JobRecord], writer: &mut impl Write) -> Resu
     Ok(())
 }
 
-fn render_job_records_pretty(jobs: &[JobRecord], writer: &mut impl Write) -> Result<()> {
+fn render_job_records_pretty(jobs: &[JobVersionRecord], writer: &mut impl Write) -> Result<()> {
     if jobs.is_empty() {
         writeln!(writer, "No Metis jobs found.")?;
         writer.flush()?;
@@ -318,7 +334,7 @@ fn render_job_records_pretty(jobs: &[JobRecord], writer: &mut impl Write) -> Res
         let status_display = format_status(&job.task.status);
         let runtime = format_runtime(&job.task, now).unwrap_or_else(|| "-".into());
         let notes = job_note(job).unwrap_or_else(|| "-".into());
-        let cells = job_row_cells(job.id.as_ref(), status_display, &runtime);
+        let cells = job_row_cells(job.job_id.as_ref(), status_display, &runtime);
         let plain_prefix = job_row_prefix(&cells);
         let colored_prefix = colored_job_row_prefix(&cells, &job.task.status);
         for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
@@ -421,7 +437,7 @@ fn write_repository_details(repository: &RepositoryRecord, writer: &mut impl Wri
 }
 
 fn render_document_records_jsonl(
-    documents: &[DocumentRecord],
+    documents: &[DocumentVersionRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
     for document in documents {
@@ -433,7 +449,7 @@ fn render_document_records_jsonl(
 }
 
 fn render_document_records_pretty(
-    documents: &[DocumentRecord],
+    documents: &[DocumentVersionRecord],
     full_output: bool,
     writer: &mut impl Write,
 ) -> Result<()> {
@@ -444,7 +460,7 @@ fn render_document_records_pretty(
     }
 
     for (index, record) in documents.iter().enumerate() {
-        writeln!(writer, "Document {}", record.id)?;
+        writeln!(writer, "Document {}", record.document_id)?;
         writeln!(writer, "Title: {}", record.document.title)?;
         let path = record.document.path.as_deref().unwrap_or("-");
         writeln!(writer, "Path: {path}")?;
@@ -545,7 +561,7 @@ fn format_status(status: &Status) -> &'static str {
     }
 }
 
-fn job_note(job: &JobRecord) -> Option<String> {
+fn job_note(job: &JobVersionRecord) -> Option<String> {
     job.task.error.as_ref().map(format_task_error)
 }
 
@@ -654,9 +670,10 @@ pub(crate) fn format_runtime(task: &Task, now: DateTime<Utc>) -> Option<String> 
 mod tests {
     use super::*;
     use crate::client::MetisClient;
+    use chrono::Utc;
     use httpmock::prelude::*;
     use metis_common::{
-        documents::{Document, DocumentRecord},
+        documents::{Document, DocumentVersionRecord},
         whoami::WhoAmIResponse,
         DocumentId, TaskId,
     };
@@ -779,7 +796,7 @@ mod tests {
         let document = Document::new("Doc".to_string(), body_lines.join("\n"), false)
             .with_path("docs/runbook.md")
             .with_created_by(TaskId::new());
-        let record = DocumentRecord::new(DocumentId::new(), document);
+        let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document);
         let mut output = Vec::new();
         render_document_records(ResolvedOutputFormat::Pretty, &[record], false, &mut output)
             .unwrap();
@@ -799,7 +816,7 @@ mod tests {
         let document = Document::new("Doc".to_string(), body_lines.join("\n"), false)
             .with_path("docs/runbook.md")
             .with_created_by(TaskId::new());
-        let record = DocumentRecord::new(DocumentId::new(), document);
+        let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document);
         let mut output = Vec::new();
         render_document_records(ResolvedOutputFormat::Pretty, &[record], true, &mut output)
             .unwrap();

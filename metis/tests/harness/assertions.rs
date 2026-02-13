@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use metis_common::{
-    issues::{IssueDependencyType, IssueRecord, IssueStatus},
-    jobs::JobRecord,
-    patches::{PatchRecord, PatchStatus},
+    issues::{IssueDependencyType, IssueStatus, IssueVersionRecord},
+    jobs::JobVersionRecord,
+    patches::{PatchStatus, PatchVersionRecord},
     task_status::Status,
 };
 
@@ -15,7 +15,7 @@ use metis_common::{
 
 /// Structured assertions on issue records.
 ///
-/// Implemented on `IssueRecord` so tests can write:
+/// Implemented on `IssueVersionRecord` so tests can write:
 /// ```ignore
 /// let issue = user.get_issue(&id).await?;
 /// issue.assert_status(IssueStatus::Closed);
@@ -32,7 +32,7 @@ pub trait IssueAssertions {
     /// to this issue's ID.
     fn assert_has_child_with_status(
         &self,
-        all_issues: &[IssueRecord],
+        all_issues: &[IssueVersionRecord],
         desc_contains: &str,
         status: IssueStatus,
     );
@@ -44,26 +44,27 @@ pub trait IssueAssertions {
     fn assert_has_patch(&self);
 }
 
-impl IssueAssertions for IssueRecord {
+impl IssueAssertions for IssueVersionRecord {
     fn assert_status(&self, expected: IssueStatus) {
         assert_eq!(
             self.issue.status, expected,
             "issue {}: expected status {:?}, got {:?}",
-            self.id, expected, self.issue.status
+            self.issue_id, expected, self.issue.status
         );
     }
 
     fn assert_has_child_with_status(
         &self,
-        all_issues: &[IssueRecord],
+        all_issues: &[IssueVersionRecord],
         desc_contains: &str,
         status: IssueStatus,
     ) {
-        let children: Vec<&IssueRecord> = all_issues
+        let children: Vec<&IssueVersionRecord> = all_issues
             .iter()
             .filter(|issue| {
                 issue.issue.dependencies.iter().any(|dep| {
-                    dep.dependency_type == IssueDependencyType::ChildOf && dep.issue_id == self.id
+                    dep.dependency_type == IssueDependencyType::ChildOf
+                        && dep.issue_id == self.issue_id
                 })
             })
             .collect();
@@ -78,14 +79,14 @@ impl IssueAssertions for IssueRecord {
                 .map(|c| {
                     format!(
                         "  {} (status={:?}, desc={:?})",
-                        c.id, c.issue.status, c.issue.description
+                        c.issue_id, c.issue.status, c.issue.description
                     )
                 })
                 .collect();
             panic!(
                 "issue {}: expected a child with description containing {:?} and status {:?}, \
                  but no matching child found.\nchildren:\n{}",
-                self.id,
+                self.issue_id,
                 desc_contains,
                 status,
                 if child_summaries.is_empty() {
@@ -102,7 +103,7 @@ impl IssueAssertions for IssueRecord {
         assert_eq!(
             actual, expected,
             "issue {}: expected {} todo items, got {}",
-            self.id, expected, actual
+            self.issue_id, expected, actual
         );
     }
 
@@ -110,7 +111,7 @@ impl IssueAssertions for IssueRecord {
         assert!(
             !self.issue.patches.is_empty(),
             "issue {}: expected at least one patch, but patches list is empty",
-            self.id
+            self.issue_id
         );
     }
 }
@@ -135,12 +136,12 @@ pub trait PatchAssertions {
     fn assert_diff_contains(&self, text: &str);
 }
 
-impl PatchAssertions for PatchRecord {
+impl PatchAssertions for PatchVersionRecord {
     fn assert_status(&self, expected: PatchStatus) {
         assert_eq!(
             self.patch.status, expected,
             "patch {}: expected status {:?}, got {:?}",
-            self.id, expected, self.patch.status
+            self.patch_id, expected, self.patch.status
         );
     }
 
@@ -151,7 +152,7 @@ impl PatchAssertions for PatchRecord {
                 assert_eq!(
                     r.is_approved, is_approved,
                     "patch {}: review from '{}' expected is_approved={}, got is_approved={}",
-                    self.id, author, is_approved, r.is_approved
+                    self.patch_id, author, is_approved, r.is_approved
                 );
             }
             None => {
@@ -163,7 +164,7 @@ impl PatchAssertions for PatchRecord {
                     .collect();
                 panic!(
                     "patch {}: expected review from '{}', but only found reviews from: {:?}",
-                    self.id, author, authors
+                    self.patch_id, author, authors
                 );
             }
         }
@@ -173,7 +174,7 @@ impl PatchAssertions for PatchRecord {
         assert!(
             self.patch.diff.contains(text),
             "patch {}: expected diff to contain {:?}, but it does not.\ndiff preview: {:?}",
-            self.id,
+            self.patch_id,
             text,
             &self.patch.diff[..self.patch.diff.len().min(200)]
         );
@@ -197,12 +198,12 @@ pub trait JobAssertions {
     fn assert_env_var(&self, key: &str, value: &str);
 }
 
-impl JobAssertions for JobRecord {
+impl JobAssertions for JobVersionRecord {
     fn assert_status(&self, expected: Status) {
         assert_eq!(
             self.task.status, expected,
             "job {}: expected status {:?}, got {:?}",
-            self.id, expected, self.task.status
+            self.job_id, expected, self.task.status
         );
     }
 
@@ -212,14 +213,14 @@ impl JobAssertions for JobRecord {
                 assert_eq!(
                     actual, value,
                     "job {}: env var '{}' expected value {:?}, got {:?}",
-                    self.id, key, value, actual
+                    self.job_id, key, value, actual
                 );
             }
             None => {
                 let keys: Vec<&str> = self.task.env_vars.keys().map(|k| k.as_str()).collect();
                 panic!(
                     "job {}: expected env var '{}', but only found: {:?}",
-                    self.id, key, keys
+                    self.job_id, key, keys
                 );
             }
         }

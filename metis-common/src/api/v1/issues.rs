@@ -524,19 +524,6 @@ impl JobSettings {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct IssueRecord {
-    pub id: IssueId,
-    pub issue: Issue,
-}
-
-impl IssueRecord {
-    pub fn new(id: IssueId, issue: Issue) -> Self {
-        Self { id, issue }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct IssueVersionRecord {
     pub issue_id: IssueId,
     pub version: VersionNumber,
@@ -578,11 +565,12 @@ impl UpsertIssueRequest {
 #[non_exhaustive]
 pub struct UpsertIssueResponse {
     pub issue_id: IssueId,
+    pub version: VersionNumber,
 }
 
 impl UpsertIssueResponse {
-    pub fn new(issue_id: IssueId) -> Self {
-        Self { issue_id }
+    pub fn new(issue_id: IssueId, version: VersionNumber) -> Self {
+        Self { issue_id, version }
     }
 }
 
@@ -659,11 +647,11 @@ impl SearchIssuesQuery {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ListIssuesResponse {
-    pub issues: Vec<IssueRecord>,
+    pub issues: Vec<IssueVersionRecord>,
 }
 
 impl ListIssuesResponse {
-    pub fn new(issues: Vec<IssueRecord>) -> Self {
+    pub fn new(issues: Vec<IssueVersionRecord>) -> Self {
         Self { issues }
     }
 }

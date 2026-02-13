@@ -1,4 +1,4 @@
-use crate::domain::issues::{Issue, TodoItem};
+use crate::domain::issues::TodoItem;
 use crate::{
     app::{AppState, UpdateTodoListError, UpsertIssueError},
     store::StoreError,
@@ -88,13 +88,15 @@ pub async fn create_issue(
     Json(payload): Json<api_issues::UpsertIssueRequest>,
 ) -> Result<Json<api_issues::UpsertIssueResponse>, ApiError> {
     info!("create_issue invoked");
-    let issue_id = state
+    let (issue_id, version) = state
         .upsert_issue(None, payload)
         .await
         .map_err(map_upsert_issue_error)?;
 
     info!(issue_id = %issue_id, "create_issue completed");
-    Ok(Json(api_issues::UpsertIssueResponse::new(issue_id)))
+    Ok(Json(api_issues::UpsertIssueResponse::new(
+        issue_id, version,
+    )))
 }
 
 pub async fn update_issue(
@@ -103,19 +105,21 @@ pub async fn update_issue(
     Json(payload): Json<api_issues::UpsertIssueRequest>,
 ) -> Result<Json<api_issues::UpsertIssueResponse>, ApiError> {
     info!(issue_id = %issue_id, "update_issue invoked");
-    let issue_id = state
+    let (issue_id, version) = state
         .upsert_issue(Some(issue_id), payload)
         .await
         .map_err(map_upsert_issue_error)?;
 
     info!(issue_id = %issue_id, "update_issue completed");
-    Ok(Json(api_issues::UpsertIssueResponse::new(issue_id)))
+    Ok(Json(api_issues::UpsertIssueResponse::new(
+        issue_id, version,
+    )))
 }
 
 pub async fn get_issue(
     State(state): State<AppState>,
     IssueIdPath(issue_id): IssueIdPath,
-) -> Result<Json<api_issues::IssueRecord>, ApiError> {
+) -> Result<Json<api_issues::IssueVersionRecord>, ApiError> {
     info!(issue_id = %issue_id, "get_issue invoked");
     let issue = state
         .get_issue(&issue_id, false)
@@ -123,7 +127,12 @@ pub async fn get_issue(
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
     info!(issue_id = %issue_id, "get_issue completed");
-    let response = api_issues::IssueRecord::new(issue_id, issue.item.into());
+    let response = api_issues::IssueVersionRecord::new(
+        issue_id,
+        issue.version,
+        issue.timestamp,
+        issue.item.into(),
+    );
     Ok(Json(response))
 }
 
@@ -212,11 +221,6 @@ pub async fn list_issues(
         .await
         .map_err(|err| map_issue_error(err, None))?;
 
-    let issue_records: Vec<(IssueId, Issue)> = issues
-        .into_iter()
-        .map(|(id, issue)| (id, issue.item))
-        .collect();
-
     // Graph filtering stays in routes layer as it requires graph traversal
     let graph_matches = if graph_filters.is_empty() {
         None
@@ -229,14 +233,21 @@ pub async fn list_issues(
         )
     };
 
-    let filtered: Vec<api_issues::IssueRecord> = issue_records
+    let filtered: Vec<api_issues::IssueVersionRecord> = issues
         .into_iter()
         .filter(|(id, _)| {
             graph_matches
                 .as_ref()
                 .is_none_or(|allowed| allowed.contains(id))
         })
-        .map(|(id, issue)| api_issues::IssueRecord::new(id, issue.into()))
+        .map(|(id, versioned)| {
+            api_issues::IssueVersionRecord::new(
+                id,
+                versioned.version,
+                versioned.timestamp,
+                versioned.item.into(),
+            )
+        })
         .collect();
 
     let response = api_issues::ListIssuesResponse::new(filtered);
@@ -444,7 +455,7 @@ fn map_todo_error(err: UpdateTodoListError) -> ApiError {
 pub async fn delete_issue(
     State(state): State<AppState>,
     IssueIdPath(issue_id): IssueIdPath,
-) -> Result<Json<api_issues::IssueRecord>, ApiError> {
+) -> Result<Json<api_issues::IssueVersionRecord>, ApiError> {
     info!(issue_id = %issue_id, "delete_issue invoked");
     state
         .delete_issue(&issue_id)
@@ -457,6 +468,11 @@ pub async fn delete_issue(
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
     info!(issue_id = %issue_id, "delete_issue completed");
-    let response = api_issues::IssueRecord::new(issue_id, issue.item.into());
+    let response = api_issues::IssueVersionRecord::new(
+        issue_id,
+        issue.version,
+        issue.timestamp,
+        issue.item.into(),
+    );
     Ok(Json(response))
 }

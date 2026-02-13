@@ -6,13 +6,13 @@ use clap::{Args, Subcommand};
 use metis_common::{
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueId, IssueRecord, IssueStatus, IssueType,
-        UpsertIssueRequest,
+        Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
+        IssueVersionRecord, UpsertIssueRequest,
     },
     jobs::BundleSpec,
     merge_queues::MergeQueue,
     patches::{
-        Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
+        Patch, PatchStatus, PatchVersionRecord, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
     PatchId, RepoName, TaskId,
@@ -272,7 +272,7 @@ pub async fn run(
                 .delete_patch(&id)
                 .await
                 .with_context(|| format!("failed to delete patch '{id}'"))?;
-            println!("Deleted patch '{}'", deleted.id);
+            println!("Deleted patch '{}'", deleted.patch_id);
             Ok(())
         }
     }
@@ -421,7 +421,7 @@ async fn fetch_patches(
     client: &dyn MetisClientInterface,
     query: Option<String>,
     include_deleted: bool,
-) -> Result<Vec<PatchRecord>> {
+) -> Result<Vec<PatchVersionRecord>> {
     let include_deleted_opt = if include_deleted { Some(true) } else { None };
     let response = client
         .list_patches(&SearchPatchesQuery::new(query, include_deleted_opt))
@@ -432,8 +432,8 @@ async fn fetch_patches(
 
 #[derive(Debug)]
 struct CreatedPatch {
-    patch: PatchRecord,
-    merge_request_issue: Option<IssueRecord>,
+    patch: PatchVersionRecord,
+    merge_request_issue: Option<IssueVersionRecord>,
 }
 
 async fn create_patch(
@@ -520,8 +520,8 @@ async fn create_patch(
 
 fn write_patch_output(
     output_format: ResolvedOutputFormat,
-    patch: &PatchRecord,
-    merge_request_issue: Option<IssueRecord>,
+    patch: &PatchVersionRecord,
+    merge_request_issue: Option<IssueVersionRecord>,
 ) -> Result<()> {
     let mut buffer = Vec::new();
     render_patch_records(output_format, std::slice::from_ref(patch), &mut buffer)?;
@@ -541,7 +541,7 @@ async fn update_patch(
     status: Option<PatchStatus>,
     force: bool,
     base_ref: &str,
-) -> Result<PatchRecord> {
+) -> Result<PatchVersionRecord> {
     update_patch_inner(
         client,
         patch_id,
@@ -564,7 +564,7 @@ async fn update_patch_inner(
     force: bool,
     base_ref: &str,
     repo_root: Option<&Path>,
-) -> Result<PatchRecord> {
+) -> Result<PatchVersionRecord> {
     let description = match description {
         Some(value) => {
             let trimmed = value.trim();
@@ -639,7 +639,12 @@ async fn update_patch_inner(
         .await
         .with_context(|| format!("failed to update patch '{patch_id}'"))?;
 
-    Ok(PatchRecord::new(response.patch_id, updated_patch))
+    Ok(PatchVersionRecord::new(
+        response.patch_id,
+        response.version,
+        Utc::now(),
+        updated_patch,
+    ))
 }
 
 async fn merge_queue(
@@ -715,7 +720,7 @@ pub async fn create_merge_request_issue(
     parent_issue_id: IssueId,
     patch_title: String,
     patch_description: String,
-) -> Result<IssueRecord> {
+) -> Result<IssueVersionRecord> {
     let assignee = assignee.trim().to_string();
     if assignee.is_empty() {
         bail!("Assignee must not be empty.");
@@ -766,7 +771,12 @@ pub async fn create_merge_request_issue(
         .await
         .context("failed to create merge-request issue")?;
 
-    Ok(IssueRecord::new(response.issue_id, issue))
+    Ok(IssueVersionRecord::new(
+        response.issue_id,
+        response.version,
+        Utc::now(),
+        issue,
+    ))
 }
 
 pub async fn resolve_service_repo_name(
@@ -947,14 +957,14 @@ mod tests {
     use httpmock::{prelude::*, Mock};
     use metis_common::{
         issues::{
-            Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
-            UpsertIssueRequest, UpsertIssueResponse,
+            Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
+            IssueVersionRecord, UpsertIssueRequest, UpsertIssueResponse,
         },
-        jobs::{BundleSpec, JobRecord, Task},
+        jobs::{BundleSpec, JobVersionRecord, Task},
         merge_queues::{EnqueueMergePatchRequest, MergeQueue},
         patches::{
-            CommitRange, CreatePatchAssetResponse, GitOid, ListPatchesResponse, Patch, PatchRecord,
-            Review, UpsertPatchResponse,
+            CommitRange, CreatePatchAssetResponse, GitOid, ListPatchesResponse, Patch,
+            PatchVersionRecord, Review, UpsertPatchResponse,
         },
         users::Username,
         RepoName,
@@ -985,10 +995,10 @@ mod tests {
             .expect("failed to create metis client")
     }
 
-    fn mock_get_job(server: &MockServer, job: JobRecord) -> Mock {
+    fn mock_get_job(server: &MockServer, job: JobVersionRecord) -> Mock {
         server.mock(move |when, then| {
             when.method(GET)
-                .path(format!("/v1/jobs/{}", job.id.as_ref()));
+                .path(format!("/v1/jobs/{}", job.job_id.as_ref()));
             then.status(200).json_body_obj(&job);
         })
     }
@@ -1006,18 +1016,18 @@ mod tests {
         })
     }
 
-    fn mock_get_issue(server: &MockServer, issue_record: IssueRecord) -> Mock {
+    fn mock_get_issue(server: &MockServer, issue_record: IssueVersionRecord) -> Mock {
         server.mock(move |when, then| {
             when.method(GET)
-                .path(format!("/v1/issues/{}", issue_record.id.as_ref()));
+                .path(format!("/v1/issues/{}", issue_record.issue_id.as_ref()));
             then.status(200).json_body_obj(&issue_record);
         })
     }
 
-    fn mock_get_patch(server: &MockServer, patch: PatchRecord) -> Mock {
+    fn mock_get_patch(server: &MockServer, patch: PatchVersionRecord) -> Mock {
         server.mock(move |when, then| {
             when.method(GET)
-                .path(format!("/v1/patches/{}", patch.id.as_ref()));
+                .path(format!("/v1/patches/{}", patch.patch_id.as_ref()));
             then.status(200).json_body_obj(&patch);
         })
     }
@@ -1191,8 +1201,10 @@ mod tests {
         let job_id = task_id("t-job-diff");
         let issue_id = issue_id("i-diff");
         let branch_name = current_branch(&repo_path)?;
-        let job_record = JobRecord::new(
+        let job_record = JobVersionRecord::new(
             job_id.clone(),
+            0,
+            Utc::now(),
             Task::new(
                 "0".to_string(),
                 BundleSpec::ServiceRepository {
@@ -1232,8 +1244,8 @@ mod tests {
             head_commit,
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
-        let patch_response = UpsertPatchResponse::new(patch_id("p-1"));
-        let patch_record = PatchRecord::new(patch_id("p-1"), patch);
+        let patch_response = UpsertPatchResponse::new(patch_id("p-1"), 0);
+        let patch_record = PatchVersionRecord::new(patch_id("p-1"), 0, Utc::now(), patch);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1268,8 +1280,10 @@ mod tests {
         let branch_name = current_branch(&repo_path)?;
 
         let job_id = task_id("t-job-1234");
-        let job_record = JobRecord::new(
+        let job_record = JobVersionRecord::new(
             job_id.clone(),
+            0,
+            Utc::now(),
             Task::new(
                 "0".to_string(),
                 BundleSpec::ServiceRepository {
@@ -1311,8 +1325,8 @@ mod tests {
             head_commit,
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
-        let patch_response = UpsertPatchResponse::new(patch_id("p-2"));
-        let patch_record = PatchRecord::new(patch_id("p-2"), patch);
+        let patch_response = UpsertPatchResponse::new(patch_id("p-2"), 0);
+        let patch_record = PatchVersionRecord::new(patch_id("p-2"), 0, Utc::now(), patch);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1379,8 +1393,10 @@ mod tests {
         let client = metis_client(&server);
         let issue_id = issue_id("i-gh-token");
         let job_id = task_id("t-job-gh-token");
-        let job_record = JobRecord::new(
+        let job_record = JobVersionRecord::new(
             job_id.clone(),
+            0,
+            Utc::now(),
             Task::new(
                 "0".to_string(),
                 BundleSpec::ServiceRepository {
@@ -1437,8 +1453,10 @@ mod tests {
         let job_id = task_id("t-job-merge");
         let parent_issue = issue_id("i-parent");
         let branch_name = current_branch(&repo_path)?;
-        let job_record = JobRecord::new(
+        let job_record = JobVersionRecord::new(
             job_id.clone(),
+            0,
+            Utc::now(),
             Task::new(
                 "0".to_string(),
                 BundleSpec::ServiceRepository {
@@ -1476,8 +1494,10 @@ mod tests {
             head_commit,
         );
         let expected_patch_request = UpsertPatchRequest::new(patch.clone());
-        let parent_issue_record = IssueRecord::new(
+        let parent_issue_record = IssueVersionRecord::new(
             parent_issue.clone(),
+            0,
+            Utc::now(),
             Issue::new(
                 IssueType::Task,
                 "parent issue".to_string(),
@@ -1514,8 +1534,8 @@ mod tests {
             ),
             None,
         );
-        let patch_response = UpsertPatchResponse::new(created_patch_id.clone());
-        let patch_record = PatchRecord::new(created_patch_id.clone(), patch);
+        let patch_response = UpsertPatchResponse::new(created_patch_id.clone(), 0);
+        let patch_record = PatchVersionRecord::new(created_patch_id.clone(), 0, Utc::now(), patch);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1528,7 +1548,7 @@ mod tests {
                 .path("/v1/issues")
                 .json_body_obj(&issue_request);
             then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-merge")));
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-merge"), 0));
         });
 
         create_patch(
@@ -1576,7 +1596,7 @@ mod tests {
         expected_patch.branch_name = Some(branch_name);
         expected_patch.commit_range = Some(CommitRange::new(base_commit, head_commit));
         let expected_request = UpsertPatchRequest::new(expected_patch);
-        let patch_response = UpsertPatchResponse::new(patch_id("p-automatic"));
+        let patch_response = UpsertPatchResponse::new(patch_id("p-automatic"), 0);
         let server = MockServer::start();
         let client = metis_client(&server);
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
@@ -1606,8 +1626,10 @@ mod tests {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let branch_name = current_branch(&repo_path)?;
         let job_id = task_id("t-job-service");
-        let job_record = JobRecord::new(
+        let job_record = JobVersionRecord::new(
             job_id.clone(),
+            0,
+            Utc::now(),
             Task::new(
                 "0".to_string(),
                 BundleSpec::ServiceRepository {
@@ -1645,8 +1667,8 @@ mod tests {
             head_commit,
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
-        let patch_response = UpsertPatchResponse::new(patch_id("p-service"));
-        let patch_record = PatchRecord::new(patch_id("p-service"), patch);
+        let patch_response = UpsertPatchResponse::new(patch_id("p-service"), 0);
+        let patch_record = PatchVersionRecord::new(patch_id("p-service"), 0, Utc::now(), patch);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1696,8 +1718,10 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_id = task_id("t-job-non-service");
-        let job_record = JobRecord::new(
+        let job_record = JobVersionRecord::new(
             job_id.clone(),
+            0,
+            Utc::now(),
             Task::new(
                 "0".to_string(),
                 BundleSpec::GitRepository {
@@ -1735,8 +1759,10 @@ mod tests {
             Some(existing_submitted_at),
         );
         let review_patch_id = patch_id("p-review");
-        let patch_record = PatchRecord::new(
+        let patch_record = PatchVersionRecord::new(
             review_patch_id.clone(),
+            0,
+            Utc::now(),
             Patch::new(
                 "reviewed patch".to_string(),
                 "description".to_string(),
@@ -1771,7 +1797,7 @@ mod tests {
                 )
                 .body_contains("submitted_at");
             then.status(200)
-                .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123")));
+                .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123"), 0));
         });
 
         review_patch(
@@ -1793,8 +1819,10 @@ mod tests {
     async fn update_patch_modifies_requested_fields() -> Result<()> {
         // Use a non-git temp dir to isolate from the real project repo.
         let tempdir = tempfile::tempdir()?;
-        let patch_record = PatchRecord::new(
+        let patch_record = PatchVersionRecord::new(
             patch_id("p-update"),
+            0,
+            Utc::now(),
             Patch::new(
                 "Initial title".to_string(),
                 "Initial description".to_string(),
@@ -1837,7 +1865,7 @@ mod tests {
             &server,
             patch_id("p-update"),
             expected_request,
-            UpsertPatchResponse::new(patch_id("p-update")),
+            UpsertPatchResponse::new(patch_id("p-update"), 0),
         );
 
         update_patch_inner(

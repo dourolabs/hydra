@@ -132,7 +132,7 @@ impl Automation for CreateMergeRequestIssueAutomation {
             vec![patch_id.clone()],
         );
 
-        let issue_id = ctx
+        let (issue_id, _version) = ctx
             .app_state
             .upsert_issue(
                 None,

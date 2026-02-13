@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 use metis_common::{
-    jobs::{JobRecord, SearchJobsQuery},
+    jobs::{JobVersionRecord, SearchJobsQuery},
     IssueId,
 };
 use std::io::{self, Write};
@@ -35,7 +35,10 @@ pub async fn run(
     Ok(())
 }
 
-pub(crate) fn truncate_jobs(jobs: Vec<JobRecord>, limit: usize) -> (Vec<JobRecord>, bool) {
+pub(crate) fn truncate_jobs(
+    jobs: Vec<JobVersionRecord>,
+    limit: usize,
+) -> (Vec<JobVersionRecord>, bool) {
     if jobs.len() <= limit {
         return (jobs, false);
     }
@@ -51,6 +54,7 @@ mod tests {
         command::output::{CommandContext, ResolvedOutputFormat},
         test_utils::ids::{issue_id, task_id},
     };
+    use chrono::Utc;
     use httpmock::prelude::*;
     use metis_common::jobs::{BundleSpec, ListJobsResponse, Task};
     use std::collections::HashMap;
@@ -64,9 +68,11 @@ mod tests {
         }
     }
 
-    fn sample_job(id: &str) -> JobRecord {
-        JobRecord::new(
+    fn sample_job(id: &str) -> JobVersionRecord {
+        JobVersionRecord::new(
             task_id(id),
+            0,
+            Utc::now(),
             Task::new(
                 "0".to_string(),
                 BundleSpec::None,
@@ -94,13 +100,13 @@ mod tests {
 
         assert!(!truncated);
         assert_eq!(kept.len(), 3);
-        assert_eq!(kept[0].id, task_id("t-job-1"));
-        assert_eq!(kept[2].id, task_id("t-job-3"));
+        assert_eq!(kept[0].job_id, task_id("t-job-1"));
+        assert_eq!(kept[2].job_id, task_id("t-job-3"));
     }
 
     #[test]
     fn truncate_jobs_limits_to_requested_count() {
-        let jobs: Vec<JobRecord> = (0..12)
+        let jobs: Vec<JobVersionRecord> = (0..12)
             .map(|idx| sample_job(&format!("t-job-{idx}")))
             .collect();
 
@@ -108,8 +114,8 @@ mod tests {
 
         assert!(truncated);
         assert_eq!(kept.len(), 10);
-        assert_eq!(kept.first().unwrap().id, task_id("t-job-0"));
-        assert_eq!(kept.last().unwrap().id, task_id("t-job-9"));
+        assert_eq!(kept.first().unwrap().job_id, task_id("t-job-0"));
+        assert_eq!(kept.last().unwrap().job_id, task_id("t-job-9"));
     }
 
     #[tokio::test]

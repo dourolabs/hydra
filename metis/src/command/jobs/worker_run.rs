@@ -882,7 +882,7 @@ mod tests {
                 .path("/v1/patches")
                 .json_body_obj(&expected_request);
             then.status(200)
-                .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123")));
+                .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123"), 0));
         });
         // Mock the github token endpoint (always called now, but returns 401).
         server.mock(|when, then| {
@@ -927,7 +927,7 @@ mod tests {
         let patch_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/patches");
             then.status(200)
-                .json_body_obj(&UpsertPatchResponse::new(patch_id("p-456")));
+                .json_body_obj(&UpsertPatchResponse::new(patch_id("p-456"), 0));
         });
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;

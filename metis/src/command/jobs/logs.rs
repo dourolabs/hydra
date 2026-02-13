@@ -55,7 +55,7 @@ async fn stream_logs_for_issue(
 
     // Jobs are returned from the server sorted by most recent activity,
     // so the first job is the most recently updated one.
-    let job_ids: Vec<TaskId> = jobs.into_iter().map(|job| job.id).collect();
+    let job_ids: Vec<TaskId> = jobs.into_iter().map(|job| job.job_id).collect();
     let chosen_job = job_ids.first().cloned().unwrap();
     let found_jobs = job_ids
         .iter()
@@ -80,8 +80,9 @@ mod tests {
         client::MetisClient,
         command::output::{CommandContext, ResolvedOutputFormat},
     };
+    use chrono::Utc;
     use httpmock::prelude::*;
-    use metis_common::jobs::{JobRecord, ListJobsResponse, Task};
+    use metis_common::jobs::{JobVersionRecord, ListJobsResponse, Task};
     use reqwest::Client as HttpClient;
     use std::{collections::HashMap, str::FromStr};
 
@@ -95,9 +96,11 @@ mod tests {
         ids::issue_id(value)
     }
 
-    fn job_record(id: &str) -> JobRecord {
-        JobRecord::new(
+    fn job_record(id: &str) -> JobVersionRecord {
+        JobVersionRecord::new(
             task_id(id),
+            0,
+            Utc::now(),
             Task::new(
                 "demo".to_string(),
                 metis_common::jobs::BundleSpec::None,
