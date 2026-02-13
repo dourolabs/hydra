@@ -33,6 +33,7 @@ async fn state_with_repo(repo_name: &str) -> anyhow::Result<(TestStateHandles, T
                 None,
                 None,
             ),
+            None,
         )
         .await?;
 
@@ -59,6 +60,7 @@ async fn state_with_repo_and_patch(
                 Some("main".to_string()),
                 None,
             ),
+            None,
         )
         .await?;
 
