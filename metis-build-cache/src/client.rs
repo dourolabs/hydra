@@ -14,6 +14,11 @@ use tar::{Builder, Header};
 use walkdir::WalkDir;
 
 /// Build cache archives are written as deterministic `tar.zst` files.
+///
+/// Zstd level 1 is used instead of the default (level 3) because it compresses at roughly
+/// 2x the throughput (~600 MB/s vs ~300 MB/s) with only ~5% larger output, which is a
+/// worthwhile trade-off for build cache archives that are dominated by network transfer time.
+const ZSTD_COMPRESSION_LEVEL: i32 = 1;
 
 #[derive(Clone)]
 pub struct BuildCacheClient {
@@ -237,7 +242,7 @@ impl BuildCacheClient {
 
         let output = File::create(output_path)
             .map_err(|err| BuildCacheError::io("creating cache archive", err))?;
-        let encoder = zstd::Encoder::new(output, 0)
+        let encoder = zstd::Encoder::new(output, ZSTD_COMPRESSION_LEVEL)
             .map_err(|err| BuildCacheError::io("initializing zstd encoder", err))?;
         let mut builder = Builder::new(encoder);
 
