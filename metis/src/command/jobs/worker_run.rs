@@ -86,6 +86,7 @@ pub async fn run(
         .context("failed to initialize tracking branches")?;
     }
 
+    let mut downloaded_cache_sha: Option<String> = None;
     if base_commit.is_some() {
         if let (Some(build_cache), Some(service_repo_name)) =
             (build_cache.as_ref(), service_repo_name.as_ref())
@@ -105,7 +106,8 @@ pub async fn run(
                         log_status(format!(
                             "Build cache download/apply completed in {elapsed:.2}s (applied entry '{}').",
                             key.object_key()
-                        ))
+                        ));
+                        downloaded_cache_sha = Some(key.git_sha.clone());
                     }
                     Ok(None) => {
                         let elapsed = cache_apply_start.elapsed().as_secs_f64();
@@ -225,47 +227,55 @@ pub async fn run(
                 Ok(client) => match resolve_head_oid(&dest) {
                     Ok(Some(head_oid)) => {
                         let git_sha = head_oid.to_string();
-                        const MAX_ATTEMPTS: u32 = 3;
-                        let mut last_error = None;
-                        for attempt in 1..=MAX_ATTEMPTS {
+                        if downloaded_cache_sha.as_deref() == Some(git_sha.as_str()) {
+                            let elapsed = cache_upload_start.elapsed().as_secs_f64();
                             log_status(format!(
-                                "Uploading build cache (attempt {attempt}/{MAX_ATTEMPTS})..."
+                                "Build cache upload skipped (cache entry already up-to-date) in {elapsed:.2}s."
                             ));
-                            match client
-                                .build_and_upload_cache(
-                                    &dest,
-                                    worker_home_dir.as_deref(),
-                                    service_repo_name.clone(),
-                                    &git_sha,
-                                )
-                                .await
-                            {
-                                Ok(key) => {
-                                    let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                                    log_status(format!(
-                                        "Build cache create/upload completed in {elapsed:.2}s (uploaded entry '{}').",
-                                        key.object_key()
-                                    ));
-                                    last_error = None;
-                                    break;
-                                }
-                                Err(err) => {
-                                    last_error = Some(err);
-                                    if attempt < MAX_ATTEMPTS {
-                                        let delay_secs = 2u64.pow(attempt);
+                        } else {
+                            const MAX_ATTEMPTS: u32 = 3;
+                            let mut last_error = None;
+                            for attempt in 1..=MAX_ATTEMPTS {
+                                log_status(format!(
+                                    "Uploading build cache (attempt {attempt}/{MAX_ATTEMPTS})..."
+                                ));
+                                match client
+                                    .build_and_upload_cache(
+                                        &dest,
+                                        worker_home_dir.as_deref(),
+                                        service_repo_name.clone(),
+                                        &git_sha,
+                                    )
+                                    .await
+                                {
+                                    Ok(key) => {
+                                        let elapsed = cache_upload_start.elapsed().as_secs_f64();
                                         log_status(format!(
-                                            "Build cache upload attempt {attempt} failed, retrying in {delay_secs}s..."
+                                            "Build cache create/upload completed in {elapsed:.2}s (uploaded entry '{}').",
+                                            key.object_key()
                                         ));
-                                        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                                        last_error = None;
+                                        break;
+                                    }
+                                    Err(err) => {
+                                        last_error = Some(err);
+                                        if attempt < MAX_ATTEMPTS {
+                                            let delay_secs = 2u64.pow(attempt);
+                                            log_status(format!(
+                                                "Build cache upload attempt {attempt} failed, retrying in {delay_secs}s..."
+                                            ));
+                                            tokio::time::sleep(Duration::from_secs(delay_secs))
+                                                .await;
+                                        }
                                     }
                                 }
                             }
-                        }
-                        if let Some(err) = last_error {
-                            let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                            log_status(format!(
-                                "Build cache create/upload completed in {elapsed:.2}s (skipped after {MAX_ATTEMPTS} attempts: {err})."
-                            ));
+                            if let Some(err) = last_error {
+                                let elapsed = cache_upload_start.elapsed().as_secs_f64();
+                                log_status(format!(
+                                    "Build cache create/upload completed in {elapsed:.2}s (skipped after {MAX_ATTEMPTS} attempts: {err})."
+                                ));
+                            }
                         }
                     }
                     Ok(None) => {
