@@ -130,6 +130,52 @@ impl GitRemote {
         .is_ok()
     }
 
+    /// Push an additional commit to an existing branch, appending `content` to `file`.
+    ///
+    /// Returns the SHA of the new commit.
+    pub fn push_commit(&self, branch: &str, file: &str, content: &str) -> anyhow::Result<String> {
+        let tempdir = TempDir::new().context("failed to create tempdir for push_commit")?;
+        let work = tempdir.path();
+        let work_str = work
+            .to_str()
+            .ok_or_else(|| anyhow!("work path contains invalid UTF-8"))?;
+
+        run_git(&["clone", &self.url, work_str])?;
+        run_git(&["-C", work_str, "config", "user.name", "Test"])?;
+        run_git(&["-C", work_str, "config", "user.email", "test@example.com"])?;
+        run_git(&["-C", work_str, "fetch", "origin", branch])?;
+        run_git(&[
+            "-C",
+            work_str,
+            "checkout",
+            "-B",
+            branch,
+            &format!("origin/{branch}"),
+        ])?;
+
+        let file_path = work.join(file);
+        let mut existing = std::fs::read_to_string(&file_path).unwrap_or_default();
+        existing.push_str(content);
+        std::fs::write(&file_path, &existing).context("failed to write file for push_commit")?;
+
+        run_git(&["-C", work_str, "add", file])?;
+        run_git(&["-C", work_str, "commit", "-m", "additional change"])?;
+        run_git(&["-C", work_str, "push", "origin", branch])?;
+
+        self.branch_sha(branch)
+    }
+
+    /// Set the HEAD symbolic reference of the bare remote to the given branch.
+    pub fn set_head(&self, branch: &str) -> anyhow::Result<()> {
+        run_git(&[
+            "--git-dir",
+            &self.url,
+            "symbolic-ref",
+            "HEAD",
+            &format!("refs/heads/{branch}"),
+        ])
+    }
+
     /// Return the unified diff between two branches.
     pub fn diff(&self, base: &str, head: &str) -> anyhow::Result<String> {
         run_git_output(&[

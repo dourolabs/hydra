@@ -114,71 +114,27 @@ async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> 
     Ok(())
 }
 
-// ── Unmigrated tests below (kept in original style) ─────────────────
-
-use std::path::Path;
-use std::process::Command;
-use tempfile::TempDir;
-
-mod common;
-use common::test_helpers::init_test_server_with_remote_and_github;
-
-fn git_output(args: &[&str], cwd: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .with_context(|| format!("failed to run git {args:?}"))?;
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
-            args,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn create_branch_with_commit(remote_url: &str, branch: &str, line: &str) -> Result<String> {
-    let tempdir = TempDir::new().context("failed to create tempdir for branch setup")?;
-    let repo_path = tempdir.path();
-
-    git_output(&["clone", remote_url, "."], repo_path)?;
-    git_output(&["config", "user.name", "Test User"], repo_path)?;
-    git_output(&["config", "user.email", "test@example.com"], repo_path)?;
-    git_output(&["checkout", "-b", branch], repo_path)?;
-    std::fs::write(repo_path.join("README.md"), format!("base content\n{line}"))
-        .context("failed to write README content")?;
-    git_output(&["add", "README.md"], repo_path)?;
-    git_output(&["commit", "-m", "feature change"], repo_path)?;
-    git_output(&["push", "-u", "origin", branch], repo_path)?;
-
-    git_output(&["rev-parse", "HEAD"], repo_path)
-}
-
 #[tokio::test]
 async fn sync_open_patches_closes_merge_request_issue_on_merged_pr() -> Result<()> {
     let pr_number = 100;
     let repo_owner = "octo";
     let repo_name = "repo";
     let merge_branch = "feature/merge";
+    let repo = metis_common::RepoName::from_str("octo/repo")?;
 
-    let (_github_server, github_app) = GitHubMockBuilder::new()
-        .with_installation(repo_owner, repo_name)
-        .build()?;
+    let mut harness = harness::TestHarness::builder()
+        .with_repo("octo/repo")
+        .with_github()
+        .build()
+        .await?;
 
-    let mut env = init_test_server_with_remote_and_github("octo/repo", Some(github_app)).await?;
-    let repository = env
-        .state
-        .repository_from_store(&env.service_repo_name)
-        .await
-        .context("failed to load service repository config")?;
-    let head_sha =
-        create_branch_with_commit(&repository.remote_url, merge_branch, "merged change\n")
-            .context("failed to create merge branch")?;
+    // Create a branch with a commit in the git remote.
+    let head_sha = harness
+        .remote("octo/repo")
+        .create_branch(merge_branch, "README.md", "base content\nmerged change\n")
+        .context("failed to create merge branch")?;
 
-    // Replace with mocks that include the merged PR
+    // Reconfigure GitHub mock with a merged PR.
     let (_github_server, github_app) = GitHubMockBuilder::new()
         .with_pr(
             repo_owner,
@@ -192,30 +148,31 @@ async fn sync_open_patches_closes_merge_request_issue_on_merged_pr() -> Result<(
                 ),
         )
         .build()?;
-    env.state.github_app = Some(github_app);
+    harness.state_mut().github_app = Some(github_app);
+
+    let user = harness.default_user();
 
     let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(env.service_repo_name.clone());
+    job_settings.repo_name = Some(repo.clone());
     job_settings.image = Some("worker:latest".to_string());
     job_settings.branch = Some("main".to_string());
 
-    let parent_issue_id = env
-        .create_issue(
+    let parent_issue_id = user
+        .create_issue_with_settings(
             "parent task for merge",
             IssueType::Task,
             IssueStatus::Open,
-            Some("requester".to_string()),
-            Some(job_settings.clone()),
+            Some("requester"),
+            Some(job_settings),
         )
         .await?;
 
-    let patch_id = env
-        .create_patch(
+    let patch_id = user
+        .create_patch_with_github(
             "Merge patch",
             "Merge description",
-            "diff",
-            PatchStatus::Open,
-            Some(GithubPr::new(
+            &repo,
+            GithubPr::new(
                 repo_owner.to_string(),
                 repo_name.to_string(),
                 pr_number,
@@ -223,13 +180,12 @@ async fn sync_open_patches_closes_merge_request_issue_on_merged_pr() -> Result<(
                 None,
                 None,
                 None,
-            )),
-            None,
+            ),
         )
         .await?;
 
     let merge_request_issue_id = create_merge_request_issue(
-        &env.client,
+        user.client(),
         patch_id.clone(),
         "requester".to_string(),
         parent_issue_id.clone(),
@@ -239,15 +195,17 @@ async fn sync_open_patches_closes_merge_request_issue_on_merged_pr() -> Result<(
     .await?
     .issue_id;
 
-    env.run_github_sync(60)
+    // Run GitHub sync and verify outcomes.
+    harness
+        .step_github_sync()
         .await
         .context("sync_open_patches failed")?;
 
-    let updated_patch = env.client.get_patch(&patch_id).await?.patch;
-    assert_eq!(updated_patch.status, PatchStatus::Merged);
+    let updated_patch = user.get_patch(&patch_id).await?;
+    assert_eq!(updated_patch.patch.status, PatchStatus::Merged);
 
-    let merge_request_issue = env.client.get_issue(&merge_request_issue_id).await?.issue;
-    assert_eq!(merge_request_issue.status, IssueStatus::Closed);
+    let merge_request_issue = user.get_issue(&merge_request_issue_id).await?;
+    assert_eq!(merge_request_issue.issue.status, IssueStatus::Closed);
 
     Ok(())
 }
@@ -258,22 +216,21 @@ async fn sync_open_patches_fails_merge_request_issue_on_closed_pr() -> Result<()
     let repo_owner = "octo";
     let repo_name = "repo";
     let closed_branch = "feature/closed";
+    let repo = metis_common::RepoName::from_str("octo/repo")?;
 
-    let (_github_server, github_app) = GitHubMockBuilder::new()
-        .with_installation(repo_owner, repo_name)
-        .build()?;
+    let mut harness = harness::TestHarness::builder()
+        .with_repo("octo/repo")
+        .with_github()
+        .build()
+        .await?;
 
-    let mut env = init_test_server_with_remote_and_github("octo/repo", Some(github_app)).await?;
-    let repository = env
-        .state
-        .repository_from_store(&env.service_repo_name)
-        .await
-        .context("failed to load service repository config")?;
-    let head_sha =
-        create_branch_with_commit(&repository.remote_url, closed_branch, "closed change\n")
-            .context("failed to create closed branch")?;
+    // Create a branch with a commit in the git remote.
+    let head_sha = harness
+        .remote("octo/repo")
+        .create_branch(closed_branch, "README.md", "base content\nclosed change\n")
+        .context("failed to create closed branch")?;
 
-    // Replace with mocks that include the closed (not merged) PR
+    // Reconfigure GitHub mock with a closed (not merged) PR.
     let (_github_server, github_app) = GitHubMockBuilder::new()
         .with_pr(
             repo_owner,
@@ -287,30 +244,31 @@ async fn sync_open_patches_fails_merge_request_issue_on_closed_pr() -> Result<()
                 ),
         )
         .build()?;
-    env.state.github_app = Some(github_app);
+    harness.state_mut().github_app = Some(github_app);
+
+    let user = harness.default_user();
 
     let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(env.service_repo_name.clone());
+    job_settings.repo_name = Some(repo.clone());
     job_settings.image = Some("worker:latest".to_string());
     job_settings.branch = Some("main".to_string());
 
-    let parent_issue_id = env
-        .create_issue(
+    let parent_issue_id = user
+        .create_issue_with_settings(
             "parent task for closed pr",
             IssueType::Task,
             IssueStatus::Open,
-            Some("requester".to_string()),
-            Some(job_settings.clone()),
+            Some("requester"),
+            Some(job_settings),
         )
         .await?;
 
-    let patch_id = env
-        .create_patch(
+    let patch_id = user
+        .create_patch_with_github(
             "Closed patch",
             "Closed description",
-            "diff",
-            PatchStatus::Open,
-            Some(GithubPr::new(
+            &repo,
+            GithubPr::new(
                 repo_owner.to_string(),
                 repo_name.to_string(),
                 pr_number,
@@ -318,13 +276,12 @@ async fn sync_open_patches_fails_merge_request_issue_on_closed_pr() -> Result<()
                 None,
                 None,
                 None,
-            )),
-            None,
+            ),
         )
         .await?;
 
     let merge_request_issue_id = create_merge_request_issue(
-        &env.client,
+        user.client(),
         patch_id.clone(),
         "requester".to_string(),
         parent_issue_id.clone(),
@@ -334,15 +291,17 @@ async fn sync_open_patches_fails_merge_request_issue_on_closed_pr() -> Result<()
     .await?
     .issue_id;
 
-    env.run_github_sync(60)
+    // Run GitHub sync and verify outcomes.
+    harness
+        .step_github_sync()
         .await
         .context("sync_open_patches failed")?;
 
-    let updated_patch = env.client.get_patch(&patch_id).await?.patch;
-    assert_eq!(updated_patch.status, PatchStatus::Closed);
+    let updated_patch = user.get_patch(&patch_id).await?;
+    assert_eq!(updated_patch.patch.status, PatchStatus::Closed);
 
-    let merge_request_issue = env.client.get_issue(&merge_request_issue_id).await?.issue;
-    assert_eq!(merge_request_issue.status, IssueStatus::Failed);
+    let merge_request_issue = user.get_issue(&merge_request_issue_id).await?;
+    assert_eq!(merge_request_issue.issue.status, IssueStatus::Failed);
 
     Ok(())
 }
