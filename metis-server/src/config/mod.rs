@@ -11,6 +11,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::policy::config::PolicyConfig;
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     #[serde(default)]
@@ -25,6 +27,10 @@ pub struct AppConfig {
     pub background: BackgroundSection,
     #[serde(default)]
     pub build_cache: BuildCacheSection,
+    /// Optional policy engine configuration. When absent, all built-in
+    /// policies are enabled with default parameters.
+    #[serde(default)]
+    pub policies: Option<PolicyConfig>,
 }
 
 impl AppConfig {
@@ -48,7 +54,16 @@ impl AppConfig {
         self.metis.validate()?;
         self.github_app.validate()?;
         self.background.validate()?;
-        self.build_cache.validate()
+        self.build_cache.validate()?;
+        self.validate_policies()
+    }
+
+    fn validate_policies(&self) -> Result<()> {
+        let Some(config) = &self.policies else {
+            return Ok(());
+        };
+        let registry = crate::policy::registry::build_default_registry();
+        registry.validate_config(config)
     }
 }
 

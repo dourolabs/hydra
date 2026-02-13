@@ -4,11 +4,12 @@ use crate::domain::issues::{Issue, IssueStatus, IssueType};
 use crate::domain::users::Username;
 use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
 use crate::policy::context::{AutomationContext, Operation, OperationPayload, RestrictionContext};
-use crate::policy::registry::PolicyRegistry;
+use crate::policy::registry::{self, PolicyRegistry};
 use crate::store::MemoryStore;
 use crate::test_utils;
 use chrono::Utc;
 use metis_common::IssueId;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -742,4 +743,406 @@ async fn check_update_job_passes_when_allowed() {
 
     let result = engine.check_update_job(&task_id, &task, None, &store).await;
     assert!(result.is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests: config-driven policy engine
+// ---------------------------------------------------------------------------
+
+/// Test 1: Default config (no `[policies]` section) reproduces all current
+/// behavior exactly — all 6 restrictions and 5 automations are active.
+#[test]
+fn default_config_enables_all_builtin_policies() {
+    let registry = registry::build_default_registry();
+
+    // Build engine with no PolicyConfig (simulates absent [policies] section)
+    let engine = crate::app::AppState::build_policy_engine(None);
+
+    assert_eq!(engine.restriction_count(), 6);
+    assert_eq!(engine.automation_count(), 5);
+    assert_eq!(engine.repo_override_count(), 0);
+
+    // Also verify that an explicit config listing all policies gives the same counts
+    let all_config = PolicyConfig {
+        global: PolicyList {
+            restrictions: vec![
+                PolicyEntry::Name("issue_lifecycle_validation".to_string()),
+                PolicyEntry::Name("task_state_machine".to_string()),
+                PolicyEntry::Name("duplicate_branch_name".to_string()),
+                PolicyEntry::Name("hidden_document_path".to_string()),
+                PolicyEntry::Name("running_job_validation".to_string()),
+                PolicyEntry::Name("require_creator".to_string()),
+            ],
+            automations: vec![
+                PolicyEntry::Name("cascade_issue_status".to_string()),
+                PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
+                PolicyEntry::Name("close_merge_request_issues".to_string()),
+                PolicyEntry::Name("create_merge_request_issue".to_string()),
+                PolicyEntry::Name("inherit_creator_from_parent".to_string()),
+            ],
+        },
+        repos: HashMap::new(),
+    };
+    let explicit_engine = registry.build(&all_config).unwrap();
+    assert_eq!(explicit_engine.restriction_count(), 6);
+    assert_eq!(explicit_engine.automation_count(), 5);
+}
+
+/// Test 2: Disabling a specific restriction allows the previously-blocked
+/// operation. The `hidden_document_path` restriction rejects documents with
+/// dot-prefixed path segments. If we omit it from config, the operation
+/// should succeed.
+#[tokio::test]
+async fn disabling_restriction_allows_blocked_operation() {
+    // Engine with all restrictions including hidden_document_path
+    let full_engine = crate::app::AppState::build_policy_engine(None);
+    let store = MemoryStore::new();
+
+    let hidden_doc = crate::domain::documents::Document {
+        title: "secret".to_string(),
+        body_markdown: String::new(),
+        path: Some(".hidden/file.md".to_string()),
+        created_by: None,
+        deleted: false,
+    };
+
+    // Full engine should block this
+    let result = full_engine.check_create_document(&hidden_doc, &store).await;
+    assert!(result.is_err(), "full engine should block hidden document");
+
+    // Build engine WITHOUT hidden_document_path restriction
+    let partial_config = PolicyConfig {
+        global: PolicyList {
+            restrictions: vec![
+                PolicyEntry::Name("issue_lifecycle_validation".to_string()),
+                PolicyEntry::Name("task_state_machine".to_string()),
+                PolicyEntry::Name("duplicate_branch_name".to_string()),
+                // hidden_document_path is intentionally omitted
+                PolicyEntry::Name("running_job_validation".to_string()),
+                PolicyEntry::Name("require_creator".to_string()),
+            ],
+            automations: vec![
+                PolicyEntry::Name("cascade_issue_status".to_string()),
+                PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
+                PolicyEntry::Name("close_merge_request_issues".to_string()),
+                PolicyEntry::Name("create_merge_request_issue".to_string()),
+                PolicyEntry::Name("inherit_creator_from_parent".to_string()),
+            ],
+        },
+        repos: HashMap::new(),
+    };
+
+    let partial_engine = crate::app::AppState::build_policy_engine(Some(&partial_config));
+    assert_eq!(partial_engine.restriction_count(), 5);
+
+    // Partial engine should allow this
+    let result = partial_engine
+        .check_create_document(&hidden_doc, &store)
+        .await;
+    assert!(
+        result.is_ok(),
+        "engine without hidden_document_path should allow hidden document"
+    );
+}
+
+/// Test 3: Per-repo override applies to operations on that repo's issues.
+/// Global config blocks hidden documents; per-repo override for "test/repo"
+/// has no restrictions, so hidden documents are allowed for that repo.
+#[tokio::test]
+async fn per_repo_override_applies_to_repo_operations() {
+    let repo_name = metis_common::RepoName::new("test", "repo").unwrap();
+
+    let config = PolicyConfig {
+        global: PolicyList {
+            restrictions: vec![PolicyEntry::Name("hidden_document_path".to_string())],
+            automations: vec![],
+        },
+        repos: {
+            let mut m = HashMap::new();
+            // Per-repo override with NO restrictions
+            m.insert(
+                repo_name.to_string(),
+                PolicyList {
+                    restrictions: vec![],
+                    automations: vec![],
+                },
+            );
+            m
+        },
+    };
+
+    let registry = registry::build_default_registry();
+    let engine = registry.build(&config).unwrap();
+
+    assert_eq!(engine.restriction_count(), 1);
+    assert_eq!(engine.repo_override_count(), 1);
+
+    let store = MemoryStore::new();
+
+    let hidden_doc_payload = OperationPayload::Document {
+        document_id: None,
+        new: crate::domain::documents::Document {
+            title: "secret".to_string(),
+            body_markdown: String::new(),
+            path: Some(".hidden/file.md".to_string()),
+            created_by: None,
+            deleted: false,
+        },
+        old: None,
+    };
+
+    // Without repo context → uses global restrictions → blocked
+    let ctx_global = RestrictionContext {
+        operation: Operation::CreateDocument,
+        repo: None,
+        payload: &hidden_doc_payload,
+        store: &store,
+    };
+    let result = engine.check_restrictions(&ctx_global).await;
+    assert!(result.is_err(), "global context should block hidden doc");
+
+    // With repo context matching the override → uses per-repo (empty) → allowed
+    let ctx_repo = RestrictionContext {
+        operation: Operation::CreateDocument,
+        repo: Some(&repo_name),
+        payload: &hidden_doc_payload,
+        store: &store,
+    };
+    let result = engine.check_restrictions(&ctx_repo).await;
+    assert!(
+        result.is_ok(),
+        "per-repo override with no restrictions should allow hidden doc"
+    );
+
+    // With a different repo (no override) → uses global → blocked
+    let other_repo = metis_common::RepoName::new("other", "project").unwrap();
+    let ctx_other = RestrictionContext {
+        operation: Operation::CreateDocument,
+        repo: Some(&other_repo),
+        payload: &hidden_doc_payload,
+        store: &store,
+    };
+    let result = engine.check_restrictions(&ctx_other).await;
+    assert!(
+        result.is_err(),
+        "repo without override should fall back to global restrictions"
+    );
+}
+
+/// Test 4: Parameterized policy works. The `cascade_issue_status` automation
+/// accepts a `trigger_statuses` parameter that controls which issue statuses
+/// trigger cascading. Verify it can be constructed with custom params.
+#[test]
+fn parameterized_policy_builds_with_custom_params() {
+    let registry = registry::build_default_registry();
+
+    // Config with cascade_issue_status using custom trigger_statuses
+    let config = PolicyConfig {
+        global: PolicyList {
+            restrictions: vec![],
+            automations: vec![PolicyEntry::WithParams {
+                name: "cascade_issue_status".to_string(),
+                params: {
+                    let mut table = toml::map::Map::new();
+                    let statuses = toml::Value::Array(vec![
+                        toml::Value::String("dropped".to_string()),
+                        toml::Value::String("failed".to_string()),
+                    ]);
+                    table.insert("trigger_statuses".to_string(), statuses);
+                    toml::Value::Table(table)
+                },
+            }],
+        },
+        repos: HashMap::new(),
+    };
+
+    let engine = registry.build(&config);
+    assert!(
+        engine.is_ok(),
+        "parameterized cascade_issue_status should build"
+    );
+    let engine = engine.unwrap();
+    assert_eq!(engine.automation_count(), 1);
+}
+
+/// Test 5: Unknown policy name in config produces a warning at startup
+/// (validation warns but does not error for unknown names).
+#[test]
+fn unknown_policy_name_in_config_is_warned() {
+    let registry = registry::build_default_registry();
+
+    // Config with an unknown restriction name
+    let config = PolicyConfig {
+        global: PolicyList {
+            restrictions: vec![PolicyEntry::Name("nonexistent_restriction".to_string())],
+            automations: vec![],
+        },
+        repos: HashMap::new(),
+    };
+
+    // Validation should succeed (warns, doesn't error on unknown names)
+    let result = registry.validate_config(&config);
+    assert!(
+        result.is_ok(),
+        "validation should warn but not error on unknown policy names"
+    );
+
+    // But building should fail (unknown names are errors during build)
+    let build_result = registry.build(&config);
+    assert!(
+        build_result.is_err(),
+        "build should fail for unknown policy names"
+    );
+    let err = build_result.err().unwrap();
+    assert!(
+        err.contains("unknown restriction policy"),
+        "unexpected error: {err}"
+    );
+}
+
+/// Test: Invalid params for a known policy produce an error during validation.
+#[test]
+fn invalid_params_produce_error_during_validation() {
+    let registry = registry::build_default_registry();
+
+    // cascade_issue_status expects trigger_statuses to be an array, not a string
+    let config = PolicyConfig {
+        global: PolicyList {
+            restrictions: vec![],
+            automations: vec![PolicyEntry::WithParams {
+                name: "cascade_issue_status".to_string(),
+                params: toml::Value::String("invalid".to_string()),
+            }],
+        },
+        repos: HashMap::new(),
+    };
+
+    let result = registry.validate_config(&config);
+    assert!(result.is_err(), "validation should error on invalid params");
+}
+
+/// Test: TOML deserialization of a full config with policies section works.
+#[test]
+fn full_toml_config_with_policies_deserializes() {
+    let toml_str = r#"
+        [metis]
+        namespace = "default"
+        allowed_orgs = []
+
+        [job]
+        default_image = "metis-worker:latest"
+
+        [database]
+        url = "postgres://localhost/test"
+
+        [github_app]
+        app_id = 1
+        client_id = "test"
+        client_secret = "test"
+        private_key = "test"
+
+        [background]
+        assignment_agent = "swe"
+
+        [[background.agent_queues]]
+        name = "swe"
+        prompt = "test"
+
+        [policies]
+        restrictions = ["issue_lifecycle_validation", "task_state_machine"]
+        automations = ["cascade_issue_status"]
+
+        [policies.repos."myorg/myrepo"]
+        restrictions = ["issue_lifecycle_validation"]
+        automations = []
+    "#;
+
+    let config: crate::config::AppConfig =
+        toml::from_str(toml_str).expect("should deserialize full config with policies");
+
+    let policies = config.policies.expect("policies should be present");
+    assert_eq!(policies.global.restrictions.len(), 2);
+    assert_eq!(policies.global.automations.len(), 1);
+    assert_eq!(
+        policies.global.restrictions[0].name(),
+        "issue_lifecycle_validation"
+    );
+    assert_eq!(
+        policies.global.automations[0].name(),
+        "cascade_issue_status"
+    );
+
+    let repo = policies
+        .repos
+        .get("myorg/myrepo")
+        .expect("should have repo override");
+    assert_eq!(repo.restrictions.len(), 1);
+    assert!(repo.automations.is_empty());
+}
+
+/// Test: Config without [policies] section deserializes with policies = None.
+#[test]
+fn config_without_policies_deserializes_as_none() {
+    let toml_str = r#"
+        [metis]
+        namespace = "default"
+
+        [job]
+        default_image = "metis-worker:latest"
+
+        [database]
+        url = "postgres://localhost/test"
+
+        [github_app]
+        app_id = 1
+        client_id = "test"
+        client_secret = "test"
+        private_key = "test"
+
+        [background]
+        assignment_agent = "swe"
+
+        [[background.agent_queues]]
+        name = "swe"
+        prompt = "test"
+    "#;
+
+    let config: crate::config::AppConfig =
+        toml::from_str(toml_str).expect("should deserialize config without policies");
+    assert!(
+        config.policies.is_none(),
+        "absent [policies] section should deserialize as None"
+    );
+}
+
+/// Test: Per-repo override in registry.build produces correct overrides.
+#[test]
+fn registry_build_with_repo_overrides() {
+    let registry = registry::build_default_registry();
+
+    let config = PolicyConfig {
+        global: PolicyList {
+            restrictions: vec![
+                PolicyEntry::Name("issue_lifecycle_validation".to_string()),
+                PolicyEntry::Name("task_state_machine".to_string()),
+            ],
+            automations: vec![PolicyEntry::Name("cascade_issue_status".to_string())],
+        },
+        repos: {
+            let mut m = HashMap::new();
+            m.insert(
+                "org/repo".to_string(),
+                PolicyList {
+                    restrictions: vec![PolicyEntry::Name("issue_lifecycle_validation".to_string())],
+                    automations: vec![],
+                },
+            );
+            m
+        },
+    };
+
+    let engine = registry.build(&config).unwrap();
+    assert_eq!(engine.restriction_count(), 2);
+    assert_eq!(engine.automation_count(), 1);
+    assert_eq!(engine.repo_override_count(), 1);
 }

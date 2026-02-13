@@ -1,4 +1,4 @@
-use super::config::PolicyConfig;
+use super::config::{PolicyConfig, PolicyList};
 use super::{Automation, PolicyEngine, Restriction};
 use std::collections::HashMap;
 
@@ -43,14 +43,12 @@ impl PolicyRegistry {
             .insert(name.to_string(), Box::new(factory));
     }
 
-    /// Build a `PolicyEngine` from the global policy list in the given config.
-    ///
-    /// Returns an error if any referenced policy name is not registered.
-    pub fn build(&self, config: &PolicyConfig) -> Result<PolicyEngine, String> {
+    /// Build a `PolicyEngine` from a single `PolicyList`.
+    fn build_engine_from_list(&self, list: &PolicyList) -> Result<PolicyEngine, String> {
         let mut restrictions: Vec<Box<dyn Restriction>> = Vec::new();
         let mut automations: Vec<Box<dyn Automation>> = Vec::new();
 
-        for entry in &config.global.restrictions {
+        for entry in &list.restrictions {
             let name = entry.name();
             let factory = self
                 .restriction_factories
@@ -60,7 +58,7 @@ impl PolicyRegistry {
             restrictions.push(restriction);
         }
 
-        for entry in &config.global.automations {
+        for entry in &list.automations {
             let name = entry.name();
             let factory = self
                 .automation_factories
@@ -71,6 +69,68 @@ impl PolicyRegistry {
         }
 
         Ok(PolicyEngine::new(restrictions, automations))
+    }
+
+    /// Build a `PolicyEngine` from a `PolicyConfig`, including per-repo overrides.
+    ///
+    /// Returns an error if any referenced policy name is not registered or
+    /// if any policy parameters are invalid.
+    pub fn build(&self, config: &PolicyConfig) -> Result<PolicyEngine, String> {
+        let global_engine = self.build_engine_from_list(&config.global)?;
+
+        let mut repo_overrides: HashMap<String, PolicyEngine> = HashMap::new();
+        for (repo_name, repo_list) in &config.repos {
+            let repo_engine = self.build_engine_from_list(repo_list)?;
+            repo_overrides.insert(repo_name.clone(), repo_engine);
+        }
+
+        Ok(global_engine.set_repo_overrides(repo_overrides))
+    }
+
+    /// Validate a `PolicyConfig` without building a full engine.
+    ///
+    /// Warns on unknown policy names and returns an error on invalid params.
+    pub fn validate_config(&self, config: &PolicyConfig) -> Result<(), anyhow::Error> {
+        self.validate_list(&config.global, "global")?;
+        for (repo_name, repo_list) in &config.repos {
+            self.validate_list(repo_list, &format!("repos.\"{repo_name}\""))?;
+        }
+        Ok(())
+    }
+
+    fn validate_list(&self, list: &PolicyList, scope: &str) -> Result<(), anyhow::Error> {
+        for entry in &list.restrictions {
+            let name = entry.name();
+            if !self.restriction_factories.contains_key(name) {
+                tracing::warn!(
+                    policy = name,
+                    scope,
+                    "unknown restriction policy in config; will be ignored"
+                );
+            } else {
+                // Validate params by attempting construction
+                let factory = &self.restriction_factories[name];
+                factory(entry.params()).map_err(|e| {
+                    anyhow::anyhow!("invalid params for restriction '{name}' in {scope}: {e}")
+                })?;
+            }
+        }
+        for entry in &list.automations {
+            let name = entry.name();
+            if !self.automation_factories.contains_key(name) {
+                tracing::warn!(
+                    policy = name,
+                    scope,
+                    "unknown automation policy in config; will be ignored"
+                );
+            } else {
+                let factory = &self.automation_factories[name];
+                factory(entry.params()).map_err(|e| {
+                    anyhow::anyhow!("invalid params for automation '{name}' in {scope}: {e}")
+                })?;
+            }
+        }
+        Ok(())
     }
 }
 

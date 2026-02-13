@@ -134,6 +134,49 @@ interval_secs = 60
 initial_backoff_secs = 1
 max_backoff_secs = 30
 
+# ------------------------------------------------------------------
+# Policy Engine Configuration
+# ------------------------------------------------------------------
+# Omit the entire [policies] section to enable all built-in policies
+# with their default parameters (backward-compatible default behavior).
+#
+# When present, only the policies listed here are active. Policies not
+# listed are disabled. Use per-repo overrides to customise behavior for
+# specific repositories (complete override, not merge).
+#
+# [policies]
+#
+# ## Restrictions — evaluated before mutations are persisted.
+# restrictions = [
+#     "issue_lifecycle_validation",   # Enforce parent/child lifecycle rules (e.g., close children first)
+#     "task_state_machine",           # Enforce valid task status transitions
+#     "duplicate_branch_name",        # Prevent patches with duplicate branch names
+#     "hidden_document_path",         # Block documents with hidden (dot-prefixed) path segments
+#     "running_job_validation",       # Prevent invalid status transitions on running jobs
+#     "require_creator",              # Require a creator on new issues
+# ]
+#
+# ## Automations — react to persisted events with side effects.
+# ## Order matters: cascade should run before kill_tasks.
+# automations = [
+#     "cascade_issue_status",         # Drop children/dependents when an issue enters a terminal state
+#     "kill_tasks_on_issue_failure",  # Kill running tasks when their issue fails/drops
+#     "close_merge_request_issues",   # Close merge-request tracking issues when a patch is merged/closed
+#     "create_merge_request_issue",   # Create a merge-request tracking issue when a patch is created
+#     "inherit_creator_from_parent",  # Set a new issue's creator to match its parent's creator
+# ]
+#
+# ## Parameterized automation example:
+# # [[automations]]
+# # name = "cascade_issue_status"
+# # [automations.params]
+# # trigger_statuses = ["dropped", "failed"]
+#
+# ## Per-repo overrides (complete override — not merged with global).
+# # [policies.repos."org/repo"]
+# # restrictions = ["issue_lifecycle_validation"]
+# # automations = ["cascade_issue_status"]
+
 [kubernetes]
 # Set to true when the server runs inside a Kubernetes cluster and should use
 # its mounted ServiceAccount credentials.

@@ -328,7 +328,7 @@ impl AppState {
         agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     ) -> Self {
         let event_bus = Arc::new(EventBus::new());
-        let policy_engine = Self::build_default_policy_engine();
+        let policy_engine = Self::build_policy_engine(config.policies.as_ref());
         Self {
             config,
             github_app,
@@ -340,13 +340,15 @@ impl AppState {
         }
     }
 
-    /// Build the default policy engine with all built-in restrictions and
-    /// automations enabled.
-    fn build_default_policy_engine() -> crate::policy::PolicyEngine {
+    /// Build the policy engine from config, or fall back to all built-in
+    /// policies with default params when no `[policies]` section is present.
+    pub(crate) fn build_policy_engine(
+        policy_config: Option<&crate::policy::config::PolicyConfig>,
+    ) -> crate::policy::PolicyEngine {
         use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
         use crate::policy::registry::build_default_registry;
 
-        let config = PolicyConfig {
+        let default_config = PolicyConfig {
             global: PolicyList {
                 restrictions: vec![
                     PolicyEntry::Name("issue_lifecycle_validation".to_string()),
@@ -367,10 +369,11 @@ impl AppState {
             repos: Default::default(),
         };
 
+        let config = policy_config.unwrap_or(&default_config);
         let registry = build_default_registry();
         registry
-            .build(&config)
-            .expect("built-in policy configuration should be valid")
+            .build(config)
+            .expect("policy configuration should be valid")
     }
 
     /// Create an AppState with a custom policy engine (useful for testing).
@@ -569,9 +572,7 @@ impl AppState {
         patch_id: &PatchId,
         actor: Option<String>,
     ) -> Result<(), StoreError> {
-        self.store
-            .delete_patch_with_actor(patch_id, actor)
-            .await?;
+        self.store.delete_patch_with_actor(patch_id, actor).await?;
         Ok(())
     }
 
@@ -1981,9 +1982,7 @@ impl AppState {
         issue_id: &IssueId,
         actor: Option<String>,
     ) -> Result<(), StoreError> {
-        self.store
-            .delete_issue_with_actor(issue_id, actor)
-            .await?;
+        self.store.delete_issue_with_actor(issue_id, actor).await?;
         Ok(())
     }
 
@@ -3241,6 +3240,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
+                None,
             )
             .await
             .unwrap();
@@ -3253,6 +3253,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
+                None,
             )
             .await
             .unwrap();
@@ -3265,6 +3266,7 @@ mod tests {
                     issue_with_status("parent", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
+                None,
             )
             .await
             .unwrap();
