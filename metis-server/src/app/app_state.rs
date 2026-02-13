@@ -2162,6 +2162,24 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
+    /// Poll a condition until it returns `Some(T)` or the timeout elapses.
+    async fn poll_until<T, F, Fut>(timeout: std::time::Duration, mut f: F) -> Option<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Option<T>>,
+    {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if let Some(value) = f().await {
+                return Some(value);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return None;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
     #[tokio::test]
     async fn login_persists_user_and_actor() -> anyhow::Result<()> {
         let github_server = MockServer::start_async().await;
@@ -2287,14 +2305,23 @@ mod tests {
             .upsert_patch(Some(&actor), Some(patch_id.clone()), request)
             .await?;
 
-        // Wait for the github_pr_sync automation to process the event.
-        wait_for_automations().await;
+        // Poll until the automation updates the github metadata.
+        let github = poll_until(std::time::Duration::from_secs(5), || {
+            let store = handles.store.clone();
+            let pid = patch_id.clone();
+            async move {
+                let p = store.as_ref().get_patch(&pid, false).await.ok()?;
+                let gh = p.item.github?;
+                if gh.head_ref.as_deref() == Some("feature") {
+                    Some(gh)
+                } else {
+                    None
+                }
+            }
+        })
+        .await
+        .expect("github metadata should be updated by automation");
 
-        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
-        let github = stored_patch
-            .item
-            .github
-            .expect("github metadata should be preserved");
         assert_eq!(github.number, 42);
         assert_eq!(github.owner, "octo");
         assert_eq!(github.repo, "repo");
@@ -2386,14 +2413,17 @@ mod tests {
             .upsert_patch(Some(&actor), None, request)
             .await?;
 
-        // Wait for the github_pr_sync automation to process the event.
-        wait_for_automations().await;
-
-        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
-        let github = stored_patch
-            .item
-            .github
-            .expect("github metadata should be created");
+        // Poll until the automation creates the github metadata.
+        let github = poll_until(std::time::Duration::from_secs(5), || {
+            let store = handles.store.clone();
+            let pid = patch_id.clone();
+            async move {
+                let p = store.as_ref().get_patch(&pid, false).await.ok()?;
+                p.item.github
+            }
+        })
+        .await
+        .expect("github metadata should be created by automation");
 
         assert_eq!(github.number, 99);
         assert_eq!(github.owner, "octo");
