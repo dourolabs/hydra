@@ -1,7 +1,3 @@
-// Migrated from old-style using init_test_server_with_remote + manual env var setup +
-// job_id_for_prompt + wait_for_status + run_as_worker.
-// Migrated to TestHarness, UserHandle, and run_worker_expect_failure.
-
 mod harness;
 
 use anyhow::{Context, Result};
