@@ -101,7 +101,7 @@ async fn user_handle_create_and_get_issue() -> Result<()> {
     // List issues — should contain the one we just created
     let list = user.list_issues().await?;
     assert_eq!(list.issues.len(), 1);
-    assert_eq!(list.issues[0].id, issue_id);
+    assert_eq!(list.issues[0].issue_id, issue_id);
 
     Ok(())
 }

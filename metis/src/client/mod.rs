@@ -10,25 +10,25 @@ use metis_common::{
     api::v1::events::EventsQuery,
     api::v1::login::{LoginRequest, LoginResponse},
     documents::{
-        DocumentRecord, DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
+        DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
         SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
     },
     github::{GithubAppClientIdResponse, GithubTokenResponse},
     issues::{
-        AddTodoItemRequest, IssueRecord, ListIssueVersionsResponse, ListIssuesResponse,
+        AddTodoItemRequest, IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse,
         ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse,
         UpsertIssueRequest, UpsertIssueResponse,
     },
     job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
     jobs::{
-        CreateJobRequest, CreateJobResponse, JobRecord, KillJobResponse, ListJobVersionsResponse,
-        ListJobsResponse, SearchJobsQuery, WorkerContext,
+        CreateJobRequest, CreateJobResponse, JobVersionRecord, KillJobResponse,
+        ListJobVersionsResponse, ListJobsResponse, SearchJobsQuery, WorkerContext,
     },
     logs::LogsQuery,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
     patches::{
         CreatePatchAssetQuery, CreatePatchAssetResponse, ListPatchVersionsResponse,
-        ListPatchesResponse, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
+        ListPatchesResponse, PatchVersionRecord, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
     repositories::{
@@ -119,7 +119,7 @@ pub trait MetisClientInterface: Send + Sync {
     async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
     async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse>;
     #[allow(dead_code)]
-    async fn get_job(&self, job_id: &TaskId) -> Result<JobRecord>;
+    async fn get_job(&self, job_id: &TaskId) -> Result<JobVersionRecord>;
     async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse>;
     async fn get_job_logs(&self, job_id: &TaskId, query: &LogsQuery) -> Result<LogStream>;
     async fn set_job_status(
@@ -155,7 +155,7 @@ pub trait MetisClientInterface: Send + Sync {
         item_number: usize,
         request: &SetTodoItemStatusRequest,
     ) -> Result<TodoListResponse>;
-    async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueRecord>;
+    async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord>;
     async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse>;
     async fn list_issue_versions(&self, issue_id: &IssueId) -> Result<ListIssueVersionsResponse>;
     async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse>;
@@ -165,7 +165,7 @@ pub trait MetisClientInterface: Send + Sync {
         patch_id: &PatchId,
         request: &UpsertPatchRequest,
     ) -> Result<UpsertPatchResponse>;
-    async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord>;
+    async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord>;
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse>;
     async fn list_patch_versions(&self, patch_id: &PatchId) -> Result<ListPatchVersionsResponse>;
     async fn create_document(
@@ -177,8 +177,8 @@ pub trait MetisClientInterface: Send + Sync {
         document_id: &DocumentId,
         request: &UpsertDocumentRequest,
     ) -> Result<UpsertDocumentResponse>;
-    async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentRecord>;
-    async fn get_document_by_path(&self, path: &str) -> Result<DocumentRecord>;
+    async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord>;
+    async fn get_document_by_path(&self, path: &str) -> Result<DocumentVersionRecord>;
     async fn list_documents(&self, query: &SearchDocumentsQuery) -> Result<ListDocumentsResponse>;
     async fn list_document_versions(
         &self,
@@ -220,9 +220,9 @@ pub trait MetisClientInterface: Send + Sync {
     async fn update_agent(&self, name: &str, request: &UpsertAgentRequest)
         -> Result<AgentResponse>;
     async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse>;
-    async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueRecord>;
-    async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchRecord>;
-    async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentRecord>;
+    async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord>;
+    async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord>;
+    async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord>;
 
     /// Open an SSE connection to GET /v1/events and return a stream of parsed events.
     async fn subscribe_events(
@@ -459,7 +459,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/:job_id` to fetch an individual job summary.
-    pub async fn get_job(&self, job_id: &TaskId) -> Result<JobRecord> {
+    pub async fn get_job(&self, job_id: &TaskId) -> Result<JobVersionRecord> {
         let path = format!("/v1/jobs/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -471,7 +471,7 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<JobRecord>()
+            .json::<JobVersionRecord>()
             .await
             .context("failed to decode job response")
     }
@@ -625,7 +625,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/issues/:issue_id` to fetch an issue.
-    pub async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueRecord> {
+    pub async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
         let path = format!("/v1/issues/{issue_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -637,7 +637,7 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<IssueRecord>()
+            .json::<IssueVersionRecord>()
             .await
             .context("failed to decode get issue response")
     }
@@ -797,7 +797,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/patches/:patch_id` to fetch a patch.
-    pub async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord> {
+    pub async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
         let path = format!("/v1/patches/{patch_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -809,7 +809,7 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<PatchRecord>()
+            .json::<PatchVersionRecord>()
             .await
             .context("failed to decode get patch response")
     }
@@ -900,7 +900,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/documents/:document_id` to fetch a document.
-    pub async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentRecord> {
+    pub async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
         let path = format!("/v1/documents/{document_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -912,7 +912,7 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<DocumentRecord>()
+            .json::<DocumentVersionRecord>()
             .await
             .context("failed to decode document response")
     }
@@ -921,7 +921,7 @@ impl MetisClient {
     ///
     /// Uses the list documents endpoint with a path prefix filter and
     /// path_is_exact=true to find a document with an exact path match.
-    pub async fn get_document_by_path(&self, path: &str) -> Result<DocumentRecord> {
+    pub async fn get_document_by_path(&self, path: &str) -> Result<DocumentVersionRecord> {
         let query = SearchDocumentsQuery::new(None, Some(path.to_string()), Some(true), None, None);
         let response = self.list_documents(&query).await?;
 
@@ -1321,7 +1321,7 @@ impl MetisClient {
     }
 
     /// Call `DELETE /v1/issues/:issue_id` to soft-delete an issue.
-    pub async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueRecord> {
+    pub async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
         let path = format!("/v1/issues/{issue_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -1333,13 +1333,13 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<IssueRecord>()
+            .json::<IssueVersionRecord>()
             .await
             .context("failed to decode delete issue response")
     }
 
     /// Call `DELETE /v1/patches/:patch_id` to soft-delete a patch.
-    pub async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchRecord> {
+    pub async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
         let path = format!("/v1/patches/{patch_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -1351,13 +1351,13 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<PatchRecord>()
+            .json::<PatchVersionRecord>()
             .await
             .context("failed to decode delete patch response")
     }
 
     /// Call `DELETE /v1/documents/:document_id` to soft-delete a document.
-    pub async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentRecord> {
+    pub async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
         let path = format!("/v1/documents/{document_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -1369,7 +1369,7 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<DocumentRecord>()
+            .json::<DocumentVersionRecord>()
             .await
             .context("failed to decode delete document response")
     }
@@ -1540,7 +1540,7 @@ impl MetisClientInterface for MetisClient {
         MetisClient::list_jobs(self, query).await
     }
 
-    async fn get_job(&self, job_id: &TaskId) -> Result<JobRecord> {
+    async fn get_job(&self, job_id: &TaskId) -> Result<JobVersionRecord> {
         MetisClient::get_job(self, job_id).await
     }
 
@@ -1609,7 +1609,7 @@ impl MetisClientInterface for MetisClient {
         MetisClient::set_todo_item_status(self, issue_id, item_number, request).await
     }
 
-    async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueRecord> {
+    async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
         MetisClient::get_issue(self, issue_id).await
     }
 
@@ -1633,7 +1633,7 @@ impl MetisClientInterface for MetisClient {
         MetisClient::update_patch(self, patch_id, request).await
     }
 
-    async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord> {
+    async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
         MetisClient::get_patch(self, patch_id).await
     }
 
@@ -1660,11 +1660,11 @@ impl MetisClientInterface for MetisClient {
         MetisClient::update_document(self, document_id, request).await
     }
 
-    async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentRecord> {
+    async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
         MetisClient::get_document(self, document_id).await
     }
 
-    async fn get_document_by_path(&self, path: &str) -> Result<DocumentRecord> {
+    async fn get_document_by_path(&self, path: &str) -> Result<DocumentVersionRecord> {
         MetisClient::get_document_by_path(self, path).await
     }
 
@@ -1766,15 +1766,15 @@ impl MetisClientInterface for MetisClient {
         MetisClient::delete_agent(self, name).await
     }
 
-    async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueRecord> {
+    async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
         MetisClient::delete_issue(self, issue_id).await
     }
 
-    async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchRecord> {
+    async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
         MetisClient::delete_patch(self, patch_id).await
     }
 
-    async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentRecord> {
+    async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
         MetisClient::delete_document(self, document_id).await
     }
 

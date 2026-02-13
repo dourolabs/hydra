@@ -178,7 +178,7 @@ async fn find_or_create_issue(
         .iter()
         .find(|i| i.issue.description == description)
     {
-        Ok(existing.id.clone())
+        Ok(existing.issue_id.clone())
     } else {
         user.create_issue(description).await
     }

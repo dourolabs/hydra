@@ -317,7 +317,7 @@ pub async fn job_id_for_prompt(client: &MetisClient, prompt: &str) -> Result<Tas
     let jobs = client.list_jobs(&SearchJobsQuery::default()).await?.jobs;
     jobs.into_iter()
         .find(|job| job.task.prompt == prompt)
-        .map(|job| job.id)
+        .map(|job| job.job_id)
         .ok_or_else(|| anyhow!("job with prompt '{prompt}' not found"))
 }
 
@@ -333,7 +333,7 @@ pub async fn wait_for_status(
         }
 
         let jobs = client.list_jobs(&SearchJobsQuery::default()).await?.jobs;
-        if let Some(job) = jobs.iter().find(|job| &job.id == job_id) {
+        if let Some(job) = jobs.iter().find(|job| &job.job_id == job_id) {
             if job.task.status == expected {
                 return Ok(());
             }

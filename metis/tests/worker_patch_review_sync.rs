@@ -86,7 +86,7 @@ async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> 
         "Review description".to_string(),
     )
     .await?
-    .id;
+    .issue_id;
 
     // Run GitHub sync and verify outcomes.
     harness
@@ -237,7 +237,7 @@ async fn sync_open_patches_closes_merge_request_issue_on_merged_pr() -> Result<(
         "Merge description".to_string(),
     )
     .await?
-    .id;
+    .issue_id;
 
     env.run_github_sync(60)
         .await
@@ -332,7 +332,7 @@ async fn sync_open_patches_fails_merge_request_issue_on_closed_pr() -> Result<()
         "Closed description".to_string(),
     )
     .await?
-    .id;
+    .issue_id;
 
     env.run_github_sync(60)
         .await

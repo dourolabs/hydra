@@ -7,8 +7,8 @@ use clap::{Args, Subcommand};
 use metis_common::{
     constants::ENV_METIS_ID,
     documents::{
-        has_hidden_segment, Document as DocumentPayload, DocumentRecord, SearchDocumentsQuery,
-        UpsertDocumentRequest,
+        has_hidden_segment, Document as DocumentPayload, DocumentVersionRecord,
+        SearchDocumentsQuery, UpsertDocumentRequest,
     },
     DocumentId, TaskId,
 };
@@ -181,10 +181,10 @@ pub async fn run(
         DocumentsCommand::Delete { id_or_path } => {
             let document = get_document_by_id_or_path(client, &id_or_path).await?;
             let deleted = client
-                .delete_document(&document.id)
+                .delete_document(&document.document_id)
                 .await
-                .with_context(|| format!("failed to delete document '{}'", document.id))?;
-            println!("Deleted document '{}'", deleted.id);
+                .with_context(|| format!("failed to delete document '{}'", document.document_id))?;
+            println!("Deleted document '{}'", deleted.document_id);
         }
         DocumentsCommand::Sync(args) => {
             sync_documents(client, args).await?;
@@ -199,7 +199,7 @@ pub async fn run(
 
 fn write_documents_output(
     format: ResolvedOutputFormat,
-    documents: &[DocumentRecord],
+    documents: &[DocumentVersionRecord],
     full_output: bool,
 ) -> Result<()> {
     let mut stdout = io::stdout();
@@ -208,7 +208,7 @@ fn write_documents_output(
 
 fn write_documents_output_with_writer(
     format: ResolvedOutputFormat,
-    documents: &[DocumentRecord],
+    documents: &[DocumentVersionRecord],
     full_output: bool,
     writer: &mut impl Write,
 ) -> Result<()> {
@@ -220,7 +220,7 @@ fn write_documents_output_with_writer(
 
 fn render_documents_to_buffer(
     format: ResolvedOutputFormat,
-    documents: &[DocumentRecord],
+    documents: &[DocumentVersionRecord],
     full_output: bool,
 ) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
@@ -231,7 +231,7 @@ fn render_documents_to_buffer(
 async fn get_document_by_id_or_path(
     client: &dyn MetisClientInterface,
     id_or_path: &str,
-) -> Result<DocumentRecord> {
+) -> Result<DocumentVersionRecord> {
     match DocumentId::try_from(id_or_path.to_string()) {
         Ok(id) => client
             .get_document(&id)
@@ -247,7 +247,7 @@ async fn get_document_by_id_or_path(
 async fn list_documents(
     client: &dyn MetisClientInterface,
     args: DocumentsListArgs,
-) -> Result<Vec<DocumentRecord>> {
+) -> Result<Vec<DocumentVersionRecord>> {
     let include_deleted = if args.include_deleted {
         Some(true)
     } else {
@@ -270,7 +270,7 @@ async fn list_documents(
 async fn create_document(
     client: &dyn MetisClientInterface,
     args: CreateDocumentArgs,
-) -> Result<DocumentRecord> {
+) -> Result<DocumentVersionRecord> {
     if args.title.trim().is_empty() {
         bail!("document title must not be empty");
     }
@@ -308,7 +308,7 @@ async fn create_document(
 async fn update_document(
     client: &dyn MetisClientInterface,
     args: UpdateDocumentArgs,
-) -> Result<DocumentRecord> {
+) -> Result<DocumentVersionRecord> {
     let mut record = client
         .get_document(&args.id)
         .await
@@ -427,7 +427,7 @@ pub async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -
         .context("failed to list documents")?;
 
     // Filter to only documents with a path
-    let pathed_documents: Vec<&DocumentRecord> = response
+    let pathed_documents: Vec<&DocumentVersionRecord> = response
         .documents
         .iter()
         .filter(|d| d.document.path.is_some())
@@ -456,13 +456,13 @@ pub async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -
         if let Some(ref manifest) = existing_manifest {
             if let Some(existing_entry) = manifest.documents.get(relative_path) {
                 if existing_entry.content_hash == content_hash
-                    && existing_entry.document_id == record.id
+                    && existing_entry.document_id == record.document_id
                 {
                     // Content unchanged, skip download
                     new_entries.insert(
                         relative_path.to_string(),
                         SyncManifestEntry {
-                            document_id: record.id.clone(),
+                            document_id: record.document_id.clone(),
                             content_hash,
                         },
                     );
@@ -484,7 +484,7 @@ pub async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -
         new_entries.insert(
             relative_path.to_string(),
             SyncManifestEntry {
-                document_id: record.id.clone(),
+                document_id: record.document_id.clone(),
                 content_hash,
             },
         );
@@ -814,6 +814,7 @@ impl DocumentBodyInput {
 mod tests {
     use super::*;
     use crate::client::MetisClient;
+    use chrono::Utc;
     use httpmock::prelude::*;
     use metis_common::documents::{
         Document as DocumentPayload, ListDocumentsResponse, UpsertDocumentResponse,
@@ -830,11 +831,11 @@ mod tests {
             .expect("client")
     }
 
-    fn sample_document_record(id: &DocumentId) -> DocumentRecord {
+    fn sample_document_record(id: &DocumentId) -> DocumentVersionRecord {
         let document = DocumentPayload::new("Runbook".to_string(), "# Steps".to_string(), false)
             .with_path("docs/runbook.md")
             .with_created_by(TaskId::new());
-        DocumentRecord::new(id.clone(), document)
+        DocumentVersionRecord::new(id.clone(), 0, Utc::now(), document)
     }
 
     #[tokio::test]
@@ -867,7 +868,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].id, document_id);
+        assert_eq!(records[0].document_id, document_id);
         list_mock.assert();
     }
 
@@ -889,8 +890,10 @@ mod tests {
                     "created_by": created_by_for_mock
                 }
             }));
-            then.status(200)
-                .json_body_obj(&UpsertDocumentResponse::new(document_id_for_mock.clone()));
+            then.status(200).json_body_obj(&UpsertDocumentResponse::new(
+                document_id_for_mock.clone(),
+                0,
+            ));
         });
         let document_record = sample_document_record(&document_id);
         let get_mock = server.mock(|when, then| {
@@ -916,7 +919,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(record.id, document_id);
+        assert_eq!(record.document_id, document_id);
         create_mock.assert();
         get_mock.assert();
     }
@@ -936,8 +939,10 @@ mod tests {
         let document_id_for_update = document_id.clone();
         let update_mock = server.mock(move |when, then| {
             when.method(PUT);
-            then.status(200)
-                .json_body_obj(&UpsertDocumentResponse::new(document_id_for_update.clone()));
+            then.status(200).json_body_obj(&UpsertDocumentResponse::new(
+                document_id_for_update.clone(),
+                0,
+            ));
         });
         let client = mock_client(&server);
 
@@ -1028,7 +1033,7 @@ mod tests {
 
         assert_eq!(lines.len(), 1);
         let parsed: Value = serde_json::from_str(lines[0]).expect("json");
-        assert_eq!(parsed["id"], document_id.as_ref());
+        assert_eq!(parsed["document_id"], document_id.as_ref());
     }
 
     #[derive(Default)]
@@ -1068,7 +1073,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.id, document_id);
+        assert_eq!(result.document_id, document_id);
         get_mock.assert();
     }
 
@@ -1090,7 +1095,7 @@ mod tests {
 
         let result = get_document_by_id_or_path(&client, path).await.unwrap();
 
-        assert_eq!(result.id, document_id);
+        assert_eq!(result.document_id, document_id);
         list_mock.assert();
     }
 
@@ -1210,7 +1215,7 @@ mod tests {
             false,
         )
         .with_path("guides/deploy.md");
-        let record = DocumentRecord::new(doc_id.clone(), document);
+        let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document);
         let response = ListDocumentsResponse::new(vec![record]);
 
         let server = MockServer::start();
@@ -1252,13 +1257,17 @@ mod tests {
         let pathed_id = DocumentId::new();
         let unpathed_id = DocumentId::new();
 
-        let pathed = DocumentRecord::new(
+        let pathed = DocumentVersionRecord::new(
             pathed_id.clone(),
+            0,
+            Utc::now(),
             DocumentPayload::new("Pathed".to_string(), "body".to_string(), false)
                 .with_path("docs/pathed.md"),
         );
-        let unpathed = DocumentRecord::new(
+        let unpathed = DocumentVersionRecord::new(
             unpathed_id,
+            0,
+            Utc::now(),
             DocumentPayload::new("Unpathed".to_string(), "body".to_string(), false),
         );
         let response = ListDocumentsResponse::new(vec![pathed, unpathed]);
@@ -1293,7 +1302,7 @@ mod tests {
         let body = "# Steps\nDo the thing";
         let document = DocumentPayload::new("Guide".to_string(), body.to_string(), false)
             .with_path("guides/steps.md");
-        let record = DocumentRecord::new(doc_id.clone(), document);
+        let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document);
         let response = ListDocumentsResponse::new(vec![record]);
 
         let server = MockServer::start();
@@ -1342,13 +1351,14 @@ mod tests {
         let doc_id = DocumentId::new();
         let document = DocumentPayload::new("Keep".to_string(), "keep body".to_string(), false)
             .with_path("docs/keep.md");
-        let record = DocumentRecord::new(doc_id.clone(), document);
+        let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document);
 
         let removed_id = DocumentId::new();
         let removed_doc =
             DocumentPayload::new("Remove".to_string(), "remove body".to_string(), false)
                 .with_path("docs/remove.md");
-        let removed_record = DocumentRecord::new(removed_id.clone(), removed_doc);
+        let removed_record =
+            DocumentVersionRecord::new(removed_id.clone(), 0, Utc::now(), removed_doc);
 
         // First sync with both documents
         let response = ListDocumentsResponse::new(vec![record.clone(), removed_record]);
@@ -1404,7 +1414,7 @@ mod tests {
         let doc_id = DocumentId::new();
         let document = DocumentPayload::new("Guide".to_string(), "body".to_string(), false)
             .with_path("playbooks/guide.md");
-        let record = DocumentRecord::new(doc_id, document);
+        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document);
         let response = ListDocumentsResponse::new(vec![record]);
 
         let server = MockServer::start();
@@ -1439,7 +1449,7 @@ mod tests {
         let doc_id = DocumentId::new();
         let document = DocumentPayload::new("Guide".to_string(), "body".to_string(), false)
             .with_path("/playbooks/guide.md");
-        let record = DocumentRecord::new(doc_id, document);
+        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document);
         let response = ListDocumentsResponse::new(vec![record]);
 
         let server = MockServer::start();
@@ -1529,8 +1539,10 @@ mod tests {
 
         // Mock server: GET document (for conflict check), PUT update
         let server = MockServer::start();
-        let server_record = DocumentRecord::new(
+        let server_record = DocumentVersionRecord::new(
             doc_id.clone(),
+            0,
+            Utc::now(),
             DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
                 .with_path("/docs/guide.md"),
         );
@@ -1545,7 +1557,7 @@ mod tests {
             when.method(PUT)
                 .path(format!("/v1/documents/{doc_id_for_update}").as_str());
             then.status(200)
-                .json_body_obj(&UpsertDocumentResponse::new(doc_id_for_update.clone()));
+                .json_body_obj(&UpsertDocumentResponse::new(doc_id_for_update.clone(), 0));
         });
         let client = mock_client(&server);
 
@@ -1642,7 +1654,7 @@ mod tests {
         let create_mock = server.mock(move |when, then| {
             when.method(POST).path("/v1/documents");
             then.status(200)
-                .json_body_obj(&UpsertDocumentResponse::new(new_doc_id_for_mock.clone()));
+                .json_body_obj(&UpsertDocumentResponse::new(new_doc_id_for_mock.clone(), 0));
         });
         let client = mock_client(&server);
 
@@ -1701,8 +1713,10 @@ mod tests {
 
         let server = MockServer::start();
         // Mock GET for conflict check on the modified file
-        let server_record = DocumentRecord::new(
+        let server_record = DocumentVersionRecord::new(
             doc_id.clone(),
+            0,
+            Utc::now(),
             DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
                 .with_path("/docs/guide.md"),
         );
@@ -1762,8 +1776,10 @@ mod tests {
 
         // Mock server returns different content than what was synced
         let server = MockServer::start();
-        let server_record = DocumentRecord::new(
+        let server_record = DocumentVersionRecord::new(
             doc_id.clone(),
+            0,
+            Utc::now(),
             DocumentPayload::new("Guide".to_string(), server_body.to_string(), false)
                 .with_path("/docs/guide.md"),
         );
@@ -1778,7 +1794,7 @@ mod tests {
             when.method(PUT)
                 .path(format!("/v1/documents/{doc_id_for_update}").as_str());
             then.status(200)
-                .json_body_obj(&UpsertDocumentResponse::new(doc_id_for_update.clone()));
+                .json_body_obj(&UpsertDocumentResponse::new(doc_id_for_update.clone(), 0));
         });
         let client = mock_client(&server);
 
@@ -1827,7 +1843,7 @@ mod tests {
         let create_mock = server.mock(move |when, then| {
             when.method(POST).path("/v1/documents");
             then.status(200)
-                .json_body_obj(&UpsertDocumentResponse::new(new_doc_id_for_mock.clone()));
+                .json_body_obj(&UpsertDocumentResponse::new(new_doc_id_for_mock.clone(), 0));
         });
         let client = mock_client(&server);
 
@@ -1931,8 +1947,10 @@ mod tests {
         let delete_mock = server.mock(move |when, then| {
             when.method(DELETE)
                 .path(format!("/v1/documents/{doc_id_for_delete}").as_str());
-            let record = DocumentRecord::new(
+            let record = DocumentVersionRecord::new(
                 doc_id_for_delete.clone(),
+                0,
+                Utc::now(),
                 DocumentPayload::new("Old".to_string(), body.to_string(), true),
             );
             then.status(200).json_body_obj(&record);
@@ -2039,8 +2057,10 @@ mod tests {
         let delete_mock = server.mock(move |when, then| {
             when.method(DELETE)
                 .path(format!("/v1/documents/{playbook_id_for_delete}").as_str());
-            let record = DocumentRecord::new(
+            let record = DocumentVersionRecord::new(
                 playbook_id_for_delete.clone(),
+                0,
+                Utc::now(),
                 DocumentPayload::new("Old".to_string(), "# Old playbook".to_string(), true),
             );
             then.status(200).json_body_obj(&record);

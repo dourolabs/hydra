@@ -5,12 +5,12 @@ use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, IssueVersionRecord,
         JobSettings, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
     },
     jobs::{BundleSpec, CreateJobRequest, SearchJobsQuery},
     patches::{
-        GithubPr, ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
+        GithubPr, ListPatchesResponse, Patch, PatchStatus, PatchVersionRecord, SearchPatchesQuery,
         UpsertPatchRequest,
     },
     users::Username,
@@ -153,7 +153,7 @@ impl UserHandle {
     }
 
     /// Retrieve an issue by ID.
-    pub async fn get_issue(&self, id: &IssueId) -> Result<IssueRecord> {
+    pub async fn get_issue(&self, id: &IssueId) -> Result<IssueVersionRecord> {
         self.client
             .get_issue(id)
             .await
@@ -200,7 +200,7 @@ impl UserHandle {
     }
 
     /// Retrieve a patch by ID.
-    pub async fn get_patch(&self, id: &PatchId) -> Result<PatchRecord> {
+    pub async fn get_patch(&self, id: &PatchId) -> Result<PatchVersionRecord> {
         self.client
             .get_patch(id)
             .await
@@ -250,7 +250,7 @@ impl UserHandle {
     pub async fn list_jobs_for_issue(
         &self,
         issue_id: &IssueId,
-    ) -> Result<Vec<metis_common::jobs::JobRecord>> {
+    ) -> Result<Vec<metis_common::jobs::JobVersionRecord>> {
         let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None);
         let response = self
             .client

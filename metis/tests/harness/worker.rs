@@ -213,8 +213,8 @@ async fn collect_created_patches(
         .patches
         .into_iter()
         .filter(|p| !p.patch.is_automatic_backup)
-        .filter(|p| !before_patch_ids.contains(&p.id))
-        .map(|p| p.id)
+        .filter(|p| !before_patch_ids.contains(&p.patch_id))
+        .map(|p| p.patch_id)
         .collect();
 
     Ok(created)
@@ -230,7 +230,7 @@ async fn get_job_status(harness: &TestHarness, job_id: &TaskId) -> Result<Status
     let job = jobs
         .jobs
         .iter()
-        .find(|j| &j.id == job_id)
+        .find(|j| &j.job_id == job_id)
         .with_context(|| format!("job '{job_id}' not found after worker run"))?;
     Ok(job.task.status)
 }
@@ -273,7 +273,7 @@ pub(super) async fn run_worker_impl(
         .patches
         .iter()
         .filter(|p| !p.patch.is_automatic_backup)
-        .map(|p| p.id.clone())
+        .map(|p| p.patch_id.clone())
         .collect();
 
     // Create BashCommands and run the worker.
