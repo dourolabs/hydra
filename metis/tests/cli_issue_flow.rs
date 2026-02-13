@@ -1,7 +1,3 @@
-// Migrated from old-style using test_state_handles + spawn_test_server_with_state + manual
-// actor/issue/server setup + run_metis_command helper.
-// Migrated to TestHarness and UserHandle::cli.
-
 mod harness;
 
 use anyhow::{anyhow, Result};

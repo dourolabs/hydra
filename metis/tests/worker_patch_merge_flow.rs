@@ -1,7 +1,3 @@
-// Migrated from old-style using init_test_server_with_remote_and_github + TestEnvironment +
-// manual git helpers + manual spawner/scheduler instantiation.
-// Migrated to TestHarness, UserHandle, GitRemote, step_spawner, step_github_sync, and run_worker.
-
 mod harness;
 
 use anyhow::{Context, Result};
