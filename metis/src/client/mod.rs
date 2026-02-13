@@ -1438,71 +1438,74 @@ impl MetisClient {
     }
 
     fn stream_sse_bytes(byte_stream: BytesStream) -> LogStream {
-        Box::pin(stream::unfold(
-            (byte_stream, String::new(), false),
-            |(mut byte_stream, mut buffer, finished)| async move {
-                if finished {
-                    return None;
-                }
-
-                loop {
-                    if let Some((idx, separator_len)) = buffer
-                        .find("\n\n")
-                        .map(|idx| (idx, 2))
-                        .or_else(|| buffer.find("\r\n\r\n").map(|idx| (idx, "\r\n\r\n".len())))
-                    {
-                        let event_block = buffer[..idx].to_string();
-                        buffer.drain(..idx + separator_len);
-                        if event_block.trim().is_empty() {
-                            continue;
-                        }
-
-                        if let Some((event_name, data)) = parse_sse_event(&event_block) {
-                            if event_name.as_deref() == Some("error") {
-                                return Some((
-                                    Err(anyhow!("error streaming logs: {data}")),
-                                    (byte_stream, buffer, true),
-                                ));
-                            }
-
-                            return Some((Ok(data), (byte_stream, buffer, false)));
-                        }
+        Box::pin(
+            stream::unfold(
+                (byte_stream, String::new(), false),
+                |(mut byte_stream, mut buffer, finished)| async move {
+                    if finished {
+                        return None;
                     }
 
-                    match byte_stream.next().await {
-                        Some(Ok(chunk)) => {
-                            if chunk.is_empty() {
+                    loop {
+                        if let Some((idx, separator_len)) = buffer
+                            .find("\n\n")
+                            .map(|idx| (idx, 2))
+                            .or_else(|| buffer.find("\r\n\r\n").map(|idx| (idx, "\r\n\r\n".len())))
+                        {
+                            let event_block = buffer[..idx].to_string();
+                            buffer.drain(..idx + separator_len);
+                            if event_block.trim().is_empty() {
                                 continue;
                             }
-                            let chunk_text = String::from_utf8_lossy(&chunk);
-                            buffer.push_str(&chunk_text);
-                        }
-                        Some(Err(err)) => {
-                            return Some((Err(err.into()), (byte_stream, buffer, true)));
-                        }
-                        None => {
-                            if buffer.trim().is_empty() {
-                                return None;
-                            }
 
-                            if let Some((event_name, data)) = parse_sse_event(&buffer) {
-                                let new_state = (byte_stream, String::new(), true);
+                            if let Some((event_name, data)) = parse_sse_event(&event_block) {
                                 if event_name.as_deref() == Some("error") {
                                     return Some((
                                         Err(anyhow!("error streaming logs: {data}")),
-                                        new_state,
+                                        (byte_stream, buffer, true),
                                     ));
                                 }
 
-                                return Some((Ok(data), new_state));
-                            } else {
-                                return None;
+                                return Some((Ok(data), (byte_stream, buffer, false)));
+                            }
+                        }
+
+                        match byte_stream.next().await {
+                            Some(Ok(chunk)) => {
+                                if chunk.is_empty() {
+                                    continue;
+                                }
+                                let chunk_text = String::from_utf8_lossy(&chunk);
+                                buffer.push_str(&chunk_text);
+                            }
+                            Some(Err(err)) => {
+                                return Some((Err(err.into()), (byte_stream, buffer, true)));
+                            }
+                            None => {
+                                if buffer.trim().is_empty() {
+                                    return None;
+                                }
+
+                                if let Some((event_name, data)) = parse_sse_event(&buffer) {
+                                    let new_state = (byte_stream, String::new(), true);
+                                    if event_name.as_deref() == Some("error") {
+                                        return Some((
+                                            Err(anyhow!("error streaming logs: {data}")),
+                                            new_state,
+                                        ));
+                                    }
+
+                                    return Some((Ok(data), new_state));
+                                } else {
+                                    return None;
+                                }
                             }
                         }
                     }
-                }
-            },
-        ))
+                },
+            )
+            .fuse(),
+        )
     }
 }
 
