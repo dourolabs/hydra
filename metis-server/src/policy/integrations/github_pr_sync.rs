@@ -16,9 +16,10 @@ use tracing::{info, warn};
 /// then updates the patch with the resulting PR metadata.
 ///
 /// Re-entrancy guard: after the automation persists GitHub PR metadata, a
-/// new `PatchUpdated` event fires. The automation skips re-processing by
-/// checking whether the patch already has `github.head_ref` matching
-/// `branch_name`.
+/// new `PatchUpdated` event fires. The automation detects this by comparing
+/// the old and new patch from the mutation payload — if the only change is
+/// to the `github` field, the update was caused by this automation and is
+/// skipped.
 pub struct GithubPrSyncAutomation;
 
 impl GithubPrSyncAutomation {
@@ -50,7 +51,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             _ => return Ok(()),
         };
 
-        let MutationPayload::Patch { new, .. } = payload.as_ref() else {
+        let MutationPayload::Patch { old, new, .. } = payload.as_ref() else {
             return Ok(());
         };
 
@@ -60,11 +61,16 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             None => return Ok(()),
         };
 
-        // Re-entrancy guard: if the patch already has github metadata with a
-        // matching head_ref, the PR has already been synced for this branch.
-        // Skip to prevent infinite re-triggering.
-        if let Some(github) = &new.github {
-            if github.head_ref.as_deref() == Some(head_ref.as_str()) {
+        // Re-entrancy guard: after this automation syncs a PR it persists the
+        // github metadata, which triggers another PatchUpdated event. Detect
+        // this by comparing old and new — if the only field that changed is
+        // `github`, this update was caused by our own write and we skip it.
+        if let Some(old) = old {
+            let mut old_without_github = old.clone();
+            let mut new_without_github = new.clone();
+            old_without_github.github = None;
+            new_without_github.github = None;
+            if old_without_github == new_without_github && old.github != new.github {
                 return Ok(());
             }
         }
@@ -269,8 +275,8 @@ mod tests {
     }
 
     #[test]
-    fn skips_when_github_head_ref_matches_branch_name() {
-        let mut patch = Patch::new(
+    fn skips_when_only_github_field_changed() {
+        let mut old_patch = Patch::new(
             "title".into(),
             "desc".into(),
             "diff".into(),
@@ -281,8 +287,10 @@ mod tests {
             RepoName::new("org", "repo").unwrap(),
             None,
         );
-        patch.branch_name = Some("feature/branch".into());
-        patch.github = Some(GithubPr::new(
+        old_patch.branch_name = Some("feature/branch".into());
+
+        let mut new_patch = old_patch.clone();
+        new_patch.github = Some(GithubPr::new(
             "org".into(),
             "repo".into(),
             1,
@@ -291,8 +299,57 @@ mod tests {
             None,
             None,
         ));
-        // Re-entrancy guard: head_ref matches branch_name, should skip.
-        let github = patch.github.as_ref().unwrap();
-        assert_eq!(github.head_ref.as_deref(), patch.branch_name.as_deref());
+
+        // Re-entrancy guard: only github changed, should skip.
+        let mut old_no_gh = old_patch.clone();
+        let mut new_no_gh = new_patch.clone();
+        old_no_gh.github = None;
+        new_no_gh.github = None;
+        assert_eq!(old_no_gh, new_no_gh);
+        assert_ne!(old_patch.github, new_patch.github);
+    }
+
+    #[test]
+    fn does_not_skip_when_non_github_fields_also_changed() {
+        let mut old_patch = Patch::new(
+            "title".into(),
+            "desc".into(),
+            "diff".into(),
+            PatchStatus::Open,
+            false,
+            None,
+            vec![],
+            RepoName::new("org", "repo").unwrap(),
+            None,
+        );
+        old_patch.branch_name = Some("feature/branch".into());
+        old_patch.github = Some(GithubPr::new(
+            "org".into(),
+            "repo".into(),
+            1,
+            Some("feature/branch".into()),
+            Some("main".into()),
+            None,
+            None,
+        ));
+
+        let mut new_patch = old_patch.clone();
+        new_patch.title = "Updated title".into();
+        new_patch.github = Some(GithubPr::new(
+            "org".into(),
+            "repo".into(),
+            1,
+            Some("feature/branch".into()),
+            Some("main".into()),
+            Some("https://example.com/pr/1".into()),
+            None,
+        ));
+
+        // Non-github field (title) changed, so guard should NOT skip.
+        let mut old_no_gh = old_patch.clone();
+        let mut new_no_gh = new_patch.clone();
+        old_no_gh.github = None;
+        new_no_gh.github = None;
+        assert_ne!(old_no_gh, new_no_gh);
     }
 }
