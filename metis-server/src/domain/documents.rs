@@ -20,7 +20,7 @@ impl From<api::documents::Document> for Document {
         Document {
             title: value.title,
             body_markdown: value.body_markdown,
-            path: value.path,
+            path: value.path.map(String::from),
             created_by: value.created_by,
             deleted: value.deleted,
         }
@@ -31,7 +31,7 @@ impl From<Document> for api::documents::Document {
     fn from(value: Document) -> Self {
         let mut document =
             api::documents::Document::new(value.title, value.body_markdown, value.deleted);
-        document.path = value.path;
+        document.path = value.path.and_then(|p| p.parse().ok());
         document.created_by = value.created_by;
         document
     }

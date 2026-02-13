@@ -276,20 +276,22 @@ async fn create_document(
         bail!("document title must not be empty");
     }
 
-    if let Some(path) = args.path.as_deref() {
+    let parsed_path = if let Some(path) = args.path.as_deref() {
         if path.trim().is_empty() {
             bail!("document path must not be empty when provided");
         }
-        let normalized = path.strip_prefix('/').unwrap_or(path);
-        if has_hidden_segment(normalized) {
-            bail!("document path must not contain hidden segments (starting with '.')");
-        }
-    }
+        Some(
+            path.parse::<metis_common::DocumentPath>()
+                .context("document path must not contain hidden segments (starting with '.')")?,
+        )
+    } else {
+        None
+    };
 
     let body = args.body.read_required(true)?;
     let mut document = DocumentPayload::new(args.title.clone(), body, false);
-    if let Some(path) = &args.path {
-        document.path = Some(path.clone());
+    if let Some(path) = parsed_path {
+        document.path = Some(path);
     }
     if let Some(created_by) = &args.created_by {
         document.created_by = Some(created_by.clone());
@@ -343,12 +345,11 @@ async fn update_document(
         if path.trim().is_empty() {
             bail!("document path must not be empty when provided");
         }
-        let normalized = path.strip_prefix('/').unwrap_or(path);
-        if has_hidden_segment(normalized) {
-            bail!("document path must not contain hidden segments (starting with '.')");
-        }
-        if document.path.as_deref() != Some(path.as_str()) {
-            document.path = Some(path.clone());
+        let parsed: metis_common::DocumentPath = path
+            .parse()
+            .context("document path must not contain hidden segments (starting with '.')")?;
+        if document.path.as_deref() != Some(parsed.as_str()) {
+            document.path = Some(parsed);
             changed = true;
         }
     }
@@ -752,8 +753,8 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
             if args.dry_run {
                 println!("Would create: {relative_path} (title: \"{title}\")");
             } else {
-                let document =
-                    DocumentPayload::new(title.clone(), content.clone(), false).with_path(doc_path);
+                let document = DocumentPayload::new(title.clone(), content.clone(), false)
+                    .with_path(doc_path)?;
                 let response = client
                     .create_document(&UpsertDocumentRequest::new(document))
                     .await
@@ -887,6 +888,7 @@ mod tests {
     fn sample_document_record(id: &DocumentId) -> DocumentVersionRecord {
         let document = DocumentPayload::new("Runbook".to_string(), "# Steps".to_string(), false)
             .with_path("docs/runbook.md")
+            .unwrap()
             .with_created_by(TaskId::new());
         DocumentVersionRecord::new(id.clone(), 0, Utc::now(), document)
     }
@@ -939,7 +941,7 @@ mod tests {
                 "document": {
                     "title": "Release notes",
                     "body_markdown": "contents",
-                    "path": "docs/release.md",
+                    "path": "/docs/release.md",
                     "created_by": created_by_for_mock
                 }
             }));
@@ -1269,7 +1271,8 @@ mod tests {
             "# Deploy\nStep 1: Run deploy".to_string(),
             false,
         )
-        .with_path("guides/deploy.md");
+        .with_path("guides/deploy.md")
+        .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document);
         let response = ListDocumentsResponse::new(vec![record]);
 
@@ -1317,7 +1320,8 @@ mod tests {
             0,
             Utc::now(),
             DocumentPayload::new("Pathed".to_string(), "body".to_string(), false)
-                .with_path("docs/pathed.md"),
+                .with_path("docs/pathed.md")
+                .unwrap(),
         );
         let unpathed = DocumentVersionRecord::new(
             unpathed_id,
@@ -1356,7 +1360,8 @@ mod tests {
         let doc_id = DocumentId::new();
         let body = "# Steps\nDo the thing";
         let document = DocumentPayload::new("Guide".to_string(), body.to_string(), false)
-            .with_path("guides/steps.md");
+            .with_path("guides/steps.md")
+            .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document);
         let response = ListDocumentsResponse::new(vec![record]);
 
@@ -1405,13 +1410,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let doc_id = DocumentId::new();
         let document = DocumentPayload::new("Keep".to_string(), "keep body".to_string(), false)
-            .with_path("docs/keep.md");
+            .with_path("docs/keep.md")
+            .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document);
 
         let removed_id = DocumentId::new();
         let removed_doc =
             DocumentPayload::new("Remove".to_string(), "remove body".to_string(), false)
-                .with_path("docs/remove.md");
+                .with_path("docs/remove.md")
+                .unwrap();
         let removed_record =
             DocumentVersionRecord::new(removed_id.clone(), 0, Utc::now(), removed_doc);
 
@@ -1468,7 +1475,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let doc_id = DocumentId::new();
         let document = DocumentPayload::new("Guide".to_string(), "body".to_string(), false)
-            .with_path("playbooks/guide.md");
+            .with_path("playbooks/guide.md")
+            .unwrap();
         let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document);
         let response = ListDocumentsResponse::new(vec![record]);
 
@@ -1503,7 +1511,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let doc_id = DocumentId::new();
         let document = DocumentPayload::new("Guide".to_string(), "body".to_string(), false)
-            .with_path("/playbooks/guide.md");
+            .with_path("/playbooks/guide.md")
+            .unwrap();
         let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document);
         let response = ListDocumentsResponse::new(vec![record]);
 
@@ -1600,7 +1609,8 @@ mod tests {
             1,
             Utc::now(),
             DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
-                .with_path("/docs/guide.md"),
+                .with_path("/docs/guide.md")
+                .unwrap(),
         );
         let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
         server.mock(|when, then| {
@@ -1678,7 +1688,8 @@ mod tests {
             1,
             Utc::now(),
             DocumentPayload::new("Stable".to_string(), body.to_string(), false)
-                .with_path("/docs/stable.md"),
+                .with_path("/docs/stable.md")
+                .unwrap(),
         );
         let list_response = ListDocumentsResponse::new(vec![list_record]);
         server.mock(|when, then| {
@@ -1801,7 +1812,8 @@ mod tests {
             1,
             Utc::now(),
             DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
-                .with_path("/docs/guide.md"),
+                .with_path("/docs/guide.md")
+                .unwrap(),
         );
         let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
         server.mock(|when, then| {
@@ -1871,7 +1883,8 @@ mod tests {
             2, // server version > manifest version (1), indicates server changed
             Utc::now(),
             DocumentPayload::new("Guide".to_string(), server_body.to_string(), false)
-                .with_path("/docs/guide.md"),
+                .with_path("/docs/guide.md")
+                .unwrap(),
         );
         let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
         server.mock(|when, then| {
@@ -1952,7 +1965,8 @@ mod tests {
                 "# Server updated content".to_string(),
                 false,
             )
-            .with_path("/docs/guide.md"),
+            .with_path("/docs/guide.md")
+            .unwrap(),
         );
         let list_response = ListDocumentsResponse::new(vec![server_record]);
         server.mock(|when, then| {
@@ -2009,7 +2023,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let doc_id = DocumentId::new();
         let document = DocumentPayload::new("Guide".to_string(), "# Content".to_string(), false)
-            .with_path("docs/guide.md");
+            .with_path("docs/guide.md")
+            .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 5, Utc::now(), document);
         let response = ListDocumentsResponse::new(vec![record]);
 

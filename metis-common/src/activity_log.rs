@@ -281,7 +281,7 @@ mod tests {
         let document_id = DocumentId::new();
         let document_v1 = Document::new("Doc".to_string(), "body".to_string(), false);
         let document_v2 = Document {
-            path: Some("docs/guide.md".to_string()),
+            path: Some("docs/guide.md".parse().unwrap()),
             ..document_v1.clone()
         };
         let versions = vec![
@@ -306,7 +306,7 @@ mod tests {
                 assert_eq!(changes.len(), 1);
                 assert_eq!(changes[0].path, "/path");
                 assert_eq!(changes[0].before, serde_json::Value::Null);
-                assert_eq!(changes[0].after, "docs/guide.md");
+                assert_eq!(changes[0].after, "/docs/guide.md");
             }
             other => panic!("expected updated event, got {other:?}"),
         }

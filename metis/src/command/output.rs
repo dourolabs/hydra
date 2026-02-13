@@ -795,6 +795,7 @@ mod tests {
         }
         let document = Document::new("Doc".to_string(), body_lines.join("\n"), false)
             .with_path("docs/runbook.md")
+            .unwrap()
             .with_created_by(TaskId::new());
         let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document);
         let mut output = Vec::new();
@@ -815,6 +816,7 @@ mod tests {
         }
         let document = Document::new("Doc".to_string(), body_lines.join("\n"), false)
             .with_path("docs/runbook.md")
+            .unwrap()
             .with_created_by(TaskId::new());
         let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document);
         let mut output = Vec::new();
