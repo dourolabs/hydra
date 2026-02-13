@@ -539,9 +539,7 @@ impl AppState {
         patch_id: &PatchId,
         actor: Option<String>,
     ) -> Result<(), StoreError> {
-        self.store
-            .delete_patch_with_actor(patch_id, actor)
-            .await?;
+        self.store.delete_patch_with_actor(patch_id, actor).await?;
         Ok(())
     }
 
@@ -1840,9 +1838,7 @@ impl AppState {
         issue_id: &IssueId,
         actor: Option<String>,
     ) -> Result<(), StoreError> {
-        self.store
-            .delete_issue_with_actor(issue_id, actor)
-            .await?;
+        self.store.delete_issue_with_actor(issue_id, actor).await?;
         Ok(())
     }
 

@@ -74,29 +74,23 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 "github_pr_sync: failed to parse actor name '{actor_name}': {e}"
             ))
         })?;
+        // Only `user_or_worker` is needed — `get_github_token` resolves the
+        // token via the user store lookup and never accesses `auth_token_hash`
+        // or `auth_token_salt`.
         let actor = Actor {
             auth_token_hash: String::new(),
             auth_token_salt: String::new(),
             user_or_worker,
         };
 
-        let token = actor
-            .get_github_token(ctx.app_state)
-            .await
-            .map_err(|e| {
-                AutomationError::Other(anyhow::anyhow!(
-                    "github_pr_sync: failed to get github token for actor '{actor_name}': {e:?}"
-                ))
-            })?;
+        let token = actor.get_github_token(ctx.app_state).await.map_err(|e| {
+            AutomationError::Other(anyhow::anyhow!(
+                "github_pr_sync: failed to get github token for actor '{actor_name}': {e:?}"
+            ))
+        })?;
 
         let client = Octocrab::builder()
-            .base_uri(
-                ctx.app_state
-                    .config
-                    .github_app
-                    .api_base_url()
-                    .to_string(),
-            )
+            .base_uri(ctx.app_state.config.github_app.api_base_url().to_string())
             .map_err(|e| {
                 AutomationError::Other(anyhow::anyhow!(
                     "github_pr_sync: failed to build octocrab client: {e}"
@@ -200,14 +194,11 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         // Clear the sync signal and persist.
         patch.sync_github_branch = None;
-        ctx.store
-            .update_patch(patch_id, patch)
-            .await
-            .map_err(|e| {
-                AutomationError::Other(anyhow::anyhow!(
-                    "github_pr_sync: failed to persist github metadata for patch '{patch_id}': {e}"
-                ))
-            })?;
+        ctx.store.update_patch(patch_id, patch).await.map_err(|e| {
+            AutomationError::Other(anyhow::anyhow!(
+                "github_pr_sync: failed to persist github metadata for patch '{patch_id}': {e}"
+            ))
+        })?;
 
         info!(
             patch_id = %patch_id,
