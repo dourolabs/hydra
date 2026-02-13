@@ -23,6 +23,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
 
+/// Actor name used for mutations performed by internal/background operations
+/// that don't have a real user or task actor.
+pub const SYSTEM_ACTOR: &str = "system";
+
 /// Payload carrying before/after entity state for mutation events.
 ///
 /// Wrapped in `Arc` inside `ServerEvent` so that cloning events to multiple
@@ -32,33 +36,33 @@ pub enum MutationPayload {
     Issue {
         old: Option<Issue>,
         new: Issue,
-        actor: Option<String>,
+        actor: String,
     },
     Patch {
         old: Option<Patch>,
         new: Patch,
-        actor: Option<String>,
+        actor: String,
     },
     Job {
         old: Option<Task>,
         new: Task,
-        actor: Option<String>,
+        actor: String,
     },
     Document {
         old: Option<Document>,
         new: Document,
-        actor: Option<String>,
+        actor: String,
     },
 }
 
 impl MutationPayload {
-    /// Returns the actor name associated with this mutation, if available.
-    pub fn actor(&self) -> Option<&str> {
+    /// Returns the actor name associated with this mutation.
+    pub fn actor(&self) -> &str {
         match self {
             MutationPayload::Issue { actor, .. }
             | MutationPayload::Patch { actor, .. }
             | MutationPayload::Job { actor, .. }
-            | MutationPayload::Document { actor, .. } => actor.as_deref(),
+            | MutationPayload::Document { actor, .. } => actor,
         }
     }
 }
@@ -425,7 +429,7 @@ impl Default for EventBus {
 
 /// A wrapper around a [`Store`] that automatically emits [`ServerEvent`]s on
 /// every successful mutation. All mutations require an explicit `actor`
-/// parameter (`Option<String>`) so that event payloads always carry actor
+/// parameter (`String`) so that event payloads always carry actor
 /// provenance. Read-only operations are forwarded unchanged via the
 /// [`ReadOnlyStore`] trait implementation.
 pub struct StoreWithEvents {
@@ -452,7 +456,7 @@ impl StoreWithEvents {
     pub async fn add_issue_with_actor(
         &self,
         issue: Issue,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<(IssueId, VersionNumber), StoreError> {
         let new_issue = issue.clone();
         let (issue_id, version) = self.inner.add_issue(issue).await?;
@@ -470,7 +474,7 @@ impl StoreWithEvents {
         &self,
         id: &IssueId,
         issue: Issue,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<VersionNumber, StoreError> {
         let old_issue = self.inner.get_issue(id, false).await.ok().map(|v| v.item);
         let new_issue = issue.clone();
@@ -488,7 +492,7 @@ impl StoreWithEvents {
     pub async fn delete_issue_with_actor(
         &self,
         id: &IssueId,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<VersionNumber, StoreError> {
         let old_issue = self.inner.get_issue(id, false).await.ok().map(|v| v.item);
         let version = self.inner.delete_issue(id).await?;
@@ -512,7 +516,7 @@ impl StoreWithEvents {
     pub async fn add_patch_with_actor(
         &self,
         patch: Patch,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
         let new_patch = patch.clone();
         let (patch_id, version) = self.inner.add_patch(patch).await?;
@@ -530,7 +534,7 @@ impl StoreWithEvents {
         &self,
         id: &PatchId,
         patch: Patch,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<VersionNumber, StoreError> {
         let old_patch = self.inner.get_patch(id, false).await.ok().map(|v| v.item);
         let new_patch = patch.clone();
@@ -548,7 +552,7 @@ impl StoreWithEvents {
     pub async fn delete_patch_with_actor(
         &self,
         id: &PatchId,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<VersionNumber, StoreError> {
         let old_patch = self.inner.get_patch(id, false).await.ok().map(|v| v.item);
         let version = self.inner.delete_patch(id).await?;
@@ -572,7 +576,7 @@ impl StoreWithEvents {
     pub async fn add_document_with_actor(
         &self,
         document: Document,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let new_document = document.clone();
         let (document_id, version) = self.inner.add_document(document).await?;
@@ -590,7 +594,7 @@ impl StoreWithEvents {
         &self,
         id: &DocumentId,
         document: Document,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<VersionNumber, StoreError> {
         let old_document = self
             .inner
@@ -613,7 +617,7 @@ impl StoreWithEvents {
     pub async fn delete_document_with_actor(
         &self,
         id: &DocumentId,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<VersionNumber, StoreError> {
         let old_document = self
             .inner
@@ -643,7 +647,7 @@ impl StoreWithEvents {
         &self,
         task: Task,
         creation_time: DateTime<Utc>,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let new_task = task.clone();
         let (task_id, version) = self.inner.add_task(task, creation_time).await?;
@@ -661,7 +665,7 @@ impl StoreWithEvents {
         &self,
         metis_id: &TaskId,
         task: Task,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<Versioned<Task>, StoreError> {
         let old_task = self
             .inner
@@ -684,7 +688,7 @@ impl StoreWithEvents {
     pub async fn delete_task_with_actor(
         &self,
         id: &TaskId,
-        _actor: Option<String>,
+        _actor: String,
     ) -> Result<VersionNumber, StoreError> {
         self.inner.delete_task(id).await
     }
@@ -695,7 +699,7 @@ impl StoreWithEvents {
         &self,
         name: RepoName,
         config: Repository,
-        _actor: Option<String>,
+        _actor: String,
     ) -> Result<(), StoreError> {
         self.inner.add_repository(name, config).await
     }
@@ -704,7 +708,7 @@ impl StoreWithEvents {
         &self,
         name: RepoName,
         config: Repository,
-        _actor: Option<String>,
+        _actor: String,
     ) -> Result<(), StoreError> {
         self.inner.update_repository(name, config).await
     }
@@ -712,7 +716,7 @@ impl StoreWithEvents {
     pub async fn delete_repository(
         &self,
         name: &RepoName,
-        _actor: Option<String>,
+        _actor: String,
     ) -> Result<(), StoreError> {
         self.inner.delete_repository(name).await
     }
@@ -722,7 +726,7 @@ impl StoreWithEvents {
     pub async fn add_actor(
         &self,
         actor: Actor,
-        _acting_as: Option<String>,
+        _acting_as: String,
     ) -> Result<(), StoreError> {
         self.inner.add_actor(actor).await
     }
@@ -730,21 +734,21 @@ impl StoreWithEvents {
     pub async fn update_actor(
         &self,
         actor: Actor,
-        _acting_as: Option<String>,
+        _acting_as: String,
     ) -> Result<(), StoreError> {
         self.inner.update_actor(actor).await
     }
 
     // ---- User mutations (inherent, with actor) ----
 
-    pub async fn add_user(&self, user: User, _actor: Option<String>) -> Result<(), StoreError> {
+    pub async fn add_user(&self, user: User, _actor: String) -> Result<(), StoreError> {
         self.inner.add_user(user).await
     }
 
     pub async fn update_user(
         &self,
         user: User,
-        _actor: Option<String>,
+        _actor: String,
     ) -> Result<Versioned<User>, StoreError> {
         self.inner.update_user(user).await
     }
@@ -752,7 +756,7 @@ impl StoreWithEvents {
     pub async fn delete_user(
         &self,
         username: &Username,
-        _actor: Option<String>,
+        _actor: String,
     ) -> Result<(), StoreError> {
         self.inner.delete_user(username).await
     }
@@ -982,7 +986,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: dummy_issue(),
-            actor: None,
+            actor: "test-actor".to_string(),
         });
         bus.emit_issue_created(issue_id.clone(), 1, payload);
 
@@ -1013,13 +1017,13 @@ mod tests {
         let payload1 = Arc::new(MutationPayload::Issue {
             old: None,
             new: issue.clone(),
-            actor: None,
+            actor: "test-actor".to_string(),
         });
         bus.emit_issue_created(issue_id.clone(), 1, payload1);
         let payload2 = Arc::new(MutationPayload::Issue {
             old: Some(issue.clone()),
             new: issue,
-            actor: None,
+            actor: "test-actor".to_string(),
         });
         bus.emit_issue_updated(issue_id, 2, payload2);
 
@@ -1053,7 +1057,10 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue_with_actor(issue, None).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue_with_actor(issue, "test-actor".to_string())
+            .await
+            .unwrap();
 
         let event = rx.recv().await.expect("should receive IssueCreated");
         match &event {
@@ -1093,7 +1100,7 @@ mod tests {
         );
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue.clone(), None)
+            .add_issue_with_actor(issue.clone(), "test-actor".to_string())
             .await
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
@@ -1101,7 +1108,7 @@ mod tests {
         let mut updated = issue;
         updated.status = IssueStatus::InProgress;
         store
-            .update_issue_with_actor(&issue_id, updated, None)
+            .update_issue_with_actor(&issue_id, updated, "test-actor".to_string())
             .await
             .unwrap();
 
@@ -1142,11 +1149,14 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue_with_actor(issue, None).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue_with_actor(issue, "test-actor".to_string())
+            .await
+            .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         store
-            .delete_issue_with_actor(&issue_id, None)
+            .delete_issue_with_actor(&issue_id, "test-actor".to_string())
             .await
             .unwrap();
 
@@ -1188,7 +1198,7 @@ mod tests {
         );
 
         store
-            .add_issue_with_actor(issue.clone(), None)
+            .add_issue_with_actor(issue.clone(), "test-actor".to_string())
             .await
             .unwrap();
 
@@ -1230,7 +1240,7 @@ mod tests {
         );
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue.clone(), None)
+            .add_issue_with_actor(issue.clone(), "test-actor".to_string())
             .await
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
@@ -1239,7 +1249,7 @@ mod tests {
         updated.status = IssueStatus::InProgress;
         updated.description = "after update".to_string();
         store
-            .update_issue_with_actor(&issue_id, updated, None)
+            .update_issue_with_actor(&issue_id, updated, "test-actor".to_string())
             .await
             .unwrap();
 
@@ -1282,11 +1292,14 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue_with_actor(issue, None).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue_with_actor(issue, "test-actor".to_string())
+            .await
+            .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         store
-            .delete_issue_with_actor(&issue_id, None)
+            .delete_issue_with_actor(&issue_id, "test-actor".to_string())
             .await
             .unwrap();
 
@@ -1331,7 +1344,7 @@ mod tests {
         };
 
         let (task_id, _) = store
-            .add_task_with_actor(task, chrono::Utc::now(), None)
+            .add_task_with_actor(task, chrono::Utc::now(), "test-actor".to_string())
             .await
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume JobCreated
@@ -1353,7 +1366,7 @@ mod tests {
         };
 
         store
-            .update_task_with_actor(&task_id, updated_task, None)
+            .update_task_with_actor(&task_id, updated_task, "test-actor".to_string())
             .await
             .unwrap();
 
@@ -1397,7 +1410,7 @@ mod tests {
         );
 
         store
-            .add_issue_with_actor(issue, Some("u-testuser".to_string()))
+            .add_issue_with_actor(issue, "u-testuser".to_string())
             .await
             .unwrap();
 
@@ -1406,7 +1419,7 @@ mod tests {
             ServerEvent::IssueCreated { payload, .. } => {
                 assert_eq!(
                     payload.actor(),
-                    Some("u-testuser"),
+                    "u-testuser",
                     "actor should be carried through the event payload"
                 );
             }
@@ -1415,7 +1428,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn actor_context_is_none_when_not_set() {
+    async fn system_actor_carried_through_events() {
         use crate::domain::issues::{Issue, IssueStatus, IssueType};
         use crate::domain::users::Username;
 
@@ -1426,7 +1439,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
-            "no actor test".to_string(),
+            "system actor test".to_string(),
             Username::from("creator"),
             String::new(),
             IssueStatus::Open,
@@ -1437,15 +1450,18 @@ mod tests {
             Vec::new(),
         );
 
-        store.add_issue_with_actor(issue, None).await.unwrap();
+        store
+            .add_issue_with_actor(issue, SYSTEM_ACTOR.to_string())
+            .await
+            .unwrap();
 
         let event = rx.recv().await.expect("should receive IssueCreated");
         match &event {
             ServerEvent::IssueCreated { payload, .. } => {
                 assert_eq!(
                     payload.actor(),
-                    None,
-                    "actor should be None when no context is set"
+                    SYSTEM_ACTOR,
+                    "actor should be SYSTEM_ACTOR when no real actor is available"
                 );
             }
             other => panic!("expected IssueCreated, got {other:?}"),

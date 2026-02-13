@@ -51,7 +51,7 @@ impl ScheduledWorker for RunSpawnersWorker {
                     );
 
                     for task in tasks {
-                        match self.state.add_task(task, Utc::now()).await {
+                        match self.state.add_task(task, Utc::now(), None).await {
                             Ok(metis_id) => {
                                 processed += 1;
                                 info!(

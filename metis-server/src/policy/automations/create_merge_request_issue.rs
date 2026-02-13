@@ -249,7 +249,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
-            actor: None,
+            actor: "test-actor".to_string(),
         });
 
         let event = ServerEvent::PatchUpdated {
@@ -297,7 +297,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
-            actor: None,
+            actor: "test-actor".to_string(),
         });
 
         let event = ServerEvent::PatchUpdated {

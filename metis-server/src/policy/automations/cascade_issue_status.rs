@@ -110,7 +110,7 @@ impl Automation for CascadeIssueStatusAutomation {
         }
 
         let store = ctx.store;
-        let actor = ctx.actor().map(String::from);
+        let actor = Some(ctx.actor().to_string());
 
         // 1. Drop all children recursively (for any trigger status)
         drop_children_recursively(ctx.app_state, store, issue_id, actor.clone()).await?;
@@ -267,7 +267,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
             new: dropped_parent,
-            actor: None,
+            actor: "test-actor".to_string(),
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -318,7 +318,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
             new: failed_a,
-            actor: None,
+            actor: "test-actor".to_string(),
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -354,7 +354,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(issue.clone()),
             new: issue,
-            actor: None,
+            actor: "test-actor".to_string(),
         });
 
         let event = ServerEvent::IssueUpdated {

@@ -77,7 +77,7 @@ impl Automation for InheritCreatorAutomation {
             .upsert_issue(
                 Some(issue_id.clone()),
                 metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
-                ctx.actor().map(String::from),
+                Some(ctx.actor().to_string()),
             )
             .await
             .map_err(|e| {
@@ -148,7 +148,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: child,
-            actor: None,
+            actor: "test-actor".to_string(),
         });
 
         let event = ServerEvent::IssueCreated {
@@ -194,7 +194,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: issue,
-            actor: None,
+            actor: "test-actor".to_string(),
         });
 
         let event = ServerEvent::IssueCreated {

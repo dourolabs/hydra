@@ -105,11 +105,11 @@ mod tests {
             None,
         );
         let first_id = state
-            .add_task(task.clone(), Utc::now())
+            .add_task(task.clone(), Utc::now(), None)
             .await
             .expect("first task should be added");
         let second_id = state
-            .add_task(task, Utc::now())
+            .add_task(task, Utc::now(), None)
             .await
             .expect("second task should be added");
 

@@ -32,7 +32,7 @@ fn dummy_issue_payload() -> Arc<MutationPayload> {
     Arc::new(MutationPayload::Issue {
         old: None,
         new: dummy_issue(),
-        actor: None,
+        actor: "test-actor".to_string(),
     })
 }
 
@@ -50,7 +50,7 @@ fn dummy_patch_payload() -> Arc<MutationPayload> {
             metis_common::RepoName::new("test", "repo").unwrap(),
             None,
         ),
-        actor: None,
+        actor: "test-actor".to_string(),
     })
 }
 
@@ -64,7 +64,7 @@ fn dummy_document_payload() -> Arc<MutationPayload> {
             created_by: None,
             deleted: false,
         },
-        actor: None,
+        actor: "test-actor".to_string(),
     })
 }
 

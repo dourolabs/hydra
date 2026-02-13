@@ -35,7 +35,7 @@ use tokio::sync::RwLock;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
-use super::event_bus::{EventBus, ServerEvent, StoreWithEvents};
+use super::event_bus::{EventBus, SYSTEM_ACTOR, ServerEvent, StoreWithEvents};
 
 use super::{
     MergeQueueError, Repository, RepositoryError, RepositoryRecord, ServiceState,
@@ -439,9 +439,9 @@ impl AppState {
             deleted: false,
         };
 
+        let actor_name = username.to_string();
         let (actor, auth_token) = Actor::new_for_user(username);
-
-        if let Err(err) = self.store.add_user(user.clone(), None).await {
+        if let Err(err) = self.store.add_user(user.clone(), actor_name.clone()).await {
             match err {
                 StoreError::UserAlreadyExists(_) => {
                     self.set_user_github_token(
@@ -449,7 +449,7 @@ impl AppState {
                         user.github_token.clone(),
                         user.github_user_id,
                         user.github_refresh_token.clone(),
-                        None,
+                        Some(actor_name.clone()),
                     )
                     .await
                     .map_err(|source| LoginError::Store { source })?;
@@ -458,11 +458,15 @@ impl AppState {
             }
         }
 
-        if let Err(err) = self.store.add_actor(actor.clone(), None).await {
+        if let Err(err) = self
+            .store
+            .add_actor(actor.clone(), actor_name.clone())
+            .await
+        {
             match err {
                 StoreError::ActorAlreadyExists(_) => {
                     self.store
-                        .update_actor(actor.clone(), None)
+                        .update_actor(actor.clone(), actor_name)
                         .await
                         .map_err(|source| LoginError::Store { source })?;
                 }
@@ -475,7 +479,9 @@ impl AppState {
 
     async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
         let (actor, auth_token) = Actor::new_for_task(task_id);
-        self.store.add_actor(actor.clone(), None).await?;
+        self.store
+            .add_actor(actor.clone(), SYSTEM_ACTOR.to_string())
+            .await?;
         Ok((actor, auth_token))
     }
 
@@ -539,7 +545,12 @@ impl AppState {
         patch_id: &PatchId,
         actor: Option<String>,
     ) -> Result<(), StoreError> {
-        self.store.delete_patch_with_actor(patch_id, actor).await?;
+        self.store
+            .delete_patch_with_actor(
+                patch_id,
+                actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()),
+            )
+            .await?;
         Ok(())
     }
 
@@ -585,6 +596,7 @@ impl AppState {
             }
         }
 
+        let actor = actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string());
         match document_id {
             Some(id) => {
                 let mut document = document;
@@ -655,7 +667,10 @@ impl AppState {
         actor: Option<String>,
     ) -> Result<(), StoreError> {
         self.store
-            .delete_document_with_actor(document_id, actor)
+            .delete_document_with_actor(
+                document_id,
+                actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()),
+            )
             .await?;
         Ok(())
     }
@@ -704,7 +719,7 @@ impl AppState {
         user.github_user_id = github_user_id;
         user.github_refresh_token = github_refresh_token;
         self.store
-            .update_user(user, actor)
+            .update_user(user, actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()))
             .await
             .map(|user| user.item)
     }
@@ -742,7 +757,7 @@ impl AppState {
                 })?;
 
         self.store
-            .delete_repository(name, actor)
+            .delete_repository(name, actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()))
             .await
             .map_err(|source| match source {
                 StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
@@ -763,7 +778,11 @@ impl AppState {
         actor: Option<String>,
     ) -> Result<RepositoryRecord, RepositoryError> {
         self.store
-            .add_repository(name.clone(), config.clone(), actor)
+            .add_repository(
+                name.clone(),
+                config.clone(),
+                actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()),
+            )
             .await
             .map_err(|source| match source {
                 StoreError::RepositoryAlreadyExists(name) => RepositoryError::AlreadyExists(name),
@@ -780,7 +799,11 @@ impl AppState {
         actor: Option<String>,
     ) -> Result<RepositoryRecord, RepositoryError> {
         self.store
-            .update_repository(name.clone(), config.clone(), actor)
+            .update_repository(
+                name.clone(),
+                config.clone(),
+                actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()),
+            )
             .await
             .map_err(|source| match source {
                 StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
@@ -828,10 +851,15 @@ impl AppState {
         &self,
         task: Task,
         created_at: DateTime<Utc>,
+        actor: Option<String>,
     ) -> Result<TaskId, StoreError> {
         let (task_id, _version) = self
             .store
-            .add_task_with_actor(task, created_at, None)
+            .add_task_with_actor(
+                task,
+                created_at,
+                actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()),
+            )
             .await?;
         Ok(task_id)
     }
@@ -976,7 +1004,11 @@ impl AppState {
 
         let (job_id, _version) = self
             .store
-            .add_task_with_actor(task, Utc::now(), actor)
+            .add_task_with_actor(
+                task,
+                Utc::now(),
+                actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()),
+            )
             .await
             .map_err(|source| CreateJobError::Store { source })?;
 
@@ -1017,7 +1049,7 @@ impl AppState {
                 &job_id,
                 status.to_result().map_err(TaskError::from),
                 status.last_message(),
-                actor,
+                actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()),
             )
             .await
             .map_err(|source| match source {
@@ -1293,7 +1325,11 @@ impl AppState {
                 "soft-deleting orphaned task whose spawned_from issue was deleted"
             );
 
-            if let Err(err) = self.store.delete_task_with_actor(&task_id, None).await {
+            if let Err(err) = self
+                .store
+                .delete_task_with_actor(&task_id, SYSTEM_ACTOR.to_string())
+                .await
+            {
                 warn!(
                     metis_id = %task_id,
                     error = %err,
@@ -1451,7 +1487,9 @@ impl AppState {
     ) -> Result<(PatchId, VersionNumber), UpsertPatchError> {
         let api::patches::UpsertPatchRequest { patch, .. } = request;
         let mut patch: Patch = patch.into();
-        let actor_name = actor.map(|a| a.name());
+        let actor_name = actor
+            .map(|a| a.name())
+            .unwrap_or_else(|| SYSTEM_ACTOR.to_string());
 
         let store = self.store.as_ref();
         let (patch_id, version) = match patch_id {
@@ -1521,6 +1559,7 @@ impl AppState {
     ) -> Result<(IssueId, VersionNumber), UpsertIssueError> {
         let api::issues::UpsertIssueRequest { issue, job_id, .. } = request;
         let mut issue: Issue = issue.into();
+        let actor = actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string());
 
         let store = self.store.as_ref();
 
@@ -1666,7 +1705,11 @@ impl AppState {
         issue.todo_list.push(item);
         let todo_list = issue.todo_list.clone();
         self.store
-            .update_issue_with_actor(&issue_id, issue, actor)
+            .update_issue_with_actor(
+                &issue_id,
+                issue,
+                actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()),
+            )
             .await
             .map_err(|source| UpdateTodoListError::Store {
                 source,
@@ -1692,7 +1735,11 @@ impl AppState {
 
         issue.todo_list = todo_list.clone();
         self.store
-            .update_issue_with_actor(&issue_id, issue, actor)
+            .update_issue_with_actor(
+                &issue_id,
+                issue,
+                actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()),
+            )
             .await
             .map_err(|source| UpdateTodoListError::Store {
                 source,
@@ -1736,7 +1783,11 @@ impl AppState {
 
         let todo_list = issue.todo_list.clone();
         self.store
-            .update_issue_with_actor(&issue_id, issue, actor)
+            .update_issue_with_actor(
+                &issue_id,
+                issue,
+                actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()),
+            )
             .await
             .map_err(|source| UpdateTodoListError::Store {
                 source,
@@ -1823,7 +1874,12 @@ impl AppState {
         issue_id: &IssueId,
         actor: Option<String>,
     ) -> Result<(), StoreError> {
-        self.store.delete_issue_with_actor(issue_id, actor).await?;
+        self.store
+            .delete_issue_with_actor(
+                issue_id,
+                actor.unwrap_or_else(|| SYSTEM_ACTOR.to_string()),
+            )
+            .await?;
         Ok(())
     }
 
@@ -1858,7 +1914,7 @@ impl AppState {
         updated.error = None;
 
         self.store
-            .update_task_with_actor(task_id, updated, None)
+            .update_task_with_actor(task_id, updated, SYSTEM_ACTOR.to_string())
             .await
     }
 
@@ -1868,8 +1924,13 @@ impl AppState {
         result: Result<(), TaskError>,
         last_message: Option<String>,
     ) -> Result<Versioned<Task>, StoreError> {
-        self.transition_task_to_completion_with_actor(task_id, result, last_message, None)
-            .await
+        self.transition_task_to_completion_with_actor(
+            task_id,
+            result,
+            last_message,
+            SYSTEM_ACTOR.to_string(),
+        )
+        .await
     }
 
     async fn transition_task_to_completion_with_actor(
@@ -1877,7 +1938,7 @@ impl AppState {
         task_id: &TaskId,
         result: Result<(), TaskError>,
         last_message: Option<String>,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<Versioned<Task>, StoreError> {
         let store = self.store.as_ref();
         let latest = store.get_task(task_id, false).await?;
@@ -1931,7 +1992,7 @@ impl AppState {
         updated.error = None;
 
         self.store
-            .update_task_with_actor(task_id, updated, None)
+            .update_task_with_actor(task_id, updated, SYSTEM_ACTOR.to_string())
             .await
     }
 
@@ -2022,6 +2083,7 @@ async fn issue_ready(store: &dyn ReadOnlyStore, issue_id: &IssueId) -> Result<bo
 #[cfg(test)]
 mod tests {
     use super::{LoginError, UpsertDocumentError, UpsertIssueError, UpsertPatchError};
+    use crate::app::event_bus::SYSTEM_ACTOR;
     use crate::{
         app::{AppState, ServerEvent, ServiceState},
         domain::{
@@ -2446,7 +2508,7 @@ mod tests {
         let (issue_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_issue_with_actor(issue_with_status("open", IssueStatus::Open, vec![]), None)
+                .add_issue_with_actor(issue_with_status("open", IssueStatus::Open, vec![]), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap()
         };
@@ -2463,7 +2525,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Open, vec![]),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap();
@@ -2477,7 +2539,7 @@ mod tests {
                             blocker_id.clone(),
                         )],
                     ),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap();
@@ -2493,7 +2555,7 @@ mod tests {
                 .update_issue_with_actor(
                     &blocker_id,
                     issue_with_status("blocker", IssueStatus::Closed, vec![]),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap();
@@ -2511,7 +2573,7 @@ mod tests {
             let (parent_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("parent", IssueStatus::InProgress, vec![]),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap();
@@ -2522,7 +2584,7 @@ mod tests {
             let (child_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("child", IssueStatus::Open, child_dependencies.clone()),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap();
@@ -2538,7 +2600,7 @@ mod tests {
                 .update_issue_with_actor(
                     &child_id,
                     issue_with_status("child", IssueStatus::Closed, child_dependencies),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap();
@@ -2556,7 +2618,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("dropped", IssueStatus::Dropped, vec![]),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap()
@@ -2574,7 +2636,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Dropped, vec![]),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap();
@@ -2588,7 +2650,7 @@ mod tests {
                             blocker_id,
                         )],
                     ),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap()
@@ -2606,7 +2668,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("closed", IssueStatus::Closed, vec![]),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap()
@@ -2625,7 +2687,7 @@ mod tests {
         let (task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap()
         };
@@ -2678,7 +2740,7 @@ mod tests {
                         patches: Vec::new(),
                         deleted: false,
                     },
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap()
@@ -2690,7 +2752,7 @@ mod tests {
             task.cpu_limit = job_settings.cpu_limit.clone();
             task.memory_limit = job_settings.memory_limit.clone();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap()
         };
@@ -2712,7 +2774,7 @@ mod tests {
         let (task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap()
         };
@@ -2739,7 +2801,7 @@ mod tests {
         let (task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap()
         };
@@ -2785,7 +2847,7 @@ mod tests {
         let (tracked_task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .add_task_with_actor(sample_task(), Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap()
         };
@@ -2822,7 +2884,7 @@ mod tests {
         let task_id = {
             let store = state.store.as_ref();
             let (task_id, _) = store
-                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .add_task_with_actor(sample_task(), Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap();
             state
@@ -2858,7 +2920,7 @@ mod tests {
         let task_id = {
             let store = state.store.as_ref();
             let (task_id, _) = store
-                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .add_task_with_actor(sample_task(), Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap();
             state
@@ -2939,15 +3001,15 @@ mod tests {
         let (parent_task_id, child_task_id, grandchild_task_id) = {
             let store = state.store.as_ref();
             let (parent_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&parent_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&parent_id), Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap();
             let (child_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap();
             let (grandchild_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&grandchild_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&grandchild_id), Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap();
             (parent_task_id, child_task_id, grandchild_task_id)
@@ -3368,16 +3430,16 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), SYSTEM_ACTOR.to_string())
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), SYSTEM_ACTOR.to_string())
             .await
             .unwrap();
 
         store
-            .delete_issue_with_actor(&issue_id, None)
+            .delete_issue_with_actor(&issue_id, SYSTEM_ACTOR.to_string())
             .await
             .unwrap();
 
@@ -3400,11 +3462,11 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), SYSTEM_ACTOR.to_string())
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), SYSTEM_ACTOR.to_string())
             .await
             .unwrap();
 
@@ -3424,7 +3486,7 @@ mod tests {
         let store = state.store.as_ref();
 
         let (task_id, _) = store
-            .add_task_with_actor(sample_task(), Utc::now(), None)
+            .add_task_with_actor(sample_task(), Utc::now(), SYSTEM_ACTOR.to_string())
             .await
             .unwrap();
 
@@ -3444,11 +3506,11 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), SYSTEM_ACTOR.to_string())
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), SYSTEM_ACTOR.to_string())
             .await
             .unwrap();
         state
@@ -3459,7 +3521,7 @@ mod tests {
         job_engine.insert_job(&task_id, JobStatus::Running).await;
 
         store
-            .delete_issue_with_actor(&issue_id, None)
+            .delete_issue_with_actor(&issue_id, SYSTEM_ACTOR.to_string())
             .await
             .unwrap();
 
@@ -3755,7 +3817,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("rejected", IssueStatus::Rejected, vec![]),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap()
@@ -3773,7 +3835,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("failed", IssueStatus::Failed, vec![]),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap()
@@ -3788,11 +3850,11 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, SYSTEM_ACTOR.to_string()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child = issue_with_status("child", IssueStatus::Rejected, vec![child_dep]);
-        store.add_issue_with_actor(child, None).await.unwrap();
+        store.add_issue_with_actor(child, SYSTEM_ACTOR.to_string()).await.unwrap();
 
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
     }
@@ -3803,11 +3865,11 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, SYSTEM_ACTOR.to_string()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child = issue_with_status("child", IssueStatus::Failed, vec![child_dep]);
-        store.add_issue_with_actor(child, None).await.unwrap();
+        store.add_issue_with_actor(child, SYSTEM_ACTOR.to_string()).await.unwrap();
 
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
     }
@@ -3818,13 +3880,13 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, SYSTEM_ACTOR.to_string()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
             .add_issue_with_actor(
                 issue_with_status("closed child", IssueStatus::Closed, vec![child_dep.clone()]),
-                None,
+                SYSTEM_ACTOR.to_string(),
             )
             .await
             .unwrap();
@@ -3835,7 +3897,7 @@ mod tests {
                     IssueStatus::Dropped,
                     vec![child_dep.clone()],
                 ),
-                None,
+                SYSTEM_ACTOR.to_string(),
             )
             .await
             .unwrap();
@@ -3846,14 +3908,14 @@ mod tests {
                     IssueStatus::Rejected,
                     vec![child_dep.clone()],
                 ),
-                None,
+                SYSTEM_ACTOR.to_string(),
             )
             .await
             .unwrap();
         store
             .add_issue_with_actor(
                 issue_with_status("failed child", IssueStatus::Failed, vec![child_dep]),
-                None,
+                SYSTEM_ACTOR.to_string(),
             )
             .await
             .unwrap();
@@ -3870,7 +3932,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Rejected, vec![]),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap();
@@ -3884,7 +3946,7 @@ mod tests {
                             blocker_id,
                         )],
                     ),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap()
@@ -3902,7 +3964,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Failed, vec![]),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap();
@@ -3916,7 +3978,7 @@ mod tests {
                             blocker_id,
                         )],
                     ),
-                    None,
+                    SYSTEM_ACTOR.to_string(),
                 )
                 .await
                 .unwrap()
@@ -3957,7 +4019,7 @@ mod tests {
         let (child_task_id,) = {
             let store = state.store.as_ref();
             let (child_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap();
             (child_task_id,)
@@ -4094,11 +4156,11 @@ mod tests {
         let (dep_task_id, dep_child_task_id) = {
             let store = state.store.as_ref();
             let (dep_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&dependent_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&dependent_id), Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap();
             let (dep_child_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&dep_child_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&dep_child_id), Utc::now(), SYSTEM_ACTOR.to_string())
                 .await
                 .unwrap();
             (dep_task_id, dep_child_task_id)

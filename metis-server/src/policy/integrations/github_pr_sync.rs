@@ -5,7 +5,7 @@ use crate::policy::context::AutomationContext;
 use crate::policy::{AutomationError, EventFilter};
 use async_trait::async_trait;
 use octocrab::Octocrab;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Automation that creates or updates a GitHub pull request when a patch
 /// is created or updated with `branch_name` set.
@@ -75,17 +75,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
         }
 
-        // Resolve actor name from the event payload.
-        let actor_name = match ctx.actor() {
-            Some(name) => name.to_string(),
-            None => {
-                warn!(
-                    patch_id = %patch_id,
-                    "github_pr_sync: no actor in event, skipping"
-                );
-                return Ok(());
-            }
-        };
+        let actor_name = ctx.actor().to_string();
 
         // Build a temporary Actor to fetch the GitHub token.
         let user_or_worker = Actor::parse_name(&actor_name).map_err(|e| {
