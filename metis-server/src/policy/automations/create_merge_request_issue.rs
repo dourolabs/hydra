@@ -54,6 +54,7 @@ impl Automation for CreateMergeRequestIssueAutomation {
         let MutationPayload::Patch {
             old: Some(old),
             new,
+            ..
         } = payload.as_ref()
         else {
             return Ok(());
@@ -137,6 +138,7 @@ impl Automation for CreateMergeRequestIssueAutomation {
             .upsert_issue(
                 None,
                 metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
+                None,
             )
             .await
             .map_err(|e| {
@@ -247,6 +249,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
+            actor: None,
         });
 
         let event = ServerEvent::PatchUpdated {
@@ -294,6 +297,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
+            actor: None,
         });
 
         let event = ServerEvent::PatchUpdated {

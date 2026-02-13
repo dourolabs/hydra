@@ -1,9 +1,10 @@
+use crate::domain::actors::Actor;
 use crate::{
     app::{AppState, BundleResolutionError, CreateJobError, TaskResolutionError},
     store::StoreError,
 };
 use axum::{
-    Json, async_trait,
+    Extension, Json, async_trait,
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
@@ -19,29 +20,33 @@ pub mod status;
 
 pub async fn create_job(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Json(payload): Json<v1::jobs::CreateJobRequest>,
 ) -> Result<Json<v1::jobs::CreateJobResponse>, ApiError> {
     info!("create_job invoked");
-    let job_id = state.create_job(payload).await.map_err(|err| match err {
-        CreateJobError::TaskResolution(err) => ApiError::from(err),
-        CreateJobError::IssueLookup { source, issue_id } => match source {
-            StoreError::IssueNotFound(_) => {
-                ApiError::not_found(format!("issue '{issue_id}' not found"))
+    let job_id = state
+        .create_job(payload, Some(actor.name()))
+        .await
+        .map_err(|err| match err {
+            CreateJobError::TaskResolution(err) => ApiError::from(err),
+            CreateJobError::IssueLookup { source, issue_id } => match source {
+                StoreError::IssueNotFound(_) => {
+                    ApiError::not_found(format!("issue '{issue_id}' not found"))
+                }
+                other => {
+                    error!(
+                        error = %other,
+                        issue_id = %issue_id,
+                        "failed to load issue for job creation"
+                    );
+                    ApiError::internal(format!("Failed to load issue '{issue_id}': {other}"))
+                }
+            },
+            CreateJobError::Store { source } => {
+                error!(error = %source, "failed to store task");
+                ApiError::internal(format!("Failed to store task: {source}"))
             }
-            other => {
-                error!(
-                    error = %other,
-                    issue_id = %issue_id,
-                    "failed to load issue for job creation"
-                );
-                ApiError::internal(format!("Failed to load issue '{issue_id}': {other}"))
-            }
-        },
-        CreateJobError::Store { source } => {
-            error!(error = %source, "failed to store task");
-            ApiError::internal(format!("Failed to store task: {source}"))
-        }
-    })?;
+        })?;
 
     info!(
         job_id = %job_id,

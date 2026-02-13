@@ -587,11 +587,12 @@ fn map_patch_error(err: StoreError, patch_id: Option<&PatchId>) -> ApiError {
 
 pub async fn delete_patch(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     PatchIdPath(patch_id): PatchIdPath,
 ) -> Result<Json<v1::patches::PatchVersionRecord>, ApiError> {
     info!(patch_id = %patch_id, "delete_patch invoked");
     state
-        .delete_patch(&patch_id)
+        .delete_patch(&patch_id, Some(actor.name()))
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 

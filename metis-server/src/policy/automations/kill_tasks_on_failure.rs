@@ -42,6 +42,7 @@ impl Automation for KillTasksOnFailureAutomation {
         let MutationPayload::Issue {
             old: Some(old),
             new,
+            ..
         } = payload.as_ref()
         else {
             return Ok(());
@@ -182,6 +183,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(old_issue),
             new: new_issue,
+            actor: None,
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -216,6 +218,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(old_issue),
             new: new_issue,
+            actor: None,
         });
 
         let event = ServerEvent::IssueUpdated {

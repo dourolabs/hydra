@@ -67,7 +67,7 @@ pub async fn create_document(
 ) -> Result<Json<v1::documents::UpsertDocumentResponse>, ApiError> {
     info!(actor = %actor.name(), "create_document invoked");
     let (document_id, version) = state
-        .upsert_document(None, payload.document.into())
+        .upsert_document(None, payload.document.into(), Some(actor.name()))
         .await
         .map_err(map_upsert_document_error)?;
 
@@ -86,7 +86,11 @@ pub async fn update_document(
 ) -> Result<Json<v1::documents::UpsertDocumentResponse>, ApiError> {
     info!(actor = %actor.name(), document_id = %document_id, "update_document invoked");
     let (document_id, version) = state
-        .upsert_document(Some(document_id.clone()), payload.document.into())
+        .upsert_document(
+            Some(document_id.clone()),
+            payload.document.into(),
+            Some(actor.name()),
+        )
         .await
         .map_err(map_upsert_document_error)?;
 
@@ -259,11 +263,12 @@ fn map_upsert_document_error(err: UpsertDocumentError) -> ApiError {
 
 pub async fn delete_document(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     DocumentIdPath(document_id): DocumentIdPath,
 ) -> Result<Json<v1::documents::DocumentVersionRecord>, ApiError> {
     info!(document_id = %document_id, "delete_document invoked");
     state
-        .delete_document(&document_id)
+        .delete_document(&document_id, Some(actor.name()))
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
