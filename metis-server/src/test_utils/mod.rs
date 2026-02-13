@@ -99,6 +99,7 @@ pub fn test_app_config() -> AppConfig {
             ..BackgroundSection::default()
         },
         build_cache: BuildCacheSection::default(),
+        policies: None,
     }
 }
 
