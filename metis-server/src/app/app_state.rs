@@ -473,8 +473,7 @@ impl AppState {
 
         let (actor, auth_token) = Actor::new_for_user(username);
 
-        let store = self.store.as_ref();
-        if let Err(err) = store.add_user(user.clone()).await {
+        if let Err(err) = self.store.add_user(user.clone(), None).await {
             match err {
                 StoreError::UserAlreadyExists(_) => {
                     self.set_user_github_token(
@@ -490,11 +489,11 @@ impl AppState {
             }
         }
 
-        if let Err(err) = store.add_actor(actor.clone()).await {
+        if let Err(err) = self.store.add_actor(actor.clone(), None).await {
             match err {
                 StoreError::ActorAlreadyExists(_) => {
-                    store
-                        .update_actor(actor.clone())
+                    self.store
+                        .update_actor(actor.clone(), None)
                         .await
                         .map_err(|source| LoginError::Store { source })?;
                 }
@@ -507,8 +506,7 @@ impl AppState {
 
     async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
         let (actor, auth_token) = Actor::new_for_task(task_id);
-        let store = self.store.as_ref();
-        store.add_actor(actor.clone()).await?;
+        self.store.add_actor(actor.clone(), None).await?;
         Ok((actor, auth_token))
     }
 
@@ -731,12 +729,14 @@ impl AppState {
         github_user_id: u64,
         github_refresh_token: String,
     ) -> Result<User, StoreError> {
-        let store = self.store.as_ref();
-        let mut user = store.get_user(username, false).await?.item;
+        let mut user = self.store.get_user(username, false).await?.item;
         user.github_token = github_token;
         user.github_user_id = github_user_id;
         user.github_refresh_token = github_refresh_token;
-        store.update_user(user).await.map(|user| user.item)
+        self.store
+            .update_user(user, None)
+            .await
+            .map(|user| user.item)
     }
 
     async fn sync_patch_with_github(
@@ -868,20 +868,19 @@ impl AppState {
         &self,
         name: &RepoName,
     ) -> Result<RepositoryRecord, RepositoryError> {
-        let store = self.store.as_ref();
-
         // Get the repository before deleting to return it
         // Use include_deleted: true since we need to access the repository to mark it as deleted
-        let current = store
-            .get_repository(name, true)
-            .await
-            .map_err(|source| match source {
-                StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
-                other => RepositoryError::Store { source: other },
-            })?;
+        let current =
+            self.store
+                .get_repository(name, true)
+                .await
+                .map_err(|source| match source {
+                    StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
+                    other => RepositoryError::Store { source: other },
+                })?;
 
-        store
-            .delete_repository(name)
+        self.store
+            .delete_repository(name, None)
             .await
             .map_err(|source| match source {
                 StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
@@ -900,18 +899,13 @@ impl AppState {
         name: RepoName,
         config: Repository,
     ) -> Result<RepositoryRecord, RepositoryError> {
-        {
-            let store = self.store.as_ref();
-            store
-                .add_repository(name.clone(), config.clone())
-                .await
-                .map_err(|source| match source {
-                    StoreError::RepositoryAlreadyExists(name) => {
-                        RepositoryError::AlreadyExists(name)
-                    }
-                    other => RepositoryError::Store { source: other },
-                })?;
-        }
+        self.store
+            .add_repository(name.clone(), config.clone(), None)
+            .await
+            .map_err(|source| match source {
+                StoreError::RepositoryAlreadyExists(name) => RepositoryError::AlreadyExists(name),
+                other => RepositoryError::Store { source: other },
+            })?;
 
         Ok(RepositoryRecord::from((name, config)))
     }
@@ -921,19 +915,16 @@ impl AppState {
         name: RepoName,
         config: Repository,
     ) -> Result<RepositoryRecord, RepositoryError> {
-        {
-            let store = self.store.as_ref();
-            store
-                .update_repository(name.clone(), config.clone())
-                .await
-                .map_err(|source| match source {
-                    StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
-                    StoreError::RepositoryAlreadyExists(_) => {
-                        RepositoryError::AlreadyExists(name.clone())
-                    }
-                    other => RepositoryError::Store { source: other },
-                })?;
-        }
+        self.store
+            .update_repository(name.clone(), config.clone(), None)
+            .await
+            .map_err(|source| match source {
+                StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
+                StoreError::RepositoryAlreadyExists(_) => {
+                    RepositoryError::AlreadyExists(name.clone())
+                }
+                other => RepositoryError::Store { source: other },
+            })?;
 
         self.service_state.clear_cache(&name).await;
 
@@ -974,8 +965,10 @@ impl AppState {
         task: Task,
         created_at: DateTime<Utc>,
     ) -> Result<TaskId, StoreError> {
-        let store = self.store.as_ref();
-        let (task_id, _version) = store.add_task(task, created_at).await?;
+        let (task_id, _version) = self
+            .store
+            .add_task_with_actor(task, created_at, None)
+            .await?;
         Ok(task_id)
     }
 
@@ -1436,7 +1429,7 @@ impl AppState {
                 "soft-deleting orphaned task whose spawned_from issue was deleted"
             );
 
-            if let Err(err) = store.delete_task(&task_id).await {
+            if let Err(err) = self.store.delete_task_with_actor(&task_id, None).await {
                 warn!(
                     metis_id = %task_id,
                     error = %err,
@@ -2006,8 +1999,7 @@ impl AppState {
         &self,
         task_id: &TaskId,
     ) -> Result<Versioned<Task>, StoreError> {
-        let store = self.store.as_ref();
-        let latest = store.get_task(task_id, false).await?;
+        let latest = self.store.get_task(task_id, false).await?;
         if !matches!(latest.item.status, Status::Created | Status::Pending) {
             return Err(StoreError::InvalidStatusTransition);
         }
@@ -2017,7 +2009,9 @@ impl AppState {
         updated.last_message = None;
         updated.error = None;
 
-        store.update_task(task_id, updated).await
+        self.store
+            .update_task_with_actor(task_id, updated, None)
+            .await
     }
 
     pub async fn transition_task_to_completion(
@@ -2078,8 +2072,7 @@ impl AppState {
         &self,
         task_id: &TaskId,
     ) -> Result<Versioned<Task>, StoreError> {
-        let store = self.store.as_ref();
-        let latest = store.get_task(task_id, false).await?;
+        let latest = self.store.get_task(task_id, false).await?;
         if latest.item.status != Status::Created {
             return Err(StoreError::InvalidStatusTransition);
         }
@@ -2089,7 +2082,9 @@ impl AppState {
         updated.last_message = None;
         updated.error = None;
 
-        store.update_task(task_id, updated).await
+        self.store
+            .update_task_with_actor(task_id, updated, None)
+            .await
     }
 
     pub async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
@@ -2193,7 +2188,7 @@ mod tests {
             users::{User, Username},
         },
         job_engine::{JobEngine, JobStatus},
-        store::{MemoryStore, ReadOnlyStore, Status, Store, StoreError, TaskError},
+        store::{MemoryStore, ReadOnlyStore, Status, StoreError, TaskError},
         test_utils::{
             MockJobEngine, add_repository, github_user_response, test_app_config, test_state,
             test_state_handles, test_state_with_engine, test_state_with_github_api_base_url,
@@ -2562,7 +2557,7 @@ mod tests {
         let (issue_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_issue(issue_with_status("open", IssueStatus::Open, vec![]))
+                .add_issue_with_actor(issue_with_status("open", IssueStatus::Open, vec![]), None)
                 .await
                 .unwrap()
         };
@@ -2577,18 +2572,24 @@ mod tests {
         let (blocker_id, blocked_issue_id) = {
             let store = state.store.as_ref();
             let (blocker_id, _) = store
-                .add_issue(issue_with_status("blocker", IssueStatus::Open, vec![]))
+                .add_issue_with_actor(
+                    issue_with_status("blocker", IssueStatus::Open, vec![]),
+                    None,
+                )
                 .await
                 .unwrap();
             let (blocked_issue_id, _) = store
-                .add_issue(issue_with_status(
-                    "blocked",
-                    IssueStatus::Open,
-                    vec![IssueDependency::new(
-                        IssueDependencyType::BlockedOn,
-                        blocker_id.clone(),
-                    )],
-                ))
+                .add_issue_with_actor(
+                    issue_with_status(
+                        "blocked",
+                        IssueStatus::Open,
+                        vec![IssueDependency::new(
+                            IssueDependencyType::BlockedOn,
+                            blocker_id.clone(),
+                        )],
+                    ),
+                    None,
+                )
                 .await
                 .unwrap();
 
@@ -2600,9 +2601,10 @@ mod tests {
         {
             let store = state.store.as_ref();
             store
-                .update_issue(
+                .update_issue_with_actor(
                     &blocker_id,
                     issue_with_status("blocker", IssueStatus::Closed, vec![]),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -2618,7 +2620,10 @@ mod tests {
         let (parent_id, child_id, child_dependencies) = {
             let store = state.store.as_ref();
             let (parent_id, _) = store
-                .add_issue(issue_with_status("parent", IssueStatus::InProgress, vec![]))
+                .add_issue_with_actor(
+                    issue_with_status("parent", IssueStatus::InProgress, vec![]),
+                    None,
+                )
                 .await
                 .unwrap();
             let child_dependencies = vec![IssueDependency::new(
@@ -2626,11 +2631,10 @@ mod tests {
                 parent_id.clone(),
             )];
             let (child_id, _) = store
-                .add_issue(issue_with_status(
-                    "child",
-                    IssueStatus::Open,
-                    child_dependencies.clone(),
-                ))
+                .add_issue_with_actor(
+                    issue_with_status("child", IssueStatus::Open, child_dependencies.clone()),
+                    None,
+                )
                 .await
                 .unwrap();
 
@@ -2642,9 +2646,10 @@ mod tests {
         {
             let store = state.store.as_ref();
             store
-                .update_issue(
+                .update_issue_with_actor(
                     &child_id,
                     issue_with_status("child", IssueStatus::Closed, child_dependencies),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -2660,7 +2665,10 @@ mod tests {
         let (issue_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_issue(issue_with_status("dropped", IssueStatus::Dropped, vec![]))
+                .add_issue_with_actor(
+                    issue_with_status("dropped", IssueStatus::Dropped, vec![]),
+                    None,
+                )
                 .await
                 .unwrap()
         };
@@ -2675,18 +2683,24 @@ mod tests {
         let (blocked_issue_id, _) = {
             let store = state.store.as_ref();
             let (blocker_id, _) = store
-                .add_issue(issue_with_status("blocker", IssueStatus::Dropped, vec![]))
+                .add_issue_with_actor(
+                    issue_with_status("blocker", IssueStatus::Dropped, vec![]),
+                    None,
+                )
                 .await
                 .unwrap();
             store
-                .add_issue(issue_with_status(
-                    "blocked",
-                    IssueStatus::Open,
-                    vec![IssueDependency::new(
-                        IssueDependencyType::BlockedOn,
-                        blocker_id,
-                    )],
-                ))
+                .add_issue_with_actor(
+                    issue_with_status(
+                        "blocked",
+                        IssueStatus::Open,
+                        vec![IssueDependency::new(
+                            IssueDependencyType::BlockedOn,
+                            blocker_id,
+                        )],
+                    ),
+                    None,
+                )
                 .await
                 .unwrap()
         };
@@ -2701,7 +2715,10 @@ mod tests {
         let (issue_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_issue(issue_with_status("closed", IssueStatus::Closed, vec![]))
+                .add_issue_with_actor(
+                    issue_with_status("closed", IssueStatus::Closed, vec![]),
+                    None,
+                )
                 .await
                 .unwrap()
         };
@@ -2718,7 +2735,10 @@ mod tests {
 
         let (task_id, _) = {
             let store = state.store.as_ref();
-            store.add_task(task, Utc::now()).await.unwrap()
+            store
+                .add_task_with_actor(task, Utc::now(), None)
+                .await
+                .unwrap()
         };
 
         state.start_pending_task(task_id.clone()).await;
@@ -2755,19 +2775,22 @@ mod tests {
         let (issue_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "with limits".to_string(),
-                    creator: Username::from("creator"),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: None,
-                    job_settings: job_settings.clone(),
-                    todo_list: Vec::new(),
-                    dependencies: Vec::new(),
-                    patches: Vec::new(),
-                    deleted: false,
-                })
+                .add_issue_with_actor(
+                    Issue {
+                        issue_type: IssueType::Task,
+                        description: "with limits".to_string(),
+                        creator: Username::from("creator"),
+                        progress: String::new(),
+                        status: IssueStatus::Open,
+                        assignee: None,
+                        job_settings: job_settings.clone(),
+                        todo_list: Vec::new(),
+                        dependencies: Vec::new(),
+                        patches: Vec::new(),
+                        deleted: false,
+                    },
+                    None,
+                )
                 .await
                 .unwrap()
         };
@@ -2777,7 +2800,10 @@ mod tests {
             let mut task = task_for_issue(&issue_id);
             task.cpu_limit = job_settings.cpu_limit.clone();
             task.memory_limit = job_settings.memory_limit.clone();
-            store.add_task(task, Utc::now()).await.unwrap()
+            store
+                .add_task_with_actor(task, Utc::now(), None)
+                .await
+                .unwrap()
         };
 
         state.start_pending_task(task_id.clone()).await;
@@ -2796,7 +2822,10 @@ mod tests {
 
         let (task_id, _) = {
             let store = state.store.as_ref();
-            store.add_task(task, Utc::now()).await.unwrap()
+            store
+                .add_task_with_actor(task, Utc::now(), None)
+                .await
+                .unwrap()
         };
 
         // Pre-insert the job so find_job_by_metis_id finds it, and configure
@@ -2820,7 +2849,10 @@ mod tests {
 
         let (task_id, _) = {
             let store = state.store.as_ref();
-            store.add_task(task, Utc::now()).await.unwrap()
+            store
+                .add_task_with_actor(task, Utc::now(), None)
+                .await
+                .unwrap()
         };
 
         // Configure create_job to fail without pre-inserting the job, so
@@ -2863,7 +2895,10 @@ mod tests {
         let state = test_state_with_engine(job_engine.clone());
         let (tracked_task_id, _) = {
             let store = state.store.as_ref();
-            store.add_task(sample_task(), Utc::now()).await.unwrap()
+            store
+                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .await
+                .unwrap()
         };
         let orphan_task_id = TaskId::new();
 
@@ -2897,7 +2932,10 @@ mod tests {
         let state = test_state_with_engine(job_engine);
         let task_id = {
             let store = state.store.as_ref();
-            let (task_id, _) = store.add_task(sample_task(), Utc::now()).await.unwrap();
+            let (task_id, _) = store
+                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .await
+                .unwrap();
             state
                 .transition_task_to_pending(&task_id)
                 .await
@@ -2930,7 +2968,10 @@ mod tests {
 
         let task_id = {
             let store = state.store.as_ref();
-            let (task_id, _) = store.add_task(sample_task(), Utc::now()).await.unwrap();
+            let (task_id, _) = store
+                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .await
+                .unwrap();
             state
                 .transition_task_to_pending(&task_id)
                 .await
@@ -3009,15 +3050,15 @@ mod tests {
         let (parent_task_id, child_task_id, grandchild_task_id) = {
             let store = state.store.as_ref();
             let (parent_task_id, _) = store
-                .add_task(task_for_issue(&parent_id), Utc::now())
+                .add_task_with_actor(task_for_issue(&parent_id), Utc::now(), None)
                 .await
                 .unwrap();
             let (child_task_id, _) = store
-                .add_task(task_for_issue(&child_id), Utc::now())
+                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), None)
                 .await
                 .unwrap();
             let (grandchild_task_id, _) = store
-                .add_task(task_for_issue(&grandchild_id), Utc::now())
+                .add_task_with_actor(task_for_issue(&grandchild_id), Utc::now(), None)
                 .await
                 .unwrap();
             (parent_task_id, child_task_id, grandchild_task_id)
@@ -3438,15 +3479,18 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue(issue_with_status("parent", IssueStatus::Open, vec![]))
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task(task_for_issue(&issue_id), Utc::now())
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
             .await
             .unwrap();
 
-        store.delete_issue(&issue_id).await.unwrap();
+        store
+            .delete_issue_with_actor(&issue_id, None)
+            .await
+            .unwrap();
 
         state.cleanup_orphaned_tasks().await;
 
@@ -3467,11 +3511,11 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue(issue_with_status("parent", IssueStatus::Open, vec![]))
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task(task_for_issue(&issue_id), Utc::now())
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
             .await
             .unwrap();
 
@@ -3490,7 +3534,10 @@ mod tests {
         let state = test_state_with_engine(job_engine);
         let store = state.store.as_ref();
 
-        let (task_id, _) = store.add_task(sample_task(), Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task_with_actor(sample_task(), Utc::now(), None)
+            .await
+            .unwrap();
 
         state.cleanup_orphaned_tasks().await;
 
@@ -3508,11 +3555,11 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue(issue_with_status("parent", IssueStatus::Open, vec![]))
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task(task_for_issue(&issue_id), Utc::now())
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
             .await
             .unwrap();
         state
@@ -3522,7 +3569,10 @@ mod tests {
 
         job_engine.insert_job(&task_id, JobStatus::Running).await;
 
-        store.delete_issue(&issue_id).await.unwrap();
+        store
+            .delete_issue_with_actor(&issue_id, None)
+            .await
+            .unwrap();
 
         state.cleanup_orphaned_tasks().await;
 
@@ -3814,7 +3864,10 @@ mod tests {
         let (issue_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_issue(issue_with_status("rejected", IssueStatus::Rejected, vec![]))
+                .add_issue_with_actor(
+                    issue_with_status("rejected", IssueStatus::Rejected, vec![]),
+                    None,
+                )
                 .await
                 .unwrap()
         };
@@ -3829,7 +3882,10 @@ mod tests {
         let (issue_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_issue(issue_with_status("failed", IssueStatus::Failed, vec![]))
+                .add_issue_with_actor(
+                    issue_with_status("failed", IssueStatus::Failed, vec![]),
+                    None,
+                )
                 .await
                 .unwrap()
         };
@@ -3843,11 +3899,11 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child = issue_with_status("child", IssueStatus::Rejected, vec![child_dep]);
-        store.add_issue(child).await.unwrap();
+        store.add_issue_with_actor(child, None).await.unwrap();
 
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
     }
@@ -3858,11 +3914,11 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child = issue_with_status("child", IssueStatus::Failed, vec![child_dep]);
-        store.add_issue(child).await.unwrap();
+        store.add_issue_with_actor(child, None).await.unwrap();
 
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
     }
@@ -3873,39 +3929,43 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
-            .add_issue(issue_with_status(
-                "closed child",
-                IssueStatus::Closed,
-                vec![child_dep.clone()],
-            ))
+            .add_issue_with_actor(
+                issue_with_status("closed child", IssueStatus::Closed, vec![child_dep.clone()]),
+                None,
+            )
             .await
             .unwrap();
         store
-            .add_issue(issue_with_status(
-                "dropped child",
-                IssueStatus::Dropped,
-                vec![child_dep.clone()],
-            ))
+            .add_issue_with_actor(
+                issue_with_status(
+                    "dropped child",
+                    IssueStatus::Dropped,
+                    vec![child_dep.clone()],
+                ),
+                None,
+            )
             .await
             .unwrap();
         store
-            .add_issue(issue_with_status(
-                "rejected child",
-                IssueStatus::Rejected,
-                vec![child_dep.clone()],
-            ))
+            .add_issue_with_actor(
+                issue_with_status(
+                    "rejected child",
+                    IssueStatus::Rejected,
+                    vec![child_dep.clone()],
+                ),
+                None,
+            )
             .await
             .unwrap();
         store
-            .add_issue(issue_with_status(
-                "failed child",
-                IssueStatus::Failed,
-                vec![child_dep],
-            ))
+            .add_issue_with_actor(
+                issue_with_status("failed child", IssueStatus::Failed, vec![child_dep]),
+                None,
+            )
             .await
             .unwrap();
 
@@ -3919,18 +3979,24 @@ mod tests {
         let (blocked_issue_id, _) = {
             let store = state.store.as_ref();
             let (blocker_id, _) = store
-                .add_issue(issue_with_status("blocker", IssueStatus::Rejected, vec![]))
+                .add_issue_with_actor(
+                    issue_with_status("blocker", IssueStatus::Rejected, vec![]),
+                    None,
+                )
                 .await
                 .unwrap();
             store
-                .add_issue(issue_with_status(
-                    "blocked",
-                    IssueStatus::Open,
-                    vec![IssueDependency::new(
-                        IssueDependencyType::BlockedOn,
-                        blocker_id,
-                    )],
-                ))
+                .add_issue_with_actor(
+                    issue_with_status(
+                        "blocked",
+                        IssueStatus::Open,
+                        vec![IssueDependency::new(
+                            IssueDependencyType::BlockedOn,
+                            blocker_id,
+                        )],
+                    ),
+                    None,
+                )
                 .await
                 .unwrap()
         };
@@ -3945,18 +4011,24 @@ mod tests {
         let (blocked_issue_id, _) = {
             let store = state.store.as_ref();
             let (blocker_id, _) = store
-                .add_issue(issue_with_status("blocker", IssueStatus::Failed, vec![]))
+                .add_issue_with_actor(
+                    issue_with_status("blocker", IssueStatus::Failed, vec![]),
+                    None,
+                )
                 .await
                 .unwrap();
             store
-                .add_issue(issue_with_status(
-                    "blocked",
-                    IssueStatus::Open,
-                    vec![IssueDependency::new(
-                        IssueDependencyType::BlockedOn,
-                        blocker_id,
-                    )],
-                ))
+                .add_issue_with_actor(
+                    issue_with_status(
+                        "blocked",
+                        IssueStatus::Open,
+                        vec![IssueDependency::new(
+                            IssueDependencyType::BlockedOn,
+                            blocker_id,
+                        )],
+                    ),
+                    None,
+                )
                 .await
                 .unwrap()
         };
@@ -3996,7 +4068,7 @@ mod tests {
         let (child_task_id,) = {
             let store = state.store.as_ref();
             let (child_task_id, _) = store
-                .add_task(task_for_issue(&child_id), Utc::now())
+                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), None)
                 .await
                 .unwrap();
             (child_task_id,)
@@ -4133,11 +4205,11 @@ mod tests {
         let (dep_task_id, dep_child_task_id) = {
             let store = state.store.as_ref();
             let (dep_task_id, _) = store
-                .add_task(task_for_issue(&dependent_id), Utc::now())
+                .add_task_with_actor(task_for_issue(&dependent_id), Utc::now(), None)
                 .await
                 .unwrap();
             let (dep_child_task_id, _) = store
-                .add_task(task_for_issue(&dep_child_id), Utc::now())
+                .add_task_with_actor(task_for_issue(&dep_child_id), Utc::now(), None)
                 .await
                 .unwrap();
             (dep_task_id, dep_child_task_id)

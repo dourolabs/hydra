@@ -423,8 +423,11 @@ impl Default for EventBus {
     }
 }
 
-/// A [`Store`] wrapper that automatically emits [`ServerEvent`]s on every
-/// successful mutation. Read-only operations are forwarded unchanged.
+/// A wrapper around a [`Store`] that automatically emits [`ServerEvent`]s on
+/// every successful mutation. All mutations require an explicit `actor`
+/// parameter (`Option<String>`) so that event payloads always carry actor
+/// provenance. Read-only operations are forwarded unchanged via the
+/// [`ReadOnlyStore`] trait implementation.
 pub struct StoreWithEvents {
     inner: Arc<dyn Store>,
     event_bus: Arc<EventBus>,
@@ -677,6 +680,82 @@ impl StoreWithEvents {
             .emit_job_updated(metis_id.clone(), result.version, payload);
         Ok(result)
     }
+
+    pub async fn delete_task_with_actor(
+        &self,
+        id: &TaskId,
+        _actor: Option<String>,
+    ) -> Result<VersionNumber, StoreError> {
+        self.inner.delete_task(id).await
+    }
+
+    // ---- Repository mutations (inherent, with actor) ----
+
+    pub async fn add_repository(
+        &self,
+        name: RepoName,
+        config: Repository,
+        _actor: Option<String>,
+    ) -> Result<(), StoreError> {
+        self.inner.add_repository(name, config).await
+    }
+
+    pub async fn update_repository(
+        &self,
+        name: RepoName,
+        config: Repository,
+        _actor: Option<String>,
+    ) -> Result<(), StoreError> {
+        self.inner.update_repository(name, config).await
+    }
+
+    pub async fn delete_repository(
+        &self,
+        name: &RepoName,
+        _actor: Option<String>,
+    ) -> Result<(), StoreError> {
+        self.inner.delete_repository(name).await
+    }
+
+    // ---- Actor mutations (inherent, with actor) ----
+
+    pub async fn add_actor(
+        &self,
+        actor: Actor,
+        _acting_as: Option<String>,
+    ) -> Result<(), StoreError> {
+        self.inner.add_actor(actor).await
+    }
+
+    pub async fn update_actor(
+        &self,
+        actor: Actor,
+        _acting_as: Option<String>,
+    ) -> Result<(), StoreError> {
+        self.inner.update_actor(actor).await
+    }
+
+    // ---- User mutations (inherent, with actor) ----
+
+    pub async fn add_user(&self, user: User, _actor: Option<String>) -> Result<(), StoreError> {
+        self.inner.add_user(user).await
+    }
+
+    pub async fn update_user(
+        &self,
+        user: User,
+        _actor: Option<String>,
+    ) -> Result<Versioned<User>, StoreError> {
+        self.inner.update_user(user).await
+    }
+
+    pub async fn delete_user(
+        &self,
+        username: &Username,
+        _actor: Option<String>,
+    ) -> Result<(), StoreError> {
+        self.inner.delete_user(username).await
+    }
 }
 
 #[async_trait]
@@ -860,122 +939,6 @@ impl ReadOnlyStore for StoreWithEvents {
     }
 }
 
-#[async_trait]
-impl Store for StoreWithEvents {
-    // ---- Repository (mutations) ----
-
-    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
-        self.inner.add_repository(name, config).await
-    }
-
-    async fn update_repository(
-        &self,
-        name: RepoName,
-        config: Repository,
-    ) -> Result<(), StoreError> {
-        self.inner.update_repository(name, config).await
-    }
-
-    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
-        self.inner.delete_repository(name).await
-    }
-
-    // ---- Issue (mutations) ----
-
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
-        self.add_issue_with_actor(issue, None).await
-    }
-
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
-        self.update_issue_with_actor(id, issue, None).await
-    }
-
-    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
-        self.delete_issue_with_actor(id, None).await
-    }
-
-    // ---- Patch (mutations) ----
-
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
-        self.add_patch_with_actor(patch, None).await
-    }
-
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
-        self.update_patch_with_actor(id, patch, None).await
-    }
-
-    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
-        self.delete_patch_with_actor(id, None).await
-    }
-
-    // ---- Document (mutations) ----
-
-    async fn add_document(
-        &self,
-        document: Document,
-    ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        self.add_document_with_actor(document, None).await
-    }
-
-    async fn update_document(
-        &self,
-        id: &DocumentId,
-        document: Document,
-    ) -> Result<VersionNumber, StoreError> {
-        self.update_document_with_actor(id, document, None).await
-    }
-
-    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
-        self.delete_document_with_actor(id, None).await
-    }
-
-    // ---- Task/Job (mutations) ----
-
-    async fn add_task(
-        &self,
-        task: Task,
-        creation_time: DateTime<Utc>,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
-        self.add_task_with_actor(task, creation_time, None).await
-    }
-
-    async fn update_task(
-        &self,
-        metis_id: &TaskId,
-        task: Task,
-    ) -> Result<Versioned<Task>, StoreError> {
-        self.update_task_with_actor(metis_id, task, None).await
-    }
-
-    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
-        self.inner.delete_task(id).await
-    }
-
-    // ---- Actor (mutations) ----
-
-    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
-        self.inner.add_actor(actor).await
-    }
-
-    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
-        self.inner.update_actor(actor).await
-    }
-
-    // ---- User (mutations) ----
-
-    async fn add_user(&self, user: User) -> Result<(), StoreError> {
-        self.inner.add_user(user).await
-    }
-
-    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError> {
-        self.inner.update_user(user).await
-    }
-
-    async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {
-        self.inner.delete_user(username).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1090,7 +1053,7 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue_with_actor(issue, None).await.unwrap();
 
         let event = rx.recv().await.expect("should receive IssueCreated");
         match &event {
@@ -1129,12 +1092,18 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue(issue.clone()).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue_with_actor(issue.clone(), None)
+            .await
+            .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         let mut updated = issue;
         updated.status = IssueStatus::InProgress;
-        store.update_issue(&issue_id, updated).await.unwrap();
+        store
+            .update_issue_with_actor(&issue_id, updated, None)
+            .await
+            .unwrap();
 
         let event = rx.recv().await.expect("should receive IssueUpdated");
         match &event {
@@ -1173,10 +1142,13 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue_with_actor(issue, None).await.unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
-        store.delete_issue(&issue_id).await.unwrap();
+        store
+            .delete_issue_with_actor(&issue_id, None)
+            .await
+            .unwrap();
 
         let event = rx.recv().await.expect("should receive IssueDeleted");
         match &event {
@@ -1215,7 +1187,10 @@ mod tests {
             Vec::new(),
         );
 
-        store.add_issue(issue.clone()).await.unwrap();
+        store
+            .add_issue_with_actor(issue.clone(), None)
+            .await
+            .unwrap();
 
         let event = rx.recv().await.expect("should receive IssueCreated");
         match &event {
@@ -1254,13 +1229,19 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue(issue.clone()).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue_with_actor(issue.clone(), None)
+            .await
+            .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         let mut updated = issue;
         updated.status = IssueStatus::InProgress;
         updated.description = "after update".to_string();
-        store.update_issue(&issue_id, updated).await.unwrap();
+        store
+            .update_issue_with_actor(&issue_id, updated, None)
+            .await
+            .unwrap();
 
         let event = rx.recv().await.expect("should receive IssueUpdated");
         match &event {
@@ -1301,10 +1282,13 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue_with_actor(issue, None).await.unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
-        store.delete_issue(&issue_id).await.unwrap();
+        store
+            .delete_issue_with_actor(&issue_id, None)
+            .await
+            .unwrap();
 
         let event = rx.recv().await.expect("should receive IssueDeleted");
         match &event {
@@ -1346,7 +1330,10 @@ mod tests {
             deleted: false,
         };
 
-        let (task_id, _) = store.add_task(task, chrono::Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task_with_actor(task, chrono::Utc::now(), None)
+            .await
+            .unwrap();
         let _ = rx.recv().await.unwrap(); // consume JobCreated
 
         let updated_task = StoreTask {
@@ -1365,7 +1352,10 @@ mod tests {
             deleted: false,
         };
 
-        store.update_task(&task_id, updated_task).await.unwrap();
+        store
+            .update_task_with_actor(&task_id, updated_task, None)
+            .await
+            .unwrap();
 
         let event = rx.recv().await.expect("should receive JobUpdated");
         match &event {
@@ -1447,7 +1437,7 @@ mod tests {
             Vec::new(),
         );
 
-        store.add_issue(issue).await.unwrap();
+        store.add_issue_with_actor(issue, None).await.unwrap();
 
         let event = rx.recv().await.expect("should receive IssueCreated");
         match &event {
