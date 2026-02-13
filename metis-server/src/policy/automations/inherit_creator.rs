@@ -73,11 +73,18 @@ impl Automation for InheritCreatorAutomation {
             .item;
 
         issue.creator = parent_issue.item.creator;
-        ctx.store.update_issue(issue_id, issue).await.map_err(|e| {
-            AutomationError::Other(anyhow::anyhow!(
-                "failed to update creator on issue {issue_id}: {e}"
-            ))
-        })?;
+        ctx.app_state
+            .upsert_issue(
+                Some(issue_id.clone()),
+                metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
+                ctx.actor().map(String::from),
+            )
+            .await
+            .map_err(|e| {
+                AutomationError::Other(anyhow::anyhow!(
+                    "failed to update creator on issue {issue_id}: {e}"
+                ))
+            })?;
 
         tracing::info!(
             issue_id = %issue_id,

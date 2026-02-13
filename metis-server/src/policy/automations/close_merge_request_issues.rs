@@ -93,11 +93,18 @@ impl Automation for CloseMergeRequestIssuesAutomation {
                 IssueStatus::Failed
             };
 
-            store.update_issue(&issue_id, issue).await.map_err(|e| {
-                AutomationError::Other(anyhow::anyhow!(
-                    "failed to update merge-request issue {issue_id}: {e}"
-                ))
-            })?;
+            ctx.app_state
+                .upsert_issue(
+                    Some(issue_id.clone()),
+                    metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
+                    ctx.actor().map(String::from),
+                )
+                .await
+                .map_err(|e| {
+                    AutomationError::Other(anyhow::anyhow!(
+                        "failed to update merge-request issue {issue_id}: {e}"
+                    ))
+                })?;
 
             updated_ids.push(issue_id);
         }

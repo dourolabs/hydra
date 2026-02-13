@@ -201,7 +201,7 @@ impl PolicyEngine {
     pub async fn check_create_issue(
         &self,
         new: &crate::domain::issues::Issue,
-        store: &dyn crate::store::Store,
+        store: &dyn crate::store::ReadOnlyStore,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Issue {
             issue_id: None,
@@ -223,7 +223,7 @@ impl PolicyEngine {
         issue_id: &metis_common::IssueId,
         new: &crate::domain::issues::Issue,
         old: Option<&crate::domain::issues::Issue>,
-        store: &dyn crate::store::Store,
+        store: &dyn crate::store::ReadOnlyStore,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Issue {
             issue_id: Some(issue_id.clone()),
@@ -243,7 +243,7 @@ impl PolicyEngine {
     pub async fn check_create_patch(
         &self,
         new: &crate::domain::patches::Patch,
-        store: &dyn crate::store::Store,
+        store: &dyn crate::store::ReadOnlyStore,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Patch {
             patch_id: None,
@@ -263,7 +263,7 @@ impl PolicyEngine {
     pub async fn check_create_document(
         &self,
         new: &crate::domain::documents::Document,
-        store: &dyn crate::store::Store,
+        store: &dyn crate::store::ReadOnlyStore,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Document {
             document_id: None,
@@ -285,7 +285,7 @@ impl PolicyEngine {
         document_id: &metis_common::DocumentId,
         new: &crate::domain::documents::Document,
         old: Option<&crate::domain::documents::Document>,
-        store: &dyn crate::store::Store,
+        store: &dyn crate::store::ReadOnlyStore,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Document {
             document_id: Some(document_id.clone()),
@@ -307,7 +307,7 @@ impl PolicyEngine {
         task_id: &metis_common::TaskId,
         new: &crate::store::Task,
         old: Option<&crate::store::Task>,
-        store: &dyn crate::store::Store,
+        store: &dyn crate::store::ReadOnlyStore,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Job {
             task_id: Some(task_id.clone()),

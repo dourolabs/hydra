@@ -1,6 +1,6 @@
 use crate::app::AppState;
 use crate::app::event_bus::ServerEvent;
-use crate::store::Store;
+use crate::store::ReadOnlyStore;
 
 /// The type of mutation being proposed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,14 +52,14 @@ pub struct RestrictionContext<'a> {
     pub operation: Operation,
     pub repo: Option<&'a metis_common::RepoName>,
     pub payload: &'a OperationPayload,
-    pub store: &'a dyn Store,
+    pub store: &'a dyn ReadOnlyStore,
 }
 
 /// Context provided to automations when an event fires.
 pub struct AutomationContext<'a> {
     pub event: &'a ServerEvent,
     pub app_state: &'a AppState,
-    pub store: &'a dyn Store,
+    pub store: &'a dyn ReadOnlyStore,
 }
 
 impl<'a> AutomationContext<'a> {

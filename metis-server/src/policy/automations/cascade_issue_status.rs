@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use std::collections::HashSet;
 
+use crate::app::AppState;
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::issues::IssueStatus;
 use crate::policy::context::AutomationContext;
@@ -109,9 +110,10 @@ impl Automation for CascadeIssueStatusAutomation {
         }
 
         let store = ctx.store;
+        let actor = ctx.actor().map(String::from);
 
         // 1. Drop all children recursively (for any trigger status)
-        drop_children_recursively(store, issue_id).await?;
+        drop_children_recursively(ctx.app_state, store, issue_id, actor.clone()).await?;
 
         // 2. For Rejected/Failed, also cascade to blocked-on dependents
         if matches!(new.status, IssueStatus::Rejected | IssueStatus::Failed) {
@@ -131,14 +133,10 @@ impl Automation for CascadeIssueStatusAutomation {
                 if !is_terminal(&dep_issue.item.status) {
                     let mut dep = dep_issue.item;
                     dep.status = IssueStatus::Dropped;
-                    store.update_issue(&dep_id, dep).await.map_err(|e| {
-                        AutomationError::Other(anyhow::anyhow!(
-                            "failed to drop dependent issue {dep_id}: {e}"
-                        ))
-                    })?;
+                    upsert_issue(ctx.app_state, &dep_id, dep, actor.clone()).await?;
 
                     // Also drop the dependent's children
-                    drop_children_recursively(store, &dep_id).await?;
+                    drop_children_recursively(ctx.app_state, store, &dep_id, actor.clone()).await?;
                 }
             }
         }
@@ -153,10 +151,32 @@ impl Automation for CascadeIssueStatusAutomation {
     }
 }
 
+/// Helper to update an issue via `AppState::upsert_issue`.
+async fn upsert_issue(
+    app_state: &AppState,
+    issue_id: &IssueId,
+    issue: crate::domain::issues::Issue,
+    actor: Option<String>,
+) -> Result<(), AutomationError> {
+    app_state
+        .upsert_issue(
+            Some(issue_id.clone()),
+            metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
+            actor,
+        )
+        .await
+        .map_err(|e| {
+            AutomationError::Other(anyhow::anyhow!("failed to update issue {issue_id}: {e}"))
+        })?;
+    Ok(())
+}
+
 /// Recursively drop all child issues of the given issue via BFS.
 async fn drop_children_recursively(
-    store: &dyn crate::store::Store,
+    app_state: &AppState,
+    store: &dyn crate::store::ReadOnlyStore,
     issue_id: &IssueId,
+    actor: Option<String>,
 ) -> Result<(), AutomationError> {
     let mut to_visit = store.get_issue_children(issue_id).await.map_err(|e| {
         AutomationError::Other(anyhow::anyhow!("failed to get children of {issue_id}: {e}"))
@@ -178,14 +198,7 @@ async fn drop_children_recursively(
         if child.item.status != IssueStatus::Dropped {
             let mut child_issue = child.item;
             child_issue.status = IssueStatus::Dropped;
-            store
-                .update_issue(&child_id, child_issue)
-                .await
-                .map_err(|e| {
-                    AutomationError::Other(anyhow::anyhow!(
-                        "failed to drop child issue {child_id}: {e}"
-                    ))
-                })?;
+            upsert_issue(app_state, &child_id, child_issue, actor.clone()).await?;
         }
 
         let grandchildren = store.get_issue_children(&child_id).await.map_err(|e| {
