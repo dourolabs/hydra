@@ -8,7 +8,7 @@ use metis_common::issues::IssueId;
 /// Validates issue lifecycle constraints when closing:
 /// - All blockers must be in a terminal state
 /// - All todo items must be done
-/// - All children must be closed
+/// - All children must be in a terminal state
 #[derive(Default)]
 pub struct IssueLifecycleRestriction;
 
@@ -102,7 +102,13 @@ impl Restriction for IssueLifecycleRestriction {
                             policy_name: self.name().to_string(),
                             message: format!("Failed to look up child issue {child_id}: {e}"),
                         })?;
-                if child.item.status != IssueStatus::Closed {
+                if !matches!(
+                    child.item.status,
+                    IssueStatus::Closed
+                        | IssueStatus::Dropped
+                        | IssueStatus::Rejected
+                        | IssueStatus::Failed
+                ) {
                     open_children.push(child_id);
                 }
             }
@@ -252,6 +258,86 @@ mod tests {
         // Try to close parent
         let mut closing_parent = make_issue(IssueStatus::Closed);
         closing_parent.creator = Username::from("creator");
+        let payload = OperationPayload::Issue {
+            issue_id: Some(parent_id.clone()),
+            new: closing_parent,
+            old: None,
+        };
+        let ctx = RestrictionContext {
+            operation: Operation::UpdateIssue,
+
+            repo: None,
+            payload: &payload,
+            store: &store,
+        };
+        let result = restriction.evaluate(&ctx).await;
+        assert!(result.is_err());
+        let violation = result.unwrap_err();
+        assert!(
+            violation
+                .message
+                .contains("cannot close issue with open child issues")
+        );
+    }
+
+    #[tokio::test]
+    async fn allows_closing_with_terminal_children() {
+        let restriction = IssueLifecycleRestriction::new();
+
+        for status in [
+            IssueStatus::Closed,
+            IssueStatus::Rejected,
+            IssueStatus::Failed,
+            IssueStatus::Dropped,
+        ] {
+            let store = MemoryStore::new();
+
+            let parent = make_issue(IssueStatus::Open);
+            let (parent_id, _) = store.add_issue(parent).await.unwrap();
+
+            let mut child = make_issue(status);
+            child.dependencies = vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )];
+            store.add_issue(child).await.unwrap();
+
+            let closing_parent = make_issue(IssueStatus::Closed);
+            let payload = OperationPayload::Issue {
+                issue_id: Some(parent_id.clone()),
+                new: closing_parent,
+                old: None,
+            };
+            let ctx = RestrictionContext {
+                operation: Operation::UpdateIssue,
+
+                repo: None,
+                payload: &payload,
+                store: &store,
+            };
+            assert!(
+                restriction.evaluate(&ctx).await.is_ok(),
+                "closing parent should succeed when child is {status:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_closing_with_in_progress_children() {
+        let restriction = IssueLifecycleRestriction::new();
+        let store = MemoryStore::new();
+
+        let parent = make_issue(IssueStatus::Open);
+        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+
+        let mut child = make_issue(IssueStatus::InProgress);
+        child.dependencies = vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_id.clone(),
+        )];
+        store.add_issue(child).await.unwrap();
+
+        let closing_parent = make_issue(IssueStatus::Closed);
         let payload = OperationPayload::Issue {
             issue_id: Some(parent_id.clone()),
             new: closing_parent,

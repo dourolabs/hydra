@@ -721,6 +721,91 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
 }
 
 #[tokio::test]
+async fn update_issue_allows_closing_with_terminal_children() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let parent: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "parent",
+                default_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let child_dependencies = vec![IssueDependency::new(
+        IssueDependencyType::ChildOf,
+        parent.issue_id.clone(),
+    )];
+    // Create child in Failed state — should not block closing parent
+    let _child: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "child",
+                default_user(),
+                String::new(),
+                IssueStatus::Failed,
+                None,
+                Vec::new(),
+                child_dependencies,
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let response = client
+        .put(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            parent.issue_id
+        ))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "parent",
+                default_user(),
+                String::new(),
+                IssueStatus::Closed,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?;
+
+    assert!(
+        response.status().is_success(),
+        "closing parent should succeed when child is Failed"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
