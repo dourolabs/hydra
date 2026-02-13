@@ -7,7 +7,7 @@ use crate::{
         patches::Patch,
         users::{User, Username},
     },
-    store::{Status, Store, StoreError, Task, TaskStatusLog},
+    store::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog},
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -1027,48 +1027,7 @@ fn ensure_schema_version(
 }
 
 #[async_trait]
-impl Store for PostgresStore {
-    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
-        let name_str = name.as_str();
-
-        // Check if repository exists (including deleted)
-        let existing = self
-            .fetch_versioned_payload::<Repository>(
-                TABLE_REPOSITORIES,
-                "repository",
-                name_str.as_str(),
-                REPOSITORY_SCHEMA_VERSION,
-            )
-            .await?;
-
-        match existing {
-            Some(repo) if repo.item.deleted => {
-                // Re-create over deleted: use caller's config as-is
-                self.update_payload(
-                    TABLE_REPOSITORIES,
-                    "repository",
-                    name_str.as_str(),
-                    REPOSITORY_SCHEMA_VERSION,
-                    &config,
-                )
-                .await?;
-                Ok(())
-            }
-            Some(_) => Err(StoreError::RepositoryAlreadyExists(name)),
-            None => {
-                self.insert_payload(
-                    TABLE_REPOSITORIES,
-                    "repository",
-                    name_str.as_str(),
-                    REPOSITORY_SCHEMA_VERSION,
-                    1,
-                    &config,
-                )
-                .await
-            }
-        }
-    }
-
+impl ReadOnlyStore for PostgresStore {
     async fn get_repository(
         &self,
         name: &RepoName,
@@ -1088,25 +1047,6 @@ impl Store for PostgresStore {
             return Err(StoreError::RepositoryNotFound(name.clone()));
         }
         Ok(versioned)
-    }
-
-    async fn update_repository(
-        &self,
-        name: RepoName,
-        config: Repository,
-    ) -> Result<(), StoreError> {
-        let name_str = name.as_str();
-        self.ensure_repository_exists(&name).await?;
-
-        self.update_payload(
-            TABLE_REPOSITORIES,
-            "repository",
-            name_str.as_str(),
-            REPOSITORY_SCHEMA_VERSION,
-            &config,
-        )
-        .await?;
-        Ok(())
     }
 
     async fn list_repositories(
@@ -1138,32 +1078,6 @@ impl Store for PostgresStore {
         Ok(rows)
     }
 
-    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
-        // Use include_deleted: true since we need to access the repository to mark it as deleted
-        let current = self.get_repository(name, true).await?;
-        let mut repo = current.item;
-        repo.deleted = true;
-        self.update_repository(name.clone(), repo).await
-    }
-
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
-        self.validate_issue_dependencies(&issue.dependencies)
-            .await?;
-        let id = IssueId::new();
-
-        self.insert_payload(
-            TABLE_ISSUES,
-            "issue",
-            id.as_ref(),
-            ISSUE_SCHEMA_VERSION,
-            1,
-            &issue,
-        )
-        .await?;
-
-        Ok((id, 1))
-    }
-
     async fn get_issue(
         &self,
         id: &IssueId,
@@ -1191,33 +1105,11 @@ impl Store for PostgresStore {
         Ok(versions)
     }
 
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
-        self.get_issue(id, true).await?;
-
-        self.validate_issue_dependencies(&issue.dependencies)
-            .await?;
-        self.update_payload(
-            TABLE_ISSUES,
-            "issue",
-            id.as_ref(),
-            ISSUE_SCHEMA_VERSION,
-            &issue,
-        )
-        .await
-    }
-
     async fn list_issues(
         &self,
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         self.fetch_latest_issues(query).await
-    }
-
-    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_issue(id, true).await?;
-        let mut issue = current.item;
-        issue.deleted = true;
-        self.update_issue(id, issue).await
     }
 
     async fn search_issue_graph(
@@ -1231,182 +1123,6 @@ impl Store for PostgresStore {
             .collect();
         let context = IssueGraphContext::from_issues(&issue_values);
         context.apply_filters(filters)
-    }
-
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
-        let id = PatchId::new();
-        self.insert_payload(
-            TABLE_PATCHES,
-            "patch",
-            id.as_ref(),
-            PATCH_SCHEMA_VERSION,
-            1,
-            &patch,
-        )
-        .await?;
-        Ok((id, 1))
-    }
-
-    async fn get_patch(
-        &self,
-        id: &PatchId,
-        include_deleted: bool,
-    ) -> Result<Versioned<Patch>, StoreError> {
-        let versioned: Versioned<Patch> = self
-            .fetch_versioned_payload(TABLE_PATCHES, "patch", id.as_ref(), PATCH_SCHEMA_VERSION)
-            .await?
-            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
-        if !include_deleted && versioned.item.deleted {
-            return Err(StoreError::PatchNotFound(id.clone()));
-        }
-        Ok(versioned)
-    }
-
-    async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
-        let versions = self
-            .fetch_versioned_payloads(TABLE_PATCHES, "patch", id.as_ref(), PATCH_SCHEMA_VERSION)
-            .await?;
-        if versions.is_empty() {
-            return Err(StoreError::PatchNotFound(id.clone()));
-        }
-        Ok(versions)
-    }
-
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
-        self.get_patch(id, true).await?;
-
-        self.update_payload(
-            TABLE_PATCHES,
-            "patch",
-            id.as_ref(),
-            PATCH_SCHEMA_VERSION,
-            &patch,
-        )
-        .await
-    }
-
-    async fn list_patches(
-        &self,
-        query: &SearchPatchesQuery,
-    ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
-        self.fetch_latest_patches(query).await
-    }
-
-    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_patch(id, true).await?;
-        let mut patch = current.item;
-        patch.deleted = true;
-        self.update_patch(id, patch).await
-    }
-
-    async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
-        self.ensure_patch_exists(patch_id).await?;
-        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
-
-        Ok(issues
-            .into_iter()
-            .filter(|(_, issue)| issue.item.patches.contains(patch_id))
-            .map(|(id, _)| id)
-            .collect())
-    }
-
-    async fn add_document(
-        &self,
-        document: Document,
-    ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        let id = DocumentId::new();
-        self.insert_payload(
-            TABLE_DOCUMENTS,
-            "document",
-            id.as_ref(),
-            DOCUMENT_SCHEMA_VERSION,
-            1,
-            &document,
-        )
-        .await?;
-        Ok((id, 1))
-    }
-
-    async fn get_document(
-        &self,
-        id: &DocumentId,
-        include_deleted: bool,
-    ) -> Result<Versioned<Document>, StoreError> {
-        let versioned: Versioned<Document> = self
-            .fetch_versioned_payload(
-                TABLE_DOCUMENTS,
-                "document",
-                id.as_ref(),
-                DOCUMENT_SCHEMA_VERSION,
-            )
-            .await?
-            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
-        if !include_deleted && versioned.item.deleted {
-            return Err(StoreError::DocumentNotFound(id.clone()));
-        }
-        Ok(versioned)
-    }
-
-    async fn get_document_versions(
-        &self,
-        id: &DocumentId,
-    ) -> Result<Vec<Versioned<Document>>, StoreError> {
-        let versions = self
-            .fetch_versioned_payloads(
-                TABLE_DOCUMENTS,
-                "document",
-                id.as_ref(),
-                DOCUMENT_SCHEMA_VERSION,
-            )
-            .await?;
-        if versions.is_empty() {
-            return Err(StoreError::DocumentNotFound(id.clone()));
-        }
-        Ok(versions)
-    }
-
-    async fn update_document(
-        &self,
-        id: &DocumentId,
-        document: Document,
-    ) -> Result<VersionNumber, StoreError> {
-        self.get_document(id, true).await?;
-        self.update_payload(
-            TABLE_DOCUMENTS,
-            "document",
-            id.as_ref(),
-            DOCUMENT_SCHEMA_VERSION,
-            &document,
-        )
-        .await
-    }
-
-    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_document(id, true).await?;
-        let mut document = current.item;
-        document.deleted = true;
-        self.update_document(id, document).await
-    }
-
-    async fn list_documents(
-        &self,
-        query: &SearchDocumentsQuery,
-    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        self.fetch_latest_documents(query).await
-    }
-
-    async fn get_documents_by_path(
-        &self,
-        path_prefix: &str,
-    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        self.list_documents(&SearchDocumentsQuery::new(
-            None,
-            Some(path_prefix.to_string()),
-            None,
-            None,
-            None,
-        ))
-        .await
     }
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
@@ -1455,56 +1171,106 @@ impl Store for PostgresStore {
         Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }
 
-    async fn add_task(
+    async fn get_patch(
         &self,
-        task: Task,
-        _creation_time: chrono::DateTime<Utc>,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let id = TaskId::new();
-        let mut task = task;
-        task.status = Status::Created;
-        task.last_message = None;
-        task.error = None;
-
-        if let Some(issue_id) = task.spawned_from.as_ref() {
-            self.ensure_issue_exists(issue_id).await?;
+        id: &PatchId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Patch>, StoreError> {
+        let versioned: Versioned<Patch> = self
+            .fetch_versioned_payload(TABLE_PATCHES, "patch", id.as_ref(), PATCH_SCHEMA_VERSION)
+            .await?
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::PatchNotFound(id.clone()));
         }
-
-        self.insert_payload(
-            TABLE_TASKS,
-            "task",
-            id.as_ref(),
-            TASK_SCHEMA_VERSION,
-            1,
-            &task,
-        )
-        .await?;
-
-        Ok((id, 1))
+        Ok(versioned)
     }
 
-    async fn update_task(
-        &self,
-        metis_id: &TaskId,
-        task: Task,
-    ) -> Result<Versioned<Task>, StoreError> {
-        self.ensure_task_exists(metis_id).await?;
-        if let Some(issue_id) = task.spawned_from.as_ref() {
-            self.ensure_issue_exists(issue_id).await?;
+    async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
+        let versions = self
+            .fetch_versioned_payloads(TABLE_PATCHES, "patch", id.as_ref(), PATCH_SCHEMA_VERSION)
+            .await?;
+        if versions.is_empty() {
+            return Err(StoreError::PatchNotFound(id.clone()));
         }
+        Ok(versions)
+    }
 
-        self.update_payload(
-            TABLE_TASKS,
-            "task",
-            metis_id.as_ref(),
-            TASK_SCHEMA_VERSION,
-            &task,
-        )
-        .await?;
+    async fn list_patches(
+        &self,
+        query: &SearchPatchesQuery,
+    ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
+        self.fetch_latest_patches(query).await
+    }
 
-        self.fetch_versioned_payload(TABLE_TASKS, "task", metis_id.as_ref(), TASK_SCHEMA_VERSION)
+    async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
+        self.ensure_patch_exists(patch_id).await?;
+        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
+
+        Ok(issues
+            .into_iter()
+            .filter(|(_, issue)| issue.item.patches.contains(patch_id))
+            .map(|(id, _)| id)
+            .collect())
+    }
+
+    async fn get_document(
+        &self,
+        id: &DocumentId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Document>, StoreError> {
+        let versioned: Versioned<Document> = self
+            .fetch_versioned_payload(
+                TABLE_DOCUMENTS,
+                "document",
+                id.as_ref(),
+                DOCUMENT_SCHEMA_VERSION,
+            )
             .await?
-            .ok_or_else(|| StoreError::TaskNotFound(metis_id.clone()))
+            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::DocumentNotFound(id.clone()));
+        }
+        Ok(versioned)
+    }
+
+    async fn get_document_versions(
+        &self,
+        id: &DocumentId,
+    ) -> Result<Vec<Versioned<Document>>, StoreError> {
+        let versions = self
+            .fetch_versioned_payloads(
+                TABLE_DOCUMENTS,
+                "document",
+                id.as_ref(),
+                DOCUMENT_SCHEMA_VERSION,
+            )
+            .await?;
+        if versions.is_empty() {
+            return Err(StoreError::DocumentNotFound(id.clone()));
+        }
+        Ok(versions)
+    }
+
+    async fn list_documents(
+        &self,
+        query: &SearchDocumentsQuery,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
+        self.fetch_latest_documents(query).await
+    }
+
+    async fn get_documents_by_path(
+        &self,
+        path_prefix: &str,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
+        self.list_documents(&SearchDocumentsQuery::new(
+            None,
+            Some(path_prefix.to_string()),
+            None,
+            None,
+            None,
+        ))
+        .await
     }
 
     async fn get_task(
@@ -1539,14 +1305,6 @@ impl Store for PostgresStore {
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         self.fetch_latest_tasks(query).await
-    }
-
-    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_task(id, true).await?;
-        let mut task = current.item;
-        task.deleted = true;
-        let versioned = self.update_task(id, task).await?;
-        Ok(versioned.version)
     }
 
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
@@ -1631,6 +1389,288 @@ impl Store for PostgresStore {
         Ok(result)
     }
 
+    async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
+        super::validate_actor_name(name)?;
+        self.fetch_versioned_payload(TABLE_ACTORS, "actor", name, ACTOR_SCHEMA_VERSION)
+            .await?
+            .ok_or_else(|| StoreError::ActorNotFound(name.to_string()))
+    }
+
+    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
+        let mut actors = self
+            .fetch_versioned_payloads_with_ids::<Actor>(TABLE_ACTORS, "actor", ACTOR_SCHEMA_VERSION)
+            .await?;
+        actors.sort_by(|(a, _), (b, _)| a.cmp(b));
+        Ok(actors)
+    }
+
+    async fn get_user(
+        &self,
+        username: &Username,
+        include_deleted: bool,
+    ) -> Result<Versioned<User>, StoreError> {
+        let versioned: Versioned<User> = self
+            .fetch_versioned_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
+            .await?
+            .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::UserNotFound(username.clone()));
+        }
+        Ok(versioned)
+    }
+
+    async fn list_users(
+        &self,
+        query: &SearchUsersQuery,
+    ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
+        self.fetch_latest_users(query).await
+    }
+}
+
+#[async_trait]
+impl Store for PostgresStore {
+    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
+        let name_str = name.as_str();
+
+        // Check if repository exists (including deleted)
+        let existing = self
+            .fetch_versioned_payload::<Repository>(
+                TABLE_REPOSITORIES,
+                "repository",
+                name_str.as_str(),
+                REPOSITORY_SCHEMA_VERSION,
+            )
+            .await?;
+
+        match existing {
+            Some(repo) if repo.item.deleted => {
+                // Re-create over deleted: use caller's config as-is
+                self.update_payload(
+                    TABLE_REPOSITORIES,
+                    "repository",
+                    name_str.as_str(),
+                    REPOSITORY_SCHEMA_VERSION,
+                    &config,
+                )
+                .await?;
+                Ok(())
+            }
+            Some(_) => Err(StoreError::RepositoryAlreadyExists(name)),
+            None => {
+                self.insert_payload(
+                    TABLE_REPOSITORIES,
+                    "repository",
+                    name_str.as_str(),
+                    REPOSITORY_SCHEMA_VERSION,
+                    1,
+                    &config,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn update_repository(
+        &self,
+        name: RepoName,
+        config: Repository,
+    ) -> Result<(), StoreError> {
+        let name_str = name.as_str();
+        self.ensure_repository_exists(&name).await?;
+
+        self.update_payload(
+            TABLE_REPOSITORIES,
+            "repository",
+            name_str.as_str(),
+            REPOSITORY_SCHEMA_VERSION,
+            &config,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
+        // Use include_deleted: true since we need to access the repository to mark it as deleted
+        let current = self.get_repository(name, true).await?;
+        let mut repo = current.item;
+        repo.deleted = true;
+        self.update_repository(name.clone(), repo).await
+    }
+
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
+        self.validate_issue_dependencies(&issue.dependencies)
+            .await?;
+        let id = IssueId::new();
+
+        self.insert_payload(
+            TABLE_ISSUES,
+            "issue",
+            id.as_ref(),
+            ISSUE_SCHEMA_VERSION,
+            1,
+            &issue,
+        )
+        .await?;
+
+        Ok((id, 1))
+    }
+
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
+        self.get_issue(id, true).await?;
+
+        self.validate_issue_dependencies(&issue.dependencies)
+            .await?;
+        self.update_payload(
+            TABLE_ISSUES,
+            "issue",
+            id.as_ref(),
+            ISSUE_SCHEMA_VERSION,
+            &issue,
+        )
+        .await
+    }
+
+    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_issue(id, true).await?;
+        let mut issue = current.item;
+        issue.deleted = true;
+        self.update_issue(id, issue).await
+    }
+
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
+        let id = PatchId::new();
+        self.insert_payload(
+            TABLE_PATCHES,
+            "patch",
+            id.as_ref(),
+            PATCH_SCHEMA_VERSION,
+            1,
+            &patch,
+        )
+        .await?;
+        Ok((id, 1))
+    }
+
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
+        self.get_patch(id, true).await?;
+
+        self.update_payload(
+            TABLE_PATCHES,
+            "patch",
+            id.as_ref(),
+            PATCH_SCHEMA_VERSION,
+            &patch,
+        )
+        .await
+    }
+
+    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_patch(id, true).await?;
+        let mut patch = current.item;
+        patch.deleted = true;
+        self.update_patch(id, patch).await
+    }
+
+    async fn add_document(
+        &self,
+        document: Document,
+    ) -> Result<(DocumentId, VersionNumber), StoreError> {
+        let id = DocumentId::new();
+        self.insert_payload(
+            TABLE_DOCUMENTS,
+            "document",
+            id.as_ref(),
+            DOCUMENT_SCHEMA_VERSION,
+            1,
+            &document,
+        )
+        .await?;
+        Ok((id, 1))
+    }
+
+    async fn update_document(
+        &self,
+        id: &DocumentId,
+        document: Document,
+    ) -> Result<VersionNumber, StoreError> {
+        self.get_document(id, true).await?;
+        self.update_payload(
+            TABLE_DOCUMENTS,
+            "document",
+            id.as_ref(),
+            DOCUMENT_SCHEMA_VERSION,
+            &document,
+        )
+        .await
+    }
+
+    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_document(id, true).await?;
+        let mut document = current.item;
+        document.deleted = true;
+        self.update_document(id, document).await
+    }
+
+    async fn add_task(
+        &self,
+        task: Task,
+        _creation_time: chrono::DateTime<Utc>,
+    ) -> Result<(TaskId, VersionNumber), StoreError> {
+        let id = TaskId::new();
+        let mut task = task;
+        task.status = Status::Created;
+        task.last_message = None;
+        task.error = None;
+
+        if let Some(issue_id) = task.spawned_from.as_ref() {
+            self.ensure_issue_exists(issue_id).await?;
+        }
+
+        self.insert_payload(
+            TABLE_TASKS,
+            "task",
+            id.as_ref(),
+            TASK_SCHEMA_VERSION,
+            1,
+            &task,
+        )
+        .await?;
+
+        Ok((id, 1))
+    }
+
+    async fn update_task(
+        &self,
+        metis_id: &TaskId,
+        task: Task,
+    ) -> Result<Versioned<Task>, StoreError> {
+        self.ensure_task_exists(metis_id).await?;
+        if let Some(issue_id) = task.spawned_from.as_ref() {
+            self.ensure_issue_exists(issue_id).await?;
+        }
+
+        self.update_payload(
+            TABLE_TASKS,
+            "task",
+            metis_id.as_ref(),
+            TASK_SCHEMA_VERSION,
+            &task,
+        )
+        .await?;
+
+        self.fetch_versioned_payload(TABLE_TASKS, "task", metis_id.as_ref(), TASK_SCHEMA_VERSION)
+            .await?
+            .ok_or_else(|| StoreError::TaskNotFound(metis_id.clone()))
+    }
+
+    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_task(id, true).await?;
+        let mut task = current.item;
+        task.deleted = true;
+        let versioned = self.update_task(id, task).await?;
+        Ok(versioned.version)
+    }
+
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
         let name = actor.name();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
@@ -1673,21 +1713,6 @@ impl Store for PostgresStore {
         self.update_payload(TABLE_ACTORS, "actor", &name, ACTOR_SCHEMA_VERSION, &actor)
             .await?;
         Ok(())
-    }
-
-    async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
-        super::validate_actor_name(name)?;
-        self.fetch_versioned_payload(TABLE_ACTORS, "actor", name, ACTOR_SCHEMA_VERSION)
-            .await?
-            .ok_or_else(|| StoreError::ActorNotFound(name.to_string()))
-    }
-
-    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
-        let mut actors = self
-            .fetch_versioned_payloads_with_ids::<Actor>(TABLE_ACTORS, "actor", ACTOR_SCHEMA_VERSION)
-            .await?;
-        actors.sort_by(|(a, _), (b, _)| a.cmp(b));
-        Ok(actors)
     }
 
     async fn add_user(&self, user: User) -> Result<(), StoreError> {
@@ -1762,28 +1787,6 @@ impl Store for PostgresStore {
                 user.username.as_str()
             ))
         })
-    }
-
-    async fn get_user(
-        &self,
-        username: &Username,
-        include_deleted: bool,
-    ) -> Result<Versioned<User>, StoreError> {
-        let versioned: Versioned<User> = self
-            .fetch_versioned_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
-            .await?
-            .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
-        if !include_deleted && versioned.item.deleted {
-            return Err(StoreError::UserNotFound(username.clone()));
-        }
-        Ok(versioned)
-    }
-
-    async fn list_users(
-        &self,
-        query: &SearchUsersQuery,
-    ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
-        self.fetch_latest_users(query).await
     }
 
     async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {

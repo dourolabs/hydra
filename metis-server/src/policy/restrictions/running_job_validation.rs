@@ -80,7 +80,7 @@ mod tests {
     use crate::domain::documents::Document;
     use crate::domain::jobs::{BundleSpec, Task};
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
-    use crate::store::{MemoryStore, Store};
+    use crate::store::{MemoryStore, ReadOnlyStore, Store};
     use chrono::Utc;
     use std::collections::HashMap;
 

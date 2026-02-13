@@ -16,7 +16,7 @@ use crate::{
         task_status::{Status, TaskError},
         users::{User, Username},
     },
-    store::{Store, StoreError, TaskStatusLog},
+    store::{ReadOnlyStore, Store, StoreError, TaskStatusLog},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -841,29 +841,10 @@ fn map_sqlx_error(err: sqlx::Error) -> StoreError {
 }
 
 #[async_trait]
-impl Store for PostgresStoreV2 {
+impl ReadOnlyStore for PostgresStoreV2 {
     // -------------------------------------------------------------------------
     // Repository methods
     // -------------------------------------------------------------------------
-
-    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
-        let name_str = name.as_str();
-
-        // Check if repository exists (including deleted)
-        let existing = self.get_repository(&name, true).await;
-
-        match existing {
-            Ok(repo) if repo.item.deleted => {
-                // Re-create over deleted: use caller's config as-is
-                self.update_repository(name, config).await
-            }
-            Ok(_) => Err(StoreError::RepositoryAlreadyExists(name)),
-            Err(StoreError::RepositoryNotFound(_)) => {
-                self.insert_repository(name_str.as_str(), 1, &config).await
-            }
-            Err(e) => Err(e),
-        }
-    }
 
     async fn get_repository(
         &self,
@@ -896,30 +877,6 @@ impl Store for PostgresStoreV2 {
         })?;
         let repo = self.row_to_repository(&row);
         Ok(Versioned::new(repo, version, row.created_at))
-    }
-
-    async fn update_repository(
-        &self,
-        name: RepoName,
-        config: Repository,
-    ) -> Result<(), StoreError> {
-        let name_str = name.as_str();
-        self.ensure_repository_exists(&name).await?;
-
-        let latest_version = self
-            .fetch_latest_version_number(TABLE_REPOSITORIES_V2, name_str.as_str())
-            .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("repository '{name_str}' was missing during update"))
-            })?;
-        let next_version = latest_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!(
-                "version number overflow for repository '{name_str}'"
-            ))
-        })?;
-
-        self.insert_repository(name_str.as_str(), next_version, &config)
-            .await
     }
 
     async fn list_repositories(
@@ -961,25 +918,9 @@ impl Store for PostgresStoreV2 {
         Ok(results)
     }
 
-    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
-        // Use include_deleted: true since we need to access the repository to mark it as deleted
-        let current = self.get_repository(name, true).await?;
-        let mut repo = current.item;
-        repo.deleted = true;
-        self.update_repository(name.clone(), repo).await
-    }
-
     // -------------------------------------------------------------------------
     // Issue methods
     // -------------------------------------------------------------------------
-
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
-        self.validate_issue_dependencies(&issue.dependencies)
-            .await?;
-        let id = IssueId::new();
-        self.insert_issue(&id, 1, &issue).await?;
-        Ok((id, 1))
-    }
 
     async fn get_issue(
         &self,
@@ -1045,25 +986,6 @@ impl Store for PostgresStoreV2 {
         }
 
         Ok(results)
-    }
-
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
-        self.get_issue(id, true).await?;
-        self.validate_issue_dependencies(&issue.dependencies)
-            .await?;
-
-        let latest_version = self
-            .fetch_latest_version_number(TABLE_ISSUES_V2, id.as_ref())
-            .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("issue '{id}' was missing during update"))
-            })?;
-        let next_version = latest_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!("version number overflow for issue '{id}'"))
-        })?;
-
-        self.insert_issue(id, next_version, &issue).await?;
-        Ok(next_version)
     }
 
     async fn list_issues(
@@ -1175,13 +1097,6 @@ impl Store for PostgresStoreV2 {
         Ok(issues)
     }
 
-    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_issue(id, true).await?;
-        let mut issue = current.item;
-        issue.deleted = true;
-        self.update_issue(id, issue).await
-    }
-
     async fn search_issue_graph(
         &self,
         filters: &[IssueGraphFilter],
@@ -1195,15 +1110,55 @@ impl Store for PostgresStoreV2 {
         context.apply_filters(filters)
     }
 
+    async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
+        self.ensure_issue_exists(issue_id).await?;
+        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
+        Ok(issues
+            .into_iter()
+            .filter_map(|(id, issue)| {
+                issue
+                    .item
+                    .dependencies
+                    .iter()
+                    .any(|dep| {
+                        dep.dependency_type == IssueDependencyType::ChildOf
+                            && dep.issue_id == *issue_id
+                    })
+                    .then_some(id)
+            })
+            .collect())
+    }
+
+    async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
+        self.ensure_issue_exists(issue_id).await?;
+        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
+        Ok(issues
+            .into_iter()
+            .filter_map(|(id, issue)| {
+                issue
+                    .item
+                    .dependencies
+                    .iter()
+                    .any(|dep| {
+                        dep.dependency_type == IssueDependencyType::BlockedOn
+                            && dep.issue_id == *issue_id
+                    })
+                    .then_some(id)
+            })
+            .collect())
+    }
+
+    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
+        self.ensure_issue_exists(issue_id).await?;
+        // Use spawned_from filter at the database level for efficiency
+        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None);
+        let tasks = self.list_tasks(&query).await?;
+        Ok(tasks.into_iter().map(|(id, _)| id).collect())
+    }
+
     // -------------------------------------------------------------------------
     // Patch methods
     // -------------------------------------------------------------------------
-
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
-        let id = PatchId::new();
-        self.insert_patch(&id, 1, &patch).await?;
-        Ok((id, 1))
-    }
 
     async fn get_patch(
         &self,
@@ -1267,23 +1222,6 @@ impl Store for PostgresStoreV2 {
         }
 
         Ok(results)
-    }
-
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
-        self.get_patch(id, true).await?;
-
-        let latest_version = self
-            .fetch_latest_version_number(TABLE_PATCHES_V2, id.as_ref())
-            .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("patch '{id}' was missing during update"))
-            })?;
-        let next_version = latest_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!("version number overflow for patch '{id}'"))
-        })?;
-
-        self.insert_patch(id, next_version, &patch).await?;
-        Ok(next_version)
     }
 
     async fn list_patches(
@@ -1405,13 +1343,6 @@ impl Store for PostgresStoreV2 {
         Ok(patches)
     }
 
-    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_patch(id, true).await?;
-        let mut patch = current.item;
-        patch.deleted = true;
-        self.update_patch(id, patch).await
-    }
-
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_patch_exists(patch_id).await?;
         let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
@@ -1426,15 +1357,6 @@ impl Store for PostgresStoreV2 {
     // -------------------------------------------------------------------------
     // Document methods
     // -------------------------------------------------------------------------
-
-    async fn add_document(
-        &self,
-        document: Document,
-    ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        let id = DocumentId::new();
-        self.insert_document(&id, 1, &document).await?;
-        Ok((id, 1))
-    }
 
     async fn get_document(
         &self,
@@ -1501,34 +1423,6 @@ impl Store for PostgresStoreV2 {
         }
 
         Ok(results)
-    }
-
-    async fn update_document(
-        &self,
-        id: &DocumentId,
-        document: Document,
-    ) -> Result<VersionNumber, StoreError> {
-        self.get_document(id, true).await?;
-
-        let latest_version = self
-            .fetch_latest_version_number(TABLE_DOCUMENTS_V2, id.as_ref())
-            .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("document '{id}' was missing during update"))
-            })?;
-        let next_version = latest_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!("version number overflow for document '{id}'"))
-        })?;
-
-        self.insert_document(id, next_version, &document).await?;
-        Ok(next_version)
-    }
-
-    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_document(id, true).await?;
-        let mut document = current.item;
-        document.deleted = true;
-        self.update_document(id, document).await
     }
 
     async fn list_documents(
@@ -1636,98 +1530,9 @@ impl Store for PostgresStoreV2 {
         .await
     }
 
-    async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        self.ensure_issue_exists(issue_id).await?;
-        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
-        Ok(issues
-            .into_iter()
-            .filter_map(|(id, issue)| {
-                issue
-                    .item
-                    .dependencies
-                    .iter()
-                    .any(|dep| {
-                        dep.dependency_type == IssueDependencyType::ChildOf
-                            && dep.issue_id == *issue_id
-                    })
-                    .then_some(id)
-            })
-            .collect())
-    }
-
-    async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        self.ensure_issue_exists(issue_id).await?;
-        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
-        Ok(issues
-            .into_iter()
-            .filter_map(|(id, issue)| {
-                issue
-                    .item
-                    .dependencies
-                    .iter()
-                    .any(|dep| {
-                        dep.dependency_type == IssueDependencyType::BlockedOn
-                            && dep.issue_id == *issue_id
-                    })
-                    .then_some(id)
-            })
-            .collect())
-    }
-
-    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
-        self.ensure_issue_exists(issue_id).await?;
-        // Use spawned_from filter at the database level for efficiency
-        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None);
-        let tasks = self.list_tasks(&query).await?;
-        Ok(tasks.into_iter().map(|(id, _)| id).collect())
-    }
-
     // -------------------------------------------------------------------------
     // Task methods
     // -------------------------------------------------------------------------
-
-    async fn add_task(
-        &self,
-        task: Task,
-        _creation_time: DateTime<Utc>,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let id = TaskId::new();
-        let mut task = task;
-        task.status = Status::Created;
-        task.last_message = None;
-        task.error = None;
-
-        if let Some(issue_id) = task.spawned_from.as_ref() {
-            self.ensure_issue_exists(issue_id).await?;
-        }
-
-        self.insert_task(&id, 1, &task).await?;
-        Ok((id, 1))
-    }
-
-    async fn update_task(
-        &self,
-        metis_id: &TaskId,
-        task: Task,
-    ) -> Result<Versioned<Task>, StoreError> {
-        self.ensure_task_exists(metis_id).await?;
-        if let Some(issue_id) = task.spawned_from.as_ref() {
-            self.ensure_issue_exists(issue_id).await?;
-        }
-
-        let latest_version = self
-            .fetch_latest_version_number(TABLE_TASKS_V2, metis_id.as_ref())
-            .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("task '{metis_id}' was missing during update"))
-            })?;
-        let next_version = latest_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!("version number overflow for task '{metis_id}'"))
-        })?;
-
-        self.insert_task(metis_id, next_version, &task).await?;
-        self.get_task(metis_id, true).await
-    }
 
     async fn get_task(
         &self,
@@ -1873,14 +1678,6 @@ impl Store for PostgresStoreV2 {
         Ok(tasks)
     }
 
-    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_task(id, true).await?;
-        let mut task = current.item;
-        task.deleted = true;
-        let versioned = self.update_task(id, task).await?;
-        Ok(versioned.version)
-    }
-
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
         let status_str = match status {
             Status::Created => "created",
@@ -1971,50 +1768,6 @@ impl Store for PostgresStoreV2 {
     // Actor methods
     // -------------------------------------------------------------------------
 
-    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
-        let name = actor.name();
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_ACTORS_V2} WHERE id = $1"
-        ))
-        .bind(&name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        if exists > 0 {
-            return Err(StoreError::ActorAlreadyExists(name));
-        }
-
-        self.insert_actor(&name, 1, &actor).await
-    }
-
-    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
-        let name = actor.name();
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_ACTORS_V2} WHERE id = $1"
-        ))
-        .bind(&name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        if exists == 0 {
-            return Err(StoreError::ActorNotFound(name));
-        }
-
-        let latest_version = self
-            .fetch_latest_version_number(TABLE_ACTORS_V2, &name)
-            .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("actor '{name}' was missing during update"))
-            })?;
-        let next_version = latest_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!("version number overflow for actor '{name}'"))
-        })?;
-
-        self.insert_actor(&name, next_version, &actor).await
-    }
-
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         let query = format!(
@@ -2066,6 +1819,323 @@ impl Store for PostgresStoreV2 {
 
         actors.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(actors)
+    }
+
+    // -------------------------------------------------------------------------
+    // User methods
+    // -------------------------------------------------------------------------
+
+    async fn get_user(
+        &self,
+        username: &Username,
+        include_deleted: bool,
+    ) -> Result<Versioned<User>, StoreError> {
+        let query = format!(
+            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, created_at, updated_at
+             FROM {TABLE_USERS_V2}
+             WHERE id = $1
+             ORDER BY version_number DESC
+             LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, UserRow>(&query)
+            .bind(username.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
+        if !include_deleted && row.deleted {
+            return Err(StoreError::UserNotFound(username.clone()));
+        }
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for user '{}'",
+                row.id
+            ))
+        })?;
+        let user = self.row_to_user(&row);
+        Ok(Versioned::new(user, version, row.created_at))
+    }
+
+    async fn list_users(
+        &self,
+        query: &SearchUsersQuery,
+    ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
+        self.fetch_latest_users(query).await
+    }
+}
+
+#[async_trait]
+impl Store for PostgresStoreV2 {
+    // -------------------------------------------------------------------------
+    // Repository methods
+    // -------------------------------------------------------------------------
+
+    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
+        let name_str = name.as_str();
+
+        // Check if repository exists (including deleted)
+        let existing = self.get_repository(&name, true).await;
+
+        match existing {
+            Ok(repo) if repo.item.deleted => {
+                // Re-create over deleted: use caller's config as-is
+                self.update_repository(name, config).await
+            }
+            Ok(_) => Err(StoreError::RepositoryAlreadyExists(name)),
+            Err(StoreError::RepositoryNotFound(_)) => {
+                self.insert_repository(name_str.as_str(), 1, &config).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn update_repository(
+        &self,
+        name: RepoName,
+        config: Repository,
+    ) -> Result<(), StoreError> {
+        let name_str = name.as_str();
+        self.ensure_repository_exists(&name).await?;
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_REPOSITORIES_V2, name_str.as_str())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("repository '{name_str}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!(
+                "version number overflow for repository '{name_str}'"
+            ))
+        })?;
+
+        self.insert_repository(name_str.as_str(), next_version, &config)
+            .await
+    }
+
+    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
+        // Use include_deleted: true since we need to access the repository to mark it as deleted
+        let current = self.get_repository(name, true).await?;
+        let mut repo = current.item;
+        repo.deleted = true;
+        self.update_repository(name.clone(), repo).await
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue methods
+    // -------------------------------------------------------------------------
+
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
+        self.validate_issue_dependencies(&issue.dependencies)
+            .await?;
+        let id = IssueId::new();
+        self.insert_issue(&id, 1, &issue).await?;
+        Ok((id, 1))
+    }
+
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
+        self.get_issue(id, true).await?;
+        self.validate_issue_dependencies(&issue.dependencies)
+            .await?;
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_ISSUES_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("issue '{id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for issue '{id}'"))
+        })?;
+
+        self.insert_issue(id, next_version, &issue).await?;
+        Ok(next_version)
+    }
+
+    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_issue(id, true).await?;
+        let mut issue = current.item;
+        issue.deleted = true;
+        self.update_issue(id, issue).await
+    }
+
+    // -------------------------------------------------------------------------
+    // Patch methods
+    // -------------------------------------------------------------------------
+
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
+        let id = PatchId::new();
+        self.insert_patch(&id, 1, &patch).await?;
+        Ok((id, 1))
+    }
+
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
+        self.get_patch(id, true).await?;
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_PATCHES_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("patch '{id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for patch '{id}'"))
+        })?;
+
+        self.insert_patch(id, next_version, &patch).await?;
+        Ok(next_version)
+    }
+
+    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_patch(id, true).await?;
+        let mut patch = current.item;
+        patch.deleted = true;
+        self.update_patch(id, patch).await
+    }
+
+    // -------------------------------------------------------------------------
+    // Document methods
+    // -------------------------------------------------------------------------
+
+    async fn add_document(
+        &self,
+        document: Document,
+    ) -> Result<(DocumentId, VersionNumber), StoreError> {
+        let id = DocumentId::new();
+        self.insert_document(&id, 1, &document).await?;
+        Ok((id, 1))
+    }
+
+    async fn update_document(
+        &self,
+        id: &DocumentId,
+        document: Document,
+    ) -> Result<VersionNumber, StoreError> {
+        self.get_document(id, true).await?;
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_DOCUMENTS_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("document '{id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for document '{id}'"))
+        })?;
+
+        self.insert_document(id, next_version, &document).await?;
+        Ok(next_version)
+    }
+
+    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_document(id, true).await?;
+        let mut document = current.item;
+        document.deleted = true;
+        self.update_document(id, document).await
+    }
+
+    // -------------------------------------------------------------------------
+    // Task methods
+    // -------------------------------------------------------------------------
+
+    async fn add_task(
+        &self,
+        task: Task,
+        _creation_time: DateTime<Utc>,
+    ) -> Result<(TaskId, VersionNumber), StoreError> {
+        let id = TaskId::new();
+        let mut task = task;
+        task.status = Status::Created;
+        task.last_message = None;
+        task.error = None;
+
+        if let Some(issue_id) = task.spawned_from.as_ref() {
+            self.ensure_issue_exists(issue_id).await?;
+        }
+
+        self.insert_task(&id, 1, &task).await?;
+        Ok((id, 1))
+    }
+
+    async fn update_task(
+        &self,
+        metis_id: &TaskId,
+        task: Task,
+    ) -> Result<Versioned<Task>, StoreError> {
+        self.ensure_task_exists(metis_id).await?;
+        if let Some(issue_id) = task.spawned_from.as_ref() {
+            self.ensure_issue_exists(issue_id).await?;
+        }
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_TASKS_V2, metis_id.as_ref())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("task '{metis_id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for task '{metis_id}'"))
+        })?;
+
+        self.insert_task(metis_id, next_version, &task).await?;
+        self.get_task(metis_id, true).await
+    }
+
+    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_task(id, true).await?;
+        let mut task = current.item;
+        task.deleted = true;
+        let versioned = self.update_task(id, task).await?;
+        Ok(versioned.version)
+    }
+
+    // -------------------------------------------------------------------------
+    // Actor methods
+    // -------------------------------------------------------------------------
+
+    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
+        let name = actor.name();
+        let exists = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(1) FROM {TABLE_ACTORS_V2} WHERE id = $1"
+        ))
+        .bind(&name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if exists > 0 {
+            return Err(StoreError::ActorAlreadyExists(name));
+        }
+
+        self.insert_actor(&name, 1, &actor).await
+    }
+
+    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
+        let name = actor.name();
+        let exists = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(1) FROM {TABLE_ACTORS_V2} WHERE id = $1"
+        ))
+        .bind(&name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if exists == 0 {
+            return Err(StoreError::ActorNotFound(name));
+        }
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_ACTORS_V2, &name)
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("actor '{name}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for actor '{name}'"))
+        })?;
+
+        self.insert_actor(&name, next_version, &actor).await
     }
 
     // -------------------------------------------------------------------------
@@ -2162,45 +2232,6 @@ impl Store for PostgresStoreV2 {
         })?;
         let user = self.row_to_user(&row);
         Ok(Versioned::new(user, version, row.created_at))
-    }
-
-    async fn get_user(
-        &self,
-        username: &Username,
-        include_deleted: bool,
-    ) -> Result<Versioned<User>, StoreError> {
-        let query = format!(
-            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, created_at, updated_at
-             FROM {TABLE_USERS_V2}
-             WHERE id = $1
-             ORDER BY version_number DESC
-             LIMIT 1"
-        );
-        let row = sqlx::query_as::<_, UserRow>(&query)
-            .bind(username.as_str())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        let row = row.ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
-        if !include_deleted && row.deleted {
-            return Err(StoreError::UserNotFound(username.clone()));
-        }
-        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-            StoreError::Internal(format!(
-                "invalid version number stored for user '{}'",
-                row.id
-            ))
-        })?;
-        let user = self.row_to_user(&row);
-        Ok(Versioned::new(user, version, row.created_at))
-    }
-
-    async fn list_users(
-        &self,
-        query: &SearchUsersQuery,
-    ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
-        self.fetch_latest_users(query).await
     }
 
     async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {

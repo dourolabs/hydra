@@ -5,7 +5,7 @@ use crate::domain::{
     patches::Patch,
     users::{User, Username},
 };
-use crate::store::{Status, Store, StoreError, Task, TaskStatusLog};
+use crate::store::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
@@ -680,12 +680,8 @@ impl StoreWithEvents {
 }
 
 #[async_trait]
-impl Store for StoreWithEvents {
-    // ---- Repository (no events) ----
-
-    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
-        self.inner.add_repository(name, config).await
-    }
+impl ReadOnlyStore for StoreWithEvents {
+    // ---- Repository (read-only) ----
 
     async fn get_repository(
         &self,
@@ -695,14 +691,6 @@ impl Store for StoreWithEvents {
         self.inner.get_repository(name, include_deleted).await
     }
 
-    async fn update_repository(
-        &self,
-        name: RepoName,
-        config: Repository,
-    ) -> Result<(), StoreError> {
-        self.inner.update_repository(name, config).await
-    }
-
     async fn list_repositories(
         &self,
         query: &SearchRepositoriesQuery,
@@ -710,15 +698,7 @@ impl Store for StoreWithEvents {
         self.inner.list_repositories(query).await
     }
 
-    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
-        self.inner.delete_repository(name).await
-    }
-
-    // ---- Issue ----
-
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
-        self.add_issue_with_actor(issue, None).await
-    }
+    // ---- Issue (read-only) ----
 
     async fn get_issue(
         &self,
@@ -732,19 +712,11 @@ impl Store for StoreWithEvents {
         self.inner.get_issue_versions(id).await
     }
 
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
-        self.update_issue_with_actor(id, issue, None).await
-    }
-
     async fn list_issues(
         &self,
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         self.inner.list_issues(query).await
-    }
-
-    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
-        self.delete_issue_with_actor(id, None).await
     }
 
     async fn search_issue_graph(
@@ -754,11 +726,21 @@ impl Store for StoreWithEvents {
         self.inner.search_issue_graph(filters).await
     }
 
-    // ---- Patch ----
+    // ---- Issue graph queries (read-only) ----
 
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
-        self.add_patch_with_actor(patch, None).await
+    async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
+        self.inner.get_issue_children(issue_id).await
     }
+
+    async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
+        self.inner.get_issue_blocked_on(issue_id).await
+    }
+
+    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
+        self.inner.get_tasks_for_issue(issue_id).await
+    }
+
+    // ---- Patch (read-only) ----
 
     async fn get_patch(
         &self,
@@ -772,10 +754,6 @@ impl Store for StoreWithEvents {
         self.inner.get_patch_versions(id).await
     }
 
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
-        self.update_patch_with_actor(id, patch, None).await
-    }
-
     async fn list_patches(
         &self,
         query: &SearchPatchesQuery,
@@ -783,22 +761,11 @@ impl Store for StoreWithEvents {
         self.inner.list_patches(query).await
     }
 
-    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
-        self.delete_patch_with_actor(id, None).await
-    }
-
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         self.inner.get_issues_for_patch(patch_id).await
     }
 
-    // ---- Document ----
-
-    async fn add_document(
-        &self,
-        document: Document,
-    ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        self.add_document_with_actor(document, None).await
-    }
+    // ---- Document (read-only) ----
 
     async fn get_document(
         &self,
@@ -815,18 +782,6 @@ impl Store for StoreWithEvents {
         self.inner.get_document_versions(id).await
     }
 
-    async fn update_document(
-        &self,
-        id: &DocumentId,
-        document: Document,
-    ) -> Result<VersionNumber, StoreError> {
-        self.update_document_with_actor(id, document, None).await
-    }
-
-    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
-        self.delete_document_with_actor(id, None).await
-    }
-
     async fn list_documents(
         &self,
         query: &SearchDocumentsQuery,
@@ -841,37 +796,7 @@ impl Store for StoreWithEvents {
         self.inner.get_documents_by_path(path_prefix).await
     }
 
-    // ---- Issue graph queries ----
-
-    async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        self.inner.get_issue_children(issue_id).await
-    }
-
-    async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        self.inner.get_issue_blocked_on(issue_id).await
-    }
-
-    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
-        self.inner.get_tasks_for_issue(issue_id).await
-    }
-
-    // ---- Task/Job ----
-
-    async fn add_task(
-        &self,
-        task: Task,
-        creation_time: DateTime<Utc>,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
-        self.add_task_with_actor(task, creation_time, None).await
-    }
-
-    async fn update_task(
-        &self,
-        metis_id: &TaskId,
-        task: Task,
-    ) -> Result<Versioned<Task>, StoreError> {
-        self.update_task_with_actor(metis_id, task, None).await
-    }
+    // ---- Task/Job (read-only) ----
 
     async fn get_task(
         &self,
@@ -892,10 +817,6 @@ impl Store for StoreWithEvents {
         self.inner.list_tasks(query).await
     }
 
-    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
-        self.inner.delete_task(id).await
-    }
-
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
         self.inner.list_tasks_with_status(status).await
     }
@@ -911,15 +832,7 @@ impl Store for StoreWithEvents {
         self.inner.get_status_logs(ids).await
     }
 
-    // ---- Actor (no events) ----
-
-    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
-        self.inner.add_actor(actor).await
-    }
-
-    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
-        self.inner.update_actor(actor).await
-    }
+    // ---- Actor (read-only) ----
 
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         self.inner.get_actor(name).await
@@ -929,15 +842,7 @@ impl Store for StoreWithEvents {
         self.inner.list_actors().await
     }
 
-    // ---- User (no events) ----
-
-    async fn add_user(&self, user: User) -> Result<(), StoreError> {
-        self.inner.add_user(user).await
-    }
-
-    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError> {
-        self.inner.update_user(user).await
-    }
+    // ---- User (read-only) ----
 
     async fn get_user(
         &self,
@@ -952,6 +857,118 @@ impl Store for StoreWithEvents {
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         self.inner.list_users(query).await
+    }
+}
+
+#[async_trait]
+impl Store for StoreWithEvents {
+    // ---- Repository (mutations) ----
+
+    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
+        self.inner.add_repository(name, config).await
+    }
+
+    async fn update_repository(
+        &self,
+        name: RepoName,
+        config: Repository,
+    ) -> Result<(), StoreError> {
+        self.inner.update_repository(name, config).await
+    }
+
+    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
+        self.inner.delete_repository(name).await
+    }
+
+    // ---- Issue (mutations) ----
+
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
+        self.add_issue_with_actor(issue, None).await
+    }
+
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
+        self.update_issue_with_actor(id, issue, None).await
+    }
+
+    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
+        self.delete_issue_with_actor(id, None).await
+    }
+
+    // ---- Patch (mutations) ----
+
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
+        self.add_patch_with_actor(patch, None).await
+    }
+
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
+        self.update_patch_with_actor(id, patch, None).await
+    }
+
+    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
+        self.delete_patch_with_actor(id, None).await
+    }
+
+    // ---- Document (mutations) ----
+
+    async fn add_document(
+        &self,
+        document: Document,
+    ) -> Result<(DocumentId, VersionNumber), StoreError> {
+        self.add_document_with_actor(document, None).await
+    }
+
+    async fn update_document(
+        &self,
+        id: &DocumentId,
+        document: Document,
+    ) -> Result<VersionNumber, StoreError> {
+        self.update_document_with_actor(id, document, None).await
+    }
+
+    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
+        self.delete_document_with_actor(id, None).await
+    }
+
+    // ---- Task/Job (mutations) ----
+
+    async fn add_task(
+        &self,
+        task: Task,
+        creation_time: DateTime<Utc>,
+    ) -> Result<(TaskId, VersionNumber), StoreError> {
+        self.add_task_with_actor(task, creation_time, None).await
+    }
+
+    async fn update_task(
+        &self,
+        metis_id: &TaskId,
+        task: Task,
+    ) -> Result<Versioned<Task>, StoreError> {
+        self.update_task_with_actor(metis_id, task, None).await
+    }
+
+    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
+        self.inner.delete_task(id).await
+    }
+
+    // ---- Actor (mutations) ----
+
+    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
+        self.inner.add_actor(actor).await
+    }
+
+    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
+        self.inner.update_actor(actor).await
+    }
+
+    // ---- User (mutations) ----
+
+    async fn add_user(&self, user: User) -> Result<(), StoreError> {
+        self.inner.add_user(user).await
+    }
+
+    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError> {
+        self.inner.update_user(user).await
     }
 
     async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {

@@ -6,7 +6,7 @@ use crate::{
         patches::Patch,
         users::{User, Username},
     },
-    store::{Status, Store, StoreError, Task, TaskStatusLog},
+    store::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -30,11 +30,7 @@ fn fail<T>() -> Result<T, StoreError> {
 }
 
 #[async_trait]
-impl Store for FailingStore {
-    async fn add_repository(&self, _name: RepoName, _config: Repository) -> Result<(), StoreError> {
-        fail()
-    }
-
+impl ReadOnlyStore for FailingStore {
     async fn get_repository(
         &self,
         _name: &RepoName,
@@ -43,26 +39,10 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_repository(
-        &self,
-        _name: RepoName,
-        _config: Repository,
-    ) -> Result<(), StoreError> {
-        fail()
-    }
-
     async fn list_repositories(
         &self,
         _query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
-        fail()
-    }
-
-    async fn delete_repository(&self, _name: &RepoName) -> Result<(), StoreError> {
-        fail()
-    }
-
-    async fn add_issue(&self, _issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
         fail()
     }
 
@@ -78,22 +58,10 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_issue(
-        &self,
-        _id: &IssueId,
-        _issue: Issue,
-    ) -> Result<VersionNumber, StoreError> {
-        fail()
-    }
-
     async fn list_issues(
         &self,
         _query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        fail()
-    }
-
-    async fn delete_issue(&self, _id: &IssueId) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
@@ -104,7 +72,15 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_patch(&self, _patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
+    async fn get_issue_children(&self, _issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
+        fail()
+    }
+
+    async fn get_issue_blocked_on(&self, _issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
+        fail()
+    }
+
+    async fn get_tasks_for_issue(&self, _issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         fail()
     }
 
@@ -120,14 +96,6 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_patch(
-        &self,
-        _id: &PatchId,
-        _patch: Patch,
-    ) -> Result<VersionNumber, StoreError> {
-        fail()
-    }
-
     async fn list_patches(
         &self,
         _query: &SearchPatchesQuery,
@@ -135,18 +103,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_patch(&self, _id: &PatchId) -> Result<VersionNumber, StoreError> {
-        fail()
-    }
-
     async fn get_issues_for_patch(&self, _patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
-        fail()
-    }
-
-    async fn add_document(
-        &self,
-        _document: Document,
-    ) -> Result<(DocumentId, VersionNumber), StoreError> {
         fail()
     }
 
@@ -165,18 +122,6 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_document(
-        &self,
-        _id: &DocumentId,
-        _document: Document,
-    ) -> Result<VersionNumber, StoreError> {
-        fail()
-    }
-
-    async fn delete_document(&self, _id: &DocumentId) -> Result<VersionNumber, StoreError> {
-        fail()
-    }
-
     async fn list_documents(
         &self,
         _query: &SearchDocumentsQuery,
@@ -188,34 +133,6 @@ impl Store for FailingStore {
         &self,
         _path_prefix: &str,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        fail()
-    }
-
-    async fn get_issue_children(&self, _issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        fail()
-    }
-
-    async fn get_issue_blocked_on(&self, _issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        fail()
-    }
-
-    async fn get_tasks_for_issue(&self, _issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
-        fail()
-    }
-
-    async fn add_task(
-        &self,
-        _task: Task,
-        _creation_time: DateTime<Utc>,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
-        fail()
-    }
-
-    async fn update_task(
-        &self,
-        _metis_id: &TaskId,
-        _task: Task,
-    ) -> Result<Versioned<Task>, StoreError> {
         fail()
     }
 
@@ -238,10 +155,6 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_task(&self, _id: &TaskId) -> Result<VersionNumber, StoreError> {
-        fail()
-    }
-
     async fn list_tasks_with_status(&self, _status: Status) -> Result<Vec<TaskId>, StoreError> {
         fail()
     }
@@ -257,28 +170,12 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_actor(&self, _actor: Actor) -> Result<(), StoreError> {
-        fail()
-    }
-
-    async fn update_actor(&self, _actor: Actor) -> Result<(), StoreError> {
-        fail()
-    }
-
     async fn get_actor(&self, _name: &str) -> Result<Versioned<Actor>, StoreError> {
         crate::store::validate_actor_name(_name)?;
         fail()
     }
 
     async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
-        fail()
-    }
-
-    async fn add_user(&self, _user: User) -> Result<(), StoreError> {
-        fail()
-    }
-
-    async fn update_user(&self, _user: User) -> Result<Versioned<User>, StoreError> {
         fail()
     }
 
@@ -294,6 +191,112 @@ impl Store for FailingStore {
         &self,
         _query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
+        fail()
+    }
+}
+
+#[async_trait]
+impl Store for FailingStore {
+    async fn add_repository(&self, _name: RepoName, _config: Repository) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn update_repository(
+        &self,
+        _name: RepoName,
+        _config: Repository,
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn delete_repository(&self, _name: &RepoName) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn add_issue(&self, _issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
+        fail()
+    }
+
+    async fn update_issue(
+        &self,
+        _id: &IssueId,
+        _issue: Issue,
+    ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn delete_issue(&self, _id: &IssueId) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn add_patch(&self, _patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
+        fail()
+    }
+
+    async fn update_patch(
+        &self,
+        _id: &PatchId,
+        _patch: Patch,
+    ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn delete_patch(&self, _id: &PatchId) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn add_document(
+        &self,
+        _document: Document,
+    ) -> Result<(DocumentId, VersionNumber), StoreError> {
+        fail()
+    }
+
+    async fn update_document(
+        &self,
+        _id: &DocumentId,
+        _document: Document,
+    ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn delete_document(&self, _id: &DocumentId) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn add_task(
+        &self,
+        _task: Task,
+        _creation_time: DateTime<Utc>,
+    ) -> Result<(TaskId, VersionNumber), StoreError> {
+        fail()
+    }
+
+    async fn update_task(
+        &self,
+        _metis_id: &TaskId,
+        _task: Task,
+    ) -> Result<Versioned<Task>, StoreError> {
+        fail()
+    }
+
+    async fn delete_task(&self, _id: &TaskId) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn add_actor(&self, _actor: Actor) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn update_actor(&self, _actor: Actor) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn add_user(&self, _user: User) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn update_user(&self, _user: User) -> Result<Versioned<User>, StoreError> {
         fail()
     }
 
