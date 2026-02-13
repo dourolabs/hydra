@@ -94,6 +94,7 @@ impl Automation for CascadeIssueStatusAutomation {
         let MutationPayload::Issue {
             old: Some(old),
             new,
+            ..
         } = payload.as_ref()
         else {
             return Ok(());
@@ -253,6 +254,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
             new: dropped_parent,
+            actor: None,
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -303,6 +305,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
             new: failed_a,
+            actor: None,
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -338,6 +341,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(issue.clone()),
             new: issue,
+            actor: None,
         });
 
         let event = ServerEvent::IssueUpdated {

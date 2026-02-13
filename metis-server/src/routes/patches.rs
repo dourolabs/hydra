@@ -1,3 +1,4 @@
+use crate::app::event_bus::with_actor;
 use crate::domain::{actors::Actor, patches::GithubPr};
 use crate::{
     app::{AppState, UpsertPatchError},
@@ -69,10 +70,14 @@ pub async fn create_patch(
     Json(payload): Json<v1::patches::UpsertPatchRequest>,
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!("create_patch invoked");
-    let (patch_id, version) = state
-        .upsert_patch(Some(&actor), None, payload)
-        .await
-        .map_err(map_upsert_patch_error)?;
+    let actor_name = Some(actor.name());
+    let (patch_id, version) = with_actor(actor_name, async {
+        state
+            .upsert_patch(Some(&actor), None, payload)
+            .await
+            .map_err(map_upsert_patch_error)
+    })
+    .await?;
 
     info!(patch_id = %patch_id, "create_patch completed");
     Ok(Json(v1::patches::UpsertPatchResponse::new(
@@ -87,10 +92,14 @@ pub async fn update_patch(
     Json(payload): Json<v1::patches::UpsertPatchRequest>,
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!(patch_id = %patch_id, "update_patch invoked");
-    let (patch_id, version) = state
-        .upsert_patch(Some(&actor), Some(patch_id), payload)
-        .await
-        .map_err(map_upsert_patch_error)?;
+    let actor_name = Some(actor.name());
+    let (patch_id, version) = with_actor(actor_name, async {
+        state
+            .upsert_patch(Some(&actor), Some(patch_id), payload)
+            .await
+            .map_err(map_upsert_patch_error)
+    })
+    .await?;
 
     info!(patch_id = %patch_id, "update_patch completed");
     Ok(Json(v1::patches::UpsertPatchResponse::new(
@@ -587,13 +596,17 @@ fn map_patch_error(err: StoreError, patch_id: Option<&PatchId>) -> ApiError {
 
 pub async fn delete_patch(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     PatchIdPath(patch_id): PatchIdPath,
 ) -> Result<Json<v1::patches::PatchVersionRecord>, ApiError> {
     info!(patch_id = %patch_id, "delete_patch invoked");
-    state
-        .delete_patch(&patch_id)
-        .await
-        .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
+    with_actor(Some(actor.name()), async {
+        state
+            .delete_patch(&patch_id)
+            .await
+            .map_err(|err| map_patch_error(err, Some(&patch_id)))
+    })
+    .await?;
 
     let patch = state
         .get_patch(&patch_id, true)

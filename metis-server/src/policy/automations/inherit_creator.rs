@@ -141,6 +141,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: child,
+            actor: None,
         });
 
         let event = ServerEvent::IssueCreated {
@@ -186,6 +187,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: issue,
+            actor: None,
         });
 
         let event = ServerEvent::IssueCreated {

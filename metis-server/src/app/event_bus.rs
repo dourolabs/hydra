@@ -32,19 +32,35 @@ pub enum MutationPayload {
     Issue {
         old: Option<Issue>,
         new: Issue,
+        actor: Option<String>,
     },
     Patch {
         old: Option<Patch>,
         new: Patch,
+        actor: Option<String>,
     },
     Job {
         old: Option<Task>,
         new: Task,
+        actor: Option<String>,
     },
     Document {
         old: Option<Document>,
         new: Document,
+        actor: Option<String>,
     },
+}
+
+impl MutationPayload {
+    /// Returns the actor name associated with this mutation, if available.
+    pub fn actor(&self) -> Option<&str> {
+        match self {
+            MutationPayload::Issue { actor, .. }
+            | MutationPayload::Patch { actor, .. }
+            | MutationPayload::Job { actor, .. }
+            | MutationPayload::Document { actor, .. } => actor.as_deref(),
+        }
+    }
 }
 
 /// Data-free mirror of [`ServerEvent`] used for event filtering without
@@ -168,6 +184,23 @@ impl ServerEvent {
             | ServerEvent::DocumentCreated { seq, .. }
             | ServerEvent::DocumentUpdated { seq, .. }
             | ServerEvent::DocumentDeleted { seq, .. } => *seq,
+        }
+    }
+
+    /// Returns a reference to the mutation payload for this event.
+    pub fn payload(&self) -> &Arc<MutationPayload> {
+        match self {
+            ServerEvent::IssueCreated { payload, .. }
+            | ServerEvent::IssueUpdated { payload, .. }
+            | ServerEvent::IssueDeleted { payload, .. }
+            | ServerEvent::PatchCreated { payload, .. }
+            | ServerEvent::PatchUpdated { payload, .. }
+            | ServerEvent::PatchDeleted { payload, .. }
+            | ServerEvent::JobCreated { payload, .. }
+            | ServerEvent::JobUpdated { payload, .. }
+            | ServerEvent::DocumentCreated { payload, .. }
+            | ServerEvent::DocumentUpdated { payload, .. }
+            | ServerEvent::DocumentDeleted { payload, .. } => payload,
         }
     }
 
@@ -390,6 +423,29 @@ impl Default for EventBus {
     }
 }
 
+tokio::task_local! {
+    /// Request-scoped actor context used by [`StoreWithEvents`] to include
+    /// the actor name in emitted [`MutationPayload`]s.
+    static CURRENT_ACTOR: Option<String>;
+}
+
+/// Sets the current actor context for the duration of the given future.
+///
+/// Any store mutations performed within the future will include the actor name
+/// in their emitted event payloads. Calls can be nested; the innermost scope
+/// wins.
+pub async fn with_actor<F, T>(actor: Option<String>, f: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    CURRENT_ACTOR.scope(actor, f).await
+}
+
+/// Returns the current actor name from the task-local context, if set.
+fn current_actor() -> Option<String> {
+    CURRENT_ACTOR.try_with(|a| a.clone()).unwrap_or(None)
+}
+
 /// A [`Store`] wrapper that automatically emits [`ServerEvent`]s on every
 /// successful mutation. Read-only operations are forwarded unchanged.
 pub struct StoreWithEvents {
@@ -451,6 +507,7 @@ impl Store for StoreWithEvents {
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: new_issue,
+            actor: current_actor(),
         });
         self.event_bus
             .emit_issue_created(issue_id.clone(), version, payload);
@@ -476,6 +533,7 @@ impl Store for StoreWithEvents {
         let payload = Arc::new(MutationPayload::Issue {
             old: old_issue,
             new: new_issue,
+            actor: current_actor(),
         });
         self.event_bus
             .emit_issue_updated(id.clone(), version, payload);
@@ -504,6 +562,7 @@ impl Store for StoreWithEvents {
         let payload = Arc::new(MutationPayload::Issue {
             old: old_issue,
             new: new_issue.expect("entity must exist after successful delete"),
+            actor: current_actor(),
         });
         self.event_bus
             .emit_issue_deleted(id.clone(), version, payload);
@@ -525,6 +584,7 @@ impl Store for StoreWithEvents {
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
             new: new_patch,
+            actor: current_actor(),
         });
         self.event_bus
             .emit_patch_created(patch_id.clone(), version, payload);
@@ -550,6 +610,7 @@ impl Store for StoreWithEvents {
         let payload = Arc::new(MutationPayload::Patch {
             old: old_patch,
             new: new_patch,
+            actor: current_actor(),
         });
         self.event_bus
             .emit_patch_updated(id.clone(), version, payload);
@@ -576,6 +637,7 @@ impl Store for StoreWithEvents {
         let payload = Arc::new(MutationPayload::Patch {
             old: old_patch,
             new: new_patch.expect("entity must exist after successful delete"),
+            actor: current_actor(),
         });
         self.event_bus
             .emit_patch_deleted(id.clone(), version, payload);
@@ -597,6 +659,7 @@ impl Store for StoreWithEvents {
         let payload = Arc::new(MutationPayload::Document {
             old: None,
             new: new_document,
+            actor: current_actor(),
         });
         self.event_bus
             .emit_document_created(document_id.clone(), version, payload);
@@ -634,6 +697,7 @@ impl Store for StoreWithEvents {
         let payload = Arc::new(MutationPayload::Document {
             old: old_document,
             new: new_document,
+            actor: current_actor(),
         });
         self.event_bus
             .emit_document_updated(id.clone(), version, payload);
@@ -658,6 +722,7 @@ impl Store for StoreWithEvents {
         let payload = Arc::new(MutationPayload::Document {
             old: old_document,
             new: new_document.expect("entity must exist after successful delete"),
+            actor: current_actor(),
         });
         self.event_bus
             .emit_document_deleted(id.clone(), version, payload);
@@ -704,6 +769,7 @@ impl Store for StoreWithEvents {
         let payload = Arc::new(MutationPayload::Job {
             old: None,
             new: new_task,
+            actor: current_actor(),
         });
         self.event_bus
             .emit_job_created(task_id.clone(), version, payload);
@@ -726,6 +792,7 @@ impl Store for StoreWithEvents {
         let payload = Arc::new(MutationPayload::Job {
             old: old_task,
             new: new_task,
+            actor: current_actor(),
         });
         self.event_bus
             .emit_job_updated(metis_id.clone(), result.version, payload);
@@ -861,6 +928,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: dummy_issue(),
+            actor: None,
         });
         bus.emit_issue_created(issue_id.clone(), 1, payload);
 
@@ -891,11 +959,13 @@ mod tests {
         let payload1 = Arc::new(MutationPayload::Issue {
             old: None,
             new: issue.clone(),
+            actor: None,
         });
         bus.emit_issue_created(issue_id.clone(), 1, payload1);
         let payload2 = Arc::new(MutationPayload::Issue {
             old: Some(issue.clone()),
             new: issue,
+            actor: None,
         });
         bus.emit_issue_updated(issue_id, 2, payload2);
 
@@ -1059,7 +1129,7 @@ mod tests {
         let event = rx.recv().await.expect("should receive IssueCreated");
         match &event {
             ServerEvent::IssueCreated { payload, .. } => match payload.as_ref() {
-                MutationPayload::Issue { old, new } => {
+                MutationPayload::Issue { old, new, .. } => {
                     assert!(old.is_none(), "create event should have no old state");
                     assert_eq!(new.description, "payload test");
                     assert_eq!(new.status, IssueStatus::Open);
@@ -1104,7 +1174,7 @@ mod tests {
         let event = rx.recv().await.expect("should receive IssueUpdated");
         match &event {
             ServerEvent::IssueUpdated { payload, .. } => match payload.as_ref() {
-                MutationPayload::Issue { old, new } => {
+                MutationPayload::Issue { old, new, .. } => {
                     let old = old.as_ref().expect("update event should carry old state");
                     assert_eq!(old.status, IssueStatus::Open);
                     assert_eq!(old.description, "before update");
@@ -1148,7 +1218,7 @@ mod tests {
         let event = rx.recv().await.expect("should receive IssueDeleted");
         match &event {
             ServerEvent::IssueDeleted { payload, .. } => match payload.as_ref() {
-                MutationPayload::Issue { old, new } => {
+                MutationPayload::Issue { old, new, .. } => {
                     let old = old.as_ref().expect("delete event should carry old state");
                     assert_eq!(old.description, "to be deleted");
                     assert!(!old.deleted, "old state should not be deleted");
@@ -1209,7 +1279,7 @@ mod tests {
         let event = rx.recv().await.expect("should receive JobUpdated");
         match &event {
             ServerEvent::JobUpdated { payload, .. } => match payload.as_ref() {
-                MutationPayload::Job { old, new } => {
+                MutationPayload::Job { old, new, .. } => {
                     let old = old.as_ref().expect("update event should carry old state");
                     assert_eq!(old.status, Status::Created);
                     assert!(old.last_message.is_none());
@@ -1219,6 +1289,86 @@ mod tests {
                 other => panic!("expected Job payload, got {other:?}"),
             },
             other => panic!("expected JobUpdated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn actor_context_carried_through_events() {
+        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::users::Username;
+
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue = Issue::new(
+            IssueType::Task,
+            "actor test".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        // Create an issue within an actor context
+        with_actor(Some("u-testuser".to_string()), async {
+            store.add_issue(issue).await.unwrap();
+        })
+        .await;
+
+        let event = rx.recv().await.expect("should receive IssueCreated");
+        match &event {
+            ServerEvent::IssueCreated { payload, .. } => {
+                assert_eq!(
+                    payload.actor(),
+                    Some("u-testuser"),
+                    "actor should be carried through the event payload"
+                );
+            }
+            other => panic!("expected IssueCreated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn actor_context_is_none_when_not_set() {
+        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::users::Username;
+
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue = Issue::new(
+            IssueType::Task,
+            "no actor test".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        store.add_issue(issue).await.unwrap();
+
+        let event = rx.recv().await.expect("should receive IssueCreated");
+        match &event {
+            ServerEvent::IssueCreated { payload, .. } => {
+                assert_eq!(
+                    payload.actor(),
+                    None,
+                    "actor should be None when no context is set"
+                );
+            }
+            other => panic!("expected IssueCreated, got {other:?}"),
         }
     }
 }

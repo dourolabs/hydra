@@ -1,3 +1,5 @@
+use crate::app::event_bus::with_actor;
+use crate::domain::actors::Actor;
 use crate::domain::issues::TodoItem;
 use crate::{
     app::{AppState, UpdateTodoListError, UpsertIssueError},
@@ -5,7 +7,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use axum::{
-    Json, async_trait,
+    Extension, Json, async_trait,
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
@@ -85,13 +87,17 @@ where
 
 pub async fn create_issue(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Json(payload): Json<api_issues::UpsertIssueRequest>,
 ) -> Result<Json<api_issues::UpsertIssueResponse>, ApiError> {
     info!("create_issue invoked");
-    let (issue_id, version) = state
-        .upsert_issue(None, payload)
-        .await
-        .map_err(map_upsert_issue_error)?;
+    let (issue_id, version) = with_actor(Some(actor.name()), async {
+        state
+            .upsert_issue(None, payload)
+            .await
+            .map_err(map_upsert_issue_error)
+    })
+    .await?;
 
     info!(issue_id = %issue_id, "create_issue completed");
     Ok(Json(api_issues::UpsertIssueResponse::new(
@@ -101,14 +107,18 @@ pub async fn create_issue(
 
 pub async fn update_issue(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     IssueIdPath(issue_id): IssueIdPath,
     Json(payload): Json<api_issues::UpsertIssueRequest>,
 ) -> Result<Json<api_issues::UpsertIssueResponse>, ApiError> {
     info!(issue_id = %issue_id, "update_issue invoked");
-    let (issue_id, version) = state
-        .upsert_issue(Some(issue_id), payload)
-        .await
-        .map_err(map_upsert_issue_error)?;
+    let (issue_id, version) = with_actor(Some(actor.name()), async {
+        state
+            .upsert_issue(Some(issue_id), payload)
+            .await
+            .map_err(map_upsert_issue_error)
+    })
+    .await?;
 
     info!(issue_id = %issue_id, "update_issue completed");
     Ok(Json(api_issues::UpsertIssueResponse::new(
@@ -263,17 +273,21 @@ pub async fn list_issues(
 
 pub async fn add_todo_item(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     IssueIdPath(issue_id): IssueIdPath,
     Json(request): Json<api_issues::AddTodoItemRequest>,
 ) -> Result<Json<api_issues::TodoListResponse>, ApiError> {
     info!(issue_id = %issue_id, "add_todo_item invoked");
-    let todo_list = state
-        .add_todo_item(
-            issue_id.clone(),
-            TodoItem::new(request.description, request.is_done),
-        )
-        .await
-        .map_err(map_todo_error)?;
+    let todo_list = with_actor(Some(actor.name()), async {
+        state
+            .add_todo_item(
+                issue_id.clone(),
+                TodoItem::new(request.description, request.is_done),
+            )
+            .await
+            .map_err(map_todo_error)
+    })
+    .await?;
 
     info!(
         issue_id = %issue_id,
@@ -289,17 +303,21 @@ pub async fn add_todo_item(
 
 pub async fn replace_todo_list(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     IssueIdPath(issue_id): IssueIdPath,
     Json(request): Json<api_issues::ReplaceTodoListRequest>,
 ) -> Result<Json<api_issues::TodoListResponse>, ApiError> {
     info!(issue_id = %issue_id, "replace_todo_list invoked");
-    let todo_list = state
-        .replace_todo_list(
-            issue_id.clone(),
-            request.todo_list.into_iter().map(Into::into).collect(),
-        )
-        .await
-        .map_err(map_todo_error)?;
+    let todo_list = with_actor(Some(actor.name()), async {
+        state
+            .replace_todo_list(
+                issue_id.clone(),
+                request.todo_list.into_iter().map(Into::into).collect(),
+            )
+            .await
+            .map_err(map_todo_error)
+    })
+    .await?;
 
     info!(
         issue_id = %issue_id,
@@ -315,6 +333,7 @@ pub async fn replace_todo_list(
 
 pub async fn set_todo_item_status(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     TodoItemPath {
         issue_id,
         item_number,
@@ -327,10 +346,13 @@ pub async fn set_todo_item_status(
         desired_status = request.is_done,
         "set_todo_item_status invoked"
     );
-    let todo_list = state
-        .set_todo_item_status(issue_id.clone(), item_number, request.is_done)
-        .await
-        .map_err(map_todo_error)?;
+    let todo_list = with_actor(Some(actor.name()), async {
+        state
+            .set_todo_item_status(issue_id.clone(), item_number, request.is_done)
+            .await
+            .map_err(map_todo_error)
+    })
+    .await?;
 
     info!(
         issue_id = %issue_id,
@@ -454,13 +476,17 @@ fn map_todo_error(err: UpdateTodoListError) -> ApiError {
 
 pub async fn delete_issue(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     IssueIdPath(issue_id): IssueIdPath,
 ) -> Result<Json<api_issues::IssueVersionRecord>, ApiError> {
     info!(issue_id = %issue_id, "delete_issue invoked");
-    state
-        .delete_issue(&issue_id)
-        .await
-        .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
+    with_actor(Some(actor.name()), async {
+        state
+            .delete_issue(&issue_id)
+            .await
+            .map_err(|err| map_issue_error(err, Some(&issue_id)))
+    })
+    .await?;
 
     let issue = state
         .get_issue(&issue_id, true)

@@ -54,6 +54,7 @@ impl Automation for CreateMergeRequestIssueAutomation {
         let MutationPayload::Patch {
             old: Some(old),
             new,
+            ..
         } = payload.as_ref()
         else {
             return Ok(());
@@ -247,6 +248,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
+            actor: None,
         });
 
         let event = ServerEvent::PatchUpdated {
@@ -294,6 +296,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
+            actor: None,
         });
 
         let event = ServerEvent::PatchUpdated {

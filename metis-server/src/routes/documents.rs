@@ -1,3 +1,4 @@
+use crate::app::event_bus::with_actor;
 use crate::domain::actors::Actor;
 use crate::{
     app::{AppState, UpsertDocumentError},
@@ -66,10 +67,13 @@ pub async fn create_document(
     Json(payload): Json<v1::documents::UpsertDocumentRequest>,
 ) -> Result<Json<v1::documents::UpsertDocumentResponse>, ApiError> {
     info!(actor = %actor.name(), "create_document invoked");
-    let (document_id, version) = state
-        .upsert_document(None, payload.document.into())
-        .await
-        .map_err(map_upsert_document_error)?;
+    let (document_id, version) = with_actor(Some(actor.name()), async {
+        state
+            .upsert_document(None, payload.document.into())
+            .await
+            .map_err(map_upsert_document_error)
+    })
+    .await?;
 
     info!(actor = %actor.name(), document_id = %document_id, "create_document completed");
     Ok(Json(v1::documents::UpsertDocumentResponse::new(
@@ -85,10 +89,13 @@ pub async fn update_document(
     Json(payload): Json<v1::documents::UpsertDocumentRequest>,
 ) -> Result<Json<v1::documents::UpsertDocumentResponse>, ApiError> {
     info!(actor = %actor.name(), document_id = %document_id, "update_document invoked");
-    let (document_id, version) = state
-        .upsert_document(Some(document_id.clone()), payload.document.into())
-        .await
-        .map_err(map_upsert_document_error)?;
+    let (document_id, version) = with_actor(Some(actor.name()), async {
+        state
+            .upsert_document(Some(document_id.clone()), payload.document.into())
+            .await
+            .map_err(map_upsert_document_error)
+    })
+    .await?;
 
     info!(actor = %actor.name(), document_id = %document_id, "update_document completed");
     Ok(Json(v1::documents::UpsertDocumentResponse::new(
@@ -259,13 +266,17 @@ fn map_upsert_document_error(err: UpsertDocumentError) -> ApiError {
 
 pub async fn delete_document(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     DocumentIdPath(document_id): DocumentIdPath,
 ) -> Result<Json<v1::documents::DocumentVersionRecord>, ApiError> {
     info!(document_id = %document_id, "delete_document invoked");
-    state
-        .delete_document(&document_id)
-        .await
-        .map_err(|err| map_document_error(err, Some(&document_id)))?;
+    with_actor(Some(actor.name()), async {
+        state
+            .delete_document(&document_id)
+            .await
+            .map_err(|err| map_document_error(err, Some(&document_id)))
+    })
+    .await?;
 
     let document = state
         .get_document(&document_id, true)

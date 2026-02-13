@@ -61,3 +61,10 @@ pub struct AutomationContext<'a> {
     pub app_state: &'a AppState,
     pub store: &'a dyn Store,
 }
+
+impl<'a> AutomationContext<'a> {
+    /// Returns the actor name from the event payload, if available.
+    pub fn actor(&self) -> Option<&str> {
+        self.event.payload().actor()
+    }
+}
