@@ -37,8 +37,8 @@ fn map_login_error(error: LoginError) -> ApiError {
             error!(error = %message, "login failed with invalid token");
             ApiError::bad_request("invalid GitHub token")
         }
-        LoginError::ForbiddenGithubOrg { username } => {
-            error!(username = %username, "login rejected by allowed orgs");
+        LoginError::ForbiddenGithubOrg { username, message } => {
+            error!(username = %username, reason = %message, "login rejected by allowed orgs");
             ApiError::unauthorized("GitHub user is not in an allowed organization")
         }
         LoginError::Store { source } => {
