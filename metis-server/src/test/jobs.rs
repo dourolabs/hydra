@@ -1034,6 +1034,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
             deleted: false,
             branch_name: None,
             commit_range: None,
+            sync_github_branch: None,
         })
         .await?;
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
@@ -1266,6 +1267,7 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
             deleted: false,
             branch_name: None,
             commit_range: None,
+            sync_github_branch: None,
         })
         .await?;
     state
@@ -1387,6 +1389,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
             deleted: false,
             branch_name: None,
             commit_range: None,
+            sync_github_branch: None,
         })
         .await?;
     state

@@ -212,6 +212,11 @@ pub struct Patch {
     /// The base-to-head commit range this patch covers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit_range: Option<CommitRange>,
+    /// When set, signals that a GitHub PR should be created or updated using
+    /// this branch as the head ref. Consumed by the `github_pr_sync` automation
+    /// and cleared after the sync completes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_github_branch: Option<String>,
 }
 
 impl Patch {
@@ -240,6 +245,7 @@ impl Patch {
             deleted: false,
             branch_name: None,
             commit_range: None,
+            sync_github_branch: None,
         }
     }
 }
@@ -398,6 +404,7 @@ impl From<api::patches::Patch> for Patch {
             deleted: value.deleted,
             branch_name: value.branch_name,
             commit_range: value.commit_range.map(Into::into),
+            sync_github_branch: None,
         }
     }
 }
@@ -549,6 +556,7 @@ mod tests {
                 "0000000000000000000000000000000000000001".parse().unwrap(),
                 "0000000000000000000000000000000000000002".parse().unwrap(),
             )),
+            sync_github_branch: None,
         };
 
         let api_patch: api::patches::Patch = domain_patch.clone().into();

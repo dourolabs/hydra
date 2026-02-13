@@ -84,6 +84,7 @@ mod tests {
             commit_range: None,
             reviews: Vec::new(),
             deleted: false,
+            sync_github_branch: None,
         }
     }
 

@@ -344,6 +344,7 @@ impl PostgresStoreV2 {
             deleted: row.deleted,
             branch_name: row.branch_name.clone(),
             commit_range,
+            sync_github_branch: None,
         })
     }
 
