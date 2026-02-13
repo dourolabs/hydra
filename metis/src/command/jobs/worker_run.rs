@@ -407,7 +407,6 @@ async fn submit_patch_artifact_if_present(
     base_commit: Option<GitOid>,
 ) -> Result<()> {
     let (title, description) = patch_metadata(job, last_message);
-    let create_github_pr = false;
     let is_automatic_backup = true;
 
     let Some(_) = base_commit else {
@@ -431,7 +430,6 @@ async fn submit_patch_artifact_if_present(
         title,
         description,
         Some(job.clone()),
-        create_github_pr,
         is_automatic_backup,
         false,
         service_repo_name.clone(),

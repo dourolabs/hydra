@@ -1,6 +1,6 @@
 # `metis patches`
 
-`metis patches` captures code changes as server-managed patch artifacts, links them to issues/jobs, and optionally pushes a GitHub branch. Patches back Metis' PR flow, merge queues, and asset uploads.
+`metis patches` captures code changes as server-managed patch artifacts, links them to issues/jobs, and pushes a GitHub branch. GitHub PRs are created automatically server-side when `branch_name` is set on a patch. Patches back Metis' PR flow, merge queues, and asset uploads.
 
 ## Authentication & output
 
@@ -16,7 +16,7 @@ All subcommands honor global CLI flags such as `--server-url`, `--token`, and `-
 
 - Work inside a repo that already has a `metis/<ISSUE_ID>/base` branch pointing at the review baseline. `metis patches create` compares `metis/<issue>/base..HEAD` unless you override with `--range`.
 - The CLI uses libgit2 for all git operations. It will refuse to create a patch when uncommitted changes exist unless `--allow-uncommitted` is set.
-- When `--github` is enabled, Metis fetches a GitHub token from the server, creates (if needed) a feature branch derived from the current branch name or `metis-<job>` slug, and pushes it before recording the patch.
+- The CLI always attempts to push the current branch to the remote (using a GitHub token from the server when available). The server-side `GithubPrSyncAutomation` then automatically creates or updates a GitHub PR whenever a patch is created or updated with `branch_name` set.
 - Use `metis patches apply <PATCH_ID>` to pull a teammate's diff into your local tree; it applies the stored patch text onto your current branch without touching remotes.
 
 ## Subcommands
@@ -38,7 +38,6 @@ metis patches create \
   --description "Explain the schema drift" \
   --issue-id i-123 \
   [--job t-456] \
-  [--github] \
   [--assignee reviewer] \
   [--range base..HEAD] \
   [--allow-uncommitted]
@@ -46,7 +45,6 @@ metis patches create \
 
 - `--title`/`--description` are required and trimmed server-side.
 - `--job` (or `METIS_ID`) provides the service repo name; omit only for purely local diffs.
-- `--github` pushes the feature branch and keeps it synced to the patch.
 - `--assignee` files a merge-request issue assigned to that username and linked to the parent issue.
 - `--issue-id` (default `METIS_ISSUE_ID`) determines which task the patch belongs to and drives default commit range selection.
 - `--range` overrides the diff base; otherwise Metis uses `metis/<issue>/base..HEAD`.
@@ -112,7 +110,6 @@ env METIS_ID=t-wwkhrw METIS_ISSUE_ID=i-zmgovr \
   metis patches create \
     --title "Patches docs" \
     --description "Add reference guide" \
-    --github \
     --assignee jayantk
 
 # Review a teammate's patch with approval
