@@ -208,12 +208,17 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             ));
         }
 
-        // Persist the updated GitHub metadata.
-        ctx.store.update_patch(patch_id, patch).await.map_err(|e| {
-            AutomationError::Other(anyhow::anyhow!(
-                "github_pr_sync: failed to persist github metadata for patch '{patch_id}': {e}"
-            ))
-        })?;
+        // Persist the updated GitHub metadata via AppState (store is read-only
+        // in the automation context, so we must go through AppState for writes).
+        let request = metis_common::api::v1::patches::UpsertPatchRequest::new(patch.into());
+        ctx.app_state
+            .upsert_patch(None, Some(patch_id.clone()), request)
+            .await
+            .map_err(|e| {
+                AutomationError::Other(anyhow::anyhow!(
+                    "github_pr_sync: failed to persist github metadata for patch '{patch_id}': {e}"
+                ))
+            })?;
 
         info!(
             patch_id = %patch_id,
