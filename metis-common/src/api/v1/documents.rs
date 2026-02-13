@@ -1,4 +1,4 @@
-use crate::{DocumentId, TaskId, VersionNumber};
+use crate::{DocumentId, DocumentPath, TaskId, VersionNumber};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +9,7 @@ pub struct Document {
     pub title: String,
     pub body_markdown: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
+    pub path: Option<DocumentPath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<TaskId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -27,9 +27,10 @@ impl Document {
         }
     }
 
-    pub fn with_path(mut self, path: impl Into<String>) -> Self {
-        self.path = Some(path.into());
-        self
+    pub fn with_path(mut self, path: impl Into<String>) -> Result<Self, crate::DocumentPathError> {
+        let path_str = path.into();
+        self.path = Some(path_str.parse()?);
+        Ok(self)
     }
 
     pub fn with_created_by(mut self, created_by: TaskId) -> Self {
@@ -170,8 +171,9 @@ mod tests {
         let created_by = TaskId::new();
         let document = Document::new("Title".to_string(), "Body".to_string(), false)
             .with_path("docs/path.md")
+            .unwrap()
             .with_created_by(created_by.clone());
-        assert_eq!(document.path.as_deref(), Some("docs/path.md"));
+        assert_eq!(document.path.as_deref(), Some("/docs/path.md"));
         assert_eq!(document.created_by, Some(created_by));
     }
 

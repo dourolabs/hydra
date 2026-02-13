@@ -37,7 +37,8 @@ async fn documents_can_be_created_listed_and_retrieved() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let document = Document::new("Design doc".to_string(), "initial body".to_string(), false)
-        .with_path("docs/design.md");
+        .with_path("docs/design.md")
+        .unwrap();
 
     let created: UpsertDocumentResponse = client
         .post(format!("{}/v1/documents", server.base_url()))
@@ -199,11 +200,14 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
 
     let docs = [
         Document::new("Runbook".to_string(), "operations".to_string(), false)
-            .with_path("docs/runbook.md"),
+            .with_path("docs/runbook.md")
+            .unwrap(),
         Document::new("API Guide".to_string(), "api details".to_string(), false)
-            .with_path("docs/guide.md"),
+            .with_path("docs/guide.md")
+            .unwrap(),
         Document::new("Notes".to_string(), "private".to_string(), false)
             .with_path("notes/internal.md")
+            .unwrap()
             .with_created_by(running_task.clone()),
     ];
 
@@ -231,7 +235,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
         .get(format!("{base}/v1/documents"))
         .query(&SearchDocumentsQuery::new(
             None,
-            Some("docs/".to_string()),
+            Some("/docs/".to_string()),
             None,
             None,
             None,
@@ -294,11 +298,14 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
 
     let docs = [
         Document::new("Exact Doc".to_string(), "exact match".to_string(), false)
-            .with_path("docs/guide.md"),
+            .with_path("docs/guide.md")
+            .unwrap(),
         Document::new("Prefix Doc".to_string(), "prefix match".to_string(), false)
-            .with_path("docs/guide.md.bak"),
+            .with_path("docs/guide.md.bak")
+            .unwrap(),
         Document::new("Nested Doc".to_string(), "nested match".to_string(), false)
-            .with_path("docs/guide.md/extra"),
+            .with_path("docs/guide.md/extra")
+            .unwrap(),
     ];
 
     for doc in docs.iter() {
@@ -315,7 +322,7 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
         .get(format!("{base}/v1/documents"))
         .query(&SearchDocumentsQuery::new(
             None,
-            Some("docs/guide.md".to_string()),
+            Some("/docs/guide.md".to_string()),
             None,
             None,
             None,
@@ -331,7 +338,7 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
         .get(format!("{base}/v1/documents"))
         .query(&SearchDocumentsQuery::new(
             None,
-            Some("docs/guide.md".to_string()),
+            Some("/docs/guide.md".to_string()),
             Some(true),
             None,
             None,
@@ -348,7 +355,7 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
         .get(format!("{base}/v1/documents"))
         .query(&SearchDocumentsQuery::new(
             None,
-            Some("docs/guide.md".to_string()),
+            Some("/docs/guide.md".to_string()),
             Some(false),
             None,
             None,
