@@ -17,13 +17,13 @@ use metis_server::{
     app::{AppState, ServiceState},
     background::{
         monitor_running_jobs::MonitorRunningJobsWorker,
-        poll_github_patches::GithubPollerWorker,
         process_pending_jobs::ProcessPendingJobsWorker,
         run_spawners::RunSpawnersWorker,
         scheduler::{ScheduledWorker, WorkerOutcome},
         spawner::AgentQueue,
     },
     domain::actors::Actor,
+    policy::integrations::github_pr_poller::GithubPollerWorker,
     store::{MemoryStore, Store},
     test_utils::{
         spawn_test_server_with_state, test_app_config, GitHubMockBuilder, GitRemote, MockJobEngine,

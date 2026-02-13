@@ -3,10 +3,11 @@
 use crate::{
     app::AppState,
     background::{
-        monitor_running_jobs::MonitorRunningJobsWorker, poll_github_patches::GithubPollerWorker,
+        monitor_running_jobs::MonitorRunningJobsWorker,
         process_pending_jobs::ProcessPendingJobsWorker, run_spawners::RunSpawnersWorker,
     },
     config::WorkerSchedulerConfig,
+    policy::integrations::github_pr_poller::GithubPollerWorker,
 };
 use async_trait::async_trait;
 use std::{sync::Arc, time::Duration};
