@@ -398,8 +398,8 @@ impl AppState {
         &self.policy_engine
     }
 
-    /// Returns a reference to the underlying store (as a trait object).
-    pub fn store(&self) -> &dyn Store {
+    /// Returns a reference to the underlying store (as a read-only trait object).
+    pub fn store(&self) -> &dyn ReadOnlyStore {
         self.store.as_ref()
     }
 
@@ -2134,7 +2134,7 @@ impl AppState {
     }
 }
 
-async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, StoreError> {
+async fn issue_ready(store: &dyn ReadOnlyStore, issue_id: &IssueId) -> Result<bool, StoreError> {
     let issue = store.get_issue(issue_id, false).await?;
     let issue = issue.item;
 
