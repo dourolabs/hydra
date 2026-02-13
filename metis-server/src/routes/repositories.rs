@@ -1,9 +1,10 @@
 use crate::{
     app::{AppState, Repository, RepositoryError},
     config::non_empty,
+    domain::actors::Actor,
 };
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path, Query, State},
 };
 use metis_common::{
@@ -37,12 +38,13 @@ pub async fn list_repositories(
 
 pub async fn create_repository(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Json(payload): Json<CreateRepositoryRequest>,
 ) -> Result<Json<UpsertRepositoryResponse>, ApiError> {
     info!(repository = %payload.name, "create_repository invoked");
     let config = normalize_config(payload.repository)?;
     let created = state
-        .create_repository(payload.name, config)
+        .create_repository(payload.name, config, Some(actor.name()))
         .await
         .map_err(map_repository_error)?;
 
@@ -52,6 +54,7 @@ pub async fn create_repository(
 
 pub async fn update_repository(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Path((organization, repo)): Path<(String, String)>,
     Json(payload): Json<UpdateRepositoryRequest>,
 ) -> Result<Json<UpsertRepositoryResponse>, ApiError> {
@@ -61,7 +64,7 @@ pub async fn update_repository(
 
     let config = normalize_config(payload.repository)?;
     let updated = state
-        .update_repository(name.clone(), config)
+        .update_repository(name.clone(), config, Some(actor.name()))
         .await
         .map_err(map_repository_error)?;
 
@@ -71,6 +74,7 @@ pub async fn update_repository(
 
 pub async fn delete_repository(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Path((organization, repo)): Path<(String, String)>,
 ) -> Result<Json<DeleteRepositoryResponse>, ApiError> {
     let name =
@@ -78,7 +82,7 @@ pub async fn delete_repository(
     info!(repository = %name, "delete_repository invoked");
 
     let deleted = state
-        .delete_repository(&name)
+        .delete_repository(&name, Some(actor.name()))
         .await
         .map_err(map_repository_error)?;
 

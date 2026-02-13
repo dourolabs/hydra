@@ -449,6 +449,7 @@ impl AppState {
                         user.github_token.clone(),
                         user.github_user_id,
                         user.github_refresh_token.clone(),
+                        None,
                     )
                     .await
                     .map_err(|source| LoginError::Store { source })?;
@@ -696,13 +697,14 @@ impl AppState {
         github_token: String,
         github_user_id: u64,
         github_refresh_token: String,
+        actor: Option<String>,
     ) -> Result<User, StoreError> {
         let mut user = self.store.get_user(username, false).await?.item;
         user.github_token = github_token;
         user.github_user_id = github_user_id;
         user.github_refresh_token = github_refresh_token;
         self.store
-            .update_user(user, None)
+            .update_user(user, actor)
             .await
             .map(|user| user.item)
     }
@@ -726,6 +728,7 @@ impl AppState {
     pub async fn delete_repository(
         &self,
         name: &RepoName,
+        actor: Option<String>,
     ) -> Result<RepositoryRecord, RepositoryError> {
         // Get the repository before deleting to return it
         // Use include_deleted: true since we need to access the repository to mark it as deleted
@@ -739,7 +742,7 @@ impl AppState {
                 })?;
 
         self.store
-            .delete_repository(name, None)
+            .delete_repository(name, actor)
             .await
             .map_err(|source| match source {
                 StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
@@ -757,9 +760,10 @@ impl AppState {
         &self,
         name: RepoName,
         config: Repository,
+        actor: Option<String>,
     ) -> Result<RepositoryRecord, RepositoryError> {
         self.store
-            .add_repository(name.clone(), config.clone(), None)
+            .add_repository(name.clone(), config.clone(), actor)
             .await
             .map_err(|source| match source {
                 StoreError::RepositoryAlreadyExists(name) => RepositoryError::AlreadyExists(name),
@@ -773,9 +777,10 @@ impl AppState {
         &self,
         name: RepoName,
         config: Repository,
+        actor: Option<String>,
     ) -> Result<RepositoryRecord, RepositoryError> {
         self.store
-            .update_repository(name.clone(), config.clone(), None)
+            .update_repository(name.clone(), config.clone(), actor)
             .await
             .map_err(|source| match source {
                 StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
