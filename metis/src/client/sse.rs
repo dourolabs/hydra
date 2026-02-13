@@ -50,69 +50,72 @@ type BytesStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
 /// This handles the SSE wire format: blocks separated by blank lines,
 /// with `event:`, `id:`, and `data:` fields.
 pub(crate) fn parse_sse_event_stream(byte_stream: BytesStream) -> SseEventStream {
-    Box::pin(stream::unfold(
-        (byte_stream, String::new(), false),
-        |(mut byte_stream, mut buffer, finished)| async move {
-            if finished {
-                return None;
-            }
-
-            loop {
-                // Look for a complete event block (terminated by blank line).
-                if let Some((idx, separator_len)) = buffer
-                    .find("\n\n")
-                    .map(|idx| (idx, 2))
-                    .or_else(|| buffer.find("\r\n\r\n").map(|idx| (idx, "\r\n\r\n".len())))
-                {
-                    let event_block = buffer[..idx].to_string();
-                    buffer.drain(..idx + separator_len);
-
-                    if event_block.trim().is_empty() {
-                        continue;
-                    }
-
-                    // Skip SSE comments (lines starting with ':')
-                    if event_block
-                        .lines()
-                        .all(|l| l.starts_with(':') || l.is_empty())
-                    {
-                        continue;
-                    }
-
-                    if let Some(event) = parse_event_block(&event_block) {
-                        return Some((Ok(event), (byte_stream, buffer, false)));
-                    }
-                    // Unparseable block — skip it.
-                    continue;
+    Box::pin(
+        stream::unfold(
+            (byte_stream, String::new(), false),
+            |(mut byte_stream, mut buffer, finished)| async move {
+                if finished {
+                    return None;
                 }
 
-                match byte_stream.next().await {
-                    Some(Ok(chunk)) => {
-                        if chunk.is_empty() {
+                loop {
+                    // Look for a complete event block (terminated by blank line).
+                    if let Some((idx, separator_len)) = buffer
+                        .find("\n\n")
+                        .map(|idx| (idx, 2))
+                        .or_else(|| buffer.find("\r\n\r\n").map(|idx| (idx, "\r\n\r\n".len())))
+                    {
+                        let event_block = buffer[..idx].to_string();
+                        buffer.drain(..idx + separator_len);
+
+                        if event_block.trim().is_empty() {
                             continue;
                         }
-                        let chunk_text = String::from_utf8_lossy(&chunk);
-                        buffer.push_str(&chunk_text);
-                    }
-                    Some(Err(err)) => {
-                        return Some((
-                            Err(anyhow!("SSE stream error: {err}")),
-                            (byte_stream, buffer, true),
-                        ));
-                    }
-                    None => {
-                        // Stream ended. Try to parse any remaining data.
-                        if !buffer.trim().is_empty() {
-                            if let Some(event) = parse_event_block(&buffer) {
-                                return Some((Ok(event), (byte_stream, String::new(), true)));
-                            }
+
+                        // Skip SSE comments (lines starting with ':')
+                        if event_block
+                            .lines()
+                            .all(|l| l.starts_with(':') || l.is_empty())
+                        {
+                            continue;
                         }
-                        return None;
+
+                        if let Some(event) = parse_event_block(&event_block) {
+                            return Some((Ok(event), (byte_stream, buffer, false)));
+                        }
+                        // Unparseable block — skip it.
+                        continue;
+                    }
+
+                    match byte_stream.next().await {
+                        Some(Ok(chunk)) => {
+                            if chunk.is_empty() {
+                                continue;
+                            }
+                            let chunk_text = String::from_utf8_lossy(&chunk);
+                            buffer.push_str(&chunk_text);
+                        }
+                        Some(Err(err)) => {
+                            return Some((
+                                Err(anyhow!("SSE stream error: {err}")),
+                                (byte_stream, buffer, true),
+                            ));
+                        }
+                        None => {
+                            // Stream ended. Try to parse any remaining data.
+                            if !buffer.trim().is_empty() {
+                                if let Some(event) = parse_event_block(&buffer) {
+                                    return Some((Ok(event), (byte_stream, String::new(), true)));
+                                }
+                            }
+                            return None;
+                        }
                     }
                 }
-            }
-        },
-    ))
+            },
+        )
+        .fuse(),
+    )
 }
 
 /// Parse a single SSE event block into an SseEvent.
