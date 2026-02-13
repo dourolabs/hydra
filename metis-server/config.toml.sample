@@ -172,10 +172,11 @@ max_backoff_secs = 30
 # # [automations.params]
 # # trigger_statuses = ["dropped", "failed"]
 #
-# ## Per-repo overrides (complete override — not merged with global).
+# ## Per-repo restriction overrides (complete override — not merged with global).
+# ## Only restrictions can be overridden per-repo; automations always use the
+# ## global list.
 # # [policies.repos."org/repo"]
 # # restrictions = ["issue_lifecycle_validation"]
-# # automations = ["cascade_issue_status"]
 
 [kubernetes]
 # Set to true when the server runs inside a Kubernetes cluster and should use

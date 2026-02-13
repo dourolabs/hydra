@@ -2,7 +2,7 @@ use super::*;
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::issues::{Issue, IssueStatus, IssueType};
 use crate::domain::users::Username;
-use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
+use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList, RepoOverride};
 use crate::policy::context::{AutomationContext, Operation, OperationPayload, RestrictionContext};
 use crate::policy::registry::{self, PolicyRegistry};
 use crate::store::MemoryStore;
@@ -537,7 +537,6 @@ fn policy_config_deserializes_from_toml() {
 
         [repos."dourolabs/metis"]
         restrictions = ["issue_lifecycle_validation"]
-        automations = []
     "#;
 
     let config: PolicyConfig = toml::from_str(toml_str).expect("should deserialize");
@@ -555,7 +554,6 @@ fn policy_config_deserializes_from_toml() {
         .get("dourolabs/metis")
         .expect("should have repo config");
     assert_eq!(repo_config.restrictions.len(), 1);
-    assert!(repo_config.automations.is_empty());
 }
 
 #[test]
@@ -862,9 +860,8 @@ async fn per_repo_override_applies_to_repo_operations() {
             // Per-repo override with NO restrictions
             m.insert(
                 repo_name.to_string(),
-                PolicyList {
+                RepoOverride {
                     restrictions: vec![],
-                    automations: vec![],
                 },
             );
             m
@@ -965,10 +962,9 @@ fn parameterized_policy_builds_with_custom_params() {
     assert_eq!(engine.automation_count(), 1);
 }
 
-/// Test 5: Unknown policy name in config produces a warning at startup
-/// (validation warns but does not error for unknown names).
+/// Test 5: Unknown policy name in config produces an error during validation.
 #[test]
-fn unknown_policy_name_in_config_is_warned() {
+fn unknown_policy_name_in_config_errors() {
     let registry = registry::build_default_registry();
 
     // Config with an unknown restriction name
@@ -980,23 +976,23 @@ fn unknown_policy_name_in_config_is_warned() {
         repos: HashMap::new(),
     };
 
-    // Validation should succeed (warns, doesn't error on unknown names)
+    // Validation should error on unknown names
     let result = registry.validate_config(&config);
     assert!(
-        result.is_ok(),
-        "validation should warn but not error on unknown policy names"
+        result.is_err(),
+        "validation should error on unknown policy names"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("unknown restriction policy 'nonexistent_restriction'"),
+        "unexpected error: {err}"
     );
 
-    // But building should fail (unknown names are errors during build)
+    // Building should also fail
     let build_result = registry.build(&config);
     assert!(
         build_result.is_err(),
         "build should fail for unknown policy names"
-    );
-    let err = build_result.err().unwrap();
-    assert!(
-        err.contains("unknown restriction policy"),
-        "unexpected error: {err}"
     );
 }
 
@@ -1054,7 +1050,6 @@ fn full_toml_config_with_policies_deserializes() {
 
         [policies.repos."myorg/myrepo"]
         restrictions = ["issue_lifecycle_validation"]
-        automations = []
     "#;
 
     let config: crate::config::AppConfig =
@@ -1077,7 +1072,6 @@ fn full_toml_config_with_policies_deserializes() {
         .get("myorg/myrepo")
         .expect("should have repo override");
     assert_eq!(repo.restrictions.len(), 1);
-    assert!(repo.automations.is_empty());
 }
 
 /// Test: Config without [policies] section deserializes with policies = None.
@@ -1132,9 +1126,8 @@ fn registry_build_with_repo_overrides() {
             let mut m = HashMap::new();
             m.insert(
                 "org/repo".to_string(),
-                PolicyList {
+                RepoOverride {
                     restrictions: vec![PolicyEntry::Name("issue_lifecycle_validation".to_string())],
-                    automations: vec![],
                 },
             );
             m
