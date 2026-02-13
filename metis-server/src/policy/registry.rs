@@ -185,9 +185,6 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_restriction("duplicate_branch_name", |_params| {
         Ok(Box::new(DuplicateBranchRestriction::new()))
     });
-    registry.register_restriction("hidden_document_path", |_params| {
-        Ok(Box::new(HiddenDocumentPathRestriction::new()))
-    });
     registry.register_restriction("running_job_validation", |_params| {
         Ok(Box::new(RunningJobValidationRestriction::new()))
     });

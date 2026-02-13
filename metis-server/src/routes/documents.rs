@@ -226,12 +226,6 @@ fn map_document_error(err: StoreError, document_id: Option<&DocumentId>) -> ApiE
 
 fn map_upsert_document_error(err: UpsertDocumentError) -> ApiError {
     match err {
-        UpsertDocumentError::InvalidPath { path } => {
-            error!(path = %path, "document path contains hidden segments");
-            ApiError::bad_request(format!(
-                "document path must not contain hidden segments (components starting with '.'): {path}"
-            ))
-        }
         UpsertDocumentError::JobNotFound { job_id, source } => {
             error!(job_id = %job_id, error = %source, "created_by job not found");
             ApiError::bad_request("created_by must reference a running job")

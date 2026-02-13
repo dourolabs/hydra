@@ -1263,7 +1263,7 @@ mod tests {
         Document {
             title: "Doc".to_string(),
             body_markdown: "Body".to_string(),
-            path: path.map(ToString::to_string),
+            path: path.map(|p| p.parse().unwrap()),
             created_by,
             deleted: false,
         }
@@ -2000,7 +2000,7 @@ mod tests {
         assert_eq!(documents.len(), 1);
         assert_eq!(documents[0].0, doc_id);
 
-        let by_path = store.get_documents_by_path("docs/").await.unwrap();
+        let by_path = store.get_documents_by_path("/docs/").await.unwrap();
         assert_eq!(by_path.len(), 1);
         assert_eq!(by_path[0].0, doc_id);
     }
@@ -2028,7 +2028,7 @@ mod tests {
 
         let query = SearchDocumentsQuery::new(
             Some("how".to_string()),
-            Some("docs/".to_string()),
+            Some("/docs/".to_string()),
             None,
             Some(task_id.clone()),
             None,
@@ -2060,17 +2060,17 @@ mod tests {
             .unwrap();
 
         let mut updated = store.get_document(&doc_id, false).await.unwrap().item;
-        updated.path = Some("docs/new.md".to_string());
+        updated.path = Some("docs/new.md".parse().unwrap());
         store.update_document(&doc_id, updated).await.unwrap();
 
         assert!(
             store
-                .get_documents_by_path("docs/old")
+                .get_documents_by_path("/docs/old")
                 .await
                 .unwrap()
                 .is_empty()
         );
-        let matches = store.get_documents_by_path("docs/new").await.unwrap();
+        let matches = store.get_documents_by_path("/docs/new").await.unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].0, doc_id);
     }
@@ -2752,7 +2752,7 @@ mod tests {
         let by_prefix = store
             .list_documents(&SearchDocumentsQuery::new(
                 None,
-                Some("docs/guide.md".to_string()),
+                Some("/docs/guide.md".to_string()),
                 None,
                 None,
                 None,
@@ -2765,7 +2765,7 @@ mod tests {
         let by_exact = store
             .list_documents(&SearchDocumentsQuery::new(
                 None,
-                Some("docs/guide.md".to_string()),
+                Some("/docs/guide.md".to_string()),
                 Some(true),
                 None,
                 None,
@@ -2779,7 +2779,7 @@ mod tests {
         let by_prefix_explicit = store
             .list_documents(&SearchDocumentsQuery::new(
                 None,
-                Some("docs/guide.md".to_string()),
+                Some("/docs/guide.md".to_string()),
                 Some(false),
                 None,
                 None,

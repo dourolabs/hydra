@@ -7,8 +7,8 @@ use clap::{Args, Subcommand};
 use metis_common::{
     constants::ENV_METIS_ID,
     documents::{
-        has_hidden_segment, Document as DocumentPayload, DocumentVersionRecord,
-        SearchDocumentsQuery, UpsertDocumentRequest,
+        Document as DocumentPayload, DocumentVersionRecord, SearchDocumentsQuery,
+        UpsertDocumentRequest,
     },
     versioning::VersionNumber,
     DocumentId, TaskId,
@@ -446,11 +446,6 @@ pub async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -
         let doc_path = record.document.path.as_deref().unwrap();
         // Strip leading slash if present for filesystem path
         let relative_path = doc_path.strip_prefix('/').unwrap_or(doc_path);
-
-        // Skip hidden files/directories (path segments starting with '.')
-        if has_hidden_segment(relative_path) {
-            continue;
-        }
 
         server_paths.insert(relative_path.to_string());
 

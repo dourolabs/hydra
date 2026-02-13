@@ -151,8 +151,6 @@ pub enum UpsertPatchError {
 
 #[derive(Debug, Error)]
 pub enum UpsertDocumentError {
-    #[error("document path contains hidden segments (components starting with '.'): {path}")]
-    InvalidPath { path: String },
     #[error("job '{job_id}' not found")]
     JobNotFound {
         #[source]
@@ -321,7 +319,6 @@ impl AppState {
                     PolicyEntry::Name("issue_lifecycle_validation".to_string()),
                     PolicyEntry::Name("task_state_machine".to_string()),
                     PolicyEntry::Name("duplicate_branch_name".to_string()),
-                    PolicyEntry::Name("hidden_document_path".to_string()),
                     PolicyEntry::Name("running_job_validation".to_string()),
                     PolicyEntry::Name("require_creator".to_string()),
                 ],
@@ -2021,7 +2018,7 @@ async fn issue_ready(store: &dyn ReadOnlyStore, issue_id: &IssueId) -> Result<bo
 
 #[cfg(test)]
 mod tests {
-    use super::{LoginError, UpsertDocumentError, UpsertIssueError, UpsertPatchError};
+    use super::{LoginError, UpsertIssueError, UpsertPatchError};
     use crate::{
         app::{AppState, ServerEvent, ServiceState},
         domain::{
@@ -4206,87 +4203,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upsert_document_rejects_hidden_path() {
-        let state = test_state();
-        let document = Document {
-            title: "Test".to_string(),
-            body_markdown: "body".to_string(),
-            path: Some(".hidden/file.md".to_string()),
-            created_by: None,
-            deleted: false,
-        };
-
-        let result = state.upsert_document(None, document, None).await;
-        assert!(result.is_err());
-        match &result.unwrap_err() {
-            UpsertDocumentError::PolicyViolation(violation) => {
-                assert!(
-                    violation.message.contains(".hidden"),
-                    "expected violation about hidden path, got: {}",
-                    violation.message
-                );
-            }
-            other => panic!("expected PolicyViolation, got: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn upsert_document_rejects_hidden_path_with_leading_slash() {
-        let state = test_state();
-        let document = Document {
-            title: "Test".to_string(),
-            body_markdown: "body".to_string(),
-            path: Some("/.hidden/file.md".to_string()),
-            created_by: None,
-            deleted: false,
-        };
-
-        let result = state.upsert_document(None, document, None).await;
-        assert!(result.is_err());
-        match &result.unwrap_err() {
-            UpsertDocumentError::PolicyViolation(violation) => {
-                assert!(
-                    violation.message.contains(".hidden"),
-                    "expected violation about hidden path, got: {}",
-                    violation.message
-                );
-            }
-            other => panic!("expected PolicyViolation, got: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn upsert_document_rejects_nested_hidden_segment() {
-        let state = test_state();
-        let document = Document {
-            title: "Test".to_string(),
-            body_markdown: "body".to_string(),
-            path: Some("docs/.secret/notes.md".to_string()),
-            created_by: None,
-            deleted: false,
-        };
-
-        let result = state.upsert_document(None, document, None).await;
-        assert!(result.is_err());
-        match &result.unwrap_err() {
-            UpsertDocumentError::PolicyViolation(violation) => {
-                assert!(
-                    violation.message.contains(".secret"),
-                    "expected violation about hidden path, got: {}",
-                    violation.message
-                );
-            }
-            other => panic!("expected PolicyViolation, got: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
     async fn upsert_document_allows_normal_path() {
         let state = test_state();
         let document = Document {
             title: "Test".to_string(),
             body_markdown: "body".to_string(),
-            path: Some("docs/notes.md".to_string()),
+            path: Some("docs/notes.md".parse().unwrap()),
             created_by: None,
             deleted: false,
         };
@@ -4308,58 +4230,5 @@ mod tests {
 
         let result = state.upsert_document(None, document, None).await;
         assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn disabling_restriction_allows_previously_rejected_operation() {
-        // With default policy engine, a hidden path is rejected
-        let state_default = test_state();
-        let hidden_doc = Document {
-            title: "Secret".to_string(),
-            body_markdown: "body".to_string(),
-            path: Some(".hidden/file.md".to_string()),
-            created_by: None,
-            deleted: false,
-        };
-        let result = state_default
-            .upsert_document(None, hidden_doc.clone(), None)
-            .await;
-        assert!(
-            result.is_err(),
-            "default policy engine should reject hidden paths"
-        );
-
-        // Build a policy engine without the hidden_document_path restriction
-        let engine_without_hidden = {
-            use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
-            use crate::policy::registry::build_default_registry;
-
-            let config = PolicyConfig {
-                global: PolicyList {
-                    restrictions: vec![
-                        // Deliberately omit "hidden_document_path"
-                        PolicyEntry::Name("issue_lifecycle_validation".to_string()),
-                        PolicyEntry::Name("task_state_machine".to_string()),
-                        PolicyEntry::Name("duplicate_branch_name".to_string()),
-                        PolicyEntry::Name("running_job_validation".to_string()),
-                        PolicyEntry::Name("require_creator".to_string()),
-                    ],
-                    automations: Vec::new(),
-                },
-                repos: Default::default(),
-            };
-
-            let registry = build_default_registry();
-            registry
-                .build(&config)
-                .expect("failed to build engine without hidden_document_path")
-        };
-
-        let state_custom = test_state().with_policy_engine(engine_without_hidden);
-        let result = state_custom.upsert_document(None, hidden_doc, None).await;
-        assert!(
-            result.is_ok(),
-            "policy engine without hidden_document_path restriction should allow hidden paths"
-        );
     }
 }
