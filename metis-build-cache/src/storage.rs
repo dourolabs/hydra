@@ -9,10 +9,11 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_types::region::Region;
+use futures::stream::{self, StreamExt};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tracing::{info, warn};
 use walkdir::WalkDir;
 
@@ -27,6 +28,9 @@ const MAX_PART_RETRIES: u32 = 3;
 
 /// Base delay for exponential backoff (1 second)
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
+
+/// Maximum number of concurrent part uploads/downloads
+const CONCURRENT_PARTS: usize = 8;
 
 /// Formats an AWS SDK error with detailed diagnostic information including
 /// HTTP status code, AWS error code, and error message where available.
@@ -331,7 +335,13 @@ impl S3StorageClient {
         }
     }
 
-    /// Uploads all parts of a file and returns the completed parts.
+    /// Uploads all parts of a file concurrently and returns the completed parts.
+    ///
+    /// Parts are read sequentially from disk, then uploaded concurrently up to
+    /// `CONCURRENT_PARTS` at a time using a buffered stream. Each part retains
+    /// its own retry logic via `upload_part_with_retry`. The results are
+    /// collected in order so that the completed parts list matches S3's
+    /// expected part numbering.
     async fn upload_parts(
         &self,
         key: &str,
@@ -343,7 +353,8 @@ impl S3StorageClient {
             .await
             .map_err(|err| BuildCacheError::io("opening file for multipart upload", err))?;
 
-        let mut completed_parts = Vec::new();
+        // Read all parts from disk sequentially, collecting (part_number, buffer) pairs.
+        let mut parts_to_upload: Vec<(i32, Vec<u8>)> = Vec::new();
         let mut part_number: i32 = 1;
         let mut bytes_read: u64 = 0;
 
@@ -356,22 +367,25 @@ impl S3StorageClient {
                 .await
                 .map_err(|err| BuildCacheError::io("reading file part", err))?;
 
-            let etag = self
-                .upload_part_with_retry(key, upload_id, part_number, buffer)
-                .await?;
-
-            completed_parts.push(
-                CompletedPart::builder()
-                    .e_tag(etag)
-                    .part_number(part_number)
-                    .build(),
-            );
-
+            parts_to_upload.push((part_number, buffer));
             bytes_read += chunk_size as u64;
             part_number += 1;
         }
 
-        Ok(completed_parts)
+        // Upload parts concurrently, buffering up to CONCURRENT_PARTS at a time.
+        let completed_parts: Vec<Result<CompletedPart, BuildCacheError>> =
+            stream::iter(parts_to_upload.into_iter().map(|(pn, buffer)| async move {
+                let etag = self
+                    .upload_part_with_retry(key, upload_id, pn, buffer)
+                    .await?;
+                Ok(CompletedPart::builder().e_tag(etag).part_number(pn).build())
+            }))
+            .buffered(CONCURRENT_PARTS)
+            .collect()
+            .await;
+
+        // Collect results, failing on the first error.
+        completed_parts.into_iter().collect()
     }
 
     /// Downloads a single part with retry logic.
@@ -448,8 +462,12 @@ impl S3StorageClient {
         ))
     }
 
-    /// Performs ranged download for large files.
-    /// Downloads the file in parts using Range headers with retry logic.
+    /// Performs ranged download for large files with concurrent part downloads.
+    ///
+    /// Parts are downloaded concurrently (up to `CONCURRENT_PARTS` at a time)
+    /// using a buffered stream. Each downloaded part is then written to the
+    /// correct file offset. The per-part retry logic in
+    /// `download_part_with_retry` is preserved.
     async fn get_object_ranged(
         &self,
         key: &str,
@@ -460,49 +478,74 @@ impl S3StorageClient {
             key = %key,
             file_size = file_size,
             part_size = PART_SIZE,
-            "Starting ranged download"
+            concurrent_parts = CONCURRENT_PARTS,
+            "Starting concurrent ranged download"
         );
 
-        // Create the destination file
-        let mut file = tokio::fs::File::create(destination)
+        // Pre-allocate the destination file to the expected size.
+        let file = tokio::fs::File::create(destination)
             .await
             .map_err(|err| BuildCacheError::io("creating download file", err))?;
+        file.set_len(file_size)
+            .await
+            .map_err(|err| BuildCacheError::io("pre-allocating download file", err))?;
 
-        let mut bytes_written: u64 = 0;
+        // Build a list of (part_number, start_offset, end_offset) for all parts.
+        let mut range_specs: Vec<(u32, u64, u64)> = Vec::new();
+        let mut offset: u64 = 0;
         let mut part_number: u32 = 1;
+        while offset < file_size {
+            let chunk_size = std::cmp::min(file_size - offset, PART_SIZE);
+            let start = offset;
+            let end = start + chunk_size - 1; // Range header is inclusive
+            range_specs.push((part_number, start, end));
+            offset += chunk_size;
+            part_number += 1;
+        }
 
-        let result = async {
-            while bytes_written < file_size {
-                let remaining = file_size - bytes_written;
-                let chunk_size = std::cmp::min(remaining, PART_SIZE);
-                let start = bytes_written;
-                let end = start + chunk_size - 1; // Range header is inclusive
+        // Download parts concurrently, collecting (start_offset, data) pairs.
+        let result: Result<Vec<(u64, Vec<u8>)>, BuildCacheError> =
+            stream::iter(range_specs.into_iter().map(|(pn, start, end)| async move {
+                let data = self.download_part_with_retry(key, start, end, pn).await?;
+                Ok((start, data))
+            }))
+            .buffered(CONCURRENT_PARTS)
+            .collect::<Vec<Result<(u64, Vec<u8>), BuildCacheError>>>()
+            .await
+            .into_iter()
+            .collect();
 
-                let data = self
-                    .download_part_with_retry(key, start, end, part_number)
-                    .await?;
+        let write_result = async {
+            let parts = result?;
 
-                tokio::io::AsyncWriteExt::write_all(&mut file, &data)
+            // Write each downloaded part at its correct offset.
+            // Re-open the file for writing at specific offsets.
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(destination)
+                .await
+                .map_err(|err| BuildCacheError::io("opening download file for writing", err))?;
+
+            for (offset, data) in parts {
+                file.seek(std::io::SeekFrom::Start(offset))
+                    .await
+                    .map_err(|err| BuildCacheError::io("seeking in download file", err))?;
+                file.write_all(&data)
                     .await
                     .map_err(|err| BuildCacheError::io("writing download part", err))?;
-
-                bytes_written += data.len() as u64;
-                part_number += 1;
             }
 
-            // Ensure all data is flushed to disk
-            tokio::io::AsyncWriteExt::flush(&mut file)
+            file.flush()
                 .await
                 .map_err(|err| BuildCacheError::io("flushing download file", err))?;
 
             info!(key = %key, "Ranged download completed successfully");
-            Ok(())
+            Ok::<(), BuildCacheError>(())
         }
         .await;
 
         // Clean up partial file on failure
-        if result.is_err() {
-            drop(file); // Close the file handle before removing
+        if write_result.is_err() {
             if let Err(remove_err) = tokio::fs::remove_file(destination).await {
                 warn!(
                     key = %key,
@@ -513,7 +556,7 @@ impl S3StorageClient {
             }
         }
 
-        result
+        write_result
     }
 }
 
