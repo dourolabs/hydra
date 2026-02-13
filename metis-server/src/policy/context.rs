@@ -60,4 +60,10 @@ pub struct AutomationContext<'a> {
     pub event: &'a ServerEvent,
     pub app_state: &'a AppState,
     pub store: &'a dyn Store,
+    /// The actor who triggered the original mutation, when known.
+    ///
+    /// Populated for mutations that originate from an authenticated request
+    /// (e.g., `upsert_patch` called by a user). `None` for events triggered
+    /// by other automations or internal processes.
+    pub actor: Option<&'a crate::domain::actors::Actor>,
 }

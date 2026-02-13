@@ -261,6 +261,7 @@ mod tests {
             version: 2,
             timestamp: Utc::now(),
             payload,
+            actor: None,
         };
 
         let automation = CascadeIssueStatusAutomation::new(None).unwrap();
@@ -268,6 +269,7 @@ mod tests {
             event: &event,
             app_state: &handles.state,
             store: store.as_ref(),
+            actor: None,
         };
 
         automation.execute(&ctx).await.unwrap();
@@ -311,6 +313,7 @@ mod tests {
             version: 2,
             timestamp: Utc::now(),
             payload,
+            actor: None,
         };
 
         let automation = CascadeIssueStatusAutomation::new(None).unwrap();
@@ -318,6 +321,7 @@ mod tests {
             event: &event,
             app_state: &handles.state,
             store: store.as_ref(),
+            actor: None,
         };
 
         automation.execute(&ctx).await.unwrap();
@@ -346,6 +350,7 @@ mod tests {
             version: 2,
             timestamp: Utc::now(),
             payload,
+            actor: None,
         };
 
         let automation = CascadeIssueStatusAutomation::new(None).unwrap();
@@ -353,6 +358,7 @@ mod tests {
             event: &event,
             app_state: &handles.state,
             store: store.as_ref(),
+            actor: None,
         };
 
         // Should return Ok without doing anything

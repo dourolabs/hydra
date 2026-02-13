@@ -72,10 +72,12 @@ async fn run_automation_loop(
             continue;
         }
 
+        let actor = event.actor();
         let ctx = AutomationContext {
             event: &event,
             app_state: &state,
             store: state.store(),
+            actor: actor.map(|a| a.as_ref()),
         };
 
         state.policy_engine().run_automations(&ctx).await;

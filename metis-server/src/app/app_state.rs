@@ -8,7 +8,7 @@ use crate::{
             Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, JobSettings, TodoItem,
         },
         jobs::BundleSpec,
-        patches::{GithubPr, Patch},
+        patches::Patch,
         users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
@@ -120,39 +120,6 @@ pub enum UpsertPatchError {
     Store {
         #[source]
         source: StoreError,
-    },
-    #[error("github sync requires an authenticated actor")]
-    GithubActorMissing,
-    #[error("failed to load github token for actor '{actor}': {message}")]
-    GithubTokenLookup { actor: String, message: String },
-    #[error("failed to create github client for actor '{actor}'")]
-    GithubUserClient {
-        #[source]
-        source: octocrab::Error,
-        actor: String,
-    },
-    #[error("github sync requires a base ref")]
-    GithubBaseRefMissing,
-    #[error("failed to load repository '{repo_name}' for github sync")]
-    GithubRepositoryLookup {
-        #[source]
-        source: StoreError,
-        repo_name: RepoName,
-    },
-    #[error("failed to update github pull request '{owner}/{repo}#{number}'")]
-    GithubPullRequestUpdate {
-        #[source]
-        source: octocrab::Error,
-        owner: String,
-        repo: String,
-        number: u64,
-    },
-    #[error("failed to create github pull request for '{owner}/{repo}'")]
-    GithubPullRequestCreate {
-        #[source]
-        source: octocrab::Error,
-        owner: String,
-        repo: String,
     },
     #[error("failed to load merge-request issues for patch '{patch_id}'")]
     MergeRequestLookup {
@@ -362,6 +329,7 @@ impl AppState {
                     PolicyEntry::Name("close_merge_request_issues".to_string()),
                     PolicyEntry::Name("create_merge_request_issue".to_string()),
                     PolicyEntry::Name("inherit_creator_from_parent".to_string()),
+                    PolicyEntry::Name("github_pr_sync".to_string()),
                 ],
             },
             repos: Default::default(),
@@ -723,115 +691,6 @@ impl AppState {
         user.github_user_id = github_user_id;
         user.github_refresh_token = github_refresh_token;
         store.update_user(user).await.map(|user| user.item)
-    }
-
-    async fn sync_patch_with_github(
-        &self,
-        actor: &Actor,
-        patch: &mut Patch,
-        head_ref: &str,
-    ) -> Result<(), UpsertPatchError> {
-        let (owner, repo) = match patch.github.as_ref() {
-            Some(github) => (github.owner.clone(), github.repo.clone()),
-            None => (
-                patch.service_repo_name.organization.clone(),
-                patch.service_repo_name.repo.clone(),
-            ),
-        };
-        let client = self.github_user_client(actor).await?;
-
-        if let Some(existing) = patch.github.as_ref() {
-            let pr = client
-                .pulls(&owner, &repo)
-                .update(existing.number)
-                .title(patch.title.clone())
-                .body(patch.description.clone())
-                .send()
-                .await
-                .map_err(|source| UpsertPatchError::GithubPullRequestUpdate {
-                    source,
-                    owner: owner.clone(),
-                    repo: repo.clone(),
-                    number: existing.number,
-                })?;
-
-            let mut updated = existing.clone();
-            updated.head_ref = Some(pr.head.ref_field.clone());
-            updated.base_ref = Some(pr.base.ref_field.clone());
-            updated.url = pr.html_url.as_ref().map(ToString::to_string);
-            patch.github = Some(updated);
-            return Ok(());
-        }
-
-        let base_ref = match patch
-            .github
-            .as_ref()
-            .and_then(|github| github.base_ref.as_ref())
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-        {
-            Some(base_ref) => base_ref,
-            None => {
-                let repository = self
-                    .repository_from_store(&patch.service_repo_name)
-                    .await
-                    .map_err(|source| UpsertPatchError::GithubRepositoryLookup {
-                        source,
-                        repo_name: patch.service_repo_name.clone(),
-                    })?;
-                repository
-                    .default_branch
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                    .ok_or(UpsertPatchError::GithubBaseRefMissing)?
-            }
-        };
-
-        let pr = client
-            .pulls(&owner, &repo)
-            .create(patch.title.clone(), head_ref, base_ref)
-            .body(patch.description.clone())
-            .send()
-            .await
-            .map_err(|source| UpsertPatchError::GithubPullRequestCreate {
-                source,
-                owner: owner.clone(),
-                repo: repo.clone(),
-            })?;
-
-        patch.github = Some(GithubPr::new(
-            owner,
-            repo,
-            pr.number,
-            Some(pr.head.ref_field.clone()),
-            Some(pr.base.ref_field.clone()),
-            pr.html_url.as_ref().map(ToString::to_string),
-            patch.github.as_ref().and_then(|github| github.ci.clone()),
-        ));
-
-        Ok(())
-    }
-
-    async fn github_user_client(&self, actor: &Actor) -> Result<Octocrab, UpsertPatchError> {
-        let token = actor.get_github_token(self).await.map_err(|err| {
-            UpsertPatchError::GithubTokenLookup {
-                actor: actor.name(),
-                message: err.message().to_string(),
-            }
-        })?;
-
-        Octocrab::builder()
-            .base_uri(self.config.github_app.api_base_url().to_string())
-            .map_err(|source| UpsertPatchError::GithubUserClient {
-                source,
-                actor: actor.name(),
-            })?
-            .personal_token(token.github_token)
-            .build()
-            .map_err(|source| UpsertPatchError::GithubUserClient {
-                source,
-                actor: actor.name(),
-            })
     }
 
     pub async fn list_repositories(
@@ -1582,71 +1441,81 @@ impl AppState {
         } = request;
         let mut patch: Patch = patch.into();
 
-        let store = self.store.as_ref();
-        let (patch_id, version) = match patch_id {
-            Some(id) => {
-                let existing_patch =
-                    store
-                        .get_patch(&id, false)
-                        .await
-                        .map_err(|source| match source {
-                            StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
-                                patch_id: id.clone(),
-                                source,
-                            },
-                            other => UpsertPatchError::Store { source: other },
-                        })?;
+        // When a sync_github_branch is provided, store it on the patch so the
+        // GithubPrSyncAutomation can pick it up asynchronously from the event.
+        if let Some(ref branch) = sync_github_branch {
+            patch.branch_name = Some(branch.clone());
+        }
 
-                patch.created_by = existing_patch.item.created_by;
-                if let Some(sync_github_branch) = sync_github_branch {
-                    if patch.github.is_none() {
+        let store = self.store.as_ref();
+
+        // Build the store result inside an async block so we can optionally
+        // wrap it with the MUTATION_ACTOR task-local (making actor context
+        // available to the automation runner via the emitted ServerEvent).
+        let do_store = async {
+            let result: Result<(PatchId, VersionNumber), UpsertPatchError> = match patch_id {
+                Some(id) => {
+                    let existing_patch =
+                        store
+                            .get_patch(&id, false)
+                            .await
+                            .map_err(|source| match source {
+                                StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
+                                    patch_id: id.clone(),
+                                    source,
+                                },
+                                other => UpsertPatchError::Store { source: other },
+                            })?;
+
+                    patch.created_by = existing_patch.item.created_by;
+                    if sync_github_branch.is_some() && patch.github.is_none() {
                         patch.github = existing_patch.item.github.clone();
                     }
 
-                    let actor = actor.ok_or(UpsertPatchError::GithubActorMissing)?;
-                    self.sync_patch_with_github(actor, &mut patch, &sync_github_branch)
-                        .await?;
+                    let version =
+                        store
+                            .update_patch(&id, patch)
+                            .await
+                            .map_err(|source| match source {
+                                StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
+                                    patch_id: id.clone(),
+                                    source,
+                                },
+                                other => UpsertPatchError::Store { source: other },
+                            })?;
+
+                    Ok((id, version))
                 }
-
-                let version =
-                    store
-                        .update_patch(&id, patch)
-                        .await
-                        .map_err(|source| match source {
-                            StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
-                                patch_id: id.clone(),
-                                source,
-                            },
-                            other => UpsertPatchError::Store { source: other },
-                        })?;
-
-                (id, version)
-            }
-            None => {
-                // Run restriction policies before persisting
-                {
+                None => {
+                    // Run restriction policies before persisting
                     self.policy_engine.check_create_patch(&patch, store).await?;
-                }
 
-                if let Some(sync_github_branch) = sync_github_branch {
-                    let actor = actor.ok_or(UpsertPatchError::GithubActorMissing)?;
-                    self.sync_patch_with_github(actor, &mut patch, &sync_github_branch)
-                        .await?;
+                    let (id, version) =
+                        store
+                            .add_patch(patch)
+                            .await
+                            .map_err(|source| match source {
+                                StoreError::PatchNotFound(id) => UpsertPatchError::PatchNotFound {
+                                    patch_id: id.clone(),
+                                    source: StoreError::PatchNotFound(id),
+                                },
+                                other => UpsertPatchError::Store { source: other },
+                            })?;
+                    Ok((id, version))
                 }
+            };
+            result
+        };
 
-                let (id, version) =
-                    store
-                        .add_patch(patch)
-                        .await
-                        .map_err(|source| match source {
-                            StoreError::PatchNotFound(id) => UpsertPatchError::PatchNotFound {
-                                patch_id: id.clone(),
-                                source: StoreError::PatchNotFound(id),
-                            },
-                            other => UpsertPatchError::Store { source: other },
-                        })?;
-                (id, version)
-            }
+        // When we have an actor, set it in the task-local so events emitted by
+        // StoreWithEvents carry the actor context for the automation runner.
+        let (patch_id, version) = if let Some(actor) = actor {
+            let actor_arc = std::sync::Arc::new(actor.clone());
+            super::event_bus::MUTATION_ACTOR
+                .scope(actor_arc, do_store)
+                .await?
+        } else {
+            do_store.await?
         };
 
         tracing::info!(patch_id = %patch_id, "patch stored successfully");
@@ -2140,28 +2009,25 @@ mod tests {
     use crate::{
         app::{AppState, ServerEvent, ServiceState},
         domain::{
-            actors::Actor,
             documents::Document,
             issues::{
                 Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
                 TodoItem,
             },
             jobs::{BundleSpec, Task},
-            patches::{GithubPr, Patch, PatchStatus},
-            users::{User, Username},
+            patches::{Patch, PatchStatus},
+            users::Username,
         },
         job_engine::{JobEngine, JobStatus},
         store::{MemoryStore, Status, Store, StoreError, TaskError},
         test_utils::{
-            MockJobEngine, add_repository, github_user_response, test_app_config, test_state,
-            test_state_handles, test_state_with_engine, test_state_with_github_api_base_url,
+            MockJobEngine, github_user_response, test_app_config, test_state, test_state_handles,
+            test_state_with_engine, test_state_with_github_api_base_url,
         },
     };
     use chrono::{Duration, Utc};
-    use httpmock::Method::PATCH;
     use httpmock::prelude::*;
     use metis_common::{IssueId, RepoName, TaskId, api::v1 as api};
-    use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
     use tokio::sync::RwLock;
 
@@ -2204,28 +2070,6 @@ mod tests {
             Arc::new(MockJobEngine::new()),
             Arc::new(RwLock::new(Vec::new())),
         )
-    }
-
-    fn github_pull_request_response(
-        number: u64,
-        head_ref: &str,
-        base_ref: &str,
-        html_url: &str,
-    ) -> serde_json::Value {
-        json!({
-            "url": format!("https://api.example.com/pulls/{number}"),
-            "id": number,
-            "number": number,
-            "head": {
-                "ref": head_ref,
-                "sha": "abc123"
-            },
-            "base": {
-                "ref": base_ref,
-                "sha": "def456"
-            },
-            "html_url": html_url
-        })
     }
 
     fn issue_with_status(
@@ -2322,194 +2166,6 @@ mod tests {
             .expect_err("login should fail for invalid token");
 
         assert!(matches!(err, LoginError::InvalidGithubToken(_)));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn upsert_patch_sync_github_updates_existing_pr() -> anyhow::Result<()> {
-        let github_server = MockServer::start_async().await;
-        let user_mock = github_server.mock(|when, then| {
-            when.method(GET).path("/user");
-            then.status(200)
-                .header("content-type", "application/json")
-                .json_body(github_user_response("octo", 42));
-        });
-        let update_mock = github_server.mock(|when, then| {
-            when.method(PATCH)
-                .path("/repos/octo/repo/pulls/42")
-                .json_body_partial(r#"{"title":"Updated title","body":"Updated description"}"#);
-            then.status(200)
-                .header("content-type", "application/json")
-                .json_body(github_pull_request_response(
-                    42,
-                    "feature",
-                    "main",
-                    "https://example.com/pr/42",
-                ));
-        });
-
-        let handles = test_state_with_github_api_base_url(github_server.base_url());
-        let username = Username::from("octo");
-        let user = User::new(
-            username.clone(),
-            42,
-            "token-123".to_string(),
-            "refresh-123".to_string(),
-        );
-        handles.store.as_ref().add_user(user).await?;
-        let (actor, _auth_token) = Actor::new_for_user(username);
-        handles.store.as_ref().add_actor(actor.clone()).await?;
-        let repo_name = RepoName::new("octo", "repo")?;
-        let existing_patch = Patch::new(
-            "Original".to_string(),
-            "Original description".to_string(),
-            "diff".to_string(),
-            PatchStatus::Open,
-            false,
-            Some(TaskId::new()),
-            Vec::new(),
-            repo_name.clone(),
-            Some(GithubPr::new(
-                "octo".to_string(),
-                "repo".to_string(),
-                42,
-                Some("old-head".to_string()),
-                Some("old-base".to_string()),
-                None,
-                None,
-            )),
-        );
-
-        let (patch_id, _) = handles.store.as_ref().add_patch(existing_patch).await?;
-
-        let request_patch = Patch::new(
-            "Updated title".to_string(),
-            "Updated description".to_string(),
-            "diff".to_string(),
-            PatchStatus::Open,
-            false,
-            None,
-            Vec::new(),
-            repo_name,
-            None,
-        );
-        let request = api::patches::UpsertPatchRequest::new(request_patch.into())
-            .with_sync_github_branch("feature");
-
-        handles
-            .state
-            .upsert_patch(Some(&actor), Some(patch_id.clone()), request)
-            .await?;
-
-        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
-        let github = stored_patch
-            .item
-            .github
-            .expect("github metadata should be preserved");
-        assert_eq!(github.number, 42);
-        assert_eq!(github.owner, "octo");
-        assert_eq!(github.repo, "repo");
-        assert_eq!(github.head_ref.as_deref(), Some("feature"));
-        assert_eq!(github.base_ref.as_deref(), Some("main"));
-        assert_eq!(github.url.as_deref(), Some("https://example.com/pr/42"));
-
-        user_mock.assert_async().await;
-        update_mock.assert_async().await;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn upsert_patch_sync_github_creates_pr_and_persists_github() -> anyhow::Result<()> {
-        let github_server = MockServer::start_async().await;
-        let user_mock = github_server.mock(|when, then| {
-            when.method(GET).path("/user");
-            then.status(200)
-                .header("content-type", "application/json")
-                .json_body(github_user_response("octo", 42));
-        });
-        let create_mock = github_server.mock(|when, then| {
-            when.method(POST)
-                .path("/repos/octo/repo/pulls")
-                .json_body_partial(
-                    r#"{"title":"New patch","head":"metis-t-test","base":"main","body":"New patch description"}"#,
-                );
-            then.status(200)
-                .header("content-type", "application/json")
-                .json_body(github_pull_request_response(
-                    99,
-                    "metis-t-test",
-                    "main",
-                    "https://example.com/pr/99",
-                ));
-        });
-
-        let handles = test_state_with_github_api_base_url(github_server.base_url());
-        let username = Username::from("octo");
-        let user = User::new(
-            username.clone(),
-            42,
-            "token-456".to_string(),
-            "refresh-456".to_string(),
-        );
-        handles.store.as_ref().add_user(user).await?;
-        let (actor, _auth_token) = Actor::new_for_user(username);
-        handles.store.as_ref().add_actor(actor.clone()).await?;
-        let repo_name = RepoName::new("octo", "repo")?;
-        add_repository(
-            &handles.state,
-            repo_name.clone(),
-            crate::app::Repository::new(
-                "https://example.com/repo.git".to_string(),
-                Some("main".to_string()),
-                None,
-            ),
-        )
-        .await?;
-
-        let mut task = sample_task();
-        let created_at = Utc::now();
-        let (task_id, _) = handles
-            .store
-            .as_ref()
-            .add_task(task.clone(), created_at)
-            .await?;
-        task.status = Status::Running;
-        handles.store.as_ref().update_task(&task_id, task).await?;
-        let patch = Patch::new(
-            "New patch".to_string(),
-            "New patch description".to_string(),
-            "diff".to_string(),
-            PatchStatus::Open,
-            false,
-            Some(task_id),
-            Vec::new(),
-            repo_name,
-            None,
-        );
-        let request = api::patches::UpsertPatchRequest::new(patch.into())
-            .with_sync_github_branch("metis-t-test");
-
-        let (patch_id, _) = handles
-            .state
-            .upsert_patch(Some(&actor), None, request)
-            .await?;
-        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
-        let github = stored_patch
-            .item
-            .github
-            .expect("github metadata should be created");
-
-        assert_eq!(github.number, 99);
-        assert_eq!(github.owner, "octo");
-        assert_eq!(github.repo, "repo");
-        assert_eq!(github.head_ref.as_deref(), Some("metis-t-test"));
-        assert_eq!(github.base_ref.as_deref(), Some("main"));
-        assert_eq!(github.url.as_deref(), Some("https://example.com/pr/99"));
-
-        user_mock.assert_async().await;
-        create_mock.assert_async().await;
-
         Ok(())
     }
 

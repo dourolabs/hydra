@@ -285,6 +285,7 @@ async fn run_automations_executes_matching_automations() {
         version: 1,
         timestamp: Utc::now(),
         payload: dummy_issue_payload(),
+        actor: None,
     };
 
     let handles = test_utils::test_state_handles();
@@ -293,6 +294,7 @@ async fn run_automations_executes_matching_automations() {
         event: &event,
         app_state: &handles.state,
         store: handles.store.as_ref(),
+        actor: None,
     };
 
     engine.run_automations(&ctx).await;
@@ -318,6 +320,7 @@ async fn run_automations_skips_non_matching_events() {
         version: 1,
         timestamp: Utc::now(),
         payload: dummy_issue_payload(),
+        actor: None,
     };
 
     let handles = test_utils::test_state_handles();
@@ -326,6 +329,7 @@ async fn run_automations_skips_non_matching_events() {
         event: &event,
         app_state: &handles.state,
         store: handles.store.as_ref(),
+        actor: None,
     };
 
     engine.run_automations(&ctx).await;
@@ -352,6 +356,7 @@ async fn run_automations_logs_errors_but_continues() {
         version: 3,
         timestamp: Utc::now(),
         payload: dummy_issue_payload(),
+        actor: None,
     };
 
     let handles = test_utils::test_state_handles();
@@ -360,6 +365,7 @@ async fn run_automations_logs_errors_but_continues() {
         event: &event,
         app_state: &handles.state,
         store: handles.store.as_ref(),
+        actor: None,
     };
 
     engine.run_automations(&ctx).await;
@@ -380,6 +386,7 @@ fn event_filter_empty_matches_all() {
         version: 1,
         timestamp: Utc::now(),
         payload: dummy_document_payload(),
+        actor: None,
     };
     assert!(filter.matches(&event));
 }
@@ -395,6 +402,7 @@ fn event_filter_specific_type_matches() {
         version: 1,
         timestamp: Utc::now(),
         payload: dummy_patch_payload(),
+        actor: None,
     };
     let non_matching = ServerEvent::PatchCreated {
         seq: 2,
@@ -402,6 +410,7 @@ fn event_filter_specific_type_matches() {
         version: 1,
         timestamp: Utc::now(),
         payload: dummy_patch_payload(),
+        actor: None,
     };
     assert!(filter.matches(&matching));
     assert!(!filter.matches(&non_matching));

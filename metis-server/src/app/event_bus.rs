@@ -23,6 +23,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
 
+tokio::task_local! {
+    /// Task-local actor context set by callers (e.g., `upsert_patch`) so that
+    /// events emitted by [`StoreWithEvents`] within the same async task carry
+    /// the acting user. The automation runner reads this from the broadcast
+    /// event to populate `AutomationContext::actor`.
+    pub static MUTATION_ACTOR: Arc<Actor>;
+}
+
 /// Payload carrying before/after entity state for mutation events.
 ///
 /// Wrapped in `Arc` inside `ServerEvent` so that cloning events to multiple
@@ -80,6 +88,7 @@ pub enum ServerEvent {
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
+        actor: Option<Arc<Actor>>,
     },
     IssueUpdated {
         seq: u64,
@@ -87,6 +96,7 @@ pub enum ServerEvent {
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
+        actor: Option<Arc<Actor>>,
     },
     IssueDeleted {
         seq: u64,
@@ -94,6 +104,7 @@ pub enum ServerEvent {
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
+        actor: Option<Arc<Actor>>,
     },
     PatchCreated {
         seq: u64,
@@ -101,6 +112,7 @@ pub enum ServerEvent {
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
+        actor: Option<Arc<Actor>>,
     },
     PatchUpdated {
         seq: u64,
@@ -108,6 +120,7 @@ pub enum ServerEvent {
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
+        actor: Option<Arc<Actor>>,
     },
     PatchDeleted {
         seq: u64,
@@ -115,6 +128,7 @@ pub enum ServerEvent {
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
+        actor: Option<Arc<Actor>>,
     },
     JobCreated {
         seq: u64,
@@ -122,6 +136,7 @@ pub enum ServerEvent {
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
+        actor: Option<Arc<Actor>>,
     },
     JobUpdated {
         seq: u64,
@@ -129,6 +144,7 @@ pub enum ServerEvent {
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
+        actor: Option<Arc<Actor>>,
     },
     DocumentCreated {
         seq: u64,
@@ -136,6 +152,7 @@ pub enum ServerEvent {
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
+        actor: Option<Arc<Actor>>,
     },
     DocumentUpdated {
         seq: u64,
@@ -143,6 +160,7 @@ pub enum ServerEvent {
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
+        actor: Option<Arc<Actor>>,
     },
     DocumentDeleted {
         seq: u64,
@@ -150,6 +168,7 @@ pub enum ServerEvent {
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
+        actor: Option<Arc<Actor>>,
     },
 }
 
@@ -168,6 +187,23 @@ impl ServerEvent {
             | ServerEvent::DocumentCreated { seq, .. }
             | ServerEvent::DocumentUpdated { seq, .. }
             | ServerEvent::DocumentDeleted { seq, .. } => *seq,
+        }
+    }
+
+    /// Returns the actor who triggered the original mutation, if known.
+    pub fn actor(&self) -> Option<&Arc<Actor>> {
+        match self {
+            ServerEvent::IssueCreated { actor, .. }
+            | ServerEvent::IssueUpdated { actor, .. }
+            | ServerEvent::IssueDeleted { actor, .. }
+            | ServerEvent::PatchCreated { actor, .. }
+            | ServerEvent::PatchUpdated { actor, .. }
+            | ServerEvent::PatchDeleted { actor, .. }
+            | ServerEvent::JobCreated { actor, .. }
+            | ServerEvent::JobUpdated { actor, .. }
+            | ServerEvent::DocumentCreated { actor, .. }
+            | ServerEvent::DocumentUpdated { actor, .. }
+            | ServerEvent::DocumentDeleted { actor, .. } => actor.as_ref(),
         }
     }
 
@@ -228,6 +264,11 @@ impl EventBus {
         let _ = self.sender.send(event);
     }
 
+    /// Returns the current task-local [`MUTATION_ACTOR`] if one is set.
+    fn current_actor() -> Option<Arc<Actor>> {
+        MUTATION_ACTOR.try_with(Arc::clone).ok()
+    }
+
     pub fn emit_issue_created(
         &self,
         issue_id: IssueId,
@@ -240,6 +281,7 @@ impl EventBus {
             version,
             timestamp: Utc::now(),
             payload,
+            actor: Self::current_actor(),
         });
     }
 
@@ -255,6 +297,7 @@ impl EventBus {
             version,
             timestamp: Utc::now(),
             payload,
+            actor: Self::current_actor(),
         });
     }
 
@@ -270,6 +313,7 @@ impl EventBus {
             version,
             timestamp: Utc::now(),
             payload,
+            actor: Self::current_actor(),
         });
     }
 
@@ -285,6 +329,7 @@ impl EventBus {
             version,
             timestamp: Utc::now(),
             payload,
+            actor: Self::current_actor(),
         });
     }
 
@@ -300,6 +345,7 @@ impl EventBus {
             version,
             timestamp: Utc::now(),
             payload,
+            actor: Self::current_actor(),
         });
     }
 
@@ -315,6 +361,7 @@ impl EventBus {
             version,
             timestamp: Utc::now(),
             payload,
+            actor: Self::current_actor(),
         });
     }
 
@@ -325,6 +372,7 @@ impl EventBus {
             version,
             timestamp: Utc::now(),
             payload,
+            actor: Self::current_actor(),
         });
     }
 
@@ -335,6 +383,7 @@ impl EventBus {
             version,
             timestamp: Utc::now(),
             payload,
+            actor: Self::current_actor(),
         });
     }
 
@@ -350,6 +399,7 @@ impl EventBus {
             version,
             timestamp: Utc::now(),
             payload,
+            actor: Self::current_actor(),
         });
     }
 
@@ -365,6 +415,7 @@ impl EventBus {
             version,
             timestamp: Utc::now(),
             payload,
+            actor: Self::current_actor(),
         });
     }
 
@@ -380,6 +431,7 @@ impl EventBus {
             version,
             timestamp: Utc::now(),
             payload,
+            actor: Self::current_actor(),
         });
     }
 }

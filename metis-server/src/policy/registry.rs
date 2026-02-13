@@ -84,6 +84,7 @@ impl Default for PolicyRegistry {
 /// (restrictions and automations).
 pub fn build_default_registry() -> PolicyRegistry {
     use super::automations::*;
+    use super::integrations::GithubPrSyncAutomation;
     use super::restrictions::*;
 
     let mut registry = PolicyRegistry::new();
@@ -123,6 +124,9 @@ pub fn build_default_registry() -> PolicyRegistry {
     });
     registry.register_automation("inherit_creator_from_parent", |params| {
         Ok(Box::new(InheritCreatorAutomation::new(params)?))
+    });
+    registry.register_automation("github_pr_sync", |params| {
+        Ok(Box::new(GithubPrSyncAutomation::new(params)?))
     });
 
     registry

@@ -190,6 +190,7 @@ mod tests {
             version: 2,
             timestamp: Utc::now(),
             payload,
+            actor: None,
         };
 
         let automation = KillTasksOnFailureAutomation;
@@ -197,6 +198,7 @@ mod tests {
             event: &event,
             app_state: &handles.state,
             store: store.as_ref(),
+            actor: None,
         };
 
         // MockJobEngine will succeed on kill_job
@@ -224,6 +226,7 @@ mod tests {
             version: 2,
             timestamp: Utc::now(),
             payload,
+            actor: None,
         };
 
         let automation = KillTasksOnFailureAutomation;
@@ -231,6 +234,7 @@ mod tests {
             event: &event,
             app_state: &handles.state,
             store: store.as_ref(),
+            actor: None,
         };
 
         automation.execute(&ctx).await.unwrap();
