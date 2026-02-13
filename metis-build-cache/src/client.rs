@@ -9,8 +9,9 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use tar::{Builder, Header};
+use tracing::info;
 use walkdir::WalkDir;
 
 /// Build cache archives are written as deterministic `tar.zst` files.
@@ -191,14 +192,56 @@ impl BuildCacheClient {
         home_dir: Option<&Path>,
         repo_name: metis_common::RepoName,
     ) -> Result<Option<BuildCacheKey>, BuildCacheError> {
+        let start = Instant::now();
         let entries = self.list_caches(repo_name.clone()).await?;
+        info!(
+            phase = "list_caches",
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            entries = entries.len(),
+            "cache phase complete"
+        );
+
         let repo_root = repo_root.as_ref();
+        let start = Instant::now();
         let nearest = find_nearest_cache_entry(repo_root, repo_name, entries)?;
+        info!(
+            phase = "find_nearest",
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            found = nearest.is_some(),
+            "cache phase complete"
+        );
+
         let Some(nearest) = nearest else {
             return Ok(None);
         };
-        self.download_and_apply_cache(repo_root, home_dir, &nearest.key)
-            .await?;
+
+        let temp = tempfile::NamedTempFile::new()
+            .map_err(|err| BuildCacheError::io("creating temp cache file", err))?;
+        let path = temp.path().to_path_buf();
+
+        let start = Instant::now();
+        self.download_cache(&nearest.key, &path).await?;
+        let file_size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        info!(
+            phase = "download",
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            file_size_bytes,
+            "cache phase complete"
+        );
+
+        let start = Instant::now();
+        self.apply_cache_archive_async(
+            repo_root.to_path_buf(),
+            home_dir.map(Path::to_path_buf),
+            path,
+        )
+        .await?;
+        info!(
+            phase = "apply",
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "cache phase complete"
+        );
+
         Ok(Some(nearest.key))
     }
 
@@ -213,13 +256,42 @@ impl BuildCacheClient {
         let temp = tempfile::NamedTempFile::new()
             .map_err(|err| BuildCacheError::io("creating temp cache file", err))?;
         let archive_path = temp.path().to_path_buf();
+
+        let start = Instant::now();
         self.build_cache_archive_async(
             repo_root.as_ref().to_path_buf(),
             home_dir.map(Path::to_path_buf),
             archive_path.clone(),
         )
         .await?;
-        self.upload_cache(&key, archive_path).await?;
+        let file_size_bytes = std::fs::metadata(&archive_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        info!(
+            phase = "build_archive",
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            file_size_bytes,
+            "cache phase complete"
+        );
+
+        let start = Instant::now();
+        self.storage
+            .put_object(&key.object_key(), &archive_path)
+            .await?;
+        info!(
+            phase = "upload",
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "cache phase complete"
+        );
+
+        let start = Instant::now();
+        self.evict_if_needed(key.repo_name.clone()).await?;
+        info!(
+            phase = "evict",
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "cache phase complete"
+        );
+
         Ok(key)
     }
 
