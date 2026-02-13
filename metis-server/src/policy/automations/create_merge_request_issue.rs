@@ -138,6 +138,7 @@ impl Automation for CreateMergeRequestIssueAutomation {
             .upsert_issue(
                 None,
                 metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
+                None,
             )
             .await
             .map_err(|e| {

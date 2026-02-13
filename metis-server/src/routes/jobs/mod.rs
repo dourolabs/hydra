@@ -1,4 +1,3 @@
-use crate::app::event_bus::with_actor;
 use crate::domain::actors::Actor;
 use crate::{
     app::{AppState, BundleResolutionError, CreateJobError, TaskResolutionError},
@@ -25,8 +24,10 @@ pub async fn create_job(
     Json(payload): Json<v1::jobs::CreateJobRequest>,
 ) -> Result<Json<v1::jobs::CreateJobResponse>, ApiError> {
     info!("create_job invoked");
-    let job_id = with_actor(Some(actor.name()), async {
-        state.create_job(payload).await.map_err(|err| match err {
+    let job_id = state
+        .create_job(payload, Some(actor.name()))
+        .await
+        .map_err(|err| match err {
             CreateJobError::TaskResolution(err) => ApiError::from(err),
             CreateJobError::IssueLookup { source, issue_id } => match source {
                 StoreError::IssueNotFound(_) => {
@@ -45,9 +46,7 @@ pub async fn create_job(
                 error!(error = %source, "failed to store task");
                 ApiError::internal(format!("Failed to store task: {source}"))
             }
-        })
-    })
-    .await?;
+        })?;
 
     info!(
         job_id = %job_id,
