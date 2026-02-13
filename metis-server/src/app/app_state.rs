@@ -3175,6 +3175,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn closing_parent_allows_terminal_children() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+
+        let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
+        let (parent_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
+            )
+            .await
+            .unwrap();
+
+        let child_dependency =
+            IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child_issue =
+            issue_with_status("child", IssueStatus::Failed, vec![child_dependency.clone()]);
+        state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child_issue.into(), None),
+            )
+            .await
+            .unwrap();
+
+        // Closing parent should succeed because child is in a terminal state (Failed)
+        state
+            .upsert_issue(
+                Some(parent_id.clone()),
+                api::issues::UpsertIssueRequest::new(
+                    issue_with_status("parent", IssueStatus::Closed, vec![]).into(),
+                    None,
+                ),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn closing_issue_requires_completed_todos() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine);
