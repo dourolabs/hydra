@@ -867,10 +867,7 @@ pub async fn create_patch_artifact_from_repo(
         push_branch(repo_root, &branch_name, github_token.as_deref(), force)?;
     }
 
-    let mut upsert_request = UpsertPatchRequest::new(patch_payload.clone());
-    if create_github_pr {
-        upsert_request = upsert_request.with_sync_github_branch(&branch_name);
-    }
+    let upsert_request = UpsertPatchRequest::new(patch_payload.clone());
 
     let response = client
         .create_patch(&upsert_request)

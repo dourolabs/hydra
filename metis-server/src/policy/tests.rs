@@ -748,7 +748,7 @@ async fn check_update_job_passes_when_allowed() {
 // ---------------------------------------------------------------------------
 
 /// Test 1: Default config (no `[policies]` section) reproduces all current
-/// behavior exactly — all 6 restrictions and 5 automations are active.
+/// behavior exactly — all 6 restrictions and 6 automations are active.
 #[test]
 fn default_config_enables_all_builtin_policies() {
     let registry = registry::build_default_registry();
@@ -757,7 +757,7 @@ fn default_config_enables_all_builtin_policies() {
     let engine = crate::app::AppState::build_policy_engine(None);
 
     assert_eq!(engine.restriction_count(), 6);
-    assert_eq!(engine.automation_count(), 5);
+    assert_eq!(engine.automation_count(), 6);
     assert_eq!(engine.repo_override_count(), 0);
 
     // Also verify that an explicit config listing all policies gives the same counts
@@ -777,13 +777,14 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("close_merge_request_issues".to_string()),
                 PolicyEntry::Name("create_merge_request_issue".to_string()),
                 PolicyEntry::Name("inherit_creator_from_parent".to_string()),
+                PolicyEntry::Name("github_pr_sync".to_string()),
             ],
         },
         repos: HashMap::new(),
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 6);
-    assert_eq!(explicit_engine.automation_count(), 5);
+    assert_eq!(explicit_engine.automation_count(), 6);
 }
 
 /// Test 2: Disabling a specific restriction allows the previously-blocked

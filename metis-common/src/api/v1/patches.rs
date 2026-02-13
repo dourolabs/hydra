@@ -282,21 +282,11 @@ impl PatchVersionRecord {
 #[non_exhaustive]
 pub struct UpsertPatchRequest {
     pub patch: Patch,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sync_github_branch: Option<String>,
 }
 
 impl UpsertPatchRequest {
     pub fn new(patch: Patch) -> Self {
-        Self {
-            patch,
-            sync_github_branch: None,
-        }
-    }
-
-    pub fn with_sync_github_branch(mut self, branch: &str) -> Self {
-        self.sync_github_branch = Some(String::from(branch));
-        self
+        Self { patch }
     }
 }
 
