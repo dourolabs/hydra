@@ -10,6 +10,7 @@ use metis_common::{
         has_hidden_segment, Document as DocumentPayload, DocumentVersionRecord,
         SearchDocumentsQuery, UpsertDocumentRequest,
     },
+    versioning::VersionNumber,
     DocumentId, TaskId,
 };
 use serde::{Deserialize, Serialize};
@@ -379,6 +380,8 @@ struct SyncManifest {
 struct SyncManifestEntry {
     document_id: DocumentId,
     content_hash: String,
+    #[serde(default)]
+    version: VersionNumber,
 }
 
 fn compute_content_hash(content: &str) -> String {
@@ -464,6 +467,7 @@ pub async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -
                         SyncManifestEntry {
                             document_id: record.document_id.clone(),
                             content_hash,
+                            version: record.version,
                         },
                     );
                     skipped_count += 1;
@@ -486,6 +490,7 @@ pub async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -
             SyncManifestEntry {
                 document_id: record.document_id.clone(),
                 content_hash,
+                version: record.version,
             },
         );
         synced_count += 1;
@@ -621,9 +626,24 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
     // Collect all local files
     let local_files = collect_local_files(directory, args.path_prefix.as_deref())?;
 
+    // Fetch the full document list from server once upfront to get current versions.
+    // This avoids individual GET requests for unchanged files when checking server versions.
+    let server_query =
+        SearchDocumentsQuery::new(None, manifest.path_prefix.clone(), None, None, None);
+    let server_response = client
+        .list_documents(&server_query)
+        .await
+        .context("failed to list documents from server")?;
+    let server_versions: std::collections::HashMap<&DocumentId, VersionNumber> = server_response
+        .documents
+        .iter()
+        .map(|r| (&r.document_id, r.version))
+        .collect();
+
     let mut updated_count = 0u64;
     let mut created_count = 0u64;
     let mut unchanged_count = 0u64;
+    let mut skipped_count = 0u64;
     let mut conflict_count = 0u64;
     let mut deleted_count = 0u64;
 
@@ -638,13 +658,42 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
         let local_hash = compute_content_hash(&content);
 
         if let Some(entry) = manifest.documents.get(relative_path.as_str()) {
-            // Existing document — check if changed locally
-            if entry.content_hash == local_hash {
+            let local_changed = entry.content_hash != local_hash;
+            let server_version = server_versions
+                .get(&entry.document_id)
+                .copied()
+                .unwrap_or(entry.version);
+            let server_changed = server_version > entry.version;
+
+            if !local_changed && server_changed {
+                // Local file is unchanged but server has a newer version — skip push
+                // to avoid overwriting remote changes.
+                let doc_id = &entry.document_id;
+                eprintln!(
+                    "Skipping: '{relative_path}' ({doc_id}) — server has newer version (v{} > v{}), local unchanged",
+                    server_version, entry.version
+                );
+                // Update manifest entry with the server's current version so that
+                // subsequent pushes recognize the server state.
+                new_entries.insert(
+                    relative_path.to_string(),
+                    SyncManifestEntry {
+                        document_id: entry.document_id.clone(),
+                        content_hash: entry.content_hash.clone(),
+                        version: server_version,
+                    },
+                );
+                skipped_count += 1;
+                continue;
+            }
+
+            if !local_changed {
+                // Neither local nor server changed
                 unchanged_count += 1;
                 continue;
             }
 
-            // Check for server-side conflict by fetching current server content
+            // Local has changed — fetch the full document for the update
             let server_record =
                 client
                     .get_document(&entry.document_id)
@@ -655,11 +704,13 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
                             entry.document_id
                         )
                     })?;
-            let server_hash = compute_content_hash(&server_record.document.body_markdown);
-            if server_hash != entry.content_hash {
+
+            if server_changed {
+                // Both local and server changed — warn but proceed (local wins)
                 let doc_id = &entry.document_id;
                 eprintln!(
-                    "Warning: server document '{relative_path}' ({doc_id}) has changed since last sync; pushing local version anyway"
+                    "Warning: server document '{relative_path}' ({doc_id}) has changed since last sync (v{} > v{}); pushing local version anyway",
+                    server_version, entry.version
                 );
                 conflict_count += 1;
             }
@@ -670,7 +721,7 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
             } else {
                 let mut document = server_record.document.clone();
                 document.body_markdown = content.clone();
-                client
+                let update_response = client
                     .update_document(&entry.document_id, &UpsertDocumentRequest::new(document))
                     .await
                     .with_context(|| {
@@ -682,6 +733,7 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
                     SyncManifestEntry {
                         document_id: entry.document_id.clone(),
                         content_hash: local_hash,
+                        version: update_response.version,
                     },
                 );
                 let doc_id = &entry.document_id;
@@ -712,6 +764,7 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
                     SyncManifestEntry {
                         document_id: response.document_id.clone(),
                         content_hash: local_hash,
+                        version: response.version,
                     },
                 );
                 let doc_id = &response.document_id;
@@ -763,7 +816,7 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
     let total = updated_count + created_count + deleted_count;
     let dir_display = directory.display();
     println!(
-        "{prefix}Pushed {total} document(s) from '{dir_display}' ({updated_count} updated, {created_count} created, {deleted_count} deleted, {unchanged_count} unchanged, {conflict_count} conflicts)"
+        "{prefix}Pushed {total} document(s) from '{dir_display}' ({updated_count} updated, {created_count} created, {deleted_count} deleted, {unchanged_count} unchanged, {skipped_count} skipped, {conflict_count} conflicts)"
     );
 
     Ok(())
@@ -1128,6 +1181,7 @@ mod tests {
             SyncManifestEntry {
                 document_id: doc_id.clone(),
                 content_hash: "sha256:abc123".to_string(),
+                version: 1,
             },
         );
         let manifest = SyncManifest {
@@ -1191,6 +1245,7 @@ mod tests {
             SyncManifestEntry {
                 document_id: doc_id.clone(),
                 content_hash: "sha256:def456".to_string(),
+                version: 1,
             },
         );
         let manifest = SyncManifest {
@@ -1523,6 +1578,7 @@ mod tests {
             SyncManifestEntry {
                 document_id: doc_id.clone(),
                 content_hash: compute_content_hash(original_body),
+                version: 1,
             },
         );
         let manifest = SyncManifest {
@@ -1537,15 +1593,20 @@ mod tests {
         let modified_body = "# Updated content";
         fs::write(dir.path().join("docs/guide.md"), modified_body).unwrap();
 
-        // Mock server: GET document (for conflict check), PUT update
+        // Mock server: LIST (for version check), GET document (for update base), PUT update
         let server = MockServer::start();
         let server_record = DocumentVersionRecord::new(
             doc_id.clone(),
-            0,
+            1,
             Utc::now(),
             DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
                 .with_path("/docs/guide.md"),
         );
+        let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
         let doc_id_for_get = doc_id.clone();
         let get_mock = server.mock(move |when, then| {
             when.method(GET)
@@ -1557,7 +1618,7 @@ mod tests {
             when.method(PUT)
                 .path(format!("/v1/documents/{doc_id_for_update}").as_str());
             then.status(200)
-                .json_body_obj(&UpsertDocumentResponse::new(doc_id_for_update.clone(), 0));
+                .json_body_obj(&UpsertDocumentResponse::new(doc_id_for_update.clone(), 2));
         });
         let client = mock_client(&server);
 
@@ -1575,12 +1636,13 @@ mod tests {
         get_mock.assert();
         update_mock.assert();
 
-        // Verify manifest was updated with new hash
+        // Verify manifest was updated with new hash and version
         let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
         assert_eq!(
             updated_manifest.documents["docs/guide.md"].content_hash,
             compute_content_hash(modified_body)
         );
+        assert_eq!(updated_manifest.documents["docs/guide.md"].version, 2);
     }
 
     #[tokio::test]
@@ -1596,6 +1658,7 @@ mod tests {
             SyncManifestEntry {
                 document_id: doc_id.clone(),
                 content_hash: compute_content_hash(body),
+                version: 1,
             },
         );
         let manifest = SyncManifest {
@@ -1609,7 +1672,19 @@ mod tests {
         fs::write(dir.path().join("docs/stable.md"), body).unwrap();
 
         let server = MockServer::start();
-        // No mocks needed — server should not be called
+        // Mock list_documents (required by push) — returns same version as manifest
+        let list_record = DocumentVersionRecord::new(
+            doc_id.clone(),
+            1,
+            Utc::now(),
+            DocumentPayload::new("Stable".to_string(), body.to_string(), false)
+                .with_path("/docs/stable.md"),
+        );
+        let list_response = ListDocumentsResponse::new(vec![list_record]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
         let client = mock_client(&server);
 
         push_documents(
@@ -1650,11 +1725,17 @@ mod tests {
 
         let new_doc_id = DocumentId::new();
         let server = MockServer::start();
+        // Mock list_documents — returns empty (no existing docs)
+        let list_response = ListDocumentsResponse::new(vec![]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
         let new_doc_id_for_mock = new_doc_id.clone();
         let create_mock = server.mock(move |when, then| {
             when.method(POST).path("/v1/documents");
             then.status(200)
-                .json_body_obj(&UpsertDocumentResponse::new(new_doc_id_for_mock.clone(), 0));
+                .json_body_obj(&UpsertDocumentResponse::new(new_doc_id_for_mock.clone(), 1));
         });
         let client = mock_client(&server);
 
@@ -1671,7 +1752,7 @@ mod tests {
 
         create_mock.assert();
 
-        // Verify manifest now contains the new document
+        // Verify manifest now contains the new document with version
         let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
         assert!(updated_manifest
             .documents
@@ -1680,6 +1761,7 @@ mod tests {
             updated_manifest.documents["guides/new-guide.md"].document_id,
             new_doc_id
         );
+        assert_eq!(updated_manifest.documents["guides/new-guide.md"].version, 1);
     }
 
     #[tokio::test]
@@ -1695,6 +1777,7 @@ mod tests {
             SyncManifestEntry {
                 document_id: doc_id.clone(),
                 content_hash: compute_content_hash(original_body),
+                version: 1,
             },
         );
         let manifest = SyncManifest {
@@ -1712,14 +1795,20 @@ mod tests {
         fs::write(dir.path().join("guides/new.md"), "# New").unwrap();
 
         let server = MockServer::start();
-        // Mock GET for conflict check on the modified file
+        // Mock list_documents (required by push) — server version matches manifest
         let server_record = DocumentVersionRecord::new(
             doc_id.clone(),
-            0,
+            1,
             Utc::now(),
             DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
                 .with_path("/docs/guide.md"),
         );
+        let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
+        // Mock GET for conflict check on the modified file
         let doc_id_for_get = doc_id.clone();
         server.mock(move |when, then| {
             when.method(GET)
@@ -1761,6 +1850,7 @@ mod tests {
             SyncManifestEntry {
                 document_id: doc_id.clone(),
                 content_hash: compute_content_hash(original_body),
+                version: 1,
             },
         );
         let manifest = SyncManifest {
@@ -1774,15 +1864,20 @@ mod tests {
         fs::create_dir_all(dir.path().join("docs")).unwrap();
         fs::write(dir.path().join("docs/guide.md"), "# Local changes").unwrap();
 
-        // Mock server returns different content than what was synced
+        // Mock server returns different content and higher version than what was synced
         let server = MockServer::start();
         let server_record = DocumentVersionRecord::new(
             doc_id.clone(),
-            0,
+            2, // server version > manifest version (1), indicates server changed
             Utc::now(),
             DocumentPayload::new("Guide".to_string(), server_body.to_string(), false)
                 .with_path("/docs/guide.md"),
         );
+        let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
         let doc_id_for_get = doc_id.clone();
         server.mock(move |when, then| {
             when.method(GET)
@@ -1794,12 +1889,11 @@ mod tests {
             when.method(PUT)
                 .path(format!("/v1/documents/{doc_id_for_update}").as_str());
             then.status(200)
-                .json_body_obj(&UpsertDocumentResponse::new(doc_id_for_update.clone(), 0));
+                .json_body_obj(&UpsertDocumentResponse::new(doc_id_for_update.clone(), 3));
         });
         let client = mock_client(&server);
 
-        // Push should succeed but print a warning (we can't easily capture stderr in test,
-        // but we verify it doesn't error out)
+        // Push should succeed but print a warning (both local and server changed; local wins)
         push_documents(
             &client,
             PushArgs {
@@ -1811,12 +1905,135 @@ mod tests {
         .await
         .unwrap();
 
-        // Manifest should be updated with local content hash
+        // Manifest should be updated with local content hash and new version
         let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
         assert_eq!(
             updated_manifest.documents["docs/guide.md"].content_hash,
             compute_content_hash("# Local changes")
         );
+        assert_eq!(updated_manifest.documents["docs/guide.md"].version, 3);
+    }
+
+    #[tokio::test]
+    async fn push_documents_skips_when_server_updated_and_local_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let body = "# Original content";
+
+        // Create manifest at version 1
+        let mut documents = BTreeMap::new();
+        documents.insert(
+            "docs/guide.md".to_string(),
+            SyncManifestEntry {
+                document_id: doc_id.clone(),
+                content_hash: compute_content_hash(body),
+                version: 1,
+            },
+        );
+        let manifest = SyncManifest {
+            synced_at: "2026-02-11T00:00:00Z".to_string(),
+            path_prefix: None,
+            documents,
+        };
+        save_manifest(dir.path(), &manifest).unwrap();
+
+        // Write local file with SAME content (unchanged locally)
+        fs::create_dir_all(dir.path().join("docs")).unwrap();
+        fs::write(dir.path().join("docs/guide.md"), body).unwrap();
+
+        // Mock server: LIST returns version 2 (server changed since last sync)
+        let server = MockServer::start();
+        let server_record = DocumentVersionRecord::new(
+            doc_id.clone(),
+            2, // server version > manifest version (1)
+            Utc::now(),
+            DocumentPayload::new(
+                "Guide".to_string(),
+                "# Server updated content".to_string(),
+                false,
+            )
+            .with_path("/docs/guide.md"),
+        );
+        let list_response = ListDocumentsResponse::new(vec![server_record]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
+        // No GET (by id), PUT, or POST mocks — should not be called since local is unchanged
+        // and we skip the push
+        let client = mock_client(&server);
+
+        push_documents(
+            &client,
+            PushArgs {
+                directory: dir.path().to_path_buf(),
+                dry_run: false,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Manifest should be updated with the server's version but same content hash
+        let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert_eq!(
+            updated_manifest.documents["docs/guide.md"].content_hash,
+            compute_content_hash(body)
+        );
+        // Version should be updated to the server's version
+        assert_eq!(updated_manifest.documents["docs/guide.md"].version, 2);
+    }
+
+    #[test]
+    fn manifest_backwards_compat_without_version_field() {
+        // Old manifest format without version field should deserialize with version = 0
+        let doc_id = DocumentId::new();
+        let json = format!(
+            r#"{{
+            "synced_at": "2026-02-11T00:00:00Z",
+            "documents": {{
+                "docs/guide.md": {{
+                    "document_id": "{doc_id}",
+                    "content_hash": "sha256:abc123"
+                }}
+            }}
+        }}"#
+        );
+
+        let manifest: SyncManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(manifest.documents["docs/guide.md"].version, 0);
+    }
+
+    #[tokio::test]
+    async fn sync_documents_records_version_in_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_id = DocumentId::new();
+        let document = DocumentPayload::new("Guide".to_string(), "# Content".to_string(), false)
+            .with_path("docs/guide.md");
+        let record = DocumentVersionRecord::new(doc_id.clone(), 5, Utc::now(), document);
+        let response = ListDocumentsResponse::new(vec![record]);
+
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&response);
+        });
+        let client = mock_client(&server);
+
+        sync_documents(
+            &client,
+            SyncArgs {
+                directory: dir.path().to_path_buf(),
+                path_prefix: None,
+                clean: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Verify manifest records the version from the server
+        let manifest = load_manifest(dir.path()).unwrap().unwrap();
+        assert_eq!(manifest.documents["docs/guide.md"].version, 5);
     }
 
     #[tokio::test]
@@ -1839,11 +2056,17 @@ mod tests {
 
         let new_doc_id = DocumentId::new();
         let server = MockServer::start();
+        // Mock list_documents — returns empty
+        let list_response = ListDocumentsResponse::new(vec![]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
         let new_doc_id_for_mock = new_doc_id.clone();
         let create_mock = server.mock(move |when, then| {
             when.method(POST).path("/v1/documents");
             then.status(200)
-                .json_body_obj(&UpsertDocumentResponse::new(new_doc_id_for_mock.clone(), 0));
+                .json_body_obj(&UpsertDocumentResponse::new(new_doc_id_for_mock.clone(), 1));
         });
         let client = mock_client(&server);
 
@@ -1929,6 +2152,7 @@ mod tests {
             SyncManifestEntry {
                 document_id: doc_id.clone(),
                 content_hash: compute_content_hash(body),
+                version: 1,
             },
         );
         let manifest = SyncManifest {
@@ -1941,15 +2165,20 @@ mod tests {
         // Create the docs directory but not the file (simulating local deletion)
         fs::create_dir_all(dir.path().join("docs")).unwrap();
 
-        // Mock server: DELETE document
+        // Mock server: LIST (required by push) and DELETE document
         let server = MockServer::start();
+        let list_response = ListDocumentsResponse::new(vec![]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
         let doc_id_for_delete = doc_id.clone();
         let delete_mock = server.mock(move |when, then| {
             when.method(DELETE)
                 .path(format!("/v1/documents/{doc_id_for_delete}").as_str());
             let record = DocumentVersionRecord::new(
                 doc_id_for_delete.clone(),
-                0,
+                1,
                 Utc::now(),
                 DocumentPayload::new("Old".to_string(), body.to_string(), true),
             );
@@ -1988,6 +2217,7 @@ mod tests {
             SyncManifestEntry {
                 document_id: doc_id.clone(),
                 content_hash: compute_content_hash(body),
+                version: 1,
             },
         );
         let manifest = SyncManifest {
@@ -1998,6 +2228,12 @@ mod tests {
         save_manifest(dir.path(), &manifest).unwrap();
 
         let server = MockServer::start();
+        // Mock list_documents (required by push)
+        let list_response = ListDocumentsResponse::new(vec![]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
         // No DELETE mock — should not be called in dry-run
         let client = mock_client(&server);
 
@@ -2031,6 +2267,7 @@ mod tests {
             SyncManifestEntry {
                 document_id: playbook_id.clone(),
                 content_hash: compute_content_hash("# Old playbook"),
+                version: 1,
             },
         );
         documents.insert(
@@ -2038,6 +2275,7 @@ mod tests {
             SyncManifestEntry {
                 document_id: guide_id.clone(),
                 content_hash: compute_content_hash("# Old guide"),
+                version: 1,
             },
         );
         let manifest = SyncManifest {
@@ -2053,13 +2291,19 @@ mod tests {
         fs::create_dir_all(dir.path().join("guides")).unwrap();
 
         let server = MockServer::start();
+        // Mock list_documents (required by push)
+        let list_response = ListDocumentsResponse::new(vec![]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/documents");
+            then.status(200).json_body_obj(&list_response);
+        });
         let playbook_id_for_delete = playbook_id.clone();
         let delete_mock = server.mock(move |when, then| {
             when.method(DELETE)
                 .path(format!("/v1/documents/{playbook_id_for_delete}").as_str());
             let record = DocumentVersionRecord::new(
                 playbook_id_for_delete.clone(),
-                0,
+                1,
                 Utc::now(),
                 DocumentPayload::new("Old".to_string(), "# Old playbook".to_string(), true),
             );
