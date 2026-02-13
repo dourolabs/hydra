@@ -12,7 +12,7 @@ use crate::{
         users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
-    store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
+    store::{ReadOnlyStore, Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
 use chrono::{DateTime, Duration, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
@@ -2193,7 +2193,7 @@ mod tests {
             users::{User, Username},
         },
         job_engine::{JobEngine, JobStatus},
-        store::{MemoryStore, Status, Store, StoreError, TaskError},
+        store::{MemoryStore, ReadOnlyStore, Status, Store, StoreError, TaskError},
         test_utils::{
             MockJobEngine, add_repository, github_user_response, test_app_config, test_state,
             test_state_handles, test_state_with_engine, test_state_with_github_api_base_url,

@@ -982,9 +982,9 @@ mod tests {
     use super::*;
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
     use crate::domain::users::Username;
-    use crate::store::Store;
     use crate::store::postgres::{PgStorePool, PostgresStore};
     use crate::store::postgres_v2::PostgresStoreV2;
+    use crate::store::{ReadOnlyStore, Store};
     use metis_common::api::v1::issues::SearchIssuesQuery;
 
     #[sqlx::test(migrations = "./migrations")]

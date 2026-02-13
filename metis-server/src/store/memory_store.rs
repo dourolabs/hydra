@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
 use super::issue_graph::IssueGraphContext;
-use super::{Status, Store, StoreError, Task, TaskStatusLog};
+use super::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog};
 use crate::domain::{
     actors::Actor,
     documents::Document,
@@ -314,25 +314,7 @@ impl Default for MemoryStore {
 }
 
 #[async_trait]
-impl Store for MemoryStore {
-    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
-        // Check if exists and if deleted
-        if let Some(entry) = self.repositories.get(&name) {
-            if let Some(latest) = Self::latest_versioned(entry.value()) {
-                if latest.item.deleted {
-                    // Re-create over deleted: use caller's config as-is
-                    drop(entry);
-                    return self.update_repository(name, config).await;
-                }
-                return Err(StoreError::RepositoryAlreadyExists(name));
-            }
-        }
-
-        self.repositories
-            .insert(name, vec![Self::versioned_now(config, 1)]);
-        Ok(())
-    }
-
+impl ReadOnlyStore for MemoryStore {
     async fn get_repository(
         &self,
         name: &RepoName,
@@ -347,21 +329,6 @@ impl Store for MemoryStore {
             return Err(StoreError::RepositoryNotFound(name.clone()));
         }
         Ok(versioned)
-    }
-
-    async fn update_repository(
-        &self,
-        name: RepoName,
-        config: Repository,
-    ) -> Result<(), StoreError> {
-        let mut versions = self
-            .repositories
-            .get_mut(&name)
-            .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
-        let next_version = Self::next_version(&versions);
-
-        versions.push(Self::versioned_now(config, next_version));
-        Ok(())
     }
 
     async fn list_repositories(
@@ -383,32 +350,6 @@ impl Store for MemoryStore {
             .collect();
         repositories.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(repositories)
-    }
-
-    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
-        // Use include_deleted: true since we need to access the repository to mark it as deleted
-        let current = self.get_repository(name, true).await?;
-        let mut repo = current.item;
-        repo.deleted = true;
-        self.update_repository(name.clone(), repo).await
-    }
-
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
-        let id = IssueId::new();
-        let new_dependencies = issue.dependencies.clone();
-        let new_patches = issue.patches.clone();
-
-        self.validate_dependencies(&new_dependencies)?;
-        self.issues
-            .insert(id.clone(), vec![Self::versioned_now(issue, 1)]);
-
-        if !new_dependencies.is_empty() {
-            self.apply_issue_dependency_delta(&id, &[], &new_dependencies);
-        }
-        if !new_patches.is_empty() {
-            self.apply_issue_patch_delta(&id, &[], &new_patches);
-        }
-        Ok((id, 1))
     }
 
     async fn get_issue(
@@ -434,38 +375,6 @@ impl Store for MemoryStore {
             .get(id)
             .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
-    }
-
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
-        let (previous_dependencies, previous_patches) = match self.issues.get(id) {
-            Some(entry) => match entry.value().last() {
-                Some(latest) => (
-                    latest.item.dependencies.clone(),
-                    latest.item.patches.clone(),
-                ),
-                None => return Err(StoreError::IssueNotFound(id.clone())),
-            },
-            None => return Err(StoreError::IssueNotFound(id.clone())),
-        };
-        let updated_dependencies = issue.dependencies.clone();
-        let updated_patches = issue.patches.clone();
-
-        self.validate_dependencies(&updated_dependencies)?;
-        let next_version = if let Some(mut versions) = self.issues.get_mut(id) {
-            let next_version = Self::next_version(&versions);
-            versions.push(Self::versioned_now(issue, next_version));
-            next_version
-        } else {
-            return Err(StoreError::IssueNotFound(id.clone()));
-        };
-
-        if !previous_dependencies.is_empty() || !updated_dependencies.is_empty() {
-            self.apply_issue_dependency_delta(id, &previous_dependencies, &updated_dependencies);
-        }
-        if !previous_patches.is_empty() || !updated_patches.is_empty() {
-            self.apply_issue_patch_delta(id, &previous_patches, &updated_patches);
-        }
-        Ok(next_version)
     }
 
     async fn list_issues(
@@ -508,13 +417,6 @@ impl Store for MemoryStore {
                 Some((issue_id.clone(), latest))
             })
             .collect())
-    }
-
-    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_issue(id, true).await?;
-        let mut issue = current.item;
-        issue.deleted = true;
-        self.update_issue(id, issue).await
     }
 
     async fn search_issue_graph(
@@ -568,11 +470,38 @@ impl Store for MemoryStore {
         context.apply_filters(filters)
     }
 
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
-        let id = PatchId::new();
-        self.patches
-            .insert(id.clone(), vec![Self::versioned_now(patch, 1)]);
-        Ok((id, 1))
+    async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
+        match self.issues.get(issue_id) {
+            Some(_) => Ok(self
+                .issue_children
+                .get(issue_id)
+                .map(|entry| entry.value().clone())
+                .unwrap_or_default()),
+            None => Err(StoreError::IssueNotFound(issue_id.clone())),
+        }
+    }
+
+    async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
+        match self.issues.get(issue_id) {
+            Some(_) => Ok(self
+                .issue_blocked_on
+                .get(issue_id)
+                .map(|entry| entry.value().clone())
+                .unwrap_or_default()),
+            None => Err(StoreError::IssueNotFound(issue_id.clone())),
+        }
+    }
+
+    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
+        if !self.issues.contains_key(issue_id) {
+            return Err(StoreError::IssueNotFound(issue_id.clone()));
+        }
+
+        Ok(self
+            .issue_tasks
+            .get(issue_id)
+            .map(|entry| entry.value().clone())
+            .unwrap_or_default())
     }
 
     async fn get_patch(
@@ -596,16 +525,6 @@ impl Store for MemoryStore {
             .get(id)
             .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
-    }
-
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
-        let mut versions = self
-            .patches
-            .get_mut(id)
-            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
-        let next_version = Self::next_version(&versions);
-        versions.push(Self::versioned_now(patch, next_version));
-        Ok(next_version)
     }
 
     async fn list_patches(
@@ -646,13 +565,6 @@ impl Store for MemoryStore {
             .collect())
     }
 
-    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_patch(id, true).await?;
-        let mut patch = current.item;
-        patch.deleted = true;
-        self.update_patch(id, patch).await
-    }
-
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         match self.patches.get(patch_id) {
             Some(_) => Ok(self
@@ -662,18 +574,6 @@ impl Store for MemoryStore {
                 .unwrap_or_default()),
             None => Err(StoreError::PatchNotFound(patch_id.clone())),
         }
-    }
-
-    async fn add_document(
-        &self,
-        document: Document,
-    ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        let id = DocumentId::new();
-        let path = document.path.clone();
-        self.documents
-            .insert(id.clone(), vec![Self::versioned_now(document, 1)]);
-        self.index_document_path(&id, path.as_deref());
-        Ok((id, 1))
     }
 
     async fn get_document(
@@ -700,37 +600,6 @@ impl Store for MemoryStore {
             .get(id)
             .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))
-    }
-
-    async fn update_document(
-        &self,
-        id: &DocumentId,
-        document: Document,
-    ) -> Result<VersionNumber, StoreError> {
-        let mut versions = self
-            .documents
-            .get_mut(id)
-            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
-        let previous_path = versions
-            .last()
-            .and_then(|version| version.item.path.clone());
-        let new_path = document.path.clone();
-        let next_version = Self::next_version(&versions);
-        versions.push(Self::versioned_now(document, next_version));
-
-        if previous_path != new_path {
-            self.remove_document_path(id, previous_path.as_deref());
-            self.index_document_path(id, new_path.as_deref());
-        }
-
-        Ok(next_version)
-    }
-
-    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_document(id, true).await?;
-        let mut document = current.item;
-        document.deleted = true;
-        self.update_document(id, document).await
     }
 
     async fn list_documents(
@@ -799,98 +668,6 @@ impl Store for MemoryStore {
         let mut documents = self.documents_from_ids(&ids);
         documents.sort_by(|(left, _), (right, _)| left.cmp(right));
         Ok(documents)
-    }
-
-    async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        match self.issues.get(issue_id) {
-            Some(_) => Ok(self
-                .issue_children
-                .get(issue_id)
-                .map(|entry| entry.value().clone())
-                .unwrap_or_default()),
-            None => Err(StoreError::IssueNotFound(issue_id.clone())),
-        }
-    }
-
-    async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        match self.issues.get(issue_id) {
-            Some(_) => Ok(self
-                .issue_blocked_on
-                .get(issue_id)
-                .map(|entry| entry.value().clone())
-                .unwrap_or_default()),
-            None => Err(StoreError::IssueNotFound(issue_id.clone())),
-        }
-    }
-
-    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
-        if !self.issues.contains_key(issue_id) {
-            return Err(StoreError::IssueNotFound(issue_id.clone()));
-        }
-
-        Ok(self
-            .issue_tasks
-            .get(issue_id)
-            .map(|entry| entry.value().clone())
-            .unwrap_or_default())
-    }
-
-    async fn add_task(
-        &self,
-        task: Task,
-        creation_time: DateTime<Utc>,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let id = TaskId::new();
-        let mut task = task;
-        task.status = Status::Created;
-        task.last_message = None;
-        task.error = None;
-        let spawned_from = task.spawned_from.clone();
-
-        self.tasks
-            .insert(id.clone(), vec![Self::versioned_at(task, 1, creation_time)]);
-
-        if let Some(issue_id) = spawned_from.as_ref() {
-            self.index_task_for_issue(issue_id, id.clone());
-        }
-
-        Ok((id, 1))
-    }
-
-    async fn update_task(
-        &self,
-        metis_id: &TaskId,
-        task: Task,
-    ) -> Result<Versioned<Task>, StoreError> {
-        let previous_spawned_from = match self.tasks.get(metis_id) {
-            Some(entry) => entry
-                .value()
-                .last()
-                .and_then(|existing| existing.item.spawned_from.clone()),
-            None => return Err(StoreError::TaskNotFound(metis_id.clone())),
-        };
-
-        if let Some(previous_issue) = previous_spawned_from.as_ref() {
-            if task.spawned_from.as_ref() != Some(previous_issue) {
-                self.remove_task_from_issue_index(previous_issue, metis_id);
-            }
-        }
-
-        // Overwrite the existing task without modifying edge structure
-        let updated = match self.tasks.get_mut(metis_id) {
-            Some(mut versions) => {
-                let next_version = Self::next_version(&versions);
-                let versioned = Self::versioned_now(task.clone(), next_version);
-                versions.push(versioned.clone());
-                versioned
-            }
-            None => return Err(StoreError::TaskNotFound(metis_id.clone())),
-        };
-
-        if let Some(issue_id) = task.spawned_from.as_ref() {
-            self.index_task_for_issue(issue_id, metis_id.clone());
-        }
-        Ok(updated)
     }
 
     async fn get_task(
@@ -964,14 +741,6 @@ impl Store for MemoryStore {
             .collect())
     }
 
-    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
-        let current = self.get_task(id, true).await?;
-        let mut task = current.item;
-        task.deleted = true;
-        let versioned = self.update_task(id, task).await?;
-        Ok(versioned.version)
-    }
-
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
         Ok(self
             .tasks
@@ -1008,28 +777,6 @@ impl Store for MemoryStore {
         Ok(result)
     }
 
-    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
-        let name = actor.name();
-        if self.actors.contains_key(&name) {
-            return Err(StoreError::ActorAlreadyExists(name));
-        }
-
-        self.actors
-            .insert(name, vec![Self::versioned_now(actor, 1)]);
-        Ok(())
-    }
-
-    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
-        let name = actor.name();
-        let mut versions = self
-            .actors
-            .get_mut(&name)
-            .ok_or_else(|| StoreError::ActorNotFound(name.clone()))?;
-        let next_version = Self::next_version(&versions);
-        versions.push(Self::versioned_now(actor, next_version));
-        Ok(())
-    }
-
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         self.actors
@@ -1049,37 +796,6 @@ impl Store for MemoryStore {
             .collect();
         actors.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(actors)
-    }
-
-    async fn add_user(&self, user: User) -> Result<(), StoreError> {
-        if let Some(mut versions) = self.users.get_mut(&user.username) {
-            // Check if the user is deleted
-            if let Some(latest) = Self::latest_versioned(versions.value()) {
-                if latest.item.deleted {
-                    // Allow re-creation with the provided user
-                    let next_version = Self::next_version(&versions);
-                    let versioned = Self::versioned_now(user, next_version);
-                    versions.push(versioned);
-                    return Ok(());
-                }
-            }
-            return Err(StoreError::UserAlreadyExists(user.username.clone()));
-        }
-
-        self.users
-            .insert(user.username.clone(), vec![Self::versioned_now(user, 1)]);
-        Ok(())
-    }
-
-    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError> {
-        let mut versions = self
-            .users
-            .get_mut(&user.username)
-            .ok_or_else(|| StoreError::UserNotFound(user.username.clone()))?;
-        let next_version = Self::next_version(&versions);
-        let versioned = Self::versioned_now(user, next_version);
-        versions.push(versioned.clone());
-        Ok(versioned)
     }
 
     async fn get_user(
@@ -1131,6 +847,293 @@ impl Store for MemoryStore {
 
         users.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
         Ok(users)
+    }
+}
+
+#[async_trait]
+impl Store for MemoryStore {
+    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
+        // Check if exists and if deleted
+        if let Some(entry) = self.repositories.get(&name) {
+            if let Some(latest) = Self::latest_versioned(entry.value()) {
+                if latest.item.deleted {
+                    // Re-create over deleted: use caller's config as-is
+                    drop(entry);
+                    return self.update_repository(name, config).await;
+                }
+                return Err(StoreError::RepositoryAlreadyExists(name));
+            }
+        }
+
+        self.repositories
+            .insert(name, vec![Self::versioned_now(config, 1)]);
+        Ok(())
+    }
+
+    async fn update_repository(
+        &self,
+        name: RepoName,
+        config: Repository,
+    ) -> Result<(), StoreError> {
+        let mut versions = self
+            .repositories
+            .get_mut(&name)
+            .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
+        let next_version = Self::next_version(&versions);
+
+        versions.push(Self::versioned_now(config, next_version));
+        Ok(())
+    }
+
+    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
+        // Use include_deleted: true since we need to access the repository to mark it as deleted
+        let current = self.get_repository(name, true).await?;
+        let mut repo = current.item;
+        repo.deleted = true;
+        self.update_repository(name.clone(), repo).await
+    }
+
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
+        let id = IssueId::new();
+        let new_dependencies = issue.dependencies.clone();
+        let new_patches = issue.patches.clone();
+
+        self.validate_dependencies(&new_dependencies)?;
+        self.issues
+            .insert(id.clone(), vec![Self::versioned_now(issue, 1)]);
+
+        if !new_dependencies.is_empty() {
+            self.apply_issue_dependency_delta(&id, &[], &new_dependencies);
+        }
+        if !new_patches.is_empty() {
+            self.apply_issue_patch_delta(&id, &[], &new_patches);
+        }
+        Ok((id, 1))
+    }
+
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
+        let (previous_dependencies, previous_patches) = match self.issues.get(id) {
+            Some(entry) => match entry.value().last() {
+                Some(latest) => (
+                    latest.item.dependencies.clone(),
+                    latest.item.patches.clone(),
+                ),
+                None => return Err(StoreError::IssueNotFound(id.clone())),
+            },
+            None => return Err(StoreError::IssueNotFound(id.clone())),
+        };
+        let updated_dependencies = issue.dependencies.clone();
+        let updated_patches = issue.patches.clone();
+
+        self.validate_dependencies(&updated_dependencies)?;
+        let next_version = if let Some(mut versions) = self.issues.get_mut(id) {
+            let next_version = Self::next_version(&versions);
+            versions.push(Self::versioned_now(issue, next_version));
+            next_version
+        } else {
+            return Err(StoreError::IssueNotFound(id.clone()));
+        };
+
+        if !previous_dependencies.is_empty() || !updated_dependencies.is_empty() {
+            self.apply_issue_dependency_delta(id, &previous_dependencies, &updated_dependencies);
+        }
+        if !previous_patches.is_empty() || !updated_patches.is_empty() {
+            self.apply_issue_patch_delta(id, &previous_patches, &updated_patches);
+        }
+        Ok(next_version)
+    }
+
+    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_issue(id, true).await?;
+        let mut issue = current.item;
+        issue.deleted = true;
+        self.update_issue(id, issue).await
+    }
+
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
+        let id = PatchId::new();
+        self.patches
+            .insert(id.clone(), vec![Self::versioned_now(patch, 1)]);
+        Ok((id, 1))
+    }
+
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
+        let mut versions = self
+            .patches
+            .get_mut(id)
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
+        let next_version = Self::next_version(&versions);
+        versions.push(Self::versioned_now(patch, next_version));
+        Ok(next_version)
+    }
+
+    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_patch(id, true).await?;
+        let mut patch = current.item;
+        patch.deleted = true;
+        self.update_patch(id, patch).await
+    }
+
+    async fn add_document(
+        &self,
+        document: Document,
+    ) -> Result<(DocumentId, VersionNumber), StoreError> {
+        let id = DocumentId::new();
+        let path = document.path.clone();
+        self.documents
+            .insert(id.clone(), vec![Self::versioned_now(document, 1)]);
+        self.index_document_path(&id, path.as_deref());
+        Ok((id, 1))
+    }
+
+    async fn update_document(
+        &self,
+        id: &DocumentId,
+        document: Document,
+    ) -> Result<VersionNumber, StoreError> {
+        let mut versions = self
+            .documents
+            .get_mut(id)
+            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+        let previous_path = versions
+            .last()
+            .and_then(|version| version.item.path.clone());
+        let new_path = document.path.clone();
+        let next_version = Self::next_version(&versions);
+        versions.push(Self::versioned_now(document, next_version));
+
+        if previous_path != new_path {
+            self.remove_document_path(id, previous_path.as_deref());
+            self.index_document_path(id, new_path.as_deref());
+        }
+
+        Ok(next_version)
+    }
+
+    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_document(id, true).await?;
+        let mut document = current.item;
+        document.deleted = true;
+        self.update_document(id, document).await
+    }
+
+    async fn add_task(
+        &self,
+        task: Task,
+        creation_time: DateTime<Utc>,
+    ) -> Result<(TaskId, VersionNumber), StoreError> {
+        let id = TaskId::new();
+        let mut task = task;
+        task.status = Status::Created;
+        task.last_message = None;
+        task.error = None;
+        let spawned_from = task.spawned_from.clone();
+
+        self.tasks
+            .insert(id.clone(), vec![Self::versioned_at(task, 1, creation_time)]);
+
+        if let Some(issue_id) = spawned_from.as_ref() {
+            self.index_task_for_issue(issue_id, id.clone());
+        }
+
+        Ok((id, 1))
+    }
+
+    async fn update_task(
+        &self,
+        metis_id: &TaskId,
+        task: Task,
+    ) -> Result<Versioned<Task>, StoreError> {
+        let previous_spawned_from = match self.tasks.get(metis_id) {
+            Some(entry) => entry
+                .value()
+                .last()
+                .and_then(|existing| existing.item.spawned_from.clone()),
+            None => return Err(StoreError::TaskNotFound(metis_id.clone())),
+        };
+
+        if let Some(previous_issue) = previous_spawned_from.as_ref() {
+            if task.spawned_from.as_ref() != Some(previous_issue) {
+                self.remove_task_from_issue_index(previous_issue, metis_id);
+            }
+        }
+
+        // Overwrite the existing task without modifying edge structure
+        let updated = match self.tasks.get_mut(metis_id) {
+            Some(mut versions) => {
+                let next_version = Self::next_version(&versions);
+                let versioned = Self::versioned_now(task.clone(), next_version);
+                versions.push(versioned.clone());
+                versioned
+            }
+            None => return Err(StoreError::TaskNotFound(metis_id.clone())),
+        };
+
+        if let Some(issue_id) = task.spawned_from.as_ref() {
+            self.index_task_for_issue(issue_id, metis_id.clone());
+        }
+        Ok(updated)
+    }
+
+    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
+        let current = self.get_task(id, true).await?;
+        let mut task = current.item;
+        task.deleted = true;
+        let versioned = self.update_task(id, task).await?;
+        Ok(versioned.version)
+    }
+
+    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
+        let name = actor.name();
+        if self.actors.contains_key(&name) {
+            return Err(StoreError::ActorAlreadyExists(name));
+        }
+
+        self.actors
+            .insert(name, vec![Self::versioned_now(actor, 1)]);
+        Ok(())
+    }
+
+    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
+        let name = actor.name();
+        let mut versions = self
+            .actors
+            .get_mut(&name)
+            .ok_or_else(|| StoreError::ActorNotFound(name.clone()))?;
+        let next_version = Self::next_version(&versions);
+        versions.push(Self::versioned_now(actor, next_version));
+        Ok(())
+    }
+
+    async fn add_user(&self, user: User) -> Result<(), StoreError> {
+        if let Some(mut versions) = self.users.get_mut(&user.username) {
+            // Check if the user is deleted
+            if let Some(latest) = Self::latest_versioned(versions.value()) {
+                if latest.item.deleted {
+                    // Allow re-creation with the provided user
+                    let next_version = Self::next_version(&versions);
+                    let versioned = Self::versioned_now(user, next_version);
+                    versions.push(versioned);
+                    return Ok(());
+                }
+            }
+            return Err(StoreError::UserAlreadyExists(user.username.clone()));
+        }
+
+        self.users
+            .insert(user.username.clone(), vec![Self::versioned_now(user, 1)]);
+        Ok(())
+    }
+
+    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError> {
+        let mut versions = self
+            .users
+            .get_mut(&user.username)
+            .ok_or_else(|| StoreError::UserNotFound(user.username.clone()))?;
+        let next_version = Self::next_version(&versions);
+        let versioned = Self::versioned_now(user, next_version);
+        versions.push(versioned.clone());
+        Ok(versioned)
     }
 
     async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {

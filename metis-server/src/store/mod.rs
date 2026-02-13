@@ -123,18 +123,9 @@ pub enum StoreError {
     InvalidAuthToken,
 }
 
-/// Trait for storing issues, patches, and tasks along with their statuses.
-///
-/// Implementations focus on persistence and referential integrity; application-specific
-/// state transition rules (such as issue lifecycle validation) must be enforced by the
-/// caller before invoking store operations.
+/// Trait for read-only store operations: queries and lookups.
 #[async_trait]
-pub trait Store: Send + Sync {
-    /// Adds a repository configuration under the provided name.
-    ///
-    /// Returns an error if a repository with the same name already exists.
-    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError>;
-
+pub trait ReadOnlyStore: Send + Sync {
     /// Retrieves a repository configuration by name.
     ///
     /// # Arguments
@@ -147,12 +138,6 @@ pub trait Store: Send + Sync {
         include_deleted: bool,
     ) -> Result<Versioned<Repository>, StoreError>;
 
-    /// Updates an existing repository configuration.
-    ///
-    /// Returns an error if the repository does not exist.
-    async fn update_repository(&self, name: RepoName, config: Repository)
-    -> Result<(), StoreError>;
-
     /// Lists repository configurations keyed by name.
     ///
     /// By default, deleted repositories are filtered out unless `include_deleted: true`
@@ -161,19 +146,6 @@ pub trait Store: Send + Sync {
         &self,
         query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError>;
-
-    /// Soft-deletes a repository by setting its `deleted` flag to true.
-    ///
-    /// This creates a new version of the repository with `deleted: true`.
-    /// The repository can still be retrieved via `get_repository` but will be filtered
-    /// from `list_repositories` by default.
-    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError>;
-
-    /// Adds a new issue to the store and assigns it an IssueId.
-    ///
-    /// Returns the new IssueId and its initial version number, or an error if
-    /// any declared dependencies reference missing issues.
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError>;
 
     /// Retrieves an issue by its IssueId.
     ///
@@ -190,12 +162,6 @@ pub trait Store: Send + Sync {
     /// Retrieves all versions of an issue in ascending version order.
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError>;
 
-    /// Updates an existing issue in the store.
-    ///
-    /// Returns the new version number, or an error if the issue does not exist
-    /// or if any dependencies reference missing issues.
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError>;
-
     /// Lists issues in the store that match the provided search query.
     ///
     /// By default, deleted issues are filtered out unless `include_deleted: true`
@@ -208,14 +174,6 @@ pub trait Store: Send + Sync {
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError>;
 
-    /// Soft-deletes an issue by setting its `deleted` flag to true.
-    ///
-    /// This creates a new version of the issue with `deleted: true`.
-    /// The issue can still be retrieved via `get_issue` but will be filtered
-    /// from `list_issues` by default. Returns the version number of the
-    /// deletion record.
-    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError>;
-
     /// Applies dependency graph filters and returns the matching issue IDs.
     ///
     /// Filters are intersected, and any filter referencing a missing issue
@@ -225,10 +183,17 @@ pub trait Store: Send + Sync {
         filters: &[IssueGraphFilter],
     ) -> Result<HashSet<IssueId>, StoreError>;
 
-    /// Adds a new patch to the store and assigns it a PatchId.
-    ///
-    /// Returns the new PatchId and its initial version number.
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError>;
+    /// Lists all issues that declare the provided issue as a parent via `child-of`.
+    #[allow(dead_code)]
+    async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
+
+    /// Lists all issues that are blocked on the provided issue.
+    #[allow(dead_code)]
+    async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
+
+    /// Lists all task IDs spawned from the provided issue.
+    #[allow(dead_code)]
+    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError>;
 
     /// Retrieves a patch by its PatchId.
     ///
@@ -245,35 +210,14 @@ pub trait Store: Send + Sync {
     /// Retrieves all versions of a patch in ascending version order.
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError>;
 
-    /// Updates an existing patch in the store.
-    ///
-    /// Returns the new version number.
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError>;
-
     /// Lists patches that match the provided search query.
     async fn list_patches(
         &self,
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError>;
 
-    /// Soft-deletes a patch by setting its `deleted` flag to true.
-    ///
-    /// This creates a new version of the patch with `deleted: true`.
-    /// The patch can still be retrieved via `get_patch` but will be filtered
-    /// from `list_patches` by default. Returns the version number of the
-    /// deletion record.
-    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError>;
-
     /// Lists all issues that reference the provided patch ID.
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError>;
-
-    /// Adds a new document to the store and assigns it a DocumentId.
-    ///
-    /// Returns the new DocumentId and its initial version number.
-    async fn add_document(
-        &self,
-        document: Document,
-    ) -> Result<(DocumentId, VersionNumber), StoreError>;
 
     /// Retrieves a document by its DocumentId.
     ///
@@ -293,24 +237,6 @@ pub trait Store: Send + Sync {
         id: &DocumentId,
     ) -> Result<Vec<Versioned<Document>>, StoreError>;
 
-    /// Updates an existing document in the store.
-    ///
-    /// Returns the new version number.
-    async fn update_document(
-        &self,
-        id: &DocumentId,
-        document: Document,
-    ) -> Result<VersionNumber, StoreError>;
-
-    /// Soft-deletes a document by setting its `deleted` flag to true.
-    ///
-    /// This creates a new version of the document with `deleted: true`.
-    /// The document can still be retrieved via `get_document` with `include_deleted: true`,
-    /// but will be filtered from `get_document` with `include_deleted: false` and from
-    /// `list_documents` by default (unless `include_deleted: true` is in the query).
-    /// Returns the version number of the deletion record.
-    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError>;
-
     /// Lists documents that match the provided search query.
     async fn list_documents(
         &self,
@@ -322,49 +248,6 @@ pub trait Store: Send + Sync {
         &self,
         path_prefix: &str,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError>;
-
-    /// Lists all issues that declare the provided issue as a parent via `child-of`.
-    #[allow(dead_code)]
-    async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
-
-    /// Lists all issues that are blocked on the provided issue.
-    #[allow(dead_code)]
-    async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
-
-    /// Lists all task IDs spawned from the provided issue.
-    #[allow(dead_code)]
-    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError>;
-
-    /// Adds a task to the store.
-    ///
-    /// Tasks start in the Created state.
-    /// # Arguments
-    /// * `task` - The task to add
-    /// * `creation_time` - The timestamp when the task is being created
-    ///
-    /// Returns the new TaskId and its initial version number.
-    async fn add_task(
-        &self,
-        task: Task,
-        creation_time: DateTime<Utc>,
-    ) -> Result<(TaskId, VersionNumber), StoreError>;
-
-    /// Updates an existing task in the store.
-    ///
-    /// This function overwrites the task data for the given vertex.
-    ///
-    /// # Arguments
-    /// * `metis_id` - The TaskId of the task to update
-    /// * `task` - The new Task to store for this vertex
-    ///
-    /// # Returns
-    /// The stored task version if successful, or an error if the task doesn't exist
-    #[allow(dead_code)]
-    async fn update_task(
-        &self,
-        metis_id: &TaskId,
-        task: Task,
-    ) -> Result<Versioned<Task>, StoreError>;
 
     /// Gets a task by its TaskId.
     ///
@@ -402,14 +285,6 @@ pub trait Store: Send + Sync {
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
 
-    /// Soft-deletes a task by setting its `deleted` flag to true.
-    ///
-    /// This creates a new version of the task with `deleted: true`.
-    /// The task can still be retrieved via `get_task` but will be filtered
-    /// from `list_tasks` by default. Returns the version number of the
-    /// deletion record.
-    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError>;
-
     /// Lists all task IDs with the specified status in the store.
     ///
     /// # Arguments
@@ -441,26 +316,11 @@ pub trait Store: Send + Sync {
         ids: &[TaskId],
     ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError>;
 
-    /// Adds a new actor to the store.
-    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError>;
-
-    /// Updates an existing actor in the store.
-    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError>;
-
     /// Gets an actor by its canonical name.
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError>;
 
     /// Lists all actors with their canonical names.
     async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError>;
-
-    /// Adds a new user to the store.
-    ///
-    /// If a user with the same username exists but is deleted, this will
-    /// undelete the user by creating a new version with `deleted: false`.
-    async fn add_user(&self, user: User) -> Result<(), StoreError>;
-
-    /// Updates an existing user in the store.
-    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError>;
 
     /// Gets a user by their username.
     ///
@@ -482,6 +342,150 @@ pub trait Store: Send + Sync {
         &self,
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError>;
+}
+
+/// Trait for storing issues, patches, and tasks along with their statuses.
+///
+/// Implementations focus on persistence and referential integrity; application-specific
+/// state transition rules (such as issue lifecycle validation) must be enforced by the
+/// caller before invoking store operations.
+#[async_trait]
+pub trait Store: ReadOnlyStore {
+    /// Adds a repository configuration under the provided name.
+    ///
+    /// Returns an error if a repository with the same name already exists.
+    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError>;
+
+    /// Updates an existing repository configuration.
+    ///
+    /// Returns an error if the repository does not exist.
+    async fn update_repository(&self, name: RepoName, config: Repository)
+    -> Result<(), StoreError>;
+
+    /// Soft-deletes a repository by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the repository with `deleted: true`.
+    /// The repository can still be retrieved via `get_repository` but will be filtered
+    /// from `list_repositories` by default.
+    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError>;
+
+    /// Adds a new issue to the store and assigns it an IssueId.
+    ///
+    /// Returns the new IssueId and its initial version number, or an error if
+    /// any declared dependencies reference missing issues.
+    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError>;
+
+    /// Updates an existing issue in the store.
+    ///
+    /// Returns the new version number, or an error if the issue does not exist
+    /// or if any dependencies reference missing issues.
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError>;
+
+    /// Soft-deletes an issue by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the issue with `deleted: true`.
+    /// The issue can still be retrieved via `get_issue` but will be filtered
+    /// from `list_issues` by default. Returns the version number of the
+    /// deletion record.
+    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError>;
+
+    /// Adds a new patch to the store and assigns it a PatchId.
+    ///
+    /// Returns the new PatchId and its initial version number.
+    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError>;
+
+    /// Updates an existing patch in the store.
+    ///
+    /// Returns the new version number.
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError>;
+
+    /// Soft-deletes a patch by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the patch with `deleted: true`.
+    /// The patch can still be retrieved via `get_patch` but will be filtered
+    /// from `list_patches` by default. Returns the version number of the
+    /// deletion record.
+    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError>;
+
+    /// Adds a new document to the store and assigns it a DocumentId.
+    ///
+    /// Returns the new DocumentId and its initial version number.
+    async fn add_document(
+        &self,
+        document: Document,
+    ) -> Result<(DocumentId, VersionNumber), StoreError>;
+
+    /// Updates an existing document in the store.
+    ///
+    /// Returns the new version number.
+    async fn update_document(
+        &self,
+        id: &DocumentId,
+        document: Document,
+    ) -> Result<VersionNumber, StoreError>;
+
+    /// Soft-deletes a document by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the document with `deleted: true`.
+    /// The document can still be retrieved via `get_document` with `include_deleted: true`,
+    /// but will be filtered from `get_document` with `include_deleted: false` and from
+    /// `list_documents` by default (unless `include_deleted: true` is in the query).
+    /// Returns the version number of the deletion record.
+    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError>;
+
+    /// Adds a task to the store.
+    ///
+    /// Tasks start in the Created state.
+    /// # Arguments
+    /// * `task` - The task to add
+    /// * `creation_time` - The timestamp when the task is being created
+    ///
+    /// Returns the new TaskId and its initial version number.
+    async fn add_task(
+        &self,
+        task: Task,
+        creation_time: DateTime<Utc>,
+    ) -> Result<(TaskId, VersionNumber), StoreError>;
+
+    /// Updates an existing task in the store.
+    ///
+    /// This function overwrites the task data for the given vertex.
+    ///
+    /// # Arguments
+    /// * `metis_id` - The TaskId of the task to update
+    /// * `task` - The new Task to store for this vertex
+    ///
+    /// # Returns
+    /// The stored task version if successful, or an error if the task doesn't exist
+    #[allow(dead_code)]
+    async fn update_task(
+        &self,
+        metis_id: &TaskId,
+        task: Task,
+    ) -> Result<Versioned<Task>, StoreError>;
+
+    /// Soft-deletes a task by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the task with `deleted: true`.
+    /// The task can still be retrieved via `get_task` but will be filtered
+    /// from `list_tasks` by default. Returns the version number of the
+    /// deletion record.
+    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError>;
+
+    /// Adds a new actor to the store.
+    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError>;
+
+    /// Updates an existing actor in the store.
+    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError>;
+
+    /// Adds a new user to the store.
+    ///
+    /// If a user with the same username exists but is deleted, this will
+    /// undelete the user by creating a new version with `deleted: false`.
+    async fn add_user(&self, user: User) -> Result<(), StoreError>;
+
+    /// Updates an existing user in the store.
+    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError>;
 
     /// Soft-deletes a user by setting its `deleted` flag to true.
     ///
