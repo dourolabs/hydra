@@ -46,8 +46,8 @@ Issues also have 2 inferred states: `Ready`, `NotReady`, that indicate whether o
 `InProgress` issues are `Ready` if all of their children are in a terminal state (`Closed`, `Dropped`, `Rejected`, or `Failed`).
 `Dropped` issues are never `Ready`; they remain blocking for downstream work until users intervene.
 Whenever an issue is `Ready`, an agent may be spawned to work on it.
-When an issue is marked `Dropped` via the metis-server API, its children are recursively set to `Dropped` (since the work is explicitly cancelled), and any tasks spawned from it are terminated immediately.
-`Rejected` and `Failed` issues do not cascade status changes to their children or blocked-on dependents; instead, blocking is retained (the dependent issues remain in their current status but are not ready to run).
+When an issue is marked `Dropped`, `Rejected`, or `Failed`, its children are recursively set to `Dropped` (since the parent's work is no longer proceeding), and any tasks spawned from it are terminated immediately.
+`Rejected` and `Failed` issues do not cascade status changes to blocked-on dependents; blocking is retained (the dependent issues remain in their current status but are not ready to run).
 
 Agents will be spawned for any `Ready` issues that are assigned to an AI agent. 
 The agent works on the task and updates the issue tracker (via the `metis` CLI) as it goes.

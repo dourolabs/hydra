@@ -4012,7 +4012,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_issue_does_not_cascade_to_children() {
+    async fn rejected_issue_cascades_to_children() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
         let runner = start_test_automation_runner(&state);
@@ -4040,6 +4040,19 @@ mod tests {
             .await
             .unwrap();
 
+        let (child_task_id,) = {
+            let store = state.store.as_ref();
+            let (child_task_id, _) = store
+                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), None)
+                .await
+                .unwrap();
+            (child_task_id,)
+        };
+
+        job_engine
+            .insert_job(&child_task_id, JobStatus::Running)
+            .await;
+
         let mut rejected_parent = parent_issue;
         rejected_parent.status = IssueStatus::Rejected;
         state
@@ -4053,20 +4066,25 @@ mod tests {
 
         wait_for_automations().await;
 
-        // Child should remain Open (not dropped) — cascade only applies to Dropped
         {
             let store = state.store.as_ref();
             assert_eq!(
                 store.get_issue(&child_id, false).await.unwrap().item.status,
-                IssueStatus::Open
+                IssueStatus::Dropped
             );
         }
+
+        let job = job_engine
+            .find_job_by_metis_id(&child_task_id)
+            .await
+            .expect("job should exist");
+        assert_eq!(job.status, JobStatus::Failed);
 
         runner.shutdown().await;
     }
 
     #[tokio::test]
-    async fn failed_issue_does_not_cascade_to_children() {
+    async fn failed_issue_cascades_to_children() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
         let runner = start_test_automation_runner(&state);
@@ -4107,12 +4125,11 @@ mod tests {
 
         wait_for_automations().await;
 
-        // Child should remain Open (not dropped) — cascade only applies to Dropped
         {
             let store = state.store.as_ref();
             assert_eq!(
                 store.get_issue(&child_id, false).await.unwrap().item.status,
-                IssueStatus::Open
+                IssueStatus::Dropped
             );
         }
 

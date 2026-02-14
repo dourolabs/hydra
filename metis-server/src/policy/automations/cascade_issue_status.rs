@@ -8,9 +8,10 @@ use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use metis_common::IssueId;
 
-/// When an issue's status changes to Dropped, recursively drop all child issues.
+/// When an issue's status changes to a terminal/failure status, recursively
+/// drop all child issues.
 ///
-/// Configurable via `trigger_statuses` param (defaults to Dropped only).
+/// Configurable via `trigger_statuses` param (defaults to Dropped, Rejected, Failed).
 pub struct CascadeIssueStatusAutomation {
     trigger_statuses: Vec<IssueStatus>,
 }
@@ -45,7 +46,11 @@ impl CascadeIssueStatusAutomation {
 }
 
 fn default_trigger_statuses() -> Vec<IssueStatus> {
-    vec![IssueStatus::Dropped]
+    vec![
+        IssueStatus::Dropped,
+        IssueStatus::Rejected,
+        IssueStatus::Failed,
+    ]
 }
 
 fn parse_issue_status(s: &str) -> Result<IssueStatus, String> {
@@ -307,7 +312,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn does_not_drop_children_when_parent_failed() {
+    async fn drops_children_when_parent_failed() {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
@@ -324,8 +329,7 @@ mod tests {
         );
         let (child_id, _) = store.add_issue(child).await.unwrap();
 
-        // Fail the parent — Failed is not a trigger status,
-        // so children should keep their original status.
+        // Fail the parent — children should be dropped.
         let mut failed_parent = parent;
         failed_parent.status = IssueStatus::Failed;
         store
@@ -357,11 +361,11 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Open);
+        assert_eq!(child_result.item.status, IssueStatus::Dropped);
     }
 
     #[tokio::test]
-    async fn does_not_drop_children_when_parent_rejected() {
+    async fn drops_children_when_parent_rejected() {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
@@ -378,8 +382,7 @@ mod tests {
         );
         let (child_id, _) = store.add_issue(child).await.unwrap();
 
-        // Reject the parent — Rejected is not a trigger status,
-        // so children should keep their original status.
+        // Reject the parent — children should be dropped.
         let mut rejected_parent = parent;
         rejected_parent.status = IssueStatus::Rejected;
         store
@@ -411,7 +414,7 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Open);
+        assert_eq!(child_result.item.status, IssueStatus::Dropped);
     }
 
     #[tokio::test]
