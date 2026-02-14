@@ -486,7 +486,7 @@ impl PostgresStoreV2 {
             .bind(version_number)
             .bind(&document.title)
             .bind(&document.body_markdown)
-            .bind(document.path.as_deref())
+            .bind(document.path.as_ref().map(|p| p.as_str()))
             .bind(document.created_by.as_ref().map(|t| t.as_ref()))
             .bind(document.deleted)
             .execute(&self.pool)
