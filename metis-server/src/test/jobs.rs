@@ -24,7 +24,6 @@ use metis_common::{
         self,
         jobs::{CreateJobResponse, JobVersionRecord, ListJobVersionsResponse, ListJobsResponse},
     },
-    job_status::GetJobStatusResponse,
 };
 use reqwest::StatusCode;
 use serde_json::json;
@@ -1173,7 +1172,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
+async fn get_job_returns_completed_status_and_timing() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let (job_id, _) = handles
@@ -1207,19 +1206,17 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
     let client = test_client();
 
     let response = client
-        .get(format!("{}/v1/jobs/{job_id}/status", server.base_url()))
+        .get(format!("{}/v1/jobs/{job_id}", server.base_url()))
         .send()
         .await?;
 
     assert!(response.status().is_success());
-    let body: GetJobStatusResponse = response.json().await?;
+    let body: JobVersionRecord = response.json().await?;
     assert_eq!(body.job_id, job_id);
-    let status_log: crate::domain::task_status::TaskStatusLog = body.status_log.into();
-    assert_eq!(status_log.current_status(), Status::Complete);
-    assert!(matches!(
-        status_log.events.last(),
-        Some(Event::Completed { .. })
-    ));
+    assert_eq!(body.task.status, v1::task_status::Status::Complete);
+    assert!(body.task.creation_time.is_some());
+    assert!(body.task.start_time.is_some());
+    assert!(body.task.end_time.is_some());
     Ok(())
 }
 

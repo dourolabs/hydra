@@ -19,7 +19,7 @@ use metis_common::{
         ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse,
         UpsertIssueRequest, UpsertIssueResponse,
     },
-    job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
+    job_status::{JobStatusUpdate, SetJobStatusResponse},
     jobs::{
         CreateJobRequest, CreateJobResponse, JobVersionRecord, KillJobResponse,
         ListJobVersionsResponse, ListJobsResponse, SearchJobsQuery, WorkerContext,
@@ -127,9 +127,6 @@ pub trait MetisClientInterface: Send + Sync {
         job_id: &TaskId,
         status: &JobStatusUpdate,
     ) -> Result<SetJobStatusResponse>;
-    #[allow(dead_code)]
-    async fn get_job_status(&self, job_id: &TaskId) -> Result<GetJobStatusResponse>;
-
     async fn get_job_context(&self, job_id: &TaskId) -> Result<WorkerContext>;
     async fn list_job_versions(&self, job_id: &TaskId) -> Result<ListJobVersionsResponse>;
     async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse>;
@@ -546,24 +543,6 @@ impl MetisClient {
             .json::<SetJobStatusResponse>()
             .await
             .context("failed to decode set job status response")
-    }
-
-    /// Call `GET /v1/jobs/:job_id/status` to retrieve the status log for a job.
-    pub async fn get_job_status(&self, job_id: &TaskId) -> Result<GetJobStatusResponse> {
-        let path = format!("/v1/jobs/{job_id}/status");
-        let url = self.endpoint(&path)?;
-        let response = self
-            .authed(self.http.get(url))
-            .send()
-            .await
-            .context("failed to request job status")?
-            .error_for_status_with_body("metis-server returned an error while fetching job status")
-            .await?;
-
-        response
-            .json::<GetJobStatusResponse>()
-            .await
-            .context("failed to decode job status response")
     }
 
     /// Call `GET /v1/jobs/:job_id/context` to retrieve the stored job context.
@@ -1561,10 +1540,6 @@ impl MetisClientInterface for MetisClient {
         status: &JobStatusUpdate,
     ) -> Result<SetJobStatusResponse> {
         MetisClient::set_job_status(self, job_id, status).await
-    }
-
-    async fn get_job_status(&self, job_id: &TaskId) -> Result<GetJobStatusResponse> {
-        MetisClient::get_job_status(self, job_id).await
     }
 
     async fn get_job_context(&self, job_id: &TaskId) -> Result<WorkerContext> {

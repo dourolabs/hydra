@@ -1,6 +1,6 @@
 use crate::{
     TaskId,
-    task_status::{Status, TaskError, TaskStatusLog},
+    task_status::{Status, TaskError},
 };
 use serde::{Deserialize, Serialize};
 
@@ -56,18 +56,5 @@ pub struct SetJobStatusResponse {
 impl SetJobStatusResponse {
     pub fn new(job_id: TaskId, status: Status) -> Self {
         Self { job_id, status }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct GetJobStatusResponse {
-    pub job_id: TaskId,
-    pub status_log: TaskStatusLog,
-}
-
-impl GetJobStatusResponse {
-    pub fn new(job_id: TaskId, status_log: TaskStatusLog) -> Self {
-        Self { job_id, status_log }
     }
 }
