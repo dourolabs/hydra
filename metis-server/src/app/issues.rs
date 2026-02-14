@@ -415,14 +415,69 @@ fn issue_ready<'a>(
                 Ok(true)
             }
             IssueStatus::InProgress => {
-                // Parent is ready when no child is ready (recursively).
-                // This enables re-planning: if all children are stuck, the parent can spawn.
+                // Parent is ready when no issue in its entire child subtree is ready.
+                // This enables re-planning: if all descendants are stuck, the parent can spawn.
+                // We must check the full subtree, not just direct children, because a
+                // non-ready child (InProgress) may still have ready descendants.
                 for child_id in store.get_issue_children(issue_id).await? {
-                    if issue_ready(store, &child_id, visited).await? {
+                    if subtree_has_ready_issue(store, &child_id, visited).await? {
                         return Ok(false);
                     }
                 }
 
+                Ok(true)
+            }
+        }
+    })
+}
+
+/// Returns true if any issue in the subtree rooted at `issue_id` is ready.
+///
+/// Unlike `issue_ready` (which answers "is this specific issue ready?"), this function
+/// answers "does any ready issue exist anywhere in this subtree?". It mirrors the
+/// status-based logic of `issue_ready` but recurses into children for InProgress nodes
+/// to find ready descendants at any depth.
+fn subtree_has_ready_issue<'a>(
+    store: &'a dyn ReadOnlyStore,
+    issue_id: &'a IssueId,
+    visited: &'a mut HashSet<IssueId>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, StoreError>> + Send + 'a>> {
+    Box::pin(async move {
+        if !visited.insert(issue_id.clone()) {
+            return Ok(false);
+        }
+
+        let issue = store.get_issue(issue_id, false).await?;
+        let issue = issue.item;
+
+        match issue.status {
+            IssueStatus::Closed
+            | IssueStatus::Dropped
+            | IssueStatus::Rejected
+            | IssueStatus::Failed => Ok(false),
+            IssueStatus::Open => {
+                // An Open issue is ready if all its blockers are closed.
+                for dependency in issue.dependencies.iter().filter(|dependency| {
+                    dependency.dependency_type == IssueDependencyType::BlockedOn
+                }) {
+                    let blocker = store.get_issue(&dependency.issue_id, false).await?;
+                    if blocker.item.status != IssueStatus::Closed {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            IssueStatus::InProgress => {
+                // An InProgress node's subtree always contains at least one ready issue:
+                // either a ready descendant, or the InProgress node itself (which is ready
+                // when all descendants are stuck). We still recurse into children so the
+                // visited set is populated for cycle detection.
+                for child_id in store.get_issue_children(issue_id).await? {
+                    if subtree_has_ready_issue(store, &child_id, visited).await? {
+                        return Ok(true);
+                    }
+                }
+                // No child subtree has a ready issue, so this InProgress node itself is ready.
                 Ok(true)
             }
         }
@@ -1401,6 +1456,73 @@ mod tests {
 
         // Parent is ready (child is Failed, not Ready).
         // But since parent IS ready, grandparent is NOT ready (has a ready child).
+        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+        assert!(!state.is_issue_ready(&grandparent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_grandparent_not_ready_with_ready_grandchild() {
+        let state = test_state();
+
+        let store = state.store.as_ref();
+        // Grandparent (InProgress) -> Parent (InProgress) -> Child (Open, unblocked)
+        let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
+        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, None).await.unwrap();
+
+        let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
+        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
+        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        store
+            .add_issue_with_actor(
+                issue_with_status("open child", IssueStatus::Open, vec![child_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Child is ready (Open, no blockers).
+        // Parent is NOT ready (has a ready child).
+        // Grandparent is NOT ready (subtree contains a ready issue).
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
+        assert!(!state.is_issue_ready(&grandparent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_grandparent_not_ready_when_parent_ready_due_to_blocked_child() {
+        let state = test_state();
+
+        let store = state.store.as_ref();
+        // Grandparent (InProgress) -> Parent (InProgress) -> Child (Open, blocked)
+        let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
+        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, None).await.unwrap();
+
+        let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
+        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
+        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+
+        // Create a blocker issue that is still open (not closed)
+        let blocker = issue_with_status("blocker", IssueStatus::Open, vec![]);
+        let (blocker_id, _) = store.add_issue_with_actor(blocker, None).await.unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let blocked_dep = IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id);
+        store
+            .add_issue_with_actor(
+                issue_with_status(
+                    "blocked child",
+                    IssueStatus::Open,
+                    vec![child_dep, blocked_dep],
+                ),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Child is NOT ready (blocked).
+        // Parent IS ready (no ready children).
+        // Grandparent is NOT ready (Parent is ready in its subtree).
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
         assert!(!state.is_issue_ready(&grandparent_id).await.unwrap());
     }
