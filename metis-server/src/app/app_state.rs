@@ -1995,22 +1995,6 @@ async fn issue_ready(store: &dyn ReadOnlyStore, issue_id: &IssueId) -> Result<bo
                 }
             }
 
-            // Children of terminal (non-Closed) parents are not ready.
-            // A Closed parent means work completed successfully; children can still run.
-            for dependency in issue
-                .dependencies
-                .iter()
-                .filter(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
-            {
-                let parent = store.get_issue(&dependency.issue_id, false).await?;
-                if matches!(
-                    parent.item.status,
-                    IssueStatus::Dropped | IssueStatus::Rejected | IssueStatus::Failed
-                ) {
-                    return Ok(false);
-                }
-            }
-
             Ok(true)
         }
         IssueStatus::InProgress => {
@@ -2608,79 +2592,6 @@ mod tests {
         };
 
         assert!(!state.is_issue_ready(&blocked_issue_id).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn child_of_terminal_parent_is_not_ready() {
-        let state = test_state();
-
-        for terminal_status in [
-            IssueStatus::Dropped,
-            IssueStatus::Rejected,
-            IssueStatus::Failed,
-        ] {
-            let (child_id, _) = {
-                let store = state.store.as_ref();
-                let (parent_id, _) = store
-                    .add_issue_with_actor(
-                        issue_with_status("parent", terminal_status, vec![]),
-                        None,
-                    )
-                    .await
-                    .unwrap();
-                store
-                    .add_issue_with_actor(
-                        issue_with_status(
-                            "child",
-                            IssueStatus::Open,
-                            vec![IssueDependency::new(
-                                IssueDependencyType::ChildOf,
-                                parent_id,
-                            )],
-                        ),
-                        None,
-                    )
-                    .await
-                    .unwrap()
-            };
-
-            assert!(
-                !state.is_issue_ready(&child_id).await.unwrap(),
-                "child of {terminal_status:?} parent should not be ready"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn child_of_closed_parent_is_ready() {
-        let state = test_state();
-
-        let (child_id, _) = {
-            let store = state.store.as_ref();
-            let (parent_id, _) = store
-                .add_issue_with_actor(
-                    issue_with_status("parent", IssueStatus::Closed, vec![]),
-                    None,
-                )
-                .await
-                .unwrap();
-            store
-                .add_issue_with_actor(
-                    issue_with_status(
-                        "child",
-                        IssueStatus::Open,
-                        vec![IssueDependency::new(
-                            IssueDependencyType::ChildOf,
-                            parent_id,
-                        )],
-                    ),
-                    None,
-                )
-                .await
-                .unwrap()
-        };
-
-        assert!(state.is_issue_ready(&child_id).await.unwrap());
     }
 
     #[tokio::test]

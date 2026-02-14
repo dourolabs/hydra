@@ -42,7 +42,7 @@ Issues additionally have a graph structure with two types of relationships `x:bl
 
 The system uses the combination of the status and graph structure to determine what issues can be worked on.
 Issues also have 2 inferred states: `Ready`, `NotReady`, that indicate whether or not the issue is ready to be worked on.
-`Open` issues are `Ready` unless they have a blocked-on edge to an issue that isn't `Closed`, or they are a child of a parent in a terminal failure state (`Dropped`, `Rejected`, or `Failed`). Children of `Closed` parents remain ready since the parent's work completed successfully.
+`Open` issues are `Ready` unless they have a blocked-on edge to an issue that isn't `Closed`.
 `InProgress` issues are `Ready` if all of their children are in a terminal state (`Closed`, `Dropped`, `Rejected`, or `Failed`).
 `Dropped` issues are never `Ready`; they remain blocking for downstream work until users intervene.
 Whenever an issue is `Ready`, an agent may be spawned to work on it.
