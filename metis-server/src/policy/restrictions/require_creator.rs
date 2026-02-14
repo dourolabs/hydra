@@ -79,7 +79,6 @@ mod tests {
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
 
-            repo: None,
             payload: &payload,
             store: &store,
         };
@@ -99,7 +98,6 @@ mod tests {
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
 
-            repo: None,
             payload: &payload,
             store: &store,
         };
@@ -123,7 +121,6 @@ mod tests {
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
 
-            repo: None,
             payload: &payload,
             store: &store,
         };

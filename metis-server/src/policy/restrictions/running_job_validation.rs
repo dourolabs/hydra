@@ -119,7 +119,6 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateDocument,
-            repo: None,
             payload: &payload,
             store: &store,
         };
@@ -148,7 +147,6 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateDocument,
-            repo: None,
             payload: &payload,
             store: &store,
         };
@@ -170,7 +168,6 @@ mod tests {
         };
         let ctx = RestrictionContext {
             operation: Operation::CreateDocument,
-            repo: None,
             payload: &payload,
             store: &store,
         };

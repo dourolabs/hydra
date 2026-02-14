@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use std::collections::HashMap;
 
 /// A single policy entry in the config, consisting of a name and optional
 /// parameters (as raw TOML values for the policy constructor to interpret).
@@ -38,15 +37,6 @@ pub struct PolicyList {
     pub automations: Vec<PolicyEntry>,
 }
 
-/// Per-repo override configuration. Only restriction overrides are supported;
-/// automations always run from the global engine because the event bus does
-/// not have a per-repo scope.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-pub struct RepoOverride {
-    pub restrictions: Vec<PolicyEntry>,
-}
-
 /// Top-level policy configuration, deserializable from the `[policies]`
 /// section of the server TOML config.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -54,10 +44,4 @@ pub struct RepoOverride {
 pub struct PolicyConfig {
     #[serde(flatten)]
     pub global: PolicyList,
-
-    /// Per-repo restriction overrides. Key is the repo name (e.g., "dourolabs/metis").
-    /// Only restrictions can be overridden per-repo; automations always use the
-    /// global list.
-    #[serde(default)]
-    pub repos: HashMap<String, RepoOverride>,
 }

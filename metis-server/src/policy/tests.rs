@@ -2,14 +2,13 @@ use super::*;
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::issues::{Issue, IssueStatus, IssueType};
 use crate::domain::users::Username;
-use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList, RepoOverride};
+use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
 use crate::policy::context::{AutomationContext, Operation, OperationPayload, RestrictionContext};
 use crate::policy::registry::{self, PolicyRegistry};
 use crate::store::MemoryStore;
 use crate::test_utils;
 use chrono::Utc;
 use metis_common::IssueId;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -189,8 +188,6 @@ async fn check_restrictions_passes_with_no_restrictions() {
     let payload = make_issue_payload();
     let ctx = RestrictionContext {
         operation: Operation::CreateIssue,
-
-        repo: None,
         payload: &payload,
         store: &store,
     };
@@ -209,8 +206,6 @@ async fn check_restrictions_passes_when_all_allow() {
     let payload = make_issue_payload();
     let ctx = RestrictionContext {
         operation: Operation::CreateIssue,
-
-        repo: None,
         payload: &payload,
         store: &store,
     };
@@ -235,8 +230,6 @@ async fn check_restrictions_returns_first_violation() {
     let payload = make_issue_payload();
     let ctx = RestrictionContext {
         operation: Operation::UpdateIssue,
-
-        repo: None,
         payload: &payload,
         store: &store,
     };
@@ -433,7 +426,6 @@ fn registry_build_with_valid_config() {
             restrictions: vec![PolicyEntry::Name("test_restriction".to_string())],
             automations: vec![PolicyEntry::Name("test_automation".to_string())],
         },
-        repos: Default::default(),
     };
 
     let engine = registry.build(&config);
@@ -452,7 +444,6 @@ fn registry_build_with_unknown_restriction_fails() {
             restrictions: vec![PolicyEntry::Name("nonexistent_policy".to_string())],
             automations: Vec::new(),
         },
-        repos: Default::default(),
     };
 
     let result = registry.build(&config);
@@ -472,7 +463,6 @@ fn registry_build_with_unknown_automation_fails() {
             restrictions: Vec::new(),
             automations: vec![PolicyEntry::Name("nonexistent_automation".to_string())],
         },
-        repos: Default::default(),
     };
 
     let result = registry.build(&config);
@@ -518,7 +508,6 @@ fn registry_build_with_params() {
             }],
             automations: Vec::new(),
         },
-        repos: Default::default(),
     };
 
     let result = registry.build(&config);
@@ -534,9 +523,6 @@ fn policy_config_deserializes_from_toml() {
     let toml_str = r#"
         restrictions = ["issue_lifecycle_validation", "task_state_machine"]
         automations = ["cascade_issue_status"]
-
-        [repos."dourolabs/metis"]
-        restrictions = ["issue_lifecycle_validation"]
     "#;
 
     let config: PolicyConfig = toml::from_str(toml_str).expect("should deserialize");
@@ -548,12 +534,6 @@ fn policy_config_deserializes_from_toml() {
     assert_eq!(config.global.restrictions[1].name(), "task_state_machine");
     assert_eq!(config.global.automations.len(), 1);
     assert_eq!(config.global.automations[0].name(), "cascade_issue_status");
-
-    let repo_config = config
-        .repos
-        .get("dourolabs/metis")
-        .expect("should have repo config");
-    assert_eq!(repo_config.restrictions.len(), 1);
 }
 
 #[test]
@@ -581,7 +561,6 @@ fn policy_config_default_is_empty() {
     let config = PolicyConfig::default();
     assert!(config.global.restrictions.is_empty());
     assert!(config.global.automations.is_empty());
-    assert!(config.repos.is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -758,7 +737,6 @@ fn default_config_enables_all_builtin_policies() {
 
     assert_eq!(engine.restriction_count(), 5);
     assert_eq!(engine.automation_count(), 6);
-    assert_eq!(engine.repo_override_count(), 0);
 
     // Also verify that an explicit config listing all policies gives the same counts
     let all_config = PolicyConfig {
@@ -779,7 +757,6 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("github_pr_sync".to_string()),
             ],
         },
-        repos: HashMap::new(),
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 5);
@@ -838,7 +815,6 @@ async fn disabling_restriction_allows_blocked_operation() {
                 PolicyEntry::Name("github_pr_sync".to_string()),
             ],
         },
-        repos: HashMap::new(),
     };
 
     let partial_engine = crate::app::AppState::build_policy_engine(Some(&partial_config));
@@ -851,102 +827,6 @@ async fn disabling_restriction_allows_blocked_operation() {
     assert!(
         result.is_ok(),
         "engine without require_creator should allow issue with empty creator"
-    );
-}
-
-/// Test 3: Per-repo override applies to operations on that repo's issues.
-/// Global config blocks issues without a creator via `require_creator`;
-/// per-repo override for "test/repo" has no restrictions, so issues
-/// without a creator are allowed for that repo.
-#[tokio::test]
-async fn per_repo_override_applies_to_repo_operations() {
-    use crate::domain::issues::{Issue, IssueStatus, IssueType};
-
-    let repo_name = metis_common::RepoName::new("test", "repo").unwrap();
-
-    let config = PolicyConfig {
-        global: PolicyList {
-            restrictions: vec![PolicyEntry::Name("require_creator".to_string())],
-            automations: vec![],
-        },
-        repos: {
-            let mut m = HashMap::new();
-            // Per-repo override with NO restrictions
-            m.insert(
-                repo_name.to_string(),
-                RepoOverride {
-                    restrictions: vec![],
-                },
-            );
-            m
-        },
-    };
-
-    let registry = registry::build_default_registry();
-    let engine = registry.build(&config).unwrap();
-
-    assert_eq!(engine.restriction_count(), 1);
-    assert_eq!(engine.repo_override_count(), 1);
-
-    let store = MemoryStore::new();
-
-    let issue_no_creator = Issue::new(
-        IssueType::Task,
-        "test".to_string(),
-        Username::from(""),
-        String::new(),
-        IssueStatus::Open,
-        None,
-        None,
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    );
-
-    let issue_payload = OperationPayload::Issue {
-        issue_id: None,
-        new: issue_no_creator,
-        old: None,
-    };
-
-    // Without repo context → uses global restrictions → blocked
-    let ctx_global = RestrictionContext {
-        operation: Operation::CreateIssue,
-        repo: None,
-        payload: &issue_payload,
-        store: &store,
-    };
-    let result = engine.check_restrictions(&ctx_global).await;
-    assert!(
-        result.is_err(),
-        "global context should block issue without creator"
-    );
-
-    // With repo context matching the override → uses per-repo (empty) → allowed
-    let ctx_repo = RestrictionContext {
-        operation: Operation::CreateIssue,
-        repo: Some(&repo_name),
-        payload: &issue_payload,
-        store: &store,
-    };
-    let result = engine.check_restrictions(&ctx_repo).await;
-    assert!(
-        result.is_ok(),
-        "per-repo override with no restrictions should allow issue without creator"
-    );
-
-    // With a different repo (no override) → uses global → blocked
-    let other_repo = metis_common::RepoName::new("other", "project").unwrap();
-    let ctx_other = RestrictionContext {
-        operation: Operation::CreateIssue,
-        repo: Some(&other_repo),
-        payload: &issue_payload,
-        store: &store,
-    };
-    let result = engine.check_restrictions(&ctx_other).await;
-    assert!(
-        result.is_err(),
-        "repo without override should fall back to global restrictions"
     );
 }
 
@@ -974,7 +854,6 @@ fn parameterized_policy_builds_with_custom_params() {
                 },
             }],
         },
-        repos: HashMap::new(),
     };
 
     let engine = registry.build(&config);
@@ -997,7 +876,6 @@ fn unknown_policy_name_in_config_errors() {
             restrictions: vec![PolicyEntry::Name("nonexistent_restriction".to_string())],
             automations: vec![],
         },
-        repos: HashMap::new(),
     };
 
     // Validation should error on unknown names
@@ -1034,7 +912,6 @@ fn invalid_params_produce_error_during_validation() {
                 params: toml::Value::String("invalid".to_string()),
             }],
         },
-        repos: HashMap::new(),
     };
 
     let result = registry.validate_config(&config);
@@ -1071,9 +948,6 @@ fn full_toml_config_with_policies_deserializes() {
         [policies]
         restrictions = ["issue_lifecycle_validation", "task_state_machine"]
         automations = ["cascade_issue_status"]
-
-        [policies.repos."myorg/myrepo"]
-        restrictions = ["issue_lifecycle_validation"]
     "#;
 
     let config: crate::config::AppConfig =
@@ -1090,12 +964,6 @@ fn full_toml_config_with_policies_deserializes() {
         policies.global.automations[0].name(),
         "cascade_issue_status"
     );
-
-    let repo = policies
-        .repos
-        .get("myorg/myrepo")
-        .expect("should have repo override");
-    assert_eq!(repo.restrictions.len(), 1);
 }
 
 /// Test: Config without [policies] section deserializes with policies = None.
@@ -1131,35 +999,4 @@ fn config_without_policies_deserializes_as_none() {
         config.policies.is_none(),
         "absent [policies] section should deserialize as None"
     );
-}
-
-/// Test: Per-repo override in registry.build produces correct overrides.
-#[test]
-fn registry_build_with_repo_overrides() {
-    let registry = registry::build_default_registry();
-
-    let config = PolicyConfig {
-        global: PolicyList {
-            restrictions: vec![
-                PolicyEntry::Name("issue_lifecycle_validation".to_string()),
-                PolicyEntry::Name("task_state_machine".to_string()),
-            ],
-            automations: vec![PolicyEntry::Name("cascade_issue_status".to_string())],
-        },
-        repos: {
-            let mut m = HashMap::new();
-            m.insert(
-                "org/repo".to_string(),
-                RepoOverride {
-                    restrictions: vec![PolicyEntry::Name("issue_lifecycle_validation".to_string())],
-                },
-            );
-            m
-        },
-    };
-
-    let engine = registry.build(&config).unwrap();
-    assert_eq!(engine.restriction_count(), 2);
-    assert_eq!(engine.automation_count(), 1);
-    assert_eq!(engine.repo_override_count(), 1);
 }

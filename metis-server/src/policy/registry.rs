@@ -1,4 +1,4 @@
-use super::config::{PolicyConfig, PolicyList, RepoOverride};
+use super::config::{PolicyConfig, PolicyList};
 use super::{Automation, PolicyEngine, Restriction};
 use std::collections::HashMap;
 
@@ -71,40 +71,12 @@ impl PolicyRegistry {
         Ok(PolicyEngine::new(restrictions, automations))
     }
 
-    /// Build a `PolicyEngine` from a `RepoOverride` (restrictions only).
-    fn build_engine_from_repo_override(
-        &self,
-        repo_override: &RepoOverride,
-    ) -> Result<PolicyEngine, String> {
-        let mut restrictions: Vec<Box<dyn Restriction>> = Vec::new();
-
-        for entry in &repo_override.restrictions {
-            let name = entry.name();
-            let factory = self
-                .restriction_factories
-                .get(name)
-                .ok_or_else(|| format!("unknown restriction policy: '{name}'"))?;
-            let restriction = factory(entry.params())?;
-            restrictions.push(restriction);
-        }
-
-        Ok(PolicyEngine::new(restrictions, Vec::new()))
-    }
-
-    /// Build a `PolicyEngine` from a `PolicyConfig`, including per-repo overrides.
+    /// Build a `PolicyEngine` from a `PolicyConfig`.
     ///
     /// Returns an error if any referenced policy name is not registered or
     /// if any policy parameters are invalid.
     pub fn build(&self, config: &PolicyConfig) -> Result<PolicyEngine, String> {
-        let global_engine = self.build_engine_from_list(&config.global)?;
-
-        let mut repo_overrides: HashMap<String, PolicyEngine> = HashMap::new();
-        for (repo_name, repo_override) in &config.repos {
-            let repo_engine = self.build_engine_from_repo_override(repo_override)?;
-            repo_overrides.insert(repo_name.clone(), repo_engine);
-        }
-
-        Ok(global_engine.set_repo_overrides(repo_overrides))
+        self.build_engine_from_list(&config.global)
     }
 
     /// Validate a `PolicyConfig` without building a full engine.
@@ -112,9 +84,6 @@ impl PolicyRegistry {
     /// Returns an error on unknown policy names or invalid params.
     pub fn validate_config(&self, config: &PolicyConfig) -> Result<(), anyhow::Error> {
         self.validate_list(&config.global, "global")?;
-        for (repo_name, repo_override) in &config.repos {
-            self.validate_repo_override(repo_override, &format!("repos.\"{repo_name}\""))?;
-        }
         Ok(())
     }
 
@@ -137,24 +106,6 @@ impl PolicyRegistry {
             let factory = &self.automation_factories[name];
             factory(entry.params()).map_err(|e| {
                 anyhow::anyhow!("invalid params for automation '{name}' in {scope}: {e}")
-            })?;
-        }
-        Ok(())
-    }
-
-    fn validate_repo_override(
-        &self,
-        repo_override: &RepoOverride,
-        scope: &str,
-    ) -> Result<(), anyhow::Error> {
-        for entry in &repo_override.restrictions {
-            let name = entry.name();
-            if !self.restriction_factories.contains_key(name) {
-                anyhow::bail!("unknown restriction policy '{name}' in {scope}");
-            }
-            let factory = &self.restriction_factories[name];
-            factory(entry.params()).map_err(|e| {
-                anyhow::anyhow!("invalid params for restriction '{name}' in {scope}: {e}")
             })?;
         }
         Ok(())

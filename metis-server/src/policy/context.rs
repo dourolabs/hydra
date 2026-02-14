@@ -50,7 +50,6 @@ pub enum OperationPayload {
 /// Context provided to restrictions for evaluating a proposed mutation.
 pub struct RestrictionContext<'a> {
     pub operation: Operation,
-    pub repo: Option<&'a metis_common::RepoName>,
     pub payload: &'a OperationPayload,
     pub store: &'a dyn ReadOnlyStore,
 }

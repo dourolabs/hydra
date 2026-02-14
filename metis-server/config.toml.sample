@@ -141,8 +141,7 @@ max_backoff_secs = 30
 # with their default parameters (backward-compatible default behavior).
 #
 # When present, only the policies listed here are active. Policies not
-# listed are disabled. Use per-repo overrides to customise behavior for
-# specific repositories (complete override, not merge).
+# listed are disabled.
 #
 # [policies]
 #
@@ -170,12 +169,6 @@ max_backoff_secs = 30
 # # name = "cascade_issue_status"
 # # [automations.params]
 # # trigger_statuses = ["dropped", "failed"]
-#
-# ## Per-repo restriction overrides (complete override — not merged with global).
-# ## Only restrictions can be overridden per-repo; automations always use the
-# ## global list.
-# # [policies.repos."org/repo"]
-# # restrictions = ["issue_lifecycle_validation"]
 
 [kubernetes]
 # Set to true when the server runs inside a Kubernetes cluster and should use

@@ -100,7 +100,6 @@ mod tests {
         let ctx = RestrictionContext {
             operation: Operation::CreatePatch,
 
-            repo: None,
             payload: &payload,
             store: &store,
         };
@@ -127,7 +126,6 @@ mod tests {
         let ctx = RestrictionContext {
             operation: Operation::CreatePatch,
 
-            repo: None,
             payload: &payload,
             store: &store,
         };
@@ -152,7 +150,6 @@ mod tests {
         let ctx = RestrictionContext {
             operation: Operation::CreatePatch,
 
-            repo: None,
             payload: &payload,
             store: &store,
         };
