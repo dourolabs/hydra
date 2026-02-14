@@ -120,7 +120,6 @@ mod tests {
         let ctx = RestrictionContext {
             operation: Operation::UpdateJob,
 
-            repo: None,
             payload: &payload,
             store: &store,
         };
@@ -141,7 +140,6 @@ mod tests {
         let ctx = RestrictionContext {
             operation: Operation::UpdateJob,
 
-            repo: None,
             payload: &payload,
             store: &store,
         };
@@ -162,7 +160,6 @@ mod tests {
         let ctx = RestrictionContext {
             operation: Operation::UpdateJob,
 
-            repo: None,
             payload: &payload,
             store: &store,
         };
@@ -188,7 +185,6 @@ mod tests {
         let ctx = RestrictionContext {
             operation: Operation::CreateJob,
 
-            repo: None,
             payload: &payload,
             store: &store,
         };

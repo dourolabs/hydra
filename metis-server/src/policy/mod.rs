@@ -81,14 +81,10 @@ pub trait Automation: Send + Sync {
     async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError>;
 }
 
-/// The core policy engine that holds all active restrictions and automations,
-/// with optional per-repo overrides.
+/// The core policy engine that holds all active restrictions and automations.
 pub struct PolicyEngine {
     restrictions: Vec<Box<dyn Restriction>>,
     automations: Vec<Box<dyn Automation>>,
-    /// Per-repo policy overrides. When a mutation is associated with a repo
-    /// listed here, that repo's engine is used instead of the global one.
-    repo_overrides: std::collections::HashMap<String, PolicyEngine>,
 }
 
 impl PolicyEngine {
@@ -100,30 +96,7 @@ impl PolicyEngine {
         Self {
             restrictions,
             automations,
-            repo_overrides: std::collections::HashMap::new(),
         }
-    }
-
-    /// Create a new policy engine with per-repo overrides.
-    pub fn with_repo_overrides(
-        restrictions: Vec<Box<dyn Restriction>>,
-        automations: Vec<Box<dyn Automation>>,
-        repo_overrides: std::collections::HashMap<String, PolicyEngine>,
-    ) -> Self {
-        Self {
-            restrictions,
-            automations,
-            repo_overrides,
-        }
-    }
-
-    /// Set per-repo overrides on an existing engine, consuming and returning it.
-    pub fn set_repo_overrides(
-        mut self,
-        repo_overrides: std::collections::HashMap<String, PolicyEngine>,
-    ) -> Self {
-        self.repo_overrides = repo_overrides;
-        self
     }
 
     /// Create an empty policy engine with no restrictions or automations.
@@ -131,31 +104,16 @@ impl PolicyEngine {
         Self {
             restrictions: Vec::new(),
             automations: Vec::new(),
-            repo_overrides: std::collections::HashMap::new(),
         }
-    }
-
-    /// Resolve which engine to use for the given repo context.
-    /// If a per-repo override exists, use it; otherwise use self (global).
-    fn resolve_for_repo(&self, repo: Option<&metis_common::RepoName>) -> &PolicyEngine {
-        if let Some(repo_name) = repo {
-            let key = repo_name.to_string();
-            if let Some(override_engine) = self.repo_overrides.get(&key) {
-                return override_engine;
-            }
-        }
-        self
     }
 
     /// Evaluate all restrictions for a proposed operation.
-    /// If the context has a repo with a per-repo override, uses that override.
     /// Returns the first violation encountered, if any.
     pub async fn check_restrictions(
         &self,
         ctx: &RestrictionContext<'_>,
     ) -> Result<(), PolicyViolation> {
-        let engine = self.resolve_for_repo(ctx.repo);
-        for restriction in &engine.restrictions {
+        for restriction in &self.restrictions {
             restriction.evaluate(ctx).await?;
         }
         Ok(())
@@ -190,11 +148,6 @@ impl PolicyEngine {
         self.automations.len()
     }
 
-    /// Returns the number of per-repo overrides.
-    pub fn repo_override_count(&self) -> usize {
-        self.repo_overrides.len()
-    }
-
     // ----- Shortcut methods for each mutation type -----
 
     /// Check restrictions for creating an issue.
@@ -210,7 +163,6 @@ impl PolicyEngine {
         };
         let ctx = RestrictionContext {
             operation: context::Operation::CreateIssue,
-            repo: None,
             payload: &payload,
             store,
         };
@@ -232,7 +184,6 @@ impl PolicyEngine {
         };
         let ctx = RestrictionContext {
             operation: context::Operation::UpdateIssue,
-            repo: None,
             payload: &payload,
             store,
         };
@@ -252,7 +203,6 @@ impl PolicyEngine {
         };
         let ctx = RestrictionContext {
             operation: context::Operation::CreatePatch,
-            repo: None,
             payload: &payload,
             store,
         };
@@ -272,7 +222,6 @@ impl PolicyEngine {
         };
         let ctx = RestrictionContext {
             operation: context::Operation::CreateDocument,
-            repo: None,
             payload: &payload,
             store,
         };
@@ -294,7 +243,6 @@ impl PolicyEngine {
         };
         let ctx = RestrictionContext {
             operation: context::Operation::UpdateDocument,
-            repo: None,
             payload: &payload,
             store,
         };
@@ -316,7 +264,6 @@ impl PolicyEngine {
         };
         let ctx = RestrictionContext {
             operation: context::Operation::UpdateJob,
-            repo: None,
             payload: &payload,
             store,
         };
