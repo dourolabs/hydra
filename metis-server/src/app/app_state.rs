@@ -1799,7 +1799,8 @@ impl AppState {
 
     pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
         let store = self.store.as_ref();
-        issue_ready(store, issue_id).await
+        let mut visited = HashSet::new();
+        issue_ready(store, issue_id, &mut visited).await
     }
 
     pub async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
@@ -1974,46 +1975,50 @@ impl AppState {
     }
 }
 
-async fn issue_ready(store: &dyn ReadOnlyStore, issue_id: &IssueId) -> Result<bool, StoreError> {
-    let issue = store.get_issue(issue_id, false).await?;
-    let issue = issue.item;
-
-    match issue.status {
-        IssueStatus::Closed
-        | IssueStatus::Dropped
-        | IssueStatus::Rejected
-        | IssueStatus::Failed => Ok(false),
-        IssueStatus::Open => {
-            for dependency in issue
-                .dependencies
-                .iter()
-                .filter(|dependency| dependency.dependency_type == IssueDependencyType::BlockedOn)
-            {
-                let blocker = store.get_issue(&dependency.issue_id, false).await?;
-                if blocker.item.status != IssueStatus::Closed {
-                    return Ok(false);
-                }
-            }
-
-            Ok(true)
+fn issue_ready<'a>(
+    store: &'a dyn ReadOnlyStore,
+    issue_id: &'a IssueId,
+    visited: &'a mut HashSet<IssueId>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, StoreError>> + Send + 'a>> {
+    Box::pin(async move {
+        if !visited.insert(issue_id.clone()) {
+            // Cycle detected: treat as not ready to break the loop.
+            return Ok(false);
         }
-        IssueStatus::InProgress => {
-            for child_id in store.get_issue_children(issue_id).await? {
-                let child = store.get_issue(&child_id, false).await?;
-                if !matches!(
-                    child.item.status,
-                    IssueStatus::Closed
-                        | IssueStatus::Dropped
-                        | IssueStatus::Rejected
-                        | IssueStatus::Failed
-                ) {
-                    return Ok(false);
-                }
-            }
 
-            Ok(true)
+        let issue = store.get_issue(issue_id, false).await?;
+        let issue = issue.item;
+
+        match issue.status {
+            IssueStatus::Closed
+            | IssueStatus::Dropped
+            | IssueStatus::Rejected
+            | IssueStatus::Failed => Ok(false),
+            IssueStatus::Open => {
+                for dependency in issue.dependencies.iter().filter(|dependency| {
+                    dependency.dependency_type == IssueDependencyType::BlockedOn
+                }) {
+                    let blocker = store.get_issue(&dependency.issue_id, false).await?;
+                    if blocker.item.status != IssueStatus::Closed {
+                        return Ok(false);
+                    }
+                }
+
+                Ok(true)
+            }
+            IssueStatus::InProgress => {
+                // Parent is ready when no child is ready (recursively).
+                // This enables re-planning: if all children are stuck, the parent can spawn.
+                for child_id in store.get_issue_children(issue_id).await? {
+                    if issue_ready(store, &child_id, visited).await? {
+                        return Ok(false);
+                    }
+                }
+
+                Ok(true)
+            }
         }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -3856,6 +3861,116 @@ mod tests {
             .unwrap();
 
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_parent_ready_when_child_failed_and_sibling_blocked() {
+        let state = test_state();
+
+        let store = state.store.as_ref();
+        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+
+        // Child A: failed
+        let (failed_child_id, _) = store
+            .add_issue_with_actor(
+                issue_with_status("failed child", IssueStatus::Failed, vec![child_dep.clone()]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Child B: open, blocked on failed child A
+        let blocked_dep = IssueDependency::new(IssueDependencyType::BlockedOn, failed_child_id);
+        store
+            .add_issue_with_actor(
+                issue_with_status(
+                    "blocked child",
+                    IssueStatus::Open,
+                    vec![child_dep, blocked_dep],
+                ),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Neither child is Ready: A is Failed (terminal), B is blocked on non-Closed A.
+        // Parent should be ready.
+        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_parent_not_ready_when_child_is_open_and_unblocked() {
+        let state = test_state();
+
+        let store = state.store.as_ref();
+        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+
+        // Closed child
+        store
+            .add_issue_with_actor(
+                issue_with_status("closed child", IssueStatus::Closed, vec![child_dep.clone()]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Open unblocked child — this child is Ready
+        store
+            .add_issue_with_actor(
+                issue_with_status("open child", IssueStatus::Open, vec![child_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Parent should NOT be ready because the open child is Ready
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_parent_ready_when_no_children() {
+        let state = test_state();
+
+        let store = state.store.as_ref();
+        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+
+        // No children — trivially, no child is Ready
+        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_parent_ready_with_nested_stuck_children() {
+        let state = test_state();
+
+        let store = state.store.as_ref();
+        // Grandparent (InProgress) -> Parent (InProgress) -> Child (Failed)
+        let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
+        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, None).await.unwrap();
+
+        let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
+        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
+        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        store
+            .add_issue_with_actor(
+                issue_with_status("failed child", IssueStatus::Failed, vec![child_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Parent is ready (child is Failed, not Ready).
+        // But since parent IS ready, grandparent is NOT ready (has a ready child).
+        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+        assert!(!state.is_issue_ready(&grandparent_id).await.unwrap());
     }
 
     #[tokio::test]
