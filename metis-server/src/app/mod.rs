@@ -2,7 +2,10 @@ mod agents;
 mod app_state;
 mod documents;
 pub mod event_bus;
+mod issues;
+mod jobs;
 mod merge_queue;
+mod patches;
 mod repositories;
 mod resolved_task;
 #[cfg(test)]
@@ -20,13 +23,13 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 
 pub use agents::AgentError;
-pub use app_state::{
-    AppState, CreateJobError, SetJobStatusError, UpdateTodoListError, UpsertIssueError,
-    UpsertPatchError,
-};
+pub use app_state::AppState;
 pub use documents::UpsertDocumentError;
 pub use event_bus::{EventBus, ServerEvent, StoreWithEvents};
+pub use issues::{UpdateTodoListError, UpsertIssueError};
+pub use jobs::{CreateJobError, SetJobStatusError};
 pub use metis_common::repositories::{Repository, RepositoryRecord};
+pub use patches::UpsertPatchError;
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
 pub use users::LoginError;
 
