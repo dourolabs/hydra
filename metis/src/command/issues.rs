@@ -530,6 +530,41 @@ struct ReviewSummary {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum IssueDescribeLine {
+    Issue {
+        issue_id: IssueId,
+        version: VersionNumber,
+        issue: Box<Issue>,
+        patches: Vec<PatchVersionRecord>,
+    },
+    Parent {
+        issue_id: IssueId,
+        issue_type: IssueType,
+        status: IssueStatus,
+        description: String,
+    },
+    Child {
+        issue_id: IssueId,
+        issue_type: IssueType,
+        status: IssueStatus,
+        assignee: Option<String>,
+        description: String,
+        progress: String,
+    },
+    Activity(ActivityLogEntrySummary),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum IssueDescribeLineVerbose {
+    Issue(IssueWithPatches),
+    Parent(IssueWithPatches),
+    Child(IssueWithPatches),
+    Activity(ActivityLogEntry),
+}
+
+#[derive(Debug, Serialize)]
 struct TodoListOutput<'a> {
     issue_id: &'a IssueId,
     todo_list: &'a [TodoItem],
@@ -542,25 +577,97 @@ async fn describe_issue(
     verbose: bool,
 ) -> Result<()> {
     let description = collect_issue_description(client, id).await?;
-    let summary = summarize_issue_description(&description)?;
 
     let mut buffer = Vec::new();
     if verbose {
-        serde_json::to_writer(&mut buffer, &description)?;
-        buffer.write_all(b"\n")?;
+        write_describe_lines_verbose(&description, &mut buffer)?;
     } else {
         match output_format {
             ResolvedOutputFormat::Pretty => {
+                let summary = summarize_issue_description(&description)?;
                 print_issue_description_pretty(&summary, &mut buffer)?;
             }
             ResolvedOutputFormat::Jsonl => {
-                serde_json::to_writer(&mut buffer, &summary)?;
-                buffer.write_all(b"\n")?;
+                write_describe_lines(&description, &mut buffer)?;
             }
         }
     }
     io::stdout().write_all(&buffer)?;
     io::stdout().flush()?;
+
+    Ok(())
+}
+
+fn write_describe_lines(description: &IssueDescription, buffer: &mut Vec<u8>) -> Result<()> {
+    let issue = &description.issue;
+    let issue_line = IssueDescribeLine::Issue {
+        issue_id: issue.issue.issue_id.clone(),
+        version: issue.issue.version,
+        issue: Box::new(issue.issue.issue.clone()),
+        patches: issue.patches.clone(),
+    };
+    serde_json::to_writer(&mut *buffer, &issue_line)?;
+    buffer.write_all(b"\n")?;
+
+    for parent in &description.parents {
+        let parent_line = IssueDescribeLine::Parent {
+            issue_id: parent.issue.issue_id.clone(),
+            issue_type: parent.issue.issue.issue_type,
+            status: parent.issue.issue.status,
+            description: parent.issue.issue.description.clone(),
+        };
+        serde_json::to_writer(&mut *buffer, &parent_line)?;
+        buffer.write_all(b"\n")?;
+    }
+
+    for child in &description.children {
+        let child_line = IssueDescribeLine::Child {
+            issue_id: child.issue.issue_id.clone(),
+            issue_type: child.issue.issue.issue_type,
+            status: child.issue.issue.status,
+            assignee: child.issue.issue.assignee.clone(),
+            description: child.issue.issue.description.clone(),
+            progress: child.issue.issue.progress.clone(),
+        };
+        serde_json::to_writer(&mut *buffer, &child_line)?;
+        buffer.write_all(b"\n")?;
+    }
+
+    let activity_summaries = summarize_activity_log(&description.activity_log)?;
+    for entry in activity_summaries {
+        let activity_line = IssueDescribeLine::Activity(entry);
+        serde_json::to_writer(&mut *buffer, &activity_line)?;
+        buffer.write_all(b"\n")?;
+    }
+
+    Ok(())
+}
+
+fn write_describe_lines_verbose(
+    description: &IssueDescription,
+    buffer: &mut Vec<u8>,
+) -> Result<()> {
+    let issue_line = IssueDescribeLineVerbose::Issue(description.issue.clone());
+    serde_json::to_writer(&mut *buffer, &issue_line)?;
+    buffer.write_all(b"\n")?;
+
+    for parent in &description.parents {
+        let parent_line = IssueDescribeLineVerbose::Parent(parent.clone());
+        serde_json::to_writer(&mut *buffer, &parent_line)?;
+        buffer.write_all(b"\n")?;
+    }
+
+    for child in &description.children {
+        let child_line = IssueDescribeLineVerbose::Child(child.clone());
+        serde_json::to_writer(&mut *buffer, &child_line)?;
+        buffer.write_all(b"\n")?;
+    }
+
+    for entry in &description.activity_log {
+        let activity_line = IssueDescribeLineVerbose::Activity(entry.clone());
+        serde_json::to_writer(&mut *buffer, &activity_line)?;
+        buffer.write_all(b"\n")?;
+    }
 
     Ok(())
 }
@@ -4788,5 +4895,352 @@ mod tests {
         assert!(rendered.contains("Reviewers:"));
         assert!(rendered.contains("- alex: changes requested @ 2024-05-01T11:50:00Z"));
         assert!(rendered.contains("- sam: approved @ 2024-05-01T12:00:00Z"));
+    }
+
+    #[test]
+    fn describe_jsonl_emits_multi_line_with_correct_ordering() {
+        let main_issue_id = issue_id("i-main");
+        let version_timestamp = Utc.with_ymd_and_hms(2024, 2, 1, 12, 0, 0).unwrap();
+
+        let description = IssueDescription {
+            issue: IssueWithPatches {
+                issue: IssueVersionRecord::new(
+                    main_issue_id.clone(),
+                    1,
+                    version_timestamp,
+                    Issue::new(
+                        IssueType::Task,
+                        "Main issue".into(),
+                        empty_user(),
+                        String::new(),
+                        IssueStatus::Open,
+                        Some("owner".into()),
+                        None,
+                        Vec::new(),
+                        vec![],
+                        Vec::new(),
+                        false,
+                    ),
+                ),
+                patches: Vec::new(),
+            },
+            parents: vec![IssueWithPatches {
+                issue: IssueVersionRecord::new(
+                    issue_id("i-parent"),
+                    1,
+                    version_timestamp,
+                    Issue::new(
+                        IssueType::Feature,
+                        "Parent issue".into(),
+                        empty_user(),
+                        String::new(),
+                        IssueStatus::InProgress,
+                        None,
+                        None,
+                        Vec::new(),
+                        vec![],
+                        Vec::new(),
+                        false,
+                    ),
+                ),
+                patches: Vec::new(),
+            }],
+            children: vec![IssueWithPatches {
+                issue: IssueVersionRecord::new(
+                    issue_id("i-child"),
+                    1,
+                    version_timestamp,
+                    Issue::new(
+                        IssueType::Bug,
+                        "Child issue".into(),
+                        empty_user(),
+                        "working on it".into(),
+                        IssueStatus::InProgress,
+                        Some("dev".into()),
+                        None,
+                        Vec::new(),
+                        vec![],
+                        Vec::new(),
+                        false,
+                    ),
+                ),
+                patches: Vec::new(),
+            }],
+            activity_log: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        write_describe_lines(&description, &mut buffer).unwrap();
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<&str> = output.trim().split('\n').collect();
+
+        // 1 issue + 1 parent + 1 child + 0 activity = 3 lines
+        assert_eq!(
+            lines.len(),
+            3,
+            "expected 3 JSONL lines, got {}",
+            lines.len()
+        );
+
+        let issue_line: Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(issue_line["type"], "issue");
+        assert_eq!(issue_line["issue_id"], "i-main");
+        assert_eq!(issue_line["version"], 1);
+
+        let parent_line: Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(parent_line["type"], "parent");
+        assert_eq!(parent_line["issue_id"], "i-parent");
+        assert_eq!(parent_line["issue_type"], "feature");
+        assert_eq!(parent_line["status"], "in-progress");
+        assert_eq!(parent_line["description"], "Parent issue");
+
+        let child_line: Value = serde_json::from_str(lines[2]).unwrap();
+        assert_eq!(child_line["type"], "child");
+        assert_eq!(child_line["issue_id"], "i-child");
+        assert_eq!(child_line["issue_type"], "bug");
+        assert_eq!(child_line["status"], "in-progress");
+        assert_eq!(child_line["assignee"], "dev");
+        assert_eq!(child_line["description"], "Child issue");
+        assert_eq!(child_line["progress"], "working on it");
+    }
+
+    #[test]
+    fn describe_jsonl_emits_activity_lines() {
+        let main_issue_id = issue_id("i-main");
+        let version_timestamp = Utc.with_ymd_and_hms(2024, 2, 1, 12, 0, 0).unwrap();
+
+        let base_issue = Issue::new(
+            IssueType::Task,
+            "Main issue".into(),
+            empty_user(),
+            String::new(),
+            IssueStatus::Open,
+            Some("owner".into()),
+            None,
+            Vec::new(),
+            vec![],
+            Vec::new(),
+            false,
+        );
+        let mut updated_issue = base_issue.clone();
+        updated_issue.status = IssueStatus::InProgress;
+
+        let issue_versions = vec![
+            Versioned::new(
+                base_issue.clone(),
+                1,
+                Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+            ),
+            Versioned::new(
+                updated_issue,
+                2,
+                Utc.with_ymd_and_hms(2024, 1, 4, 9, 0, 0).unwrap(),
+            ),
+        ];
+        let mut activity_log =
+            activity_log_for_issue_versions(main_issue_id.clone(), &issue_versions);
+        sort_activity_log_entries(&mut activity_log);
+
+        let description = IssueDescription {
+            issue: IssueWithPatches {
+                issue: IssueVersionRecord::new(
+                    main_issue_id.clone(),
+                    2,
+                    version_timestamp,
+                    issue_versions[1].item.clone(),
+                ),
+                patches: Vec::new(),
+            },
+            parents: vec![],
+            children: vec![],
+            activity_log,
+        };
+
+        let mut buffer = Vec::new();
+        write_describe_lines(&description, &mut buffer).unwrap();
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<&str> = output.trim().split('\n').collect();
+
+        // 1 issue + 0 parents + 0 children + 2 activity = 3 lines
+        assert_eq!(
+            lines.len(),
+            3,
+            "expected 3 JSONL lines, got {}",
+            lines.len()
+        );
+
+        assert_eq!(
+            serde_json::from_str::<Value>(lines[0]).unwrap()["type"],
+            "issue"
+        );
+        let activity1: Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(activity1["type"], "activity");
+        assert!(activity1["object_id"].as_str().unwrap().contains("i-main"));
+
+        let activity2: Value = serde_json::from_str(lines[2]).unwrap();
+        assert_eq!(activity2["type"], "activity");
+    }
+
+    #[test]
+    fn describe_verbose_emits_multi_line_jsonl_with_full_objects() {
+        let main_issue_id = issue_id("i-main");
+        let version_timestamp = Utc.with_ymd_and_hms(2024, 2, 1, 12, 0, 0).unwrap();
+
+        let description = IssueDescription {
+            issue: IssueWithPatches {
+                issue: IssueVersionRecord::new(
+                    main_issue_id.clone(),
+                    1,
+                    version_timestamp,
+                    Issue::new(
+                        IssueType::Task,
+                        "Main issue".into(),
+                        empty_user(),
+                        String::new(),
+                        IssueStatus::Open,
+                        Some("owner".into()),
+                        None,
+                        Vec::new(),
+                        vec![],
+                        Vec::new(),
+                        false,
+                    ),
+                ),
+                patches: Vec::new(),
+            },
+            parents: vec![IssueWithPatches {
+                issue: IssueVersionRecord::new(
+                    issue_id("i-parent"),
+                    1,
+                    version_timestamp,
+                    Issue::new(
+                        IssueType::Feature,
+                        "Parent issue".into(),
+                        empty_user(),
+                        String::new(),
+                        IssueStatus::Open,
+                        None,
+                        None,
+                        Vec::new(),
+                        vec![],
+                        Vec::new(),
+                        false,
+                    ),
+                ),
+                patches: Vec::new(),
+            }],
+            children: vec![IssueWithPatches {
+                issue: IssueVersionRecord::new(
+                    issue_id("i-child"),
+                    1,
+                    version_timestamp,
+                    Issue::new(
+                        IssueType::Bug,
+                        "Child issue".into(),
+                        empty_user(),
+                        "working on it".into(),
+                        IssueStatus::InProgress,
+                        Some("dev".into()),
+                        None,
+                        Vec::new(),
+                        vec![],
+                        Vec::new(),
+                        false,
+                    ),
+                ),
+                patches: Vec::new(),
+            }],
+            activity_log: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        write_describe_lines_verbose(&description, &mut buffer).unwrap();
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<&str> = output.trim().split('\n').collect();
+
+        // 1 issue + 1 parent + 1 child + 0 activity = 3 lines
+        assert_eq!(
+            lines.len(),
+            3,
+            "expected 3 JSONL lines, got {}",
+            lines.len()
+        );
+
+        let issue_line: Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(issue_line["type"], "issue");
+        // Verbose includes full IssueWithPatches, so nested issue.issue has full fields
+        assert!(issue_line["issue"].is_object());
+        assert!(issue_line["patches"].is_array());
+
+        let parent_line: Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(parent_line["type"], "parent");
+        assert!(parent_line["issue"].is_object());
+
+        let child_line: Value = serde_json::from_str(lines[2]).unwrap();
+        assert_eq!(child_line["type"], "child");
+        assert!(child_line["issue"].is_object());
+    }
+
+    #[test]
+    fn describe_jsonl_issue_line_contains_patches() {
+        let main_issue_id = issue_id("i-main");
+        let main_patch_id = patch_id("p-main");
+        let version_timestamp = Utc.with_ymd_and_hms(2024, 2, 1, 12, 0, 0).unwrap();
+
+        let description = IssueDescription {
+            issue: IssueWithPatches {
+                issue: IssueVersionRecord::new(
+                    main_issue_id.clone(),
+                    1,
+                    version_timestamp,
+                    Issue::new(
+                        IssueType::Task,
+                        "Main issue".into(),
+                        empty_user(),
+                        String::new(),
+                        IssueStatus::Open,
+                        Some("owner".into()),
+                        None,
+                        Vec::new(),
+                        vec![],
+                        vec![main_patch_id.clone()],
+                        false,
+                    ),
+                ),
+                patches: vec![PatchVersionRecord::new(
+                    main_patch_id,
+                    0,
+                    version_timestamp,
+                    Patch::new(
+                        "main patch".into(),
+                        "desc".into(),
+                        sample_diff(),
+                        Default::default(),
+                        false,
+                        None,
+                        Vec::new(),
+                        sample_repo_name(),
+                        None,
+                        false,
+                    ),
+                )],
+            },
+            parents: vec![],
+            children: vec![],
+            activity_log: Vec::new(),
+        };
+
+        let mut buffer = Vec::new();
+        write_describe_lines(&description, &mut buffer).unwrap();
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<&str> = output.trim().split('\n').collect();
+
+        assert_eq!(lines.len(), 1);
+
+        let issue_line: Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(issue_line["type"], "issue");
+        let patches = issue_line["patches"].as_array().unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0]["patch_id"], "p-main");
     }
 }

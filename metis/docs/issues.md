@@ -31,7 +31,27 @@ metis issues list \
 metis issues describe <ISSUE_ID> [--verbose]
 ```
 
-Summarizes an issue along with its immediate parents, transitive children, todo list, linked patches, and the complete activity log. Use `--verbose` to emit the full JSONL payload (including expanded parent/child records and raw activity entries) for automation or auditing.
+Summarizes an issue along with its immediate parents, transitive children, todo list, linked patches, and the complete activity log.
+
+#### JSONL output format
+
+In JSONL mode (`--output-format jsonl`), `describe` emits multi-line JSONL with one JSON object per line, ordered by importance so agents can stop reading early:
+
+1. **issue** (1 line) — The issue itself with full details and linked patches.
+2. **parent** (0-N lines) — One per parent with compact summary fields.
+3. **child** (0-N lines) — One per child with compact summary fields.
+4. **activity** (0-N lines) — Activity log entries, one per line.
+
+Each line has a `type` discriminant field:
+
+```jsonl
+{"type":"issue", "issue_id":"i-abc", "version":1, "issue":{...}, "patches":[...]}
+{"type":"parent", "issue_id":"i-def", "issue_type":"task", "status":"open", "description":"..."}
+{"type":"child", "issue_id":"i-ghi", "issue_type":"bug", "status":"in_progress", "assignee":"dev", "description":"...", "progress":"..."}
+{"type":"activity", "object_id":"i-abc", "object_kind":"issue", ...}
+```
+
+Use `--verbose` to emit multi-line JSONL with full expanded objects per line (full `IssueWithPatches` for parent/child lines, raw `ActivityLogEntry` for activity lines) for automation or auditing.
 
 ### Create
 
