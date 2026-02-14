@@ -11,6 +11,10 @@ use tracing::{debug, info, warn};
 
 const WORKER_NAME: &str = "cleanup_branches";
 
+/// Maximum number of branch deletions per worker iteration across all repositories.
+/// This prevents exceeding GitHub API rate limits when many stale branches accumulate.
+const MAX_DELETIONS_PER_ITERATION: usize = 30;
+
 #[derive(Clone)]
 pub struct CleanupBranchesWorker {
     state: AppState,
@@ -46,6 +50,16 @@ impl ScheduledWorker for CleanupBranchesWorker {
         let mut total_failed = 0usize;
 
         for (repo_name, repo_versioned) in &repositories {
+            let remaining_budget = MAX_DELETIONS_PER_ITERATION.saturating_sub(total_deleted);
+            if remaining_budget == 0 {
+                info!(
+                    worker = WORKER_NAME,
+                    limit = MAX_DELETIONS_PER_ITERATION,
+                    "reached per-iteration deletion limit; deferring remaining repos to next cycle"
+                );
+                break;
+            }
+
             let repo = &repo_versioned.item;
             let Some((owner, repo_short)) = parse_github_owner_repo(&repo.remote_url) else {
                 debug!(
@@ -68,7 +82,7 @@ impl ScheduledWorker for CleanupBranchesWorker {
             };
 
             match self
-                .cleanup_repo_branches(&client, &owner, &repo_short)
+                .cleanup_repo_branches(&client, &owner, &repo_short, remaining_budget)
                 .await
             {
                 Ok(stats) => {
@@ -115,6 +129,7 @@ impl CleanupBranchesWorker {
         client: &Octocrab,
         owner: &str,
         repo: &str,
+        max_deletions: usize,
     ) -> anyhow::Result<CleanupStats> {
         let refs = list_metis_refs(client, owner, repo).await?;
 
@@ -134,6 +149,16 @@ impl CleanupBranchesWorker {
         let mut failed = 0usize;
 
         for branch in &branches {
+            if deleted >= max_deletions {
+                debug!(
+                    owner = owner,
+                    repo = repo,
+                    limit = max_deletions,
+                    "reached deletion limit for this iteration; stopping"
+                );
+                break;
+            }
+
             let is_stale = self.is_branch_stale(branch).await;
             if !is_stale {
                 continue;
