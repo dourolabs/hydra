@@ -9,8 +9,8 @@ use walkdir::WalkDir;
 
 use crate::s3::S3State;
 use crate::util::{
-    DEFAULT_MAX_KEYS, ListObjectsQuery, ListResult, ObjectEntry, S3Error,
-    read_etag_with_fallback_sync, render_list_response, s3_error, sanitize_prefix,
+    DEFAULT_MAX_KEYS, ListObjectsQuery, ListResult, ObjectEntry, S3Error, render_list_response,
+    s3_error, sanitize_prefix,
 };
 
 pub async fn list_objects_v2(
@@ -149,9 +149,9 @@ pub async fn list_objects(
             let last_modified = metadata.modified().ok();
             let size = metadata.len();
 
-            // Read ETag from metadata cache, falling back to computing if missing
+            // Read ETag from metadata cache (None if missing)
             let metadata_path = metadata_dir.join(format!("{key}.etag"));
-            let etag = read_etag_with_fallback_sync(&metadata_path, entry.path());
+            let etag = std::fs::read_to_string(&metadata_path).ok();
 
             let obj = ObjectEntry {
                 key,
