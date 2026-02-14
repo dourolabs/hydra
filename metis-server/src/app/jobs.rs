@@ -4,7 +4,7 @@ use crate::{
     job_engine::{JobEngineError, JobStatus},
     store::{ReadOnlyStore, Status, StoreError, Task, TaskError, TaskStatusLog},
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use metis_common::{
     TaskId, Versioned,
     api::v1 as api,
@@ -57,6 +57,18 @@ pub enum SetJobStatusError {
 }
 
 impl AppState {
+    pub async fn add_task(
+        &self,
+        task: Task,
+        created_at: DateTime<Utc>,
+    ) -> Result<TaskId, StoreError> {
+        let (task_id, _version) = self
+            .store
+            .add_task_with_actor(task, created_at, None)
+            .await?;
+        Ok(task_id)
+    }
+
     pub async fn create_job(
         &self,
         request: api::jobs::CreateJobRequest,

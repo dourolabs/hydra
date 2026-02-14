@@ -1,10 +1,4 @@
-use crate::{
-    background::AgentQueue,
-    config::AgentQueueConfig,
-    store::{StoreError, Task},
-};
-use chrono::{DateTime, Utc};
-use metis_common::TaskId;
+use crate::{background::AgentQueue, config::AgentQueueConfig};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -39,18 +33,6 @@ impl AppState {
 
     pub async fn agent_queues(&self) -> Vec<Arc<AgentQueue>> {
         self.agents.read().await.clone()
-    }
-
-    pub async fn add_task(
-        &self,
-        task: Task,
-        created_at: DateTime<Utc>,
-    ) -> Result<TaskId, StoreError> {
-        let (task_id, _version) = self
-            .store
-            .add_task_with_actor(task, created_at, None)
-            .await?;
-        Ok(task_id)
     }
 
     pub async fn create_agent(
