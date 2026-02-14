@@ -383,6 +383,42 @@ impl AppState {
     }
 }
 
+/// Returns `true` if any descendant in the subtree rooted at `issue_id` has a
+/// non-terminal status (Open, InProgress, or the implicit Unknown default).
+/// Uses BFS with a visited set for cycle detection.
+async fn has_open_children_in_subtree(
+    store: &dyn ReadOnlyStore,
+    issue_id: &IssueId,
+) -> Result<bool, StoreError> {
+    let mut to_visit = store.get_issue_children(issue_id).await?;
+    let mut visited = HashSet::new();
+
+    while let Some(child_id) = to_visit.pop() {
+        if !visited.insert(child_id.clone()) {
+            continue;
+        }
+
+        let child = store.get_issue(&child_id, false).await?;
+        match child.item.status {
+            IssueStatus::Closed
+            | IssueStatus::Dropped
+            | IssueStatus::Rejected
+            | IssueStatus::Failed => {
+                // Terminal — skip descendants
+            }
+            _ => {
+                // Non-terminal descendant found
+                return Ok(true);
+            }
+        }
+
+        let grandchildren = store.get_issue_children(&child_id).await?;
+        to_visit.extend(grandchildren);
+    }
+
+    Ok(false)
+}
+
 fn issue_ready<'a>(
     store: &'a dyn ReadOnlyStore,
     issue_id: &'a IssueId,
@@ -412,15 +448,17 @@ fn issue_ready<'a>(
                     }
                 }
 
+                // Not ready if any descendant in the subtree is non-terminal
+                if has_open_children_in_subtree(store, issue_id).await? {
+                    return Ok(false);
+                }
+
                 Ok(true)
             }
             IssueStatus::InProgress => {
-                // Parent is ready when no child is ready (recursively).
-                // This enables re-planning: if all children are stuck, the parent can spawn.
-                for child_id in store.get_issue_children(issue_id).await? {
-                    if issue_ready(store, &child_id, visited).await? {
-                        return Ok(false);
-                    }
+                // Not ready if any descendant in the subtree is non-terminal
+                if has_open_children_in_subtree(store, issue_id).await? {
+                    return Ok(false);
                 }
 
                 Ok(true)
@@ -1296,7 +1334,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn in_progress_parent_ready_when_child_failed_and_sibling_blocked() {
+    async fn in_progress_parent_not_ready_when_child_failed_and_sibling_blocked() {
         let state = test_state();
 
         let store = state.store.as_ref();
@@ -1328,9 +1366,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Neither child is Ready: A is Failed (terminal), B is blocked on non-Closed A.
-        // Parent should be ready.
-        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+        // Child B is Open (non-terminal), so the subtree has open descendants.
+        // Parent should NOT be ready.
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
     }
 
     #[tokio::test]
@@ -1352,7 +1390,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Open unblocked child — this child is Ready
+        // Open unblocked child — non-terminal descendant
         store
             .add_issue_with_actor(
                 issue_with_status("open child", IssueStatus::Open, vec![child_dep]),
@@ -1361,7 +1399,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Parent should NOT be ready because the open child is Ready
+        // Parent should NOT be ready because there is a non-terminal descendant
         assert!(!state.is_issue_ready(&parent_id).await.unwrap());
     }
 
@@ -1702,5 +1740,223 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+
+    // --- Subtree open-children readiness tests ---
+
+    #[tokio::test]
+    async fn open_parent_not_ready_with_open_child() {
+        let state = test_state();
+        let store = state.store.as_ref();
+
+        let (parent_id, _) = store
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .await
+            .unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        store
+            .add_issue_with_actor(
+                issue_with_status("child", IssueStatus::Open, vec![child_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn open_parent_not_ready_with_open_grandchild() {
+        let state = test_state();
+        let store = state.store.as_ref();
+
+        let (parent_id, _) = store
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .await
+            .unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let (child_id, _) = store
+            .add_issue_with_actor(
+                issue_with_status("child", IssueStatus::Closed, vec![child_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let grandchild_dep = IssueDependency::new(IssueDependencyType::ChildOf, child_id.clone());
+        store
+            .add_issue_with_actor(
+                issue_with_status("grandchild", IssueStatus::Open, vec![grandchild_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn open_parent_ready_with_all_terminal_children() {
+        let state = test_state();
+        let store = state.store.as_ref();
+
+        let (parent_id, _) = store
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .await
+            .unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        for status in [
+            IssueStatus::Closed,
+            IssueStatus::Dropped,
+            IssueStatus::Rejected,
+            IssueStatus::Failed,
+        ] {
+            store
+                .add_issue_with_actor(
+                    issue_with_status("child", status, vec![child_dep.clone()]),
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+
+        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn open_parent_not_ready_with_in_progress_child() {
+        let state = test_state();
+        let store = state.store.as_ref();
+
+        let (parent_id, _) = store
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .await
+            .unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        store
+            .add_issue_with_actor(
+                issue_with_status("child", IssueStatus::InProgress, vec![child_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_parent_not_ready_with_open_grandchild() {
+        let state = test_state();
+        let store = state.store.as_ref();
+
+        let (parent_id, _) = store
+            .add_issue_with_actor(
+                issue_with_status("parent", IssueStatus::InProgress, vec![]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let (child_id, _) = store
+            .add_issue_with_actor(
+                issue_with_status("child", IssueStatus::Closed, vec![child_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let grandchild_dep = IssueDependency::new(IssueDependencyType::ChildOf, child_id.clone());
+        store
+            .add_issue_with_actor(
+                issue_with_status("grandchild", IssueStatus::Open, vec![grandchild_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_parent_ready_with_all_terminal_subtree() {
+        let state = test_state();
+        let store = state.store.as_ref();
+
+        let (parent_id, _) = store
+            .add_issue_with_actor(
+                issue_with_status("parent", IssueStatus::InProgress, vec![]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let (child_id, _) = store
+            .add_issue_with_actor(
+                issue_with_status("child", IssueStatus::Closed, vec![child_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let grandchild_dep = IssueDependency::new(IssueDependencyType::ChildOf, child_id.clone());
+        store
+            .add_issue_with_actor(
+                issue_with_status("grandchild", IssueStatus::Failed, vec![grandchild_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn open_parent_ready_with_no_children() {
+        let state = test_state();
+        let store = state.store.as_ref();
+
+        let (parent_id, _) = store
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .await
+            .unwrap();
+
+        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn open_parent_not_ready_with_in_progress_grandchild() {
+        let state = test_state();
+        let store = state.store.as_ref();
+
+        let (parent_id, _) = store
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .await
+            .unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let (child_id, _) = store
+            .add_issue_with_actor(
+                issue_with_status("child", IssueStatus::Closed, vec![child_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let grandchild_dep = IssueDependency::new(IssueDependencyType::ChildOf, child_id.clone());
+        store
+            .add_issue_with_actor(
+                issue_with_status("grandchild", IssueStatus::InProgress, vec![grandchild_dep]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
     }
 }

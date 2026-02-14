@@ -1230,13 +1230,15 @@ mod tests {
         // Second attempt should be blocked (max_tries=1 reached).
         assert!(queue.spawn(&handles.state).await?.is_empty());
 
-        // Create a child issue — this counts as progress on the parent.
+        // Create a child issue in a terminal state — this counts as progress
+        // on the parent. The child is Closed so the parent remains ready
+        // (no non-terminal descendants in subtree).
         // Assign to a different agent so it doesn't spawn here.
         handles
             .store
             .add_issue(issue(
                 "Child issue",
-                IssueStatus::Open,
+                IssueStatus::Closed,
                 Some("agent-b"),
                 vec![IssueDependency::new(
                     IssueDependencyType::ChildOf,
@@ -1274,12 +1276,12 @@ mod tests {
             ))
             .await?;
 
-        // Create a child before the first spawn.
+        // Create a child in a terminal state so the parent remains ready.
         let (child_id, _) = handles
             .store
             .add_issue(issue(
                 "Child issue",
-                IssueStatus::Open,
+                IssueStatus::Closed,
                 Some("agent-a"),
                 vec![IssueDependency::new(
                     IssueDependencyType::ChildOf,
@@ -1289,26 +1291,25 @@ mod tests {
             ))
             .await?;
 
-        // First spawn attempt succeeds.
+        // First spawn attempt succeeds (only parent is eligible; child is terminal).
         let mut tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 2); // parent + child both eligible
+        assert_eq!(tasks.len(), 1);
         for t in tasks.drain(..) {
             record_completed_task(&handles, t).await?;
         }
 
-        // Further attempts should be blocked for both.
+        // Further attempts should be blocked.
         assert!(queue.spawn(&handles.state).await?.is_empty());
 
         // Update the child issue — this counts as progress on the parent.
         let child = handles.store.get_issue(&child_id, false).await?;
         let mut child_item = child.item;
-        child_item.status = IssueStatus::InProgress;
+        child_item.status = IssueStatus::Failed;
         handles.store.update_issue(&child_id, child_item).await?;
 
         // Parent's counter should have reset (child version changed).
-        // Child's counter should also reset (its status changed).
         let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks.len(), 1);
 
         Ok(())
     }
@@ -1330,12 +1331,12 @@ mod tests {
             ))
             .await?;
 
-        // Create a child before the first spawn.
+        // Create a child in a terminal state so the parent remains ready.
         handles
             .store
             .add_issue(issue(
                 "Child issue",
-                IssueStatus::Open,
+                IssueStatus::Closed,
                 Some("agent-a"),
                 vec![IssueDependency::new(
                     IssueDependencyType::ChildOf,
@@ -1345,9 +1346,9 @@ mod tests {
             ))
             .await?;
 
-        // First spawn consumes both parent and child.
+        // First spawn consumes the parent (child is terminal, not spawnable).
         let mut tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks.len(), 1);
         for t in tasks.drain(..) {
             record_completed_task(&handles, t).await?;
         }
