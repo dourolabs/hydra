@@ -2560,7 +2560,7 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].0, doc_id);
 
-        let by_path = store.get_documents_by_path("docs/").await.unwrap();
+        let by_path = store.get_documents_by_path("/docs/").await.unwrap();
         assert_eq!(by_path.len(), 1);
         assert_eq!(by_path[0].0, doc_id);
     }
