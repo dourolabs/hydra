@@ -35,6 +35,17 @@ pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
     }
 }
 
+/// Maps a `Status` enum variant to the string used in the database.
+pub(crate) fn status_to_db_str(status: Status) -> &'static str {
+    match status {
+        Status::Created => "created",
+        Status::Pending => "pending",
+        Status::Running => "running",
+        Status::Complete => "complete",
+        Status::Failed => "failed",
+    }
+}
+
 pub(crate) fn task_status_log_from_versions(versions: &[Versioned<Task>]) -> Option<TaskStatusLog> {
     let (first, rest) = versions.split_first()?;
     let mut log = TaskStatusLog::new(first.item.status, first.timestamp);
@@ -284,15 +295,6 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
-
-    /// Lists all task IDs with the specified status in the store.
-    ///
-    /// # Arguments
-    /// * `status` - The status to filter by
-    ///
-    /// # Returns
-    /// A vector of TaskIds for tasks with the specified status
-    async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError>;
 
     /// Gets the status log for a task by its TaskId.
     ///

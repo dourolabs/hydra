@@ -815,12 +815,6 @@ impl AppState {
     }
 
     #[allow(unused)]
-    pub async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
-        let store = self.store.as_ref();
-        store.list_tasks_with_status(status).await
-    }
-
-    #[allow(unused)]
     pub async fn add_task(
         &self,
         task: Task,

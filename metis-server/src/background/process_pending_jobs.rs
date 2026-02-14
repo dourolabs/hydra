@@ -4,6 +4,7 @@ use crate::{
     store::Status,
 };
 use async_trait::async_trait;
+use metis_common::jobs::SearchJobsQuery;
 use tracing::{error, info};
 
 const WORKER_NAME: &str = "process_pending_jobs";
@@ -27,8 +28,9 @@ impl ProcessPendingJobsWorker {
 impl ScheduledWorker for ProcessPendingJobsWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
-        let pending_ids = match self.state.list_tasks_with_status(Status::Created).await {
-            Ok(ids) => ids,
+        let query = SearchJobsQuery::new(None, None, None, Some(Status::Created.into()));
+        let pending_ids: Vec<_> = match self.state.list_tasks_with_query(&query).await {
+            Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
             Err(err) => {
                 error!(error = %err, "failed to list created tasks");
                 info!(

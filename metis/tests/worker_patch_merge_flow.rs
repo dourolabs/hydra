@@ -164,6 +164,7 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
             None,
             Some(merge_request_issue_id.clone()),
             None,
+            None,
         ))
         .await?
         .jobs;

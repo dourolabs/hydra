@@ -1160,7 +1160,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
         // Use spawned_from filter at the database level for efficiency
-        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None);
+        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, None);
         let tasks = self.list_tasks(&query).await?;
         Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }
@@ -1649,6 +1649,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
             bindings.push(pattern); // status
         }
 
+        // Filter by status
+        if let Some(status) = query.status {
+            let server_status: Status = status.into();
+            predicates.push(format!("status = ${}", bindings.len() + 1));
+            bindings.push(super::status_to_db_str(server_status).to_string());
+        }
+
         // Filter deleted tasks by default
         if !query.include_deleted.unwrap_or(false) {
             predicates.push("deleted = false".to_string());
@@ -1685,37 +1692,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
         }
 
         Ok(tasks)
-    }
-
-    async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
-        let status_str = match status {
-            Status::Created => "created",
-            Status::Pending => "pending",
-            Status::Running => "running",
-            Status::Complete => "complete",
-            Status::Failed => "failed",
-        };
-
-        let query = format!(
-            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, created_at, updated_at
-             FROM {TABLE_TASKS_V2}
-             ORDER BY id, version_number DESC"
-        );
-        let rows = sqlx::query_as::<_, TaskRow>(&query)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        let mut matches = Vec::new();
-        for row in rows {
-            if row.status == status_str {
-                matches.push(row.id.parse::<TaskId>().map_err(|err| {
-                    StoreError::Internal(format!("invalid task id stored in database: {err}"))
-                })?);
-            }
-        }
-
-        Ok(matches)
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
@@ -2521,11 +2497,15 @@ mod tests {
         let tasks = handles.store.get_tasks_for_issue(&issue_id).await.unwrap();
         assert_eq!(tasks, vec![task_id.clone()]);
 
-        let complete = handles
+        let query = SearchJobsQuery::new(None, None, None, Some(Status::Complete.into()));
+        let complete: Vec<_> = handles
             .store
-            .list_tasks_with_status(Status::Complete)
+            .list_tasks(&query)
             .await
-            .unwrap();
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
         assert_eq!(complete, vec![task_id]);
     }
 

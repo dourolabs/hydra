@@ -17,7 +17,7 @@ pub async fn run(
     context: &CommandContext,
 ) -> Result<()> {
     let response = client
-        .list_jobs(&SearchJobsQuery::new(None, spawned_from, None))
+        .list_jobs(&SearchJobsQuery::new(None, spawned_from, None, None))
         .await?;
     let limit = limit.max(1);
     let total_jobs = response.jobs.len();
