@@ -4191,6 +4191,7 @@ dependencies = [
  "aws-sdk-s3",
  "aws-smithy-runtime-api",
  "aws-types",
+ "bytes",
  "futures",
  "git2",
  "globset",
