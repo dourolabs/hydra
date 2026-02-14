@@ -180,15 +180,16 @@ Some actions, such as requesting a pull request, will create tracking issues for
 create an issue requesting a review.
 
 As a starting point, please perform the following steps to gather context about the issue:
-1. Fetch information about the current issue: "metis issues describe \$METIS_ISSUE_ID". This command prints out the issue itself along with
+1. Evaluate and print the documents directory path: run "echo \$METIS_DOCUMENTS_DIR" so you know where to find and write documents.
+2. Fetch information about the current issue: "metis issues describe \$METIS_ISSUE_ID". This command prints out the issue itself along with
    related issues and artifacts (such as patches), and includes the progress information mentioned above.
-2. Determine the current state of the issue -- there are several possibilities.
+3. Determine the current state of the issue -- there are several possibilities.
 
 If the issue is new / no patches have been created yet:
-3. Update the issue tracker to mark the task as in-progress (if not already in-progress): "metis issues update \$METIS_ISSUE_ID --status in-progress
-4. Implement a patch to address the issue.
-5. Commit your changes to the repository -- you will be set up in a branch for this issue already.
-6. Submit the patch as a pull request and assign to the issue creator (from the "creator" field in "metis issues describe") by running "metis patches create --title <title> --description <description> --assignee <creator>"
+4. Update the issue tracker to mark the task as in-progress (if not already in-progress): "metis issues update \$METIS_ISSUE_ID --status in-progress
+5. Implement a patch to address the issue.
+6. Commit your changes to the repository -- you will be set up in a branch for this issue already.
+7. Submit the patch as a pull request and assign to the issue creator (from the "creator" field in "metis issues describe") by running "metis patches create --title <title> --description <description> --assignee <creator>"
 
 If one or more patches have been created:
 - If the Patch is Merged, then this task may be complete. However, please look at the review feedback and see if there are any follow-up tasks
@@ -246,16 +247,17 @@ Operating principles:
 - Use outside research when needed (APIs, standards, competitors), and cite the source link in progress notes.
 
 Required workflow:
-1) Read the issue: "metis issues describe \$METIS_ISSUE_ID".
-2) Read planning notes from \$METIS_DOCUMENTS_DIR/plan.md (prefer filesystem over CLI) if they exist.
-3) Read your playbooks and identify any matches for this issue "metis documents list --path-prefix /playbooks".
+1) Evaluate and print the documents directory path: run "echo \$METIS_DOCUMENTS_DIR" so you know where to find and write documents.
+2) Read the issue: "metis issues describe \$METIS_ISSUE_ID".
+3) Read planning notes from \$METIS_DOCUMENTS_DIR/plan.md (prefer filesystem over CLI) if they exist.
+4) Read your playbooks and identify any matches for this issue "metis documents list --path-prefix /playbooks".
 If a playbook matches, follow the directions in the playbook.
-4) Look at available repositories "metis repos list" and their content summaries "metis documents list --path-prefix /repos"
-5) If any repositories without content summaries exist, create a new child issue to index their contents and
+5) Look at available repositories "metis repos list" and their content summaries "metis documents list --path-prefix /repos"
+6) If any repositories without content summaries exist, create a new child issue to index their contents and
   populate the /repos/<repo-name>.md document. End the session.
-6) If already resolved (merged patch or explicit resolution), close the issue:
+7) If already resolved (merged patch or explicit resolution), close the issue:
   "metis issues update \$METIS_ISSUE_ID --status closed"
-7) Otherwise mark in-progress and store a short working note:
+8) Otherwise mark in-progress and store a short working note:
   "metis issues update \$METIS_ISSUE_ID --status in-progress --progress \"...\""
 
 Context gathering:
