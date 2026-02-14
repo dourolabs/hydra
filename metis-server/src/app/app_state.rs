@@ -28,7 +28,6 @@ use metis_common::{
     merge_queues::MergeQueue,
 };
 use octocrab::Octocrab;
-use serde::Deserialize;
 use std::{collections::HashMap, collections::HashSet, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -272,10 +271,6 @@ pub enum AgentError {
 
 #[derive(Debug, Error)]
 pub enum LoginError {
-    #[error("invalid github token: {0}")]
-    InvalidGithubToken(String),
-    #[error("github user '{username}' is not in an allowed organization")]
-    ForbiddenGithubOrg { username: String },
     #[error("login store operation failed")]
     Store {
         #[source]
@@ -370,67 +365,14 @@ impl AppState {
 
     pub async fn login_with_github_token(
         &self,
+        username: Username,
+        github_user_id: u64,
         github_token: String,
         github_refresh_token: String,
     ) -> Result<api::login::LoginResponse, LoginError> {
-        let (user, _actor, login_token) = self
-            .create_actor_for_github_token(github_token, github_refresh_token)
-            .await?;
-
-        let user_summary: api::users::UserSummary = UserSummary::from(user).into();
-
-        Ok(api::login::LoginResponse::new(login_token, user_summary))
-    }
-
-    async fn create_actor_for_github_token(
-        &self,
-        github_token: String,
-        github_refresh_token: String,
-    ) -> Result<(User, Actor, String), LoginError> {
-        let github_client = Octocrab::builder()
-            .base_uri(self.config.github_app.api_base_url().to_string())
-            .map_err(|err| LoginError::Store {
-                source: StoreError::Internal(format!("failed to parse github api base url: {err}")),
-            })?
-            .personal_token(github_token.clone())
-            .build()
-            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
-
-        let github_user = github_client
-            .current()
-            .user()
-            .await
-            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
-        let username = Username::from(github_user.login);
-
-        let allowed_orgs = &self.config.metis.allowed_orgs;
-        if !allowed_orgs.is_empty() {
-            #[derive(Deserialize)]
-            struct GithubOrg {
-                login: String,
-            }
-
-            let orgs: Vec<GithubOrg> = github_client
-                .get("/user/orgs", None::<&()>)
-                .await
-                .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
-
-            let is_allowed = orgs.iter().any(|org| {
-                allowed_orgs
-                    .iter()
-                    .any(|allowed| org.login.eq_ignore_ascii_case(allowed))
-            });
-
-            if !is_allowed {
-                return Err(LoginError::ForbiddenGithubOrg {
-                    username: username.to_string(),
-                });
-            }
-        }
-
         let user = User {
             username: username.clone(),
-            github_user_id: github_user.id.into_inner(),
+            github_user_id,
             github_token,
             github_refresh_token,
             deleted: false,
@@ -467,7 +409,9 @@ impl AppState {
             }
         }
 
-        Ok((user, actor, auth_token))
+        let user_summary: api::users::UserSummary = UserSummary::from(user).into();
+
+        Ok(api::login::LoginResponse::new(auth_token, user_summary))
     }
 
     async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
@@ -2018,7 +1962,7 @@ async fn issue_ready(store: &dyn ReadOnlyStore, issue_id: &IssueId) -> Result<bo
 
 #[cfg(test)]
 mod tests {
-    use super::{LoginError, UpsertIssueError, UpsertPatchError};
+    use super::{UpsertIssueError, UpsertPatchError};
     use crate::{
         app::{AppState, ServerEvent, ServiceState},
         domain::{
@@ -2179,18 +2123,15 @@ mod tests {
 
     #[tokio::test]
     async fn login_persists_user_and_actor() -> anyhow::Result<()> {
-        let github_server = MockServer::start_async().await;
-        let _mock = github_server.mock(|when, then| {
-            when.method(GET).path("/user");
-            then.status(200)
-                .header("content-type", "application/json")
-                .json_body(github_user_response("octo", 42));
-        });
-
-        let handles = test_state_with_github_api_base_url(github_server.base_url());
+        let handles = test_state_handles();
         let response = handles
             .state
-            .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
+            .login_with_github_token(
+                Username::from("octo"),
+                42,
+                "gh-token".to_string(),
+                "gh-refresh".to_string(),
+            )
             .await
             .expect("login should succeed");
 
@@ -2203,25 +2144,6 @@ mod tests {
         assert_eq!(actors.len(), 1);
         assert_eq!(user.item.username.as_str(), "octo");
 
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn login_returns_error_for_invalid_token() -> anyhow::Result<()> {
-        let github_server = MockServer::start_async().await;
-        let _mock = github_server.mock(|when, then| {
-            when.method(GET).path("/user");
-            then.status(401);
-        });
-
-        let handles = test_state_with_github_api_base_url(github_server.base_url());
-        let err = handles
-            .state
-            .login_with_github_token("bad-token".to_string(), "gh-refresh".to_string())
-            .await
-            .expect_err("login should fail for invalid token");
-
-        assert!(matches!(err, LoginError::InvalidGithubToken(_)));
         Ok(())
     }
 

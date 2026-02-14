@@ -1,8 +1,8 @@
+use crate::domain::users::Username;
 use crate::test::{
-    github_user_response, spawn_test_server, spawn_test_server_with_state, test_auth_token,
-    test_client, test_state_with_github_api_base_url,
+    spawn_test_server, spawn_test_server_with_state, test_auth_token, test_client,
+    test_state_handles,
 };
-use httpmock::prelude::*;
 use metis_common::api::v1::whoami::{ActorIdentity, WhoAmIResponse};
 use reqwest::{Client, StatusCode, header};
 
@@ -22,18 +22,15 @@ fn client_with_token(token: &str) -> Client {
 
 #[tokio::test]
 async fn whoami_returns_user_identity() -> anyhow::Result<()> {
-    let github_server = MockServer::start_async().await;
-    let _mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user");
-        then.status(200)
-            .header("content-type", "application/json")
-            .json_body(github_user_response("octo", 42));
-    });
-
-    let handles = test_state_with_github_api_base_url(github_server.base_url());
+    let handles = test_state_handles();
     let token = handles
         .state
-        .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
+        .login_with_github_token(
+            Username::from("octo"),
+            42,
+            "gh-token".to_string(),
+            "gh-refresh".to_string(),
+        )
         .await?
         .login_token;
 
