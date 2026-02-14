@@ -5,10 +5,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use axum::{Extension, Json, extract::State};
-use metis_common::api::v1::{
-    job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
-    task_status::TaskStatusLog as ApiTaskStatusLog,
-};
+use metis_common::api::v1::job_status::{JobStatusUpdate, SetJobStatusResponse};
 use tracing::{error, info};
 
 pub async fn set_job_status(
@@ -46,29 +43,4 @@ pub async fn set_job_status(
 
     info!(job_id = %response.job_id, "job status stored successfully");
     Ok(Json(response))
-}
-
-pub async fn get_job_status(
-    State(state): State<AppState>,
-    JobIdPath(job_id): JobIdPath,
-) -> Result<Json<GetJobStatusResponse>, ApiError> {
-    info!(job_id = %job_id, "get_job_status invoked");
-
-    state.get_task(&job_id).await.map_err(|err| {
-        error!(error = %err, job_id = %job_id, "failed to load task for job status");
-        ApiError::not_found(format!("Job '{job_id}' not found"))
-    })?;
-
-    let status_log = state.get_status_log(&job_id).await.map_err(|err| {
-        error!(
-            error = %err,
-            job_id = %job_id,
-            "failed to load status log for job status"
-        );
-        ApiError::internal(anyhow!("Failed to load status log: {err}"))
-    })?;
-
-    let status_log: ApiTaskStatusLog = status_log.into();
-    info!(job_id = %job_id, "get_job_status completed");
-    Ok(Json(GetJobStatusResponse::new(job_id, status_log)))
 }

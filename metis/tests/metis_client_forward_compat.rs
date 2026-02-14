@@ -20,7 +20,7 @@ use metis_common::{
     repositories::{
         CreateRepositoryRequest, Repository, SearchRepositoriesQuery, UpdateRepositoryRequest,
     },
-    task_status::{Event, Status},
+    task_status::Status,
     users::Username,
     whoami::ActorIdentity,
     DocumentId, IssueId, PatchId, RepoName, TaskId,
@@ -91,7 +91,6 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let job_id_for_get = job_id.clone();
     let job_id_for_kill = job_id.clone();
     let job_id_for_status_post = job_id.clone();
-    let job_id_for_status_get = job_id.clone();
     let issue_id_for_create = issue_id.clone();
     let issue_id_for_update = issue_id.clone();
     let patch_id_for_create = patch_id.clone();
@@ -172,16 +171,6 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         when.method(POST).path(job_status_path_clone.as_str());
         then.status(200).json_body(
             json!({ "job_id": job_id_for_status_post_clone, "status": "draining", "future": true }),
-        );
-    });
-
-    let job_status_get_path = job_status_path.clone();
-    let job_id_for_status_get_clone = job_id_for_status_get.clone();
-    let status_log_json_for_get = status_log_json.clone();
-    server.mock(move |when, then| {
-        when.method(GET).path(job_status_get_path.as_str());
-        then.status(200).json_body(
-            json!({ "job_id": job_id_for_status_get_clone, "status_log": status_log_json_for_get, "next": "status" }),
         );
     });
 
@@ -451,14 +440,9 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         .await?;
     assert!(matches!(status_response.status, Status::Unknown));
 
-    let job_status = client.get_job_status(&job_id).await?;
-    assert!(matches!(
-        job_status.status_log.events.first(),
-        Some(Event::Created {
-            status: Status::Unknown,
-            ..
-        })
-    ));
+    // Verify the job can still be fetched after a status update
+    let fetched_job_after_status = client.get_job(&job_id).await?;
+    assert_eq!(fetched_job_after_status.job_id, job_id);
 
     let context = client.get_job_context(&job_id).await?;
     assert!(matches!(context.request_context, Bundle::Unknown));

@@ -145,61 +145,6 @@ impl From<TaskError> for api_task_status::TaskError {
     }
 }
 
-impl From<api_task_status::Event> for Event {
-    fn from(value: api_task_status::Event) -> Self {
-        match value {
-            api_task_status::Event::Created { at, status } => Event::Created {
-                at,
-                status: status.into(),
-            },
-            api_task_status::Event::Started { at } => Event::Started { at },
-            api_task_status::Event::Completed { at, last_message } => {
-                Event::Completed { at, last_message }
-            }
-            api_task_status::Event::Failed { at, error } => Event::Failed {
-                at,
-                error: error.into(),
-            },
-            other => panic!("unsupported task event variant: {other:?}"),
-        }
-    }
-}
-
-impl From<Event> for api_task_status::Event {
-    fn from(value: Event) -> Self {
-        match value {
-            Event::Created { at, status } => api_task_status::Event::Created {
-                at,
-                status: status.into(),
-            },
-            Event::Started { at } => api_task_status::Event::Started { at },
-            Event::Completed { at, last_message } => {
-                api_task_status::Event::Completed { at, last_message }
-            }
-            Event::Failed { at, error } => api_task_status::Event::Failed {
-                at,
-                error: error.into(),
-            },
-        }
-    }
-}
-
-impl From<api_task_status::TaskStatusLog> for TaskStatusLog {
-    fn from(value: api_task_status::TaskStatusLog) -> Self {
-        Self {
-            events: value.events.into_iter().map(Event::from).collect(),
-        }
-    }
-}
-
-impl From<TaskStatusLog> for api_task_status::TaskStatusLog {
-    fn from(value: TaskStatusLog) -> Self {
-        api_task_status::TaskStatusLog::from_events(
-            value.events.into_iter().map(Into::into).collect(),
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

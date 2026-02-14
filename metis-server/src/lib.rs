@@ -178,7 +178,7 @@ pub async fn run_with_state(
         )
         .route(
             "/v1/jobs/:job_id/status",
-            get(routes::jobs::status::get_job_status).post(routes::jobs::status::set_job_status),
+            post(routes::jobs::status::set_job_status),
         )
         .route(
             "/v1/jobs/:job_id/context",
