@@ -1,6 +1,8 @@
 mod app_state;
 pub mod event_bus;
 mod resolved_task;
+#[cfg(test)]
+pub mod test_helpers;
 
 use crate::{
     domain::jobs::Bundle, domain::patches::Patch, merge_queue::MergeQueueImpl, store::StoreError,
