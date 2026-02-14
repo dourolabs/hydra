@@ -297,6 +297,22 @@ pub enum IssueCommands {
         #[arg(value_name = "ISSUE_ID")]
         id: IssueId,
     },
+    /// Get a single issue by ID (alias for `list --id <issue-id>`).
+    Get {
+        /// Issue ID to get.
+        #[arg(value_name = "ISSUE_ID")]
+        id: IssueId,
+    },
+    /// Show activity log for an issue (most recent first).
+    Activity {
+        /// Issue ID to show activity for.
+        #[arg(value_name = "ISSUE_ID")]
+        id: IssueId,
+
+        /// Maximum number of activity entries to show.
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
 }
 
 pub async fn run(
@@ -446,6 +462,15 @@ pub async fn run(
             println!("Deleted issue '{}'", deleted.issue_id);
             Ok(())
         }
+        IssueCommands::Get { id } => {
+            let issues =
+                fetch_issues(client, Some(id), None, None, None, None, vec![], false).await?;
+            write_issue_records(context.output_format, &issues)?;
+            Ok(())
+        }
+        IssueCommands::Activity { id, limit } => {
+            activity_issue(client, id, context.output_format, limit).await
+        }
     }
 }
 
@@ -555,6 +580,37 @@ async fn describe_issue(
             }
             ResolvedOutputFormat::Jsonl => {
                 serde_json::to_writer(&mut buffer, &summary)?;
+                buffer.write_all(b"\n")?;
+            }
+        }
+    }
+    io::stdout().write_all(&buffer)?;
+    io::stdout().flush()?;
+
+    Ok(())
+}
+
+async fn activity_issue(
+    client: &dyn MetisClientInterface,
+    id: IssueId,
+    output_format: ResolvedOutputFormat,
+    limit: usize,
+) -> Result<()> {
+    let description = collect_issue_description(client, id).await?;
+    let summary = summarize_issue_description(&description)?;
+
+    let mut entries = summary.activity_log;
+    entries.reverse();
+    entries.truncate(limit);
+
+    let mut buffer = Vec::new();
+    match output_format {
+        ResolvedOutputFormat::Pretty => {
+            write_activity_log_pretty(&entries, &mut buffer)?;
+        }
+        ResolvedOutputFormat::Jsonl => {
+            for entry in &entries {
+                serde_json::to_writer(&mut buffer, entry)?;
                 buffer.write_all(b"\n")?;
             }
         }
