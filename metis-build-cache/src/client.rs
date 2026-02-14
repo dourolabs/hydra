@@ -9,7 +9,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use tar::{Builder, Header};
 use tracing::info;
 use walkdir::WalkDir;
@@ -20,6 +20,37 @@ use walkdir::WalkDir;
 /// 2x the throughput (~600 MB/s vs ~300 MB/s) with only ~5% larger output, which is a
 /// worthwhile trade-off for build cache archives that are dominated by network transfer time.
 const ZSTD_COMPRESSION_LEVEL: i32 = 1;
+
+/// Per-phase timing information from [`BuildCacheClient::apply_nearest_cache`].
+#[derive(Debug, Clone)]
+pub struct ApplyCacheTimings {
+    pub list_caches: Duration,
+    pub find_nearest: Duration,
+    pub download: Option<DownloadTiming>,
+    pub apply: Option<Duration>,
+}
+
+/// Download timing with file size metadata.
+#[derive(Debug, Clone, Copy)]
+pub struct DownloadTiming {
+    pub elapsed: Duration,
+    pub file_size_bytes: u64,
+}
+
+/// Per-phase timing information from [`BuildCacheClient::build_and_upload_cache`].
+#[derive(Debug, Clone)]
+pub struct UploadCacheTimings {
+    pub build_archive: BuildArchiveTiming,
+    pub upload: Duration,
+    pub evict: Duration,
+}
+
+/// Build archive timing with file size metadata.
+#[derive(Debug, Clone, Copy)]
+pub struct BuildArchiveTiming {
+    pub elapsed: Duration,
+    pub file_size_bytes: u64,
+}
 
 #[derive(Clone)]
 pub struct BuildCacheClient {
@@ -191,12 +222,13 @@ impl BuildCacheClient {
         repo_root: impl AsRef<Path>,
         home_dir: Option<&Path>,
         repo_name: metis_common::RepoName,
-    ) -> Result<Option<BuildCacheKey>, BuildCacheError> {
+    ) -> Result<(Option<BuildCacheKey>, ApplyCacheTimings), BuildCacheError> {
         let start = Instant::now();
         let entries = self.list_caches(repo_name.clone()).await?;
+        let list_caches_elapsed = start.elapsed();
         info!(
             phase = "list_caches",
-            elapsed_ms = start.elapsed().as_millis() as u64,
+            elapsed_ms = list_caches_elapsed.as_millis() as u64,
             entries = entries.len(),
             "cache phase complete"
         );
@@ -204,15 +236,22 @@ impl BuildCacheClient {
         let repo_root = repo_root.as_ref();
         let start = Instant::now();
         let nearest = find_nearest_cache_entry(repo_root, repo_name, entries)?;
+        let find_nearest_elapsed = start.elapsed();
         info!(
             phase = "find_nearest",
-            elapsed_ms = start.elapsed().as_millis() as u64,
+            elapsed_ms = find_nearest_elapsed.as_millis() as u64,
             found = nearest.is_some(),
             "cache phase complete"
         );
 
         let Some(nearest) = nearest else {
-            return Ok(None);
+            let timings = ApplyCacheTimings {
+                list_caches: list_caches_elapsed,
+                find_nearest: find_nearest_elapsed,
+                download: None,
+                apply: None,
+            };
+            return Ok((None, timings));
         };
 
         let temp = tempfile::NamedTempFile::new()
@@ -222,9 +261,10 @@ impl BuildCacheClient {
         let start = Instant::now();
         self.download_cache(&nearest.key, &path).await?;
         let file_size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let download_elapsed = start.elapsed();
         info!(
             phase = "download",
-            elapsed_ms = start.elapsed().as_millis() as u64,
+            elapsed_ms = download_elapsed.as_millis() as u64,
             file_size_bytes,
             "cache phase complete"
         );
@@ -236,13 +276,23 @@ impl BuildCacheClient {
             path,
         )
         .await?;
+        let apply_elapsed = start.elapsed();
         info!(
             phase = "apply",
-            elapsed_ms = start.elapsed().as_millis() as u64,
+            elapsed_ms = apply_elapsed.as_millis() as u64,
             "cache phase complete"
         );
 
-        Ok(Some(nearest.key))
+        let timings = ApplyCacheTimings {
+            list_caches: list_caches_elapsed,
+            find_nearest: find_nearest_elapsed,
+            download: Some(DownloadTiming {
+                elapsed: download_elapsed,
+                file_size_bytes,
+            }),
+            apply: Some(apply_elapsed),
+        };
+        Ok((Some(nearest.key), timings))
     }
 
     pub async fn build_and_upload_cache(
@@ -251,7 +301,7 @@ impl BuildCacheClient {
         home_dir: Option<&Path>,
         repo_name: metis_common::RepoName,
         git_sha: &str,
-    ) -> Result<BuildCacheKey, BuildCacheError> {
+    ) -> Result<(BuildCacheKey, UploadCacheTimings), BuildCacheError> {
         let key = BuildCacheKey::new(repo_name, git_sha);
         let temp = tempfile::NamedTempFile::new()
             .map_err(|err| BuildCacheError::io("creating temp cache file", err))?;
@@ -267,9 +317,10 @@ impl BuildCacheClient {
         let file_size_bytes = std::fs::metadata(&archive_path)
             .map(|m| m.len())
             .unwrap_or(0);
+        let build_archive_elapsed = start.elapsed();
         info!(
             phase = "build_archive",
-            elapsed_ms = start.elapsed().as_millis() as u64,
+            elapsed_ms = build_archive_elapsed.as_millis() as u64,
             file_size_bytes,
             "cache phase complete"
         );
@@ -278,21 +329,31 @@ impl BuildCacheClient {
         self.storage
             .put_object(&key.object_key(), &archive_path)
             .await?;
+        let upload_elapsed = start.elapsed();
         info!(
             phase = "upload",
-            elapsed_ms = start.elapsed().as_millis() as u64,
+            elapsed_ms = upload_elapsed.as_millis() as u64,
             "cache phase complete"
         );
 
         let start = Instant::now();
         self.evict_if_needed(key.repo_name.clone()).await?;
+        let evict_elapsed = start.elapsed();
         info!(
             phase = "evict",
-            elapsed_ms = start.elapsed().as_millis() as u64,
+            elapsed_ms = evict_elapsed.as_millis() as u64,
             "cache phase complete"
         );
 
-        Ok(key)
+        let timings = UploadCacheTimings {
+            build_archive: BuildArchiveTiming {
+                elapsed: build_archive_elapsed,
+                file_size_bytes,
+            },
+            upload: upload_elapsed,
+            evict: evict_elapsed,
+        };
+        Ok((key, timings))
     }
 
     fn build_cache_archive_impl(

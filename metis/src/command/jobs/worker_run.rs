@@ -101,19 +101,21 @@ pub async fn run(
                     )
                     .await
                 {
-                    Ok(Some(key)) => {
+                    Ok((Some(key), timings)) => {
                         let elapsed = cache_apply_start.elapsed().as_secs_f64();
                         log_status(format!(
                             "Build cache download/apply completed in {elapsed:.2}s (applied entry '{}').",
                             key.object_key()
                         ));
+                        log_apply_cache_timings(&timings);
                         downloaded_cache_sha = Some(key.git_sha.clone());
                     }
-                    Ok(None) => {
+                    Ok((None, timings)) => {
                         let elapsed = cache_apply_start.elapsed().as_secs_f64();
                         log_status(format!(
                             "Build cache download/apply completed in {elapsed:.2}s (no entry found)."
-                        ))
+                        ));
+                        log_apply_cache_timings(&timings);
                     }
                     Err(err) => {
                         let elapsed = cache_apply_start.elapsed().as_secs_f64();
@@ -248,12 +250,13 @@ pub async fn run(
                                     )
                                     .await
                                 {
-                                    Ok(key) => {
+                                    Ok((key, timings)) => {
                                         let elapsed = cache_upload_start.elapsed().as_secs_f64();
                                         log_status(format!(
                                             "Build cache create/upload completed in {elapsed:.2}s (uploaded entry '{}').",
                                             key.object_key()
                                         ));
+                                        log_upload_cache_timings(&timings);
                                         last_error = None;
                                         break;
                                     }
@@ -712,6 +715,37 @@ fn update_branch_to_head(repo: &Repository, branch: &str) -> Result<()> {
 
 fn log_status(message: impl std::fmt::Display) {
     println!("{message}");
+}
+
+fn log_apply_cache_timings(timings: &metis_build_cache::ApplyCacheTimings) {
+    log_status(format!(
+        "  list_caches: {:.2}s",
+        timings.list_caches.as_secs_f64()
+    ));
+    log_status(format!(
+        "  find_nearest: {:.2}s",
+        timings.find_nearest.as_secs_f64()
+    ));
+    if let Some(dl) = &timings.download {
+        log_status(format!(
+            "  download: {:.2}s ({} bytes)",
+            dl.elapsed.as_secs_f64(),
+            dl.file_size_bytes
+        ));
+    }
+    if let Some(apply) = &timings.apply {
+        log_status(format!("  apply: {:.2}s", apply.as_secs_f64()));
+    }
+}
+
+fn log_upload_cache_timings(timings: &metis_build_cache::UploadCacheTimings) {
+    log_status(format!(
+        "  build_archive: {:.2}s ({} bytes)",
+        timings.build_archive.elapsed.as_secs_f64(),
+        timings.build_archive.file_size_bytes
+    ));
+    log_status(format!("  upload: {:.2}s", timings.upload.as_secs_f64()));
+    log_status(format!("  evict: {:.2}s", timings.evict.as_secs_f64()));
 }
 
 fn resolve_worker_home_dir() -> Option<PathBuf> {

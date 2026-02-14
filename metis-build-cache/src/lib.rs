@@ -7,8 +7,12 @@ mod git;
 mod key;
 mod storage;
 
+pub use client::ApplyCacheTimings;
+pub use client::BuildArchiveTiming;
 pub use client::BuildCacheClient;
 pub use client::BuildCacheEntry;
+pub use client::DownloadTiming;
+pub use client::UploadCacheTimings;
 pub use config::{BuildCacheConfig, BuildCacheMatcher, FileSystemStorageConfig, S3StorageConfig};
 pub use error::BuildCacheError;
 pub use git::{NearestCacheEntry, find_nearest_cache_entry};

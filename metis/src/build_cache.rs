@@ -105,13 +105,13 @@ mod tests {
             .expect("oid")
             .to_string();
         let client = build_cache_client(&context).expect("cache client");
-        client
+        let (_key, _timings) = client
             .build_and_upload_cache(repo_root, None, repo_name.clone(), &git_sha)
             .await
             .expect("upload cache");
 
         fs::remove_dir_all(&target_dir).expect("remove target");
-        let applied = client
+        let (applied, _timings) = client
             .apply_nearest_cache(repo_root, None, repo_name.clone())
             .await
             .expect("apply cache");
