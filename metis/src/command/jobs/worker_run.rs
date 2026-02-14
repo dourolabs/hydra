@@ -132,12 +132,12 @@ pub async fn run(
         }
     }
 
-    // Sync documents to a temporary directory (best-effort).
-    let documents_dir = Builder::new()
-        .prefix("metis-documents")
-        .tempdir()
-        .context("failed to create temporary documents directory")?;
-    let documents_path = documents_dir.path().to_path_buf();
+    // Sync documents to a well-known directory under the working directory (best-effort).
+    let documents_path = dest.join("documents");
+    std::fs::create_dir_all(&documents_path).context("failed to create documents directory")?;
+    // Exclude the documents directory from git so it does not appear as uncommitted changes.
+    // Use .git/info/exclude rather than .gitignore to avoid creating a tracked file.
+    exclude_from_git(&dest, "/documents");
     match sync_documents(
         client,
         SyncArgs {
@@ -716,6 +716,25 @@ fn log_status(message: impl std::fmt::Display) {
 
 fn resolve_worker_home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Best-effort: add `entry` to `.git/info/exclude` so git ignores the path without
+/// modifying tracked files (unlike `.gitignore`).
+fn exclude_from_git(repo_root: &Path, entry: &str) {
+    let exclude_file = repo_root.join(".git/info/exclude");
+    let already_present = fs::read_to_string(&exclude_file)
+        .map(|contents| contents.lines().any(|line| line.trim() == entry))
+        .unwrap_or(false);
+    if !already_present {
+        use std::io::Write;
+        if let Ok(mut file) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&exclude_file)
+        {
+            let _ = writeln!(file, "{entry}");
+        }
+    }
 }
 
 #[cfg(test)]
