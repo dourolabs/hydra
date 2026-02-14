@@ -1,8 +1,13 @@
+mod agents;
 mod app_state;
+mod documents;
 pub mod event_bus;
+mod merge_queue;
+mod repositories;
 mod resolved_task;
 #[cfg(test)]
 pub mod test_helpers;
+mod users;
 
 use crate::{
     domain::jobs::Bundle, domain::patches::Patch, merge_queue::MergeQueueImpl, store::StoreError,
@@ -14,13 +19,16 @@ use tempfile::TempDir;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 
+pub use agents::AgentError;
 pub use app_state::{
-    AgentError, AppState, CreateJobError, LoginError, SetJobStatusError, UpdateTodoListError,
-    UpsertDocumentError, UpsertIssueError, UpsertPatchError,
+    AppState, CreateJobError, SetJobStatusError, UpdateTodoListError, UpsertIssueError,
+    UpsertPatchError,
 };
+pub use documents::UpsertDocumentError;
 pub use event_bus::{EventBus, ServerEvent, StoreWithEvents};
 pub use metis_common::repositories::{Repository, RepositoryRecord};
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
+pub use users::LoginError;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedBundle {
