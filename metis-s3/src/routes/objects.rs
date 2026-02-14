@@ -11,7 +11,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::s3::S3State;
 use crate::util::{
-    ByteRange, S3Error, compute_etag, range_not_satisfiable_response, read_etag_with_fallback,
+    ByteRange, S3Error, compute_etag, range_not_satisfiable_response, read_cached_etag,
     response_with_body, s3_error, streaming_partial_response, streaming_response,
     write_etag_metadata, write_file,
 };
@@ -143,7 +143,7 @@ pub async fn get_object(
     let total_len = metadata.len();
     let last_modified = metadata.modified().ok();
 
-    // Read ETag from metadata cache (falls back to computing if cache missing)
+    // Read ETag from metadata cache (fail fast if missing)
     let metadata_path = match state.metadata_path(&bucket, &key) {
         Ok(p) => p,
         Err(err) => {
@@ -156,16 +156,19 @@ pub async fn get_object(
             return err.into_response();
         }
     };
-    let etag = match read_etag_with_fallback(&metadata_path, &path).await {
-        Ok(etag) => etag,
-        Err(err) => {
+    let etag = match read_cached_etag(&metadata_path).await {
+        Some(etag) => etag,
+        None => {
             error!(
                 bucket = %bucket,
                 key = %key,
-                error = %err,
-                "get_object failed: reading etag"
+                "get_object failed: ETag metadata file is missing"
             );
-            return S3Error::io("reading etag", err).into_response();
+            return s3_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                "ETag metadata file is missing for this object",
+            );
         }
     };
 
@@ -273,7 +276,7 @@ pub async fn head_object(
         }
     };
 
-    // Read ETag from metadata cache (falls back to computing if cache missing)
+    // Read ETag from metadata cache (fail fast if missing)
     let metadata_path = match state.metadata_path(&bucket, &key) {
         Ok(p) => p,
         Err(err) => {
@@ -286,16 +289,19 @@ pub async fn head_object(
             return err.into_response();
         }
     };
-    let etag = match read_etag_with_fallback(&metadata_path, &path).await {
-        Ok(etag) => etag,
-        Err(err) => {
+    let etag = match read_cached_etag(&metadata_path).await {
+        Some(etag) => etag,
+        None => {
             error!(
                 bucket = %bucket,
                 key = %key,
-                error = %err,
-                "head_object failed: reading etag"
+                "head_object failed: ETag metadata file is missing"
             );
-            return S3Error::io("reading etag", err).into_response();
+            return s3_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                "ETag metadata file is missing for this object",
+            );
         }
     };
     response_with_body(Vec::new(), metadata.modified().ok(), metadata.len(), etag)
