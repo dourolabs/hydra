@@ -3219,19 +3219,6 @@ fn apply_issue_update(state: &mut DashboardState, issue: IssueRecord) -> bool {
     true
 }
 
-/// Remove a job from the dashboard state by task ID and refresh derived views.
-/// Returns `true` if the state changed.
-#[allow(dead_code)]
-fn remove_job(state: &mut DashboardState, task_id: &TaskId) -> bool {
-    let Some(&idx) = state.job_index.get(task_id) else {
-        return update_views(state);
-    };
-    state.jobs.swap_remove(idx);
-    rebuild_job_index(state);
-    update_views(state);
-    true
-}
-
 /// Remove an issue from the dashboard state by issue ID and refresh derived views.
 /// Returns `true` if the state changed.
 fn remove_issue(state: &mut DashboardState, issue_id: &IssueId) -> bool {
@@ -6374,6 +6361,18 @@ mod tests {
         let _changed = apply_issue_update(&mut state, iss);
 
         assert_eq!(state.issues.len(), 1);
+    }
+
+    /// Remove a job from the dashboard state by task ID and refresh derived views.
+    /// Returns `true` if the state changed.
+    fn remove_job(state: &mut DashboardState, task_id: &TaskId) -> bool {
+        let Some(&idx) = state.job_index.get(task_id) else {
+            return update_views(state);
+        };
+        state.jobs.swap_remove(idx);
+        rebuild_job_index(state);
+        update_views(state);
+        true
     }
 
     #[test]
