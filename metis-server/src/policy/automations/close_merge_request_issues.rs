@@ -97,7 +97,7 @@ impl Automation for CloseMergeRequestIssuesAutomation {
                 .upsert_issue(
                     Some(issue_id.clone()),
                     metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
-                    ctx.actor().map(String::from),
+                    ctx.actor().to_string(),
                 )
                 .await
                 .map_err(|e| {
@@ -217,7 +217,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
-            actor: None,
+            actor: "test".to_string(),
         });
 
         let event = ServerEvent::PatchUpdated {
@@ -272,7 +272,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
-            actor: None,
+            actor: "test".to_string(),
         });
 
         let event = ServerEvent::PatchUpdated {

@@ -248,7 +248,7 @@ async fn sync_patch_from_github(
     if updated_patch != latest_patch {
         state
             .upsert_patch(
-                None,
+                crate::app::event_bus::SYSTEM_ACTOR,
                 Some(patch_id.clone()),
                 api::patches::UpsertPatchRequest::new(updated_patch.into()),
             )

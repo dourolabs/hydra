@@ -214,7 +214,7 @@ impl Actor {
                     refreshed.access_token.clone(),
                     user.github_user_id,
                     refreshed.refresh_token.clone(),
-                    Some(self.name()),
+                    self.name(),
                 )
                 .await
                 .map_err(|err| match err {

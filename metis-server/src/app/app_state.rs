@@ -441,7 +441,14 @@ impl AppState {
 
         let (actor, auth_token) = Actor::new_for_user(username);
 
-        if let Err(err) = self.store.add_user(user.clone(), None).await {
+        if let Err(err) = self
+            .store
+            .add_user(
+                user.clone(),
+                super::event_bus::SYSTEM_ACTOR.to_string(),
+            )
+            .await
+        {
             match err {
                 StoreError::UserAlreadyExists(_) => {
                     self.set_user_github_token(
@@ -449,7 +456,7 @@ impl AppState {
                         user.github_token.clone(),
                         user.github_user_id,
                         user.github_refresh_token.clone(),
-                        None,
+                        super::event_bus::SYSTEM_ACTOR.to_string(),
                     )
                     .await
                     .map_err(|source| LoginError::Store { source })?;
@@ -458,11 +465,21 @@ impl AppState {
             }
         }
 
-        if let Err(err) = self.store.add_actor(actor.clone(), None).await {
+        if let Err(err) = self
+            .store
+            .add_actor(
+                actor.clone(),
+                super::event_bus::SYSTEM_ACTOR.to_string(),
+            )
+            .await
+        {
             match err {
                 StoreError::ActorAlreadyExists(_) => {
                     self.store
-                        .update_actor(actor.clone(), None)
+                        .update_actor(
+                            actor.clone(),
+                            super::event_bus::SYSTEM_ACTOR.to_string(),
+                        )
                         .await
                         .map_err(|source| LoginError::Store { source })?;
                 }
@@ -475,7 +492,9 @@ impl AppState {
 
     async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
         let (actor, auth_token) = Actor::new_for_task(task_id);
-        self.store.add_actor(actor.clone(), None).await?;
+        self.store
+            .add_actor(actor.clone(), super::event_bus::SYSTEM_ACTOR.to_string())
+            .await?;
         Ok((actor, auth_token))
     }
 
@@ -537,7 +556,7 @@ impl AppState {
     pub async fn delete_patch(
         &self,
         patch_id: &PatchId,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<(), StoreError> {
         self.store.delete_patch_with_actor(patch_id, actor).await?;
         Ok(())
@@ -547,7 +566,7 @@ impl AppState {
         &self,
         document_id: Option<DocumentId>,
         document: Document,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<(DocumentId, VersionNumber), UpsertDocumentError> {
         let store = self.store.as_ref();
 
@@ -652,7 +671,7 @@ impl AppState {
     pub async fn delete_document(
         &self,
         document_id: &DocumentId,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<(), StoreError> {
         self.store
             .delete_document_with_actor(document_id, actor)
@@ -697,7 +716,7 @@ impl AppState {
         github_token: String,
         github_user_id: u64,
         github_refresh_token: String,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<User, StoreError> {
         let mut user = self.store.get_user(username, false).await?.item;
         user.github_token = github_token;
@@ -728,7 +747,7 @@ impl AppState {
     pub async fn delete_repository(
         &self,
         name: &RepoName,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<RepositoryRecord, RepositoryError> {
         // Get the repository before deleting to return it
         // Use include_deleted: true since we need to access the repository to mark it as deleted
@@ -760,7 +779,7 @@ impl AppState {
         &self,
         name: RepoName,
         config: Repository,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<RepositoryRecord, RepositoryError> {
         self.store
             .add_repository(name.clone(), config.clone(), actor)
@@ -777,7 +796,7 @@ impl AppState {
         &self,
         name: RepoName,
         config: Repository,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<RepositoryRecord, RepositoryError> {
         self.store
             .update_repository(name.clone(), config.clone(), actor)
@@ -831,7 +850,7 @@ impl AppState {
     ) -> Result<TaskId, StoreError> {
         let (task_id, _version) = self
             .store
-            .add_task_with_actor(task, created_at, None)
+            .add_task_with_actor(task, created_at, super::event_bus::SYSTEM_ACTOR.to_string())
             .await?;
         Ok(task_id)
     }
@@ -895,7 +914,7 @@ impl AppState {
     pub async fn create_job(
         &self,
         request: api::jobs::CreateJobRequest,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<TaskId, CreateJobError> {
         let env_vars = request.variables;
 
@@ -999,7 +1018,7 @@ impl AppState {
         &self,
         job_id: TaskId,
         status: JobStatusUpdate,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<SetJobStatusResponse, SetJobStatusError> {
         {
             let store = self.store.as_ref();
@@ -1293,7 +1312,11 @@ impl AppState {
                 "soft-deleting orphaned task whose spawned_from issue was deleted"
             );
 
-            if let Err(err) = self.store.delete_task_with_actor(&task_id, None).await {
+            if let Err(err) = self
+                .store
+                .delete_task_with_actor(&task_id, super::event_bus::SYSTEM_ACTOR.to_string())
+                .await
+            {
                 warn!(
                     metis_id = %task_id,
                     error = %err,
@@ -1445,13 +1468,13 @@ impl AppState {
 
     pub async fn upsert_patch(
         &self,
-        actor: Option<&Actor>,
+        actor: &str,
         patch_id: Option<PatchId>,
         request: api::patches::UpsertPatchRequest,
     ) -> Result<(PatchId, VersionNumber), UpsertPatchError> {
         let api::patches::UpsertPatchRequest { patch, .. } = request;
         let mut patch: Patch = patch.into();
-        let actor_name = actor.map(|a| a.name());
+        let actor_name = actor.to_string();
 
         let store = self.store.as_ref();
         let (patch_id, version) = match patch_id {
@@ -1517,7 +1540,7 @@ impl AppState {
         &self,
         issue_id: Option<IssueId>,
         request: api::issues::UpsertIssueRequest,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<(IssueId, VersionNumber), UpsertIssueError> {
         let api::issues::UpsertIssueRequest { issue, job_id, .. } = request;
         let mut issue: Issue = issue.into();
@@ -1652,7 +1675,7 @@ impl AppState {
         &self,
         issue_id: IssueId,
         item: TodoItem,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
         let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
@@ -1679,7 +1702,7 @@ impl AppState {
         &self,
         issue_id: IssueId,
         todo_list: Vec<TodoItem>,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
         let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
@@ -1706,7 +1729,7 @@ impl AppState {
         issue_id: IssueId,
         item_number: usize,
         is_done: bool,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
         let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
@@ -1821,7 +1844,7 @@ impl AppState {
     pub async fn delete_issue(
         &self,
         issue_id: &IssueId,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<(), StoreError> {
         self.store.delete_issue_with_actor(issue_id, actor).await?;
         Ok(())
@@ -1858,7 +1881,11 @@ impl AppState {
         updated.error = None;
 
         self.store
-            .update_task_with_actor(task_id, updated, None)
+            .update_task_with_actor(
+                task_id,
+                updated,
+                super::event_bus::SYSTEM_ACTOR.to_string(),
+            )
             .await
     }
 
@@ -1868,8 +1895,13 @@ impl AppState {
         result: Result<(), TaskError>,
         last_message: Option<String>,
     ) -> Result<Versioned<Task>, StoreError> {
-        self.transition_task_to_completion_with_actor(task_id, result, last_message, None)
-            .await
+        self.transition_task_to_completion_with_actor(
+            task_id,
+            result,
+            last_message,
+            super::event_bus::SYSTEM_ACTOR.to_string(),
+        )
+        .await
     }
 
     async fn transition_task_to_completion_with_actor(
@@ -1877,7 +1909,7 @@ impl AppState {
         task_id: &TaskId,
         result: Result<(), TaskError>,
         last_message: Option<String>,
-        actor: Option<String>,
+        actor: String,
     ) -> Result<Versioned<Task>, StoreError> {
         let store = self.store.as_ref();
         let latest = store.get_task(task_id, false).await?;
@@ -1931,7 +1963,11 @@ impl AppState {
         updated.error = None;
 
         self.store
-            .update_task_with_actor(task_id, updated, None)
+            .update_task_with_actor(
+                task_id,
+                updated,
+                super::event_bus::SYSTEM_ACTOR.to_string(),
+            )
             .await
     }
 
@@ -2302,7 +2338,7 @@ mod tests {
 
         handles
             .state
-            .upsert_patch(Some(&actor), Some(patch_id.clone()), request)
+            .upsert_patch(&actor.name(), Some(patch_id.clone()), request)
             .await?;
 
         // Poll until the automation updates the github metadata.
@@ -2410,7 +2446,7 @@ mod tests {
 
         let (patch_id, _) = handles
             .state
-            .upsert_patch(Some(&actor), None, request)
+            .upsert_patch(&actor.name(), None, request)
             .await?;
 
         // Poll until the automation creates the github metadata.
@@ -2446,7 +2482,7 @@ mod tests {
         let (issue_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_issue_with_actor(issue_with_status("open", IssueStatus::Open, vec![]), None)
+                .add_issue_with_actor(issue_with_status("open", IssueStatus::Open, vec![]), "test".to_string())
                 .await
                 .unwrap()
         };
@@ -2463,7 +2499,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Open, vec![]),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -2477,7 +2513,7 @@ mod tests {
                             blocker_id.clone(),
                         )],
                     ),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -2493,7 +2529,7 @@ mod tests {
                 .update_issue_with_actor(
                     &blocker_id,
                     issue_with_status("blocker", IssueStatus::Closed, vec![]),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -2511,7 +2547,7 @@ mod tests {
             let (parent_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("parent", IssueStatus::InProgress, vec![]),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -2522,7 +2558,7 @@ mod tests {
             let (child_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("child", IssueStatus::Open, child_dependencies.clone()),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -2538,7 +2574,7 @@ mod tests {
                 .update_issue_with_actor(
                     &child_id,
                     issue_with_status("child", IssueStatus::Closed, child_dependencies),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -2556,7 +2592,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("dropped", IssueStatus::Dropped, vec![]),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap()
@@ -2574,7 +2610,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Dropped, vec![]),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -2588,7 +2624,7 @@ mod tests {
                             blocker_id,
                         )],
                     ),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap()
@@ -2606,7 +2642,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("closed", IssueStatus::Closed, vec![]),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap()
@@ -2625,7 +2661,7 @@ mod tests {
         let (task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), "test".to_string())
                 .await
                 .unwrap()
         };
@@ -2678,7 +2714,7 @@ mod tests {
                         patches: Vec::new(),
                         deleted: false,
                     },
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap()
@@ -2690,7 +2726,7 @@ mod tests {
             task.cpu_limit = job_settings.cpu_limit.clone();
             task.memory_limit = job_settings.memory_limit.clone();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), "test".to_string())
                 .await
                 .unwrap()
         };
@@ -2712,7 +2748,7 @@ mod tests {
         let (task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), "test".to_string())
                 .await
                 .unwrap()
         };
@@ -2739,7 +2775,7 @@ mod tests {
         let (task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), "test".to_string())
                 .await
                 .unwrap()
         };
@@ -2785,7 +2821,7 @@ mod tests {
         let (tracked_task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .add_task_with_actor(sample_task(), Utc::now(), "test".to_string())
                 .await
                 .unwrap()
         };
@@ -2822,7 +2858,7 @@ mod tests {
         let task_id = {
             let store = state.store.as_ref();
             let (task_id, _) = store
-                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .add_task_with_actor(sample_task(), Utc::now(), "test".to_string())
                 .await
                 .unwrap();
             state
@@ -2858,7 +2894,7 @@ mod tests {
         let task_id = {
             let store = state.store.as_ref();
             let (task_id, _) = store
-                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .add_task_with_actor(sample_task(), Utc::now(), "test".to_string())
                 .await
                 .unwrap();
             state
@@ -2902,7 +2938,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -2915,7 +2951,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.clone().into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -2931,7 +2967,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(grandchild_issue.clone().into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -2939,15 +2975,15 @@ mod tests {
         let (parent_task_id, child_task_id, grandchild_task_id) = {
             let store = state.store.as_ref();
             let (parent_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&parent_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&parent_id), Utc::now(), "test".to_string())
                 .await
                 .unwrap();
             let (child_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), "test".to_string())
                 .await
                 .unwrap();
             let (grandchild_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&grandchild_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&grandchild_id), Utc::now(), "test".to_string())
                 .await
                 .unwrap();
             (parent_task_id, child_task_id, grandchild_task_id)
@@ -2969,7 +3005,7 @@ mod tests {
             .upsert_issue(
                 Some(parent_id.clone()),
                 api::issues::UpsertIssueRequest::new(dropped_parent.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3014,7 +3050,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(blocker_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3029,7 +3065,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(blocked_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3042,7 +3078,7 @@ mod tests {
                         .into(),
                     None,
                 ),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap_err();
@@ -3065,7 +3101,7 @@ mod tests {
                     issue_with_status("blocker", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3077,7 +3113,7 @@ mod tests {
                     issue_with_status("blocked", IssueStatus::Closed, blocked_dependencies).into(),
                     None,
                 ),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3093,7 +3129,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3106,7 +3142,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3118,7 +3154,7 @@ mod tests {
                     issue_with_status("parent", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap_err();
@@ -3142,7 +3178,7 @@ mod tests {
                         .into(),
                     None,
                 ),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3154,7 +3190,7 @@ mod tests {
                     issue_with_status("parent", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3170,7 +3206,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3183,7 +3219,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3196,7 +3232,7 @@ mod tests {
                     issue_with_status("parent", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3215,7 +3251,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(issue.clone().into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3227,7 +3263,7 @@ mod tests {
             .upsert_issue(
                 Some(issue_id.clone()),
                 api::issues::UpsertIssueRequest::new(closed_issue.clone().into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap_err();
@@ -3244,7 +3280,7 @@ mod tests {
         }
 
         state
-            .set_todo_item_status(issue_id.clone(), 1, true, None)
+            .set_todo_item_status(issue_id.clone(), 1, true, "test".to_string())
             .await
             .unwrap();
 
@@ -3257,7 +3293,7 @@ mod tests {
             .upsert_issue(
                 Some(issue_id.clone()),
                 api::issues::UpsertIssueRequest::new(closed_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3274,7 +3310,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3287,7 +3323,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3308,7 +3344,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3321,7 +3357,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3345,7 +3381,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap_err();
@@ -3368,16 +3404,16 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), "test".to_string())
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), "test".to_string())
             .await
             .unwrap();
 
         store
-            .delete_issue_with_actor(&issue_id, None)
+            .delete_issue_with_actor(&issue_id, "test".to_string())
             .await
             .unwrap();
 
@@ -3400,11 +3436,11 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), "test".to_string())
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), "test".to_string())
             .await
             .unwrap();
 
@@ -3424,7 +3460,7 @@ mod tests {
         let store = state.store.as_ref();
 
         let (task_id, _) = store
-            .add_task_with_actor(sample_task(), Utc::now(), None)
+            .add_task_with_actor(sample_task(), Utc::now(), "test".to_string())
             .await
             .unwrap();
 
@@ -3444,11 +3480,11 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), "test".to_string())
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), "test".to_string())
             .await
             .unwrap();
         state
@@ -3459,7 +3495,7 @@ mod tests {
         job_engine.insert_job(&task_id, JobStatus::Running).await;
 
         store
-            .delete_issue_with_actor(&issue_id, None)
+            .delete_issue_with_actor(&issue_id, "test".to_string())
             .await
             .unwrap();
 
@@ -3490,7 +3526,7 @@ mod tests {
         let issue = issue_with_status("test issue", IssueStatus::Open, Vec::new());
         let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
         let (issue_id, _) = state
-            .upsert_issue(None, request, None)
+            .upsert_issue(None, request, "test".to_string())
             .await
             .expect("create should succeed");
 
@@ -3504,7 +3540,7 @@ mod tests {
         let updated_issue = issue_with_status("updated issue", IssueStatus::InProgress, Vec::new());
         let update_request = api::issues::UpsertIssueRequest::new(updated_issue.into(), None);
         state
-            .upsert_issue(Some(issue_id.clone()), update_request, None)
+            .upsert_issue(Some(issue_id.clone()), update_request, "test".to_string())
             .await
             .expect("update should succeed");
 
@@ -3522,14 +3558,14 @@ mod tests {
         let issue = issue_with_status("doomed issue", IssueStatus::Open, Vec::new());
         let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
         let (issue_id, _) = state
-            .upsert_issue(None, request, None)
+            .upsert_issue(None, request, "test".to_string())
             .await
             .expect("create should succeed");
 
         let mut rx = state.subscribe();
 
         state
-            .delete_issue(&issue_id, None)
+            .delete_issue(&issue_id, "test".to_string())
             .await
             .expect("delete should succeed");
 
@@ -3549,7 +3585,7 @@ mod tests {
             let issue = issue_with_status(&format!("issue {i}"), IssueStatus::Open, Vec::new());
             let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
             state
-                .upsert_issue(None, request, None)
+                .upsert_issue(None, request, "test".to_string())
                 .await
                 .expect("create should succeed");
             let event = rx.recv().await.expect("should receive event");
@@ -3582,7 +3618,7 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let (patch1_id, _) = handles.state.upsert_patch(None, None, request1).await?;
+        let (patch1_id, _) = handles.state.upsert_patch("test", None, request1).await?;
 
         let mut patch2 = Patch::new(
             "Second patch".to_string(),
@@ -3599,7 +3635,7 @@ mod tests {
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
         let err = handles
             .state
-            .upsert_patch(None, None, request2)
+            .upsert_patch("test", None, request2)
             .await
             .unwrap_err();
 
@@ -3640,7 +3676,7 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let (patch1_id, _) = handles.state.upsert_patch(None, None, request1).await?;
+        let (patch1_id, _) = handles.state.upsert_patch("test", None, request1).await?;
 
         // Close the first patch
         let mut closed_patch = handles.store.get_patch(&patch1_id, false).await?.item;
@@ -3661,7 +3697,7 @@ mod tests {
         );
         patch2.branch_name = Some("feature/foo".to_string());
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
-        handles.state.upsert_patch(None, None, request2).await?;
+        handles.state.upsert_patch("test", None, request2).await?;
 
         Ok(())
     }
@@ -3684,7 +3720,7 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let (patch1_id, _) = handles.state.upsert_patch(None, None, request1).await?;
+        let (patch1_id, _) = handles.state.upsert_patch("test", None, request1).await?;
 
         // Updating the same patch should succeed (the uniqueness check is only
         // on creates, not updates).
@@ -3703,7 +3739,7 @@ mod tests {
         let request2 = api::patches::UpsertPatchRequest::new(update_patch.into());
         handles
             .state
-            .upsert_patch(None, Some(patch1_id), request2)
+            .upsert_patch("test", Some(patch1_id), request2)
             .await?;
 
         Ok(())
@@ -3727,7 +3763,7 @@ mod tests {
             None,
         );
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        handles.state.upsert_patch(None, None, request1).await?;
+        handles.state.upsert_patch("test", None, request1).await?;
 
         let patch2 = Patch::new(
             "Second patch".to_string(),
@@ -3741,7 +3777,7 @@ mod tests {
             None,
         );
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
-        handles.state.upsert_patch(None, None, request2).await?;
+        handles.state.upsert_patch("test", None, request2).await?;
 
         Ok(())
     }
@@ -3755,7 +3791,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("rejected", IssueStatus::Rejected, vec![]),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap()
@@ -3773,7 +3809,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("failed", IssueStatus::Failed, vec![]),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap()
@@ -3788,11 +3824,11 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, "test".to_string()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child = issue_with_status("child", IssueStatus::Rejected, vec![child_dep]);
-        store.add_issue_with_actor(child, None).await.unwrap();
+        store.add_issue_with_actor(child, "test".to_string()).await.unwrap();
 
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
     }
@@ -3803,11 +3839,11 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, "test".to_string()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child = issue_with_status("child", IssueStatus::Failed, vec![child_dep]);
-        store.add_issue_with_actor(child, None).await.unwrap();
+        store.add_issue_with_actor(child, "test".to_string()).await.unwrap();
 
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
     }
@@ -3818,13 +3854,13 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, "test".to_string()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
             .add_issue_with_actor(
                 issue_with_status("closed child", IssueStatus::Closed, vec![child_dep.clone()]),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3835,7 +3871,7 @@ mod tests {
                     IssueStatus::Dropped,
                     vec![child_dep.clone()],
                 ),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3846,14 +3882,14 @@ mod tests {
                     IssueStatus::Rejected,
                     vec![child_dep.clone()],
                 ),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
         store
             .add_issue_with_actor(
                 issue_with_status("failed child", IssueStatus::Failed, vec![child_dep]),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3870,7 +3906,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Rejected, vec![]),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -3884,7 +3920,7 @@ mod tests {
                             blocker_id,
                         )],
                     ),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap()
@@ -3902,7 +3938,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Failed, vec![]),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -3916,7 +3952,7 @@ mod tests {
                             blocker_id,
                         )],
                     ),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap()
@@ -3936,7 +3972,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3949,7 +3985,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -3957,7 +3993,7 @@ mod tests {
         let (child_task_id,) = {
             let store = state.store.as_ref();
             let (child_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), "test".to_string())
                 .await
                 .unwrap();
             (child_task_id,)
@@ -3973,7 +4009,7 @@ mod tests {
             .upsert_issue(
                 Some(parent_id.clone()),
                 api::issues::UpsertIssueRequest::new(rejected_parent.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -4008,7 +4044,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -4021,7 +4057,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -4032,7 +4068,7 @@ mod tests {
             .upsert_issue(
                 Some(parent_id.clone()),
                 api::issues::UpsertIssueRequest::new(failed_parent.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -4061,7 +4097,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(blocker_issue.clone().into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -4073,7 +4109,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(dependent_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -4086,7 +4122,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(dep_child_issue.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -4094,11 +4130,11 @@ mod tests {
         let (dep_task_id, dep_child_task_id) = {
             let store = state.store.as_ref();
             let (dep_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&dependent_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&dependent_id), Utc::now(), "test".to_string())
                 .await
                 .unwrap();
             let (dep_child_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&dep_child_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&dep_child_id), Utc::now(), "test".to_string())
                 .await
                 .unwrap();
             (dep_task_id, dep_child_task_id)
@@ -4117,7 +4153,7 @@ mod tests {
             .upsert_issue(
                 Some(blocker_id.clone()),
                 api::issues::UpsertIssueRequest::new(rejected_blocker.into(), None),
-                None,
+                "test".to_string(),
             )
             .await
             .unwrap();
@@ -4173,7 +4209,7 @@ mod tests {
                 .upsert_issue(
                     None,
                     api::issues::UpsertIssueRequest::new(blocker_issue.into(), None),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -4186,7 +4222,7 @@ mod tests {
                 .upsert_issue(
                     None,
                     api::issues::UpsertIssueRequest::new(blocked_issue.into(), None),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -4198,7 +4234,7 @@ mod tests {
                         issue_with_status("blocked", IssueStatus::Closed, vec![blocked_dep]).into(),
                         None,
                     ),
-                    None,
+                    "test".to_string(),
                 )
                 .await
                 .unwrap();
@@ -4216,7 +4252,7 @@ mod tests {
             deleted: false,
         };
 
-        let result = state.upsert_document(None, document, None).await;
+        let result = state.upsert_document(None, document, "test".to_string()).await;
         assert!(result.is_err());
         match &result.unwrap_err() {
             UpsertDocumentError::PolicyViolation(violation) => {
@@ -4241,7 +4277,7 @@ mod tests {
             deleted: false,
         };
 
-        let result = state.upsert_document(None, document, None).await;
+        let result = state.upsert_document(None, document, "test".to_string()).await;
         assert!(result.is_err());
         match &result.unwrap_err() {
             UpsertDocumentError::PolicyViolation(violation) => {
@@ -4266,7 +4302,7 @@ mod tests {
             deleted: false,
         };
 
-        let result = state.upsert_document(None, document, None).await;
+        let result = state.upsert_document(None, document, "test".to_string()).await;
         assert!(result.is_err());
         match &result.unwrap_err() {
             UpsertDocumentError::PolicyViolation(violation) => {
@@ -4291,7 +4327,7 @@ mod tests {
             deleted: false,
         };
 
-        let result = state.upsert_document(None, document, None).await;
+        let result = state.upsert_document(None, document, "test".to_string()).await;
         assert!(result.is_ok());
     }
 
@@ -4306,7 +4342,7 @@ mod tests {
             deleted: false,
         };
 
-        let result = state.upsert_document(None, document, None).await;
+        let result = state.upsert_document(None, document, "test".to_string()).await;
         assert!(result.is_ok());
     }
 
@@ -4322,7 +4358,7 @@ mod tests {
             deleted: false,
         };
         let result = state_default
-            .upsert_document(None, hidden_doc.clone(), None)
+            .upsert_document(None, hidden_doc.clone(), "test".to_string())
             .await;
         assert!(
             result.is_err(),
@@ -4356,7 +4392,7 @@ mod tests {
         };
 
         let state_custom = test_state().with_policy_engine(engine_without_hidden);
-        let result = state_custom.upsert_document(None, hidden_doc, None).await;
+        let result = state_custom.upsert_document(None, hidden_doc, "test".to_string()).await;
         assert!(
             result.is_ok(),
             "policy engine without hidden_document_path restriction should allow hidden paths"

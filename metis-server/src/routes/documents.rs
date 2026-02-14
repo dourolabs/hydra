@@ -67,7 +67,7 @@ pub async fn create_document(
 ) -> Result<Json<v1::documents::UpsertDocumentResponse>, ApiError> {
     info!(actor = %actor.name(), "create_document invoked");
     let (document_id, version) = state
-        .upsert_document(None, payload.document.into(), Some(actor.name()))
+        .upsert_document(None, payload.document.into(), actor.name())
         .await
         .map_err(map_upsert_document_error)?;
 
@@ -89,7 +89,7 @@ pub async fn update_document(
         .upsert_document(
             Some(document_id.clone()),
             payload.document.into(),
-            Some(actor.name()),
+            actor.name(),
         )
         .await
         .map_err(map_upsert_document_error)?;
@@ -268,7 +268,7 @@ pub async fn delete_document(
 ) -> Result<Json<v1::documents::DocumentVersionRecord>, ApiError> {
     info!(document_id = %document_id, "delete_document invoked");
     state
-        .delete_document(&document_id, Some(actor.name()))
+        .delete_document(&document_id, actor.name())
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 

@@ -20,7 +20,7 @@ async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()
     let handles = test_state_handles();
     handles
         .state
-        .create_repository(name.clone(), repository.clone(), None)
+        .create_repository(name.clone(), repository.clone(), "test".to_string())
         .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
@@ -120,7 +120,7 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     );
     handles
         .state
-        .create_repository(name.clone(), repository.clone(), None)
+        .create_repository(name.clone(), repository.clone(), "test".to_string())
         .await?;
     service_state.ensure_cached(&name, &repository).await?;
     let service_state = handles.state.service_state.clone();
@@ -203,7 +203,7 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
                 repository.default_branch.clone(),
                 repository.default_image.clone(),
             ),
-            None,
+            "test".to_string(),
         )
         .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;

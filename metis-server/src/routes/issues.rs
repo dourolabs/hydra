@@ -91,7 +91,7 @@ pub async fn create_issue(
 ) -> Result<Json<api_issues::UpsertIssueResponse>, ApiError> {
     info!("create_issue invoked");
     let (issue_id, version) = state
-        .upsert_issue(None, payload, Some(actor.name()))
+        .upsert_issue(None, payload, actor.name())
         .await
         .map_err(map_upsert_issue_error)?;
 
@@ -109,7 +109,7 @@ pub async fn update_issue(
 ) -> Result<Json<api_issues::UpsertIssueResponse>, ApiError> {
     info!(issue_id = %issue_id, "update_issue invoked");
     let (issue_id, version) = state
-        .upsert_issue(Some(issue_id), payload, Some(actor.name()))
+        .upsert_issue(Some(issue_id), payload, actor.name())
         .await
         .map_err(map_upsert_issue_error)?;
 
@@ -275,7 +275,7 @@ pub async fn add_todo_item(
         .add_todo_item(
             issue_id.clone(),
             TodoItem::new(request.description, request.is_done),
-            Some(actor.name()),
+            actor.name(),
         )
         .await
         .map_err(map_todo_error)?;
@@ -303,7 +303,7 @@ pub async fn replace_todo_list(
         .replace_todo_list(
             issue_id.clone(),
             request.todo_list.into_iter().map(Into::into).collect(),
-            Some(actor.name()),
+            actor.name(),
         )
         .await
         .map_err(map_todo_error)?;
@@ -340,7 +340,7 @@ pub async fn set_todo_item_status(
             issue_id.clone(),
             item_number,
             request.is_done,
-            Some(actor.name()),
+            actor.name(),
         )
         .await
         .map_err(map_todo_error)?;
@@ -472,7 +472,7 @@ pub async fn delete_issue(
 ) -> Result<Json<api_issues::IssueVersionRecord>, ApiError> {
     info!(issue_id = %issue_id, "delete_issue invoked");
     state
-        .delete_issue(&issue_id, Some(actor.name()))
+        .delete_issue(&issue_id, actor.name())
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 

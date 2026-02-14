@@ -150,7 +150,7 @@ pub async fn add_repository(
     config: Repository,
 ) -> anyhow::Result<()> {
     state
-        .create_repository(name, config, None)
+        .create_repository(name, config, "test".to_string())
         .await
         .context("failed to add repository to test state")?;
     Ok(())

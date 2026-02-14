@@ -63,8 +63,8 @@ pub struct AutomationContext<'a> {
 }
 
 impl<'a> AutomationContext<'a> {
-    /// Returns the actor name from the event payload, if available.
-    pub fn actor(&self) -> Option<&str> {
+    /// Returns the actor name from the event payload.
+    pub fn actor(&self) -> &str {
         self.event.payload().actor()
     }
 }

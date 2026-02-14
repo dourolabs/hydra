@@ -110,7 +110,7 @@ impl Automation for CascadeIssueStatusAutomation {
         }
 
         let store = ctx.store;
-        let actor = ctx.actor().map(String::from);
+        let actor = ctx.actor().to_string();
 
         // 1. Drop all children recursively (for any trigger status)
         drop_children_recursively(ctx.app_state, store, issue_id, actor.clone()).await?;
@@ -156,7 +156,7 @@ async fn upsert_issue(
     app_state: &AppState,
     issue_id: &IssueId,
     issue: crate::domain::issues::Issue,
-    actor: Option<String>,
+    actor: String,
 ) -> Result<(), AutomationError> {
     app_state
         .upsert_issue(
@@ -176,7 +176,7 @@ async fn drop_children_recursively(
     app_state: &AppState,
     store: &dyn crate::store::ReadOnlyStore,
     issue_id: &IssueId,
-    actor: Option<String>,
+    actor: String,
 ) -> Result<(), AutomationError> {
     let mut to_visit = store.get_issue_children(issue_id).await.map_err(|e| {
         AutomationError::Other(anyhow::anyhow!("failed to get children of {issue_id}: {e}"))
@@ -267,7 +267,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
             new: dropped_parent,
-            actor: None,
+            actor: "test".to_string(),
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -318,7 +318,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
             new: failed_a,
-            actor: None,
+            actor: "test".to_string(),
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -354,7 +354,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(issue.clone()),
             new: issue,
-            actor: None,
+            actor: "test".to_string(),
         });
 
         let event = ServerEvent::IssueUpdated {

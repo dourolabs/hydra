@@ -44,7 +44,7 @@ pub async fn create_repository(
     info!(repository = %payload.name, "create_repository invoked");
     let config = normalize_config(payload.repository)?;
     let created = state
-        .create_repository(payload.name, config, Some(actor.name()))
+        .create_repository(payload.name, config, actor.name())
         .await
         .map_err(map_repository_error)?;
 
@@ -64,7 +64,7 @@ pub async fn update_repository(
 
     let config = normalize_config(payload.repository)?;
     let updated = state
-        .update_repository(name.clone(), config, Some(actor.name()))
+        .update_repository(name.clone(), config, actor.name())
         .await
         .map_err(map_repository_error)?;
 
@@ -82,7 +82,7 @@ pub async fn delete_repository(
     info!(repository = %name, "delete_repository invoked");
 
     let deleted = state
-        .delete_repository(&name, Some(actor.name()))
+        .delete_repository(&name, actor.name())
         .await
         .map_err(map_repository_error)?;
 
