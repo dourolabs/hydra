@@ -92,7 +92,6 @@ pub enum StoreError {
     PatchNotFound(PatchId),
     #[error("Document not found: {0}")]
     DocumentNotFound(DocumentId),
-    #[allow(dead_code)]
     #[error("Invalid dependency: {0}")]
     InvalidDependency(IssueId),
     #[error("Invalid issue status: {0}")]
@@ -184,15 +183,12 @@ pub trait ReadOnlyStore: Send + Sync {
     ) -> Result<HashSet<IssueId>, StoreError>;
 
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
-    #[allow(dead_code)]
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 
     /// Lists all issues that are blocked on the provided issue.
-    #[allow(dead_code)]
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 
     /// Lists all task IDs spawned from the provided issue.
-    #[allow(dead_code)]
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError>;
 
     /// Retrieves a patch by its PatchId.
@@ -457,7 +453,6 @@ pub trait Store: ReadOnlyStore {
     ///
     /// # Returns
     /// The stored task version if successful, or an error if the task doesn't exist
-    #[allow(dead_code)]
     async fn update_task(
         &self,
         metis_id: &TaskId,

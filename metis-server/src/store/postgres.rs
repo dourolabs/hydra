@@ -1828,7 +1828,6 @@ mod tests {
         assert_eq!(actual.version, expected_version);
     }
 
-    #[allow(dead_code)]
     fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
         Issue::new(
             IssueType::Task,
@@ -1844,7 +1843,6 @@ mod tests {
         )
     }
 
-    #[allow(dead_code)]
     fn sample_patch() -> Patch {
         Patch::new(
             "patch title".to_string(),
@@ -1859,7 +1857,6 @@ mod tests {
         )
     }
 
-    #[allow(dead_code)]
     fn sample_document(path: &str, created_by: Option<TaskId>) -> Document {
         Document {
             title: "Doc".to_string(),
@@ -1870,7 +1867,6 @@ mod tests {
         }
     }
 
-    #[allow(dead_code)]
     fn sample_task() -> Task {
         Task::new(
             "prompt".to_string(),
@@ -1885,7 +1881,6 @@ mod tests {
         )
     }
 
-    #[allow(dead_code)]
     fn sample_repository_config() -> Repository {
         Repository::new(
             "https://example.com/repo.git".to_string(),
