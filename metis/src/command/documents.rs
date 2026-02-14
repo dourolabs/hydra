@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::{
-    constants::ENV_METIS_ID,
+    constants::{ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ID},
     documents::{
         Document as DocumentPayload, DocumentVersionRecord, SearchDocumentsQuery,
         UpsertDocumentRequest,
@@ -114,8 +114,8 @@ pub struct UpdateDocumentArgs {
 #[derive(Debug, Clone, Args)]
 pub struct SyncArgs {
     /// Local directory to sync documents into.
-    #[arg(value_name = "DIRECTORY")]
-    pub directory: PathBuf,
+    #[arg(value_name = "DIRECTORY", env = ENV_METIS_DOCUMENTS_DIR)]
+    pub directory: Option<PathBuf>,
 
     /// Only sync documents whose path starts with this prefix.
     #[arg(long = "path-prefix", value_name = "PREFIX")]
@@ -129,8 +129,8 @@ pub struct SyncArgs {
 #[derive(Debug, Clone, Args)]
 pub struct PushArgs {
     /// Local directory previously synced with `metis documents sync`.
-    #[arg(value_name = "DIRECTORY")]
-    pub directory: PathBuf,
+    #[arg(value_name = "DIRECTORY", env = ENV_METIS_DOCUMENTS_DIR)]
+    pub directory: Option<PathBuf>,
 
     /// Show what would be uploaded without making changes.
     #[arg(long = "dry-run")]
@@ -414,7 +414,11 @@ fn save_manifest(directory: &Path, manifest: &SyncManifest) -> Result<()> {
 }
 
 pub async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -> Result<()> {
-    let directory = &args.directory;
+    let directory = args.directory.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "No directory specified. Provide a DIRECTORY argument or set the {ENV_METIS_DOCUMENTS_DIR} environment variable."
+        )
+    })?;
 
     // Create directory if it doesn't exist
     fs::create_dir_all(directory)
@@ -609,7 +613,11 @@ fn collect_local_files_recursive(
 }
 
 pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -> Result<()> {
-    let directory = &args.directory;
+    let directory = args.directory.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "No directory specified. Provide a DIRECTORY argument or set the {ENV_METIS_DOCUMENTS_DIR} environment variable."
+        )
+    })?;
 
     // Safety guard: refuse to operate without a manifest
     let manifest = load_manifest(directory)?.with_context(|| {
@@ -1281,7 +1289,7 @@ mod tests {
         sync_documents(
             &client,
             SyncArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 path_prefix: None,
                 clean: false,
             },
@@ -1336,7 +1344,7 @@ mod tests {
         sync_documents(
             &client,
             SyncArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 path_prefix: None,
                 clean: false,
             },
@@ -1371,7 +1379,7 @@ mod tests {
         sync_documents(
             &client,
             SyncArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 path_prefix: None,
                 clean: false,
             },
@@ -1387,7 +1395,7 @@ mod tests {
         sync_documents(
             &client,
             SyncArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 path_prefix: None,
                 clean: false,
             },
@@ -1429,7 +1437,7 @@ mod tests {
         sync_documents(
             &client,
             SyncArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 path_prefix: None,
                 clean: false,
             },
@@ -1452,7 +1460,7 @@ mod tests {
         sync_documents(
             &client,
             SyncArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 path_prefix: None,
                 clean: true,
             },
@@ -1487,7 +1495,7 @@ mod tests {
         sync_documents(
             &client,
             SyncArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 path_prefix: Some("/playbooks".to_string()),
                 clean: false,
             },
@@ -1521,7 +1529,7 @@ mod tests {
         sync_documents(
             &client,
             SyncArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 path_prefix: None,
                 clean: false,
             },
@@ -1558,7 +1566,7 @@ mod tests {
         let error = push_documents(
             &client,
             PushArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
             },
@@ -1630,7 +1638,7 @@ mod tests {
         push_documents(
             &client,
             PushArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
             },
@@ -1696,7 +1704,7 @@ mod tests {
         push_documents(
             &client,
             PushArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
             },
@@ -1748,7 +1756,7 @@ mod tests {
         push_documents(
             &client,
             PushArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
             },
@@ -1828,7 +1836,7 @@ mod tests {
         push_documents(
             &client,
             PushArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 dry_run: true,
                 path_prefix: None,
             },
@@ -1905,7 +1913,7 @@ mod tests {
         push_documents(
             &client,
             PushArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
             },
@@ -1975,7 +1983,7 @@ mod tests {
         push_documents(
             &client,
             PushArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
             },
@@ -2033,7 +2041,7 @@ mod tests {
         sync_documents(
             &client,
             SyncArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 path_prefix: None,
                 clean: false,
             },
@@ -2083,7 +2091,7 @@ mod tests {
         push_documents(
             &client,
             PushArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: Some("/playbooks".to_string()),
             },
@@ -2199,7 +2207,7 @@ mod tests {
         push_documents(
             &client,
             PushArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
             },
@@ -2250,7 +2258,7 @@ mod tests {
         push_documents(
             &client,
             PushArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 dry_run: true,
                 path_prefix: None,
             },
@@ -2324,7 +2332,7 @@ mod tests {
         push_documents(
             &client,
             PushArgs {
-                directory: dir.path().to_path_buf(),
+                directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: Some("/playbooks".to_string()),
             },

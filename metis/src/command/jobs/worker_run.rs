@@ -142,7 +142,7 @@ pub async fn run(
     match sync_documents(
         client,
         SyncArgs {
-            directory: documents_path.clone(),
+            directory: Some(documents_path.clone()),
             path_prefix: None,
             clean: false,
         },
@@ -208,7 +208,7 @@ pub async fn run(
         if let Err(err) = push_documents(
             client,
             PushArgs {
-                directory: documents_path.clone(),
+                directory: Some(documents_path.clone()),
                 dry_run: false,
                 path_prefix: None,
             },
