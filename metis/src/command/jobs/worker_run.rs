@@ -61,24 +61,26 @@ pub async fn run(
         .map(|value| value.to_string())
         .or_else(|| execution_env.get(ENV_METIS_ISSUE_ID).cloned());
     let github_token = client.get_github_token().await.ok();
+    let repo_path = dest.join("repo");
     let base_commit = match request_context {
         Bundle::None => {
-            fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
+            fs::create_dir_all(&repo_path)
+                .with_context(|| format!("failed to create {repo_path:?}"))?;
             None
         }
         Bundle::GitRepository { url, rev } => {
-            clone_repo(&url, &rev, &dest, github_token.as_deref())
+            clone_repo(&url, &rev, &repo_path, github_token.as_deref())
                 .context("failed to clone repository")?;
-            configure_repo(&dest, "Metis Worker", "metis-worker@example.com")
+            configure_repo(&repo_path, "Metis Worker", "metis-worker@example.com")
                 .context("failed to configure git repository")?;
-            resolve_head_oid(&dest).context("failed to resolve HEAD commit")?
+            resolve_head_oid(&repo_path).context("failed to resolve HEAD commit")?
         }
         _ => bail!("unsupported bundle type for worker context"),
     };
 
     if base_commit.is_some() {
         initialize_tracking_branches(
-            &dest,
+            &repo_path,
             issue_branch_id.as_deref(),
             &job,
             github_token.as_deref(),
@@ -95,7 +97,7 @@ pub async fn run(
             match build_cache_client(build_cache) {
                 Ok(client) => match client
                     .apply_nearest_cache(
-                        &dest,
+                        &repo_path,
                         worker_home_dir.as_deref(),
                         service_repo_name.clone(),
                     )
@@ -132,12 +134,9 @@ pub async fn run(
         }
     }
 
-    // Sync documents to a temporary directory (best-effort).
-    let documents_dir = Builder::new()
-        .prefix("metis-documents")
-        .tempdir()
-        .context("failed to create temporary documents directory")?;
-    let documents_path = documents_dir.path().to_path_buf();
+    // Sync documents to a well-known sibling directory next to the repo checkout (best-effort).
+    let documents_path = dest.join("documents");
+    std::fs::create_dir_all(&documents_path).context("failed to create documents directory")?;
     match sync_documents(
         client,
         SyncArgs {
@@ -175,7 +174,7 @@ pub async fn run(
             openai_api_key.clone(),
             anthropic_api_key.clone(),
             claude_code_oauth_token.clone(),
-            &dest,
+            &repo_path,
             &execution_env,
             &output_path,
         )
@@ -193,7 +192,7 @@ pub async fn run(
 
     if base_commit.is_some() {
         if let Err(err) = finalize_task_run(
-            &dest,
+            &repo_path,
             issue_branch_id.as_deref(),
             &job,
             github_token.as_deref(),
@@ -224,7 +223,7 @@ pub async fn run(
         {
             let cache_upload_start = Instant::now();
             match build_cache_client(build_cache) {
-                Ok(client) => match resolve_head_oid(&dest) {
+                Ok(client) => match resolve_head_oid(&repo_path) {
                     Ok(Some(head_oid)) => {
                         let git_sha = head_oid.to_string();
                         if downloaded_cache_sha.as_deref() == Some(git_sha.as_str()) {
@@ -241,7 +240,7 @@ pub async fn run(
                                 ));
                                 match client
                                     .build_and_upload_cache(
-                                        &dest,
+                                        &repo_path,
                                         worker_home_dir.as_deref(),
                                         service_repo_name.clone(),
                                         &git_sha,
@@ -305,7 +304,7 @@ pub async fn run(
         if let Err(err) = submit_patch_artifact_if_present(
             client,
             &job,
-            &dest,
+            &repo_path,
             &last_message,
             service_repo_name,
             base_commit,
