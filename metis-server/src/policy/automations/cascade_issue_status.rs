@@ -9,7 +9,7 @@ use crate::policy::{Automation, AutomationError, EventFilter};
 use metis_common::IssueId;
 
 /// When an issue's status changes to a terminal/failure status, recursively
-/// drop all child issues and cascade to blocked-on dependents.
+/// drop all child issues.
 ///
 /// Configurable via `trigger_statuses` param (defaults to Dropped, Rejected, Failed).
 pub struct CascadeIssueStatusAutomation {
@@ -65,13 +65,6 @@ fn parse_issue_status(s: &str) -> Result<IssueStatus, String> {
     }
 }
 
-fn is_terminal(status: &IssueStatus) -> bool {
-    matches!(
-        status,
-        IssueStatus::Dropped | IssueStatus::Closed | IssueStatus::Rejected | IssueStatus::Failed
-    )
-}
-
 #[async_trait]
 impl Automation for CascadeIssueStatusAutomation {
     fn name(&self) -> &str {
@@ -112,34 +105,8 @@ impl Automation for CascadeIssueStatusAutomation {
         let store = ctx.store;
         let actor = ctx.actor().map(String::from);
 
-        // 1. Drop all children recursively (for any trigger status)
-        drop_children_recursively(ctx.app_state, store, issue_id, actor.clone()).await?;
-
-        // 2. For Rejected/Failed, also cascade to blocked-on dependents
-        if matches!(new.status, IssueStatus::Rejected | IssueStatus::Failed) {
-            let dependent_ids = store.get_issue_blocked_on(issue_id).await.map_err(|e| {
-                AutomationError::Other(anyhow::anyhow!(
-                    "failed to get dependents of {issue_id}: {e}"
-                ))
-            })?;
-
-            for dep_id in dependent_ids {
-                let dep_issue = store.get_issue(&dep_id, false).await.map_err(|e| {
-                    AutomationError::Other(anyhow::anyhow!(
-                        "failed to fetch dependent issue {dep_id}: {e}"
-                    ))
-                })?;
-
-                if !is_terminal(&dep_issue.item.status) {
-                    let mut dep = dep_issue.item;
-                    dep.status = IssueStatus::Dropped;
-                    upsert_issue(ctx.app_state, &dep_id, dep, actor.clone()).await?;
-
-                    // Also drop the dependent's children
-                    drop_children_recursively(ctx.app_state, store, &dep_id, actor.clone()).await?;
-                }
-            }
-        }
+        // Drop all children recursively
+        drop_children_recursively(ctx.app_state, store, issue_id, actor).await?;
 
         tracing::info!(
             issue_id = %issue_id,
@@ -292,7 +259,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cascades_to_blocked_on_dependents_when_failed() {
+    async fn does_not_cascade_to_blocked_on_dependents_when_failed() {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
@@ -310,7 +277,8 @@ mod tests {
         );
         let (id_b, _) = store.add_issue(issue_b).await.unwrap();
 
-        // Fail issue A
+        // Fail issue A — Failed is no longer a trigger status,
+        // so the automation should not fire and B should stay Open.
         let mut failed_a = issue_a;
         failed_a.status = IssueStatus::Failed;
         store.update_issue(&id_a, failed_a.clone()).await.unwrap();
@@ -338,8 +306,115 @@ mod tests {
 
         automation.execute(&ctx).await.unwrap();
 
+        // B should remain Open (not dropped)
         let b_result = store.get_issue(&id_b, false).await.unwrap();
-        assert_eq!(b_result.item.status, IssueStatus::Dropped);
+        assert_eq!(b_result.item.status, IssueStatus::Open);
+    }
+
+    #[tokio::test]
+    async fn drops_children_when_parent_failed() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        // Create parent and child
+        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let (parent_id, _) = store.add_issue(parent.clone()).await.unwrap();
+
+        let child = make_issue(
+            IssueStatus::Open,
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )],
+        );
+        let (child_id, _) = store.add_issue(child).await.unwrap();
+
+        // Fail the parent — children should be dropped.
+        let mut failed_parent = parent;
+        failed_parent.status = IssueStatus::Failed;
+        store
+            .update_issue(&parent_id, failed_parent.clone())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            new: failed_parent,
+            actor: None,
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 1,
+            issue_id: parent_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = CascadeIssueStatusAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let child_result = store.get_issue(&child_id, false).await.unwrap();
+        assert_eq!(child_result.item.status, IssueStatus::Dropped);
+    }
+
+    #[tokio::test]
+    async fn drops_children_when_parent_rejected() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        // Create parent and child
+        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let (parent_id, _) = store.add_issue(parent.clone()).await.unwrap();
+
+        let child = make_issue(
+            IssueStatus::Open,
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )],
+        );
+        let (child_id, _) = store.add_issue(child).await.unwrap();
+
+        // Reject the parent — children should be dropped.
+        let mut rejected_parent = parent;
+        rejected_parent.status = IssueStatus::Rejected;
+        store
+            .update_issue(&parent_id, rejected_parent.clone())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            new: rejected_parent,
+            actor: None,
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 1,
+            issue_id: parent_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = CascadeIssueStatusAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let child_result = store.get_issue(&child_id, false).await.unwrap();
+        assert_eq!(child_result.item.status, IssueStatus::Dropped);
     }
 
     #[tokio::test]

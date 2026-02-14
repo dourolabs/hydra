@@ -4048,7 +4048,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_blocker_auto_drops_dependents() {
+    async fn rejected_blocker_does_not_auto_drop_dependents() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
         let runner = start_test_automation_runner(&state);
@@ -4075,39 +4075,6 @@ mod tests {
             .await
             .unwrap();
 
-        let dep_child_dep =
-            IssueDependency::new(IssueDependencyType::ChildOf, dependent_id.clone());
-        let dep_child_issue =
-            issue_with_status("dep-child", IssueStatus::Open, vec![dep_child_dep]);
-        let (dep_child_id, _) = state
-            .upsert_issue(
-                None,
-                api::issues::UpsertIssueRequest::new(dep_child_issue.into(), None),
-                None,
-            )
-            .await
-            .unwrap();
-
-        let (dep_task_id, dep_child_task_id) = {
-            let store = state.store.as_ref();
-            let (dep_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&dependent_id), Utc::now(), None)
-                .await
-                .unwrap();
-            let (dep_child_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&dep_child_id), Utc::now(), None)
-                .await
-                .unwrap();
-            (dep_task_id, dep_child_task_id)
-        };
-
-        job_engine
-            .insert_job(&dep_task_id, JobStatus::Running)
-            .await;
-        job_engine
-            .insert_job(&dep_child_task_id, JobStatus::Running)
-            .await;
-
         let mut rejected_blocker = blocker_issue;
         rejected_blocker.status = IssueStatus::Rejected;
         state
@@ -4121,6 +4088,8 @@ mod tests {
 
         wait_for_automations().await;
 
+        // Dependent should remain Open (not dropped) — blocking is retained
+        // but status is not changed
         {
             let store = state.store.as_ref();
             assert_eq!(
@@ -4130,26 +4099,12 @@ mod tests {
                     .unwrap()
                     .item
                     .status,
-                IssueStatus::Dropped
-            );
-            assert_eq!(
-                store
-                    .get_issue(&dep_child_id, false)
-                    .await
-                    .unwrap()
-                    .item
-                    .status,
-                IssueStatus::Dropped
+                IssueStatus::Open
             );
         }
 
-        for task_id in [dep_task_id, dep_child_task_id] {
-            let job = job_engine
-                .find_job_by_metis_id(&task_id)
-                .await
-                .expect("job should exist");
-            assert_eq!(job.status, JobStatus::Failed);
-        }
+        // Dependent should not be ready (blocker is not Closed)
+        assert!(!state.is_issue_ready(&dependent_id).await.unwrap());
 
         runner.shutdown().await;
     }
