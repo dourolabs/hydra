@@ -173,10 +173,7 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        domain::documents::Document,
-        test_utils::test_state,
-    };
+    use crate::{domain::documents::Document, test_utils::test_state};
 
     #[tokio::test]
     async fn upsert_document_allows_normal_path() {

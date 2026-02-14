@@ -1,8 +1,8 @@
 use crate::store::{ReadOnlyStore, StoreError};
 use metis_common::{RepoName, api::v1::repositories::SearchRepositoriesQuery};
 
-use super::{Repository, RepositoryError, RepositoryRecord};
 use super::app_state::AppState;
+use super::{Repository, RepositoryError, RepositoryRecord};
 
 impl AppState {
     pub async fn list_repositories(

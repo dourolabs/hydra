@@ -140,7 +140,6 @@ pub enum UpsertPatchError {
     PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
 
-
 #[derive(Debug, Error)]
 pub enum UpsertIssueError {
     #[error("job_id may only be provided when creating an issue")]
@@ -380,8 +379,6 @@ impl AppState {
         let store = self.store.as_ref();
         store.get_status_logs(task_ids).await
     }
-
-
 
     pub async fn create_job(
         &self,
@@ -1236,7 +1233,6 @@ impl AppState {
         Ok(todo_list)
     }
 
-
     pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
         let store = self.store.as_ref();
         let mut visited = HashSet::new();
@@ -1395,7 +1391,6 @@ impl AppState {
         let store = self.store.as_ref();
         store.get_issue_children(issue_id).await
     }
-
 }
 
 fn issue_ready<'a>(
@@ -3523,5 +3518,4 @@ mod tests {
                 .unwrap();
         }
     }
-
 }
