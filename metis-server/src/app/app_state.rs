@@ -814,7 +814,6 @@ impl AppState {
         self.agents.read().await.clone()
     }
 
-    #[allow(unused)]
     pub async fn add_task(
         &self,
         task: Task,

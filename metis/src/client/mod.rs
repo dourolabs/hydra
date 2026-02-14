@@ -41,7 +41,6 @@ use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
-use serde::Deserialize;
 use sse::SseEventStream;
 use std::path::Path;
 use std::pin::Pin;
@@ -118,7 +117,6 @@ pub trait MetisClientInterface: Send + Sync {
 
     async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
     async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse>;
-    #[allow(dead_code)]
     async fn get_job(&self, job_id: &TaskId) -> Result<JobVersionRecord>;
     async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse>;
     async fn get_job_logs(&self, job_id: &TaskId, query: &LogsQuery) -> Result<LogStream>;
@@ -127,10 +125,10 @@ pub trait MetisClientInterface: Send + Sync {
         job_id: &TaskId,
         status: &JobStatusUpdate,
     ) -> Result<SetJobStatusResponse>;
+
     async fn get_job_context(&self, job_id: &TaskId) -> Result<WorkerContext>;
     async fn list_job_versions(&self, job_id: &TaskId) -> Result<ListJobVersionsResponse>;
     async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse>;
-    #[allow(dead_code)]
     async fn update_issue(
         &self,
         issue_id: &IssueId,
@@ -156,7 +154,6 @@ pub trait MetisClientInterface: Send + Sync {
     async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse>;
     async fn list_issue_versions(&self, issue_id: &IssueId) -> Result<ListIssueVersionsResponse>;
     async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse>;
-    #[allow(dead_code)]
     async fn update_patch(
         &self,
         patch_id: &PatchId,
@@ -250,12 +247,6 @@ impl MetisClientUnauthenticated {
             base_url: url,
             http,
         })
-    }
-
-    /// Expose the underlying HTTP client for advanced operations.
-    #[allow(dead_code)]
-    pub fn http_client(&self) -> &HttpClient {
-        &self.http
     }
 
     /// Expose the resolved base URL used for requests.
@@ -353,52 +344,13 @@ impl MetisClient {
         })
     }
 
-    /// Expose the underlying HTTP client for advanced operations.
-    #[allow(dead_code)]
-    pub fn http_client(&self) -> &HttpClient {
-        &self.http
-    }
-
     /// Expose the resolved base URL used for requests.
     pub fn base_url(&self) -> &Url {
         &self.base_url
     }
 
-    /// Expose the auth token used for requests.
-    #[allow(dead_code)]
-    pub fn auth_token(&self) -> &str {
-        &self.auth_token
-    }
-
     fn authed(&self, builder: RequestBuilder) -> RequestBuilder {
         builder.bearer_auth(&self.auth_token)
-    }
-
-    /// Call the `/health` endpoint and return the reported status string.
-    #[allow(dead_code)]
-    pub async fn health(&self) -> Result<String> {
-        #[allow(dead_code)]
-        #[derive(Deserialize)]
-        struct HealthResponse {
-            #[allow(dead_code)]
-            status: String,
-        }
-
-        let url = self.endpoint("/health")?;
-        let response = self
-            .authed(self.http.get(url))
-            .send()
-            .await
-            .context("failed to contact metis-server health endpoint")?
-            .error_for_status_with_body("metis-server health endpoint returned an error status")
-            .await?;
-
-        let health = response
-            .json::<HealthResponse>()
-            .await
-            .context("failed to decode metis-server health response")?;
-
-        Ok(health.status)
     }
 
     /// Call `POST /v1/jobs` to create a new job.
