@@ -1,34 +1,28 @@
 use crate::{
     background::AgentQueue,
-    config::{AgentQueueConfig, AppConfig, non_empty},
+    config::{AppConfig, non_empty},
     domain::{
         actors::Actor,
-        documents::Document,
         issues::{
             Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, JobSettings, TodoItem,
         },
         jobs::BundleSpec,
         patches::Patch,
-        users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{ReadOnlyStore, Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
-use chrono::{DateTime, Duration, Utc};
-use metis_common::api::v1::documents::SearchDocumentsQuery;
+use chrono::{Duration, Utc};
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
-use metis_common::api::v1::repositories::SearchRepositoriesQuery;
 use metis_common::{
-    DocumentId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    PatchId, TaskId, VersionNumber, Versioned,
     api::v1 as api,
     issues::IssueId,
     job_status::{JobStatusUpdate, SetJobStatusResponse},
-    merge_queues::MergeQueue,
 };
 use octocrab::Octocrab;
-use serde::Deserialize;
 use std::{collections::HashMap, collections::HashSet, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -37,10 +31,7 @@ use tracing::{error, info, warn};
 
 use super::event_bus::{EventBus, ServerEvent, StoreWithEvents};
 
-use super::{
-    MergeQueueError, Repository, RepositoryError, RepositoryRecord, ServiceState,
-    TaskResolutionError,
-};
+use super::{ServiceState, TaskResolutionError};
 
 /// Shared application state and application-specific coordination such as issue lifecycle validation.
 #[derive(Clone)]
@@ -48,10 +39,10 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub github_app: Option<Octocrab>,
     pub service_state: Arc<ServiceState>,
-    store: Arc<StoreWithEvents>,
+    pub(crate) store: Arc<StoreWithEvents>,
     pub job_engine: Arc<dyn JobEngine>,
-    agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
-    policy_engine: Arc<crate::policy::PolicyEngine>,
+    pub(crate) agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
+    pub(crate) policy_engine: Arc<crate::policy::PolicyEngine>,
 }
 
 #[derive(Debug, Error)]
@@ -150,40 +141,6 @@ pub enum UpsertPatchError {
 }
 
 #[derive(Debug, Error)]
-pub enum UpsertDocumentError {
-    #[error("job '{job_id}' not found")]
-    JobNotFound {
-        #[source]
-        source: StoreError,
-        job_id: TaskId,
-    },
-    #[error("failed to validate job status for '{job_id}'")]
-    JobStatusLookup {
-        #[source]
-        source: StoreError,
-        job_id: TaskId,
-    },
-    #[error("created_by must reference a running job")]
-    JobNotRunning {
-        job_id: TaskId,
-        status: Option<Status>,
-    },
-    #[error("document '{document_id}' not found")]
-    DocumentNotFound {
-        #[source]
-        source: StoreError,
-        document_id: DocumentId,
-    },
-    #[error("document store operation failed")]
-    Store {
-        #[source]
-        source: StoreError,
-    },
-    #[error("{0}")]
-    PolicyViolation(#[from] crate::policy::PolicyViolation),
-}
-
-#[derive(Debug, Error)]
 pub enum UpsertIssueError {
     #[error("job_id may only be provided when creating an issue")]
     JobIdProvidedForUpdate,
@@ -259,27 +216,6 @@ pub enum UpdateTodoListError {
         #[source]
         source: StoreError,
         issue_id: IssueId,
-    },
-}
-
-#[derive(Debug, Error)]
-pub enum AgentError {
-    #[error("agent '{name}' already exists")]
-    AlreadyExists { name: String },
-    #[error("agent '{name}' not found")]
-    NotFound { name: String },
-}
-
-#[derive(Debug, Error)]
-pub enum LoginError {
-    #[error("invalid github token: {0}")]
-    InvalidGithubToken(String),
-    #[error("github user '{username}' is not in an allowed organization")]
-    ForbiddenGithubOrg { username: String },
-    #[error("login store operation failed")]
-    Store {
-        #[source]
-        source: StoreError,
     },
 }
 
@@ -367,114 +303,6 @@ impl AppState {
         self.store.as_ref()
     }
 
-    pub async fn login_with_github_token(
-        &self,
-        github_token: String,
-        github_refresh_token: String,
-    ) -> Result<api::login::LoginResponse, LoginError> {
-        let (user, _actor, login_token) = self
-            .create_actor_for_github_token(github_token, github_refresh_token)
-            .await?;
-
-        let user_summary: api::users::UserSummary = UserSummary::from(user).into();
-
-        Ok(api::login::LoginResponse::new(login_token, user_summary))
-    }
-
-    async fn create_actor_for_github_token(
-        &self,
-        github_token: String,
-        github_refresh_token: String,
-    ) -> Result<(User, Actor, String), LoginError> {
-        let github_client = Octocrab::builder()
-            .base_uri(self.config.github_app.api_base_url().to_string())
-            .map_err(|err| LoginError::Store {
-                source: StoreError::Internal(format!("failed to parse github api base url: {err}")),
-            })?
-            .personal_token(github_token.clone())
-            .build()
-            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
-
-        let github_user = github_client
-            .current()
-            .user()
-            .await
-            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
-        let username = Username::from(github_user.login);
-
-        let allowed_orgs = &self.config.metis.allowed_orgs;
-        if !allowed_orgs.is_empty() {
-            #[derive(Deserialize)]
-            struct GithubOrg {
-                login: String,
-            }
-
-            let orgs: Vec<GithubOrg> = github_client
-                .get("/user/orgs", None::<&()>)
-                .await
-                .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
-
-            let is_allowed = orgs.iter().any(|org| {
-                allowed_orgs
-                    .iter()
-                    .any(|allowed| org.login.eq_ignore_ascii_case(allowed))
-            });
-
-            if !is_allowed {
-                return Err(LoginError::ForbiddenGithubOrg {
-                    username: username.to_string(),
-                });
-            }
-        }
-
-        let user = User {
-            username: username.clone(),
-            github_user_id: github_user.id.into_inner(),
-            github_token,
-            github_refresh_token,
-            deleted: false,
-        };
-
-        let (actor, auth_token) = Actor::new_for_user(username);
-
-        if let Err(err) = self.store.add_user(user.clone(), None).await {
-            match err {
-                StoreError::UserAlreadyExists(_) => {
-                    self.set_user_github_token(
-                        &user.username,
-                        user.github_token.clone(),
-                        user.github_user_id,
-                        user.github_refresh_token.clone(),
-                        None,
-                    )
-                    .await
-                    .map_err(|source| LoginError::Store { source })?;
-                }
-                other => return Err(LoginError::Store { source: other }),
-            }
-        }
-
-        if let Err(err) = self.store.add_actor(actor.clone(), None).await {
-            match err {
-                StoreError::ActorAlreadyExists(_) => {
-                    self.store
-                        .update_actor(actor.clone(), None)
-                        .await
-                        .map_err(|source| LoginError::Store { source })?;
-                }
-                other => return Err(LoginError::Store { source: other }),
-            }
-        }
-
-        Ok((user, actor, auth_token))
-    }
-
-    async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
-        let (actor, auth_token) = Actor::new_for_task(task_id);
-        self.store.add_actor(actor.clone(), None).await?;
-        Ok((actor, auth_token))
-    }
-
     pub async fn get_issue(
         &self,
         issue_id: &IssueId,
@@ -539,131 +367,6 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn upsert_document(
-        &self,
-        document_id: Option<DocumentId>,
-        document: Document,
-        actor: Option<String>,
-    ) -> Result<(DocumentId, VersionNumber), UpsertDocumentError> {
-        let store = self.store.as_ref();
-
-        let old_document = match &document_id {
-            Some(id) => {
-                let existing =
-                    store
-                        .get_document(id, false)
-                        .await
-                        .map_err(|source| match source {
-                            StoreError::DocumentNotFound(_) => {
-                                UpsertDocumentError::DocumentNotFound {
-                                    document_id: id.clone(),
-                                    source,
-                                }
-                            }
-                            other => UpsertDocumentError::Store { source: other },
-                        })?;
-                Some(existing.item)
-            }
-            None => None,
-        };
-
-        // Run restriction policies before persisting
-        match &document_id {
-            Some(id) => {
-                self.policy_engine
-                    .check_update_document(id, &document, old_document.as_ref(), store)
-                    .await?;
-            }
-            None => {
-                self.policy_engine
-                    .check_create_document(&document, store)
-                    .await?;
-            }
-        }
-
-        match document_id {
-            Some(id) => {
-                let mut document = document;
-                // old_document is Some in update path
-                document.created_by = old_document.unwrap().created_by;
-
-                let version = self
-                    .store
-                    .update_document_with_actor(&id, document, actor)
-                    .await
-                    .map_err(|source| match source {
-                        StoreError::DocumentNotFound(_) => UpsertDocumentError::DocumentNotFound {
-                            document_id: id.clone(),
-                            source,
-                        },
-                        other => UpsertDocumentError::Store { source: other },
-                    })?;
-
-                info!(document_id = %id, "document updated");
-                Ok((id, version))
-            }
-            None => {
-                let created_by = document.created_by.clone();
-                let (document_id, version) = self
-                    .store
-                    .add_document_with_actor(document, actor)
-                    .await
-                    .map_err(|source| UpsertDocumentError::Store { source })?;
-
-                info!(
-                    document_id = %document_id,
-                    created_by = ?created_by,
-                    "document created"
-                );
-                Ok((document_id, version))
-            }
-        }
-    }
-
-    pub async fn get_document(
-        &self,
-        document_id: &DocumentId,
-        include_deleted: bool,
-    ) -> Result<Versioned<Document>, StoreError> {
-        let store = self.store.as_ref();
-        store.get_document(document_id, include_deleted).await
-    }
-
-    pub async fn get_document_versions(
-        &self,
-        document_id: &DocumentId,
-    ) -> Result<Vec<Versioned<Document>>, StoreError> {
-        let store = self.store.as_ref();
-        store.get_document_versions(document_id).await
-    }
-
-    pub async fn list_documents(
-        &self,
-        query: &SearchDocumentsQuery,
-    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        let store = self.store.as_ref();
-        store.list_documents(query).await
-    }
-
-    pub async fn delete_document(
-        &self,
-        document_id: &DocumentId,
-        actor: Option<String>,
-    ) -> Result<(), StoreError> {
-        self.store
-            .delete_document_with_actor(document_id, actor)
-            .await?;
-        Ok(())
-    }
-
-    pub async fn get_documents_by_path(
-        &self,
-        path_prefix: &str,
-    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        let store = self.store.as_ref();
-        store.get_documents_by_path(path_prefix).await
-    }
-
     pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         let store = self.store.as_ref();
         store.get_status_log(task_id).await
@@ -675,210 +378,6 @@ impl AppState {
     ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
         let store = self.store.as_ref();
         store.get_status_logs(task_ids).await
-    }
-
-    pub async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {
-        let store = self.store.as_ref();
-        store.get_actor(name).await.map(|actor| actor.item)
-    }
-
-    pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
-        let store = self.store.as_ref();
-        store.get_user(username, false).await.map(|user| user.item)
-    }
-
-    pub async fn set_user_github_token(
-        &self,
-        username: &Username,
-        github_token: String,
-        github_user_id: u64,
-        github_refresh_token: String,
-        actor: Option<String>,
-    ) -> Result<User, StoreError> {
-        let mut user = self.store.get_user(username, false).await?.item;
-        user.github_token = github_token;
-        user.github_user_id = github_user_id;
-        user.github_refresh_token = github_refresh_token;
-        self.store
-            .update_user(user, actor)
-            .await
-            .map(|user| user.item)
-    }
-
-    pub async fn list_repositories(
-        &self,
-        query: &SearchRepositoriesQuery,
-    ) -> Result<Vec<RepositoryRecord>, RepositoryError> {
-        let store = self.store.as_ref();
-        let repositories = store
-            .list_repositories(query)
-            .await
-            .map_err(|source| RepositoryError::Store { source })?;
-
-        Ok(repositories
-            .into_iter()
-            .map(|(name, repository)| RepositoryRecord::from((name, repository.item)))
-            .collect())
-    }
-
-    pub async fn delete_repository(
-        &self,
-        name: &RepoName,
-        actor: Option<String>,
-    ) -> Result<RepositoryRecord, RepositoryError> {
-        // Get the repository before deleting to return it
-        // Use include_deleted: true since we need to access the repository to mark it as deleted
-        let current =
-            self.store
-                .get_repository(name, true)
-                .await
-                .map_err(|source| match source {
-                    StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
-                    other => RepositoryError::Store { source: other },
-                })?;
-
-        self.store
-            .delete_repository(name, actor)
-            .await
-            .map_err(|source| match source {
-                StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
-                other => RepositoryError::Store { source: other },
-            })?;
-
-        self.service_state.clear_cache(name).await;
-
-        let mut deleted_repo = current.item;
-        deleted_repo.deleted = true;
-        Ok(RepositoryRecord::from((name.clone(), deleted_repo)))
-    }
-
-    pub async fn create_repository(
-        &self,
-        name: RepoName,
-        config: Repository,
-        actor: Option<String>,
-    ) -> Result<RepositoryRecord, RepositoryError> {
-        self.store
-            .add_repository(name.clone(), config.clone(), actor)
-            .await
-            .map_err(|source| match source {
-                StoreError::RepositoryAlreadyExists(name) => RepositoryError::AlreadyExists(name),
-                other => RepositoryError::Store { source: other },
-            })?;
-
-        Ok(RepositoryRecord::from((name, config)))
-    }
-
-    pub async fn update_repository(
-        &self,
-        name: RepoName,
-        config: Repository,
-        actor: Option<String>,
-    ) -> Result<RepositoryRecord, RepositoryError> {
-        self.store
-            .update_repository(name.clone(), config.clone(), actor)
-            .await
-            .map_err(|source| match source {
-                StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
-                StoreError::RepositoryAlreadyExists(_) => {
-                    RepositoryError::AlreadyExists(name.clone())
-                }
-                other => RepositoryError::Store { source: other },
-            })?;
-
-        self.service_state.clear_cache(&name).await;
-
-        Ok(RepositoryRecord::from((name, config)))
-    }
-
-    pub async fn list_agent_configs(&self) -> Vec<AgentQueueConfig> {
-        self.agents
-            .read()
-            .await
-            .iter()
-            .map(|agent| agent.as_config())
-            .collect()
-    }
-
-    pub async fn get_agent_config(&self, name: &str) -> Option<AgentQueueConfig> {
-        self.agents
-            .read()
-            .await
-            .iter()
-            .find(|agent| agent.name == name)
-            .map(|agent| agent.as_config())
-    }
-
-    pub async fn agent_queues(&self) -> Vec<Arc<AgentQueue>> {
-        self.agents.read().await.clone()
-    }
-
-    pub async fn add_task(
-        &self,
-        task: Task,
-        created_at: DateTime<Utc>,
-    ) -> Result<TaskId, StoreError> {
-        let (task_id, _version) = self
-            .store
-            .add_task_with_actor(task, created_at, None)
-            .await?;
-        Ok(task_id)
-    }
-
-    pub async fn create_agent(
-        &self,
-        agent: AgentQueueConfig,
-    ) -> Result<AgentQueueConfig, AgentError> {
-        let mut agents = self.agents.write().await;
-        if agents.iter().any(|existing| existing.name == agent.name) {
-            return Err(AgentError::AlreadyExists {
-                name: agent.name.clone(),
-            });
-        }
-
-        let created = Arc::new(AgentQueue::from_config(&agent));
-        agents.push(created.clone());
-
-        Ok(created.as_config())
-    }
-
-    pub async fn update_agent(
-        &self,
-        agent_name: &str,
-        updated: AgentQueueConfig,
-    ) -> Result<AgentQueueConfig, AgentError> {
-        let mut agents = self.agents.write().await;
-
-        if updated.name != agent_name && agents.iter().any(|existing| existing.name == updated.name)
-        {
-            return Err(AgentError::AlreadyExists {
-                name: updated.name.clone(),
-            });
-        }
-
-        let Some(index) = agents.iter().position(|agent| agent.name == agent_name) else {
-            return Err(AgentError::NotFound {
-                name: agent_name.to_string(),
-            });
-        };
-
-        let replacement = Arc::new(AgentQueue::from_config(&updated));
-        agents[index] = replacement.clone();
-
-        Ok(replacement.as_config())
-    }
-
-    pub async fn delete_agent(&self, agent_name: &str) -> Result<AgentQueueConfig, AgentError> {
-        let mut agents = self.agents.write().await;
-
-        let Some(index) = agents.iter().position(|agent| agent.name == agent_name) else {
-            return Err(AgentError::NotFound {
-                name: agent_name.to_string(),
-            });
-        };
-
-        let removed = agents.remove(index);
-        Ok(removed.as_config())
     }
 
     pub async fn create_job(
@@ -1734,61 +1233,6 @@ impl AppState {
         Ok(todo_list)
     }
 
-    pub async fn merge_queue(
-        &self,
-        service_repo_name: &RepoName,
-        branch_name: &str,
-    ) -> Result<MergeQueue, MergeQueueError> {
-        let config = self
-            .repository_from_store(service_repo_name)
-            .await
-            .map_err(|source| match source {
-                StoreError::RepositoryNotFound(_) => {
-                    MergeQueueError::UnknownRepository(service_repo_name.clone())
-                }
-                other => MergeQueueError::RepositoryLookup {
-                    repo_name: service_repo_name.clone(),
-                    source: other,
-                },
-            })?;
-
-        self.service_state
-            .ensure_cached(service_repo_name, &config)
-            .await?;
-        self.service_state
-            .get_merge_queue(service_repo_name, &config, branch_name)
-            .await
-    }
-
-    pub async fn enqueue_merge_queue_patch(
-        &self,
-        service_repo_name: &RepoName,
-        branch_name: &str,
-        patch_id: PatchId,
-    ) -> Result<MergeQueue, MergeQueueError> {
-        let config = self
-            .repository_from_store(service_repo_name)
-            .await
-            .map_err(|source| match source {
-                StoreError::RepositoryNotFound(_) => {
-                    MergeQueueError::UnknownRepository(service_repo_name.clone())
-                }
-                other => MergeQueueError::RepositoryLookup {
-                    repo_name: service_repo_name.clone(),
-                    source: other,
-                },
-            })?;
-
-        let patch = self.load_patch(patch_id.clone()).await?;
-
-        self.service_state
-            .ensure_cached(service_repo_name, &config)
-            .await?;
-        self.service_state
-            .add_patch_to_merge_queue(service_repo_name, &config, branch_name, patch_id, &patch)
-            .await
-    }
-
     pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
         let store = self.store.as_ref();
         let mut visited = HashSet::new();
@@ -1947,24 +1391,6 @@ impl AppState {
         let store = self.store.as_ref();
         store.get_issue_children(issue_id).await
     }
-
-    pub async fn repository_from_store(&self, name: &RepoName) -> Result<Repository, StoreError> {
-        let store = self.store.as_ref();
-        // Use include_deleted: false since API callers should not see deleted repositories
-        store
-            .get_repository(name, false)
-            .await
-            .map(|repo| repo.item)
-    }
-
-    async fn load_patch(&self, patch_id: PatchId) -> Result<Patch, MergeQueueError> {
-        let store = self.store.as_ref();
-        match store.get_patch(&patch_id, false).await {
-            Ok(patch) => Ok(patch.item),
-            Err(StoreError::PatchNotFound(_)) => Err(MergeQueueError::PatchNotFound { patch_id }),
-            Err(source) => Err(MergeQueueError::PatchLookup { patch_id, source }),
-        }
-    }
 }
 
 fn issue_ready<'a>(
@@ -2015,7 +1441,7 @@ fn issue_ready<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{LoginError, UpsertIssueError, UpsertPatchError};
+    use super::{UpsertIssueError, UpsertPatchError};
     use crate::{
         app::{
             ServerEvent,
@@ -2026,7 +1452,6 @@ mod tests {
         },
         domain::{
             actors::Actor,
-            documents::Document,
             issues::{
                 Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
                 TodoItem,
@@ -2050,54 +1475,6 @@ mod tests {
     /// Wait briefly for automations to process events.
     async fn wait_for_automations() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-
-    #[tokio::test]
-    async fn login_persists_user_and_actor() -> anyhow::Result<()> {
-        let github_server = MockServer::start_async().await;
-        let _mock = github_server.mock(|when, then| {
-            when.method(GET).path("/user");
-            then.status(200)
-                .header("content-type", "application/json")
-                .json_body(github_user_response("octo", 42));
-        });
-
-        let handles = test_state_with_github_api_base_url(github_server.base_url());
-        let response = handles
-            .state
-            .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
-            .await
-            .expect("login should succeed");
-
-        assert!(!response.login_token.is_empty());
-        assert_eq!(response.user.username.as_str(), "octo");
-
-        let store_read = handles.store.as_ref();
-        let user = store_read.get_user(&Username::from("octo"), false).await?;
-        let actors = store_read.list_actors().await?;
-        assert_eq!(actors.len(), 1);
-        assert_eq!(user.item.username.as_str(), "octo");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn login_returns_error_for_invalid_token() -> anyhow::Result<()> {
-        let github_server = MockServer::start_async().await;
-        let _mock = github_server.mock(|when, then| {
-            when.method(GET).path("/user");
-            then.status(401);
-        });
-
-        let handles = test_state_with_github_api_base_url(github_server.base_url());
-        let err = handles
-            .state
-            .login_with_github_token("bad-token".to_string(), "gh-refresh".to_string())
-            .await
-            .expect_err("login should fail for invalid token");
-
-        assert!(matches!(err, LoginError::InvalidGithubToken(_)));
-        Ok(())
     }
 
     #[tokio::test]
@@ -4140,35 +3517,5 @@ mod tests {
                 .await
                 .unwrap();
         }
-    }
-
-    #[tokio::test]
-    async fn upsert_document_allows_normal_path() {
-        let state = test_state();
-        let document = Document {
-            title: "Test".to_string(),
-            body_markdown: "body".to_string(),
-            path: Some("docs/notes.md".parse().unwrap()),
-            created_by: None,
-            deleted: false,
-        };
-
-        let result = state.upsert_document(None, document, None).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn upsert_document_allows_no_path() {
-        let state = test_state();
-        let document = Document {
-            title: "Test".to_string(),
-            body_markdown: "body".to_string(),
-            path: None,
-            created_by: None,
-            deleted: false,
-        };
-
-        let result = state.upsert_document(None, document, None).await;
-        assert!(result.is_ok());
     }
 }
