@@ -457,6 +457,8 @@ pub struct SchedulerSection {
     pub run_spawners: WorkerSchedulerConfig,
     #[serde(default = "default_github_poller_scheduler")]
     pub github_poller: WorkerSchedulerConfig,
+    #[serde(default = "default_cleanup_branches_scheduler")]
+    pub cleanup_branches: WorkerSchedulerConfig,
 }
 
 impl Default for SchedulerSection {
@@ -466,6 +468,7 @@ impl Default for SchedulerSection {
             monitor_running_jobs: default_monitor_running_scheduler(),
             run_spawners: default_run_spawners_scheduler(),
             github_poller: default_github_poller_scheduler(),
+            cleanup_branches: default_cleanup_branches_scheduler(),
         }
     }
 }
@@ -592,6 +595,13 @@ fn default_github_poller_scheduler() -> WorkerSchedulerConfig {
     }
 }
 
+fn default_cleanup_branches_scheduler() -> WorkerSchedulerConfig {
+    WorkerSchedulerConfig {
+        interval_secs: 300,
+        ..Default::default()
+    }
+}
+
 fn default_cpu_limit() -> String {
     "500m".to_string()
 }
@@ -631,6 +641,7 @@ mod tests {
             scheduler.github_poller.interval_secs,
             default_github_poll_interval_secs()
         );
+        assert_eq!(scheduler.cleanup_branches.interval_secs, 300);
 
         assert_eq!(scheduler.process_pending_jobs.initial_backoff_secs, 1);
         assert_eq!(scheduler.process_pending_jobs.max_backoff_secs, 30);
@@ -640,6 +651,8 @@ mod tests {
         assert_eq!(scheduler.run_spawners.max_backoff_secs, 30);
         assert_eq!(scheduler.github_poller.initial_backoff_secs, 1);
         assert_eq!(scheduler.github_poller.max_backoff_secs, 30);
+        assert_eq!(scheduler.cleanup_branches.initial_backoff_secs, 1);
+        assert_eq!(scheduler.cleanup_branches.max_backoff_secs, 30);
     }
 
     #[test]

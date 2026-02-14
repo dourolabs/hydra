@@ -3,7 +3,7 @@
 use crate::{
     app::AppState,
     background::{
-        monitor_running_jobs::MonitorRunningJobsWorker,
+        cleanup_branches::CleanupBranchesWorker, monitor_running_jobs::MonitorRunningJobsWorker,
         process_pending_jobs::ProcessPendingJobsWorker, run_spawners::RunSpawnersWorker,
     },
     config::WorkerSchedulerConfig,
@@ -102,6 +102,7 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
         .interval_secs
         .max(state.config.background.github_poller.interval_secs)
         .max(1);
+    let cleanup_branches_interval_secs = scheduler_config.cleanup_branches.interval_secs.max(1);
     log_worker_config(
         "process_pending_jobs",
         process_interval_secs,
@@ -121,6 +122,11 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
         "github_poller",
         github_interval_secs,
         &scheduler_config.github_poller,
+    );
+    log_worker_config(
+        "cleanup_branches",
+        cleanup_branches_interval_secs,
+        &scheduler_config.cleanup_branches,
     );
 
     let workers = vec![
@@ -154,7 +160,15 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
                 github_interval_secs,
                 &scheduler_config.github_poller,
             ),
-            Arc::new(GithubPollerWorker::new(state, github_interval_secs)),
+            Arc::new(GithubPollerWorker::new(state.clone(), github_interval_secs)),
+        ),
+        WorkerHandle::new(
+            worker_settings_from_config(
+                "cleanup_branches",
+                cleanup_branches_interval_secs,
+                &scheduler_config.cleanup_branches,
+            ),
+            Arc::new(CleanupBranchesWorker::new(state)),
         ),
     ];
 
