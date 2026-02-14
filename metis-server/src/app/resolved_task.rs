@@ -5,7 +5,6 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedTask {
-    #[allow(dead_code)]
     pub context: ResolvedBundle,
     pub image: String,
     pub env_vars: HashMap<String, String>,

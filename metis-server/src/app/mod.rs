@@ -26,19 +26,6 @@ pub struct ResolvedBundle {
     pub default_image: Option<String>,
 }
 
-#[allow(dead_code)]
-pub struct ConnectedRepository {
-    repository: GitRepository,
-    _workdir: TempDir,
-}
-
-impl ConnectedRepository {
-    #[allow(dead_code)]
-    pub fn repository(&self) -> &GitRepository {
-        &self.repository
-    }
-}
-
 /// Aggregated cache for repositories the service can interact with.
 #[derive(Debug, Default, Clone)]
 pub struct ServiceState {
@@ -134,26 +121,14 @@ pub enum RepositoryError {
     },
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Error)]
-pub enum GitRepositoryError {
-    #[error("failed to allocate working directory for repository")]
-    TempDir(#[source] std::io::Error),
-    #[error(transparent)]
-    Git(#[from] git2::Error),
-}
-
 fn connect_repository(
     _repo_name: &RepoName,
     config: &Repository,
-) -> Result<ConnectedRepository, GitRepositoryError> {
-    let workdir = TempDir::new().map_err(GitRepositoryError::TempDir)?;
+) -> Result<(GitRepository, TempDir), anyhow::Error> {
+    let workdir = TempDir::new()?;
     let repository = GitRepository::clone(&config.remote_url, workdir.path())?;
 
-    Ok(ConnectedRepository {
-        repository,
-        _workdir: workdir,
-    })
+    Ok((repository, workdir))
 }
 
 #[allow(clippy::result_large_err)]
@@ -311,13 +286,11 @@ impl ServiceState {
             return Ok(existing.clone());
         }
 
-        let ConnectedRepository {
-            repository: _,
-            _workdir,
-        } = connect_repository(repo_name, config).map_err(|source| MergeQueueError::Git {
-            repo_name: repo_name.clone(),
-            source: source.into(),
-        })?;
+        let (_repository, _workdir) =
+            connect_repository(repo_name, config).map_err(|source| MergeQueueError::Git {
+                repo_name: repo_name.clone(),
+                source,
+            })?;
         let cached = Arc::new(Mutex::new(CachedRepository {
             path: _workdir.path().to_path_buf(),
             _workdir,
@@ -365,8 +338,7 @@ mod tests {
         let repository =
             Repository::new(remote_dir.path().to_str().unwrap().to_string(), None, None);
 
-        let connected = connect_repository(&repo_name, &repository)?;
-        let repo = connected.repository();
+        let (repo, _workdir) = connect_repository(&repo_name, &repository)?;
 
         assert_eq!(repo.head()?.target(), Some(expected_head));
         let origin = repo.find_remote("origin")?;
