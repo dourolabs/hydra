@@ -506,10 +506,19 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
+        let path = row
+            .path
+            .as_ref()
+            .map(|s| {
+                s.parse()
+                    .map_err(|e| StoreError::Internal(format!("invalid document path: {e}")))
+            })
+            .transpose()?;
+
         Ok(Document {
             title: row.title.clone(),
             body_markdown: row.body_markdown.clone(),
-            path: row.path.clone(),
+            path,
             created_by,
             deleted: row.deleted,
         })
@@ -2309,7 +2318,7 @@ mod tests {
         Document {
             title: "Doc".to_string(),
             body_markdown: "Body".to_string(),
-            path: Some(path.to_string()),
+            path: Some(path.parse().unwrap()),
             created_by,
             deleted: false,
         }
@@ -2551,7 +2560,7 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].0, doc_id);
 
-        let by_path = store.get_documents_by_path("docs/").await.unwrap();
+        let by_path = store.get_documents_by_path("/docs/").await.unwrap();
         assert_eq!(by_path.len(), 1);
         assert_eq!(by_path[0].0, doc_id);
     }
@@ -2600,7 +2609,7 @@ mod tests {
         let doc = Document {
             title: "original_title".to_string(),
             body_markdown: "Body content".to_string(),
-            path: Some("docs/test.md".to_string()),
+            path: Some("docs/test.md".parse().unwrap()),
             created_by: None,
             deleted: false,
         };
@@ -2610,7 +2619,7 @@ mod tests {
         let updated_doc = Document {
             title: "changed_title".to_string(),
             body_markdown: "Body content".to_string(),
-            path: Some("docs/test.md".to_string()),
+            path: Some("docs/test.md".parse().unwrap()),
             created_by: None,
             deleted: false,
         };

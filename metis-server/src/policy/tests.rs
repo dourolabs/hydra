@@ -748,7 +748,7 @@ async fn check_update_job_passes_when_allowed() {
 // ---------------------------------------------------------------------------
 
 /// Test 1: Default config (no `[policies]` section) reproduces all current
-/// behavior exactly — all 6 restrictions and 6 automations are active.
+/// behavior exactly — all 5 restrictions and 6 automations are active.
 #[test]
 fn default_config_enables_all_builtin_policies() {
     let registry = registry::build_default_registry();
@@ -756,7 +756,7 @@ fn default_config_enables_all_builtin_policies() {
     // Build engine with no PolicyConfig (simulates absent [policies] section)
     let engine = crate::app::AppState::build_policy_engine(None);
 
-    assert_eq!(engine.restriction_count(), 6);
+    assert_eq!(engine.restriction_count(), 5);
     assert_eq!(engine.automation_count(), 6);
     assert_eq!(engine.repo_override_count(), 0);
 
@@ -767,7 +767,6 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("issue_lifecycle_validation".to_string()),
                 PolicyEntry::Name("task_state_machine".to_string()),
                 PolicyEntry::Name("duplicate_branch_name".to_string()),
-                PolicyEntry::Name("hidden_document_path".to_string()),
                 PolicyEntry::Name("running_job_validation".to_string()),
                 PolicyEntry::Name("require_creator".to_string()),
             ],
@@ -783,42 +782,52 @@ fn default_config_enables_all_builtin_policies() {
         repos: HashMap::new(),
     };
     let explicit_engine = registry.build(&all_config).unwrap();
-    assert_eq!(explicit_engine.restriction_count(), 6);
+    assert_eq!(explicit_engine.restriction_count(), 5);
     assert_eq!(explicit_engine.automation_count(), 6);
 }
 
 /// Test 2: Disabling a specific restriction allows the previously-blocked
-/// operation. The `hidden_document_path` restriction rejects documents with
-/// dot-prefixed path segments. If we omit it from config, the operation
-/// should succeed.
+/// operation. The `require_creator` restriction rejects issues with empty
+/// creator fields. If we omit it from config, the operation should succeed.
 #[tokio::test]
 async fn disabling_restriction_allows_blocked_operation() {
-    // Engine with all restrictions including hidden_document_path
+    use crate::domain::issues::{Issue, IssueStatus, IssueType};
+
+    // Engine with all restrictions including require_creator
     let full_engine = crate::app::AppState::build_policy_engine(None);
     let store = MemoryStore::new();
 
-    let hidden_doc = crate::domain::documents::Document {
-        title: "secret".to_string(),
-        body_markdown: String::new(),
-        path: Some(".hidden/file.md".to_string()),
-        created_by: None,
-        deleted: false,
-    };
+    let issue_no_creator = Issue::new(
+        IssueType::Task,
+        "test".to_string(),
+        Username::from(""),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
 
-    // Full engine should block this
-    let result = full_engine.check_create_document(&hidden_doc, &store).await;
-    assert!(result.is_err(), "full engine should block hidden document");
+    // Full engine should block this (empty creator)
+    let result = full_engine
+        .check_create_issue(&issue_no_creator, &store)
+        .await;
+    assert!(
+        result.is_err(),
+        "full engine should block issue with empty creator"
+    );
 
-    // Build engine WITHOUT hidden_document_path restriction
+    // Build engine WITHOUT require_creator restriction
     let partial_config = PolicyConfig {
         global: PolicyList {
             restrictions: vec![
                 PolicyEntry::Name("issue_lifecycle_validation".to_string()),
                 PolicyEntry::Name("task_state_machine".to_string()),
                 PolicyEntry::Name("duplicate_branch_name".to_string()),
-                // hidden_document_path is intentionally omitted
+                // require_creator is intentionally omitted
                 PolicyEntry::Name("running_job_validation".to_string()),
-                PolicyEntry::Name("require_creator".to_string()),
             ],
             automations: vec![
                 PolicyEntry::Name("cascade_issue_status".to_string()),
@@ -826,34 +835,38 @@ async fn disabling_restriction_allows_blocked_operation() {
                 PolicyEntry::Name("close_merge_request_issues".to_string()),
                 PolicyEntry::Name("create_merge_request_issue".to_string()),
                 PolicyEntry::Name("inherit_creator_from_parent".to_string()),
+                PolicyEntry::Name("github_pr_sync".to_string()),
             ],
         },
         repos: HashMap::new(),
     };
 
     let partial_engine = crate::app::AppState::build_policy_engine(Some(&partial_config));
-    assert_eq!(partial_engine.restriction_count(), 5);
+    assert_eq!(partial_engine.restriction_count(), 4);
 
     // Partial engine should allow this
     let result = partial_engine
-        .check_create_document(&hidden_doc, &store)
+        .check_create_issue(&issue_no_creator, &store)
         .await;
     assert!(
         result.is_ok(),
-        "engine without hidden_document_path should allow hidden document"
+        "engine without require_creator should allow issue with empty creator"
     );
 }
 
 /// Test 3: Per-repo override applies to operations on that repo's issues.
-/// Global config blocks hidden documents; per-repo override for "test/repo"
-/// has no restrictions, so hidden documents are allowed for that repo.
+/// Global config blocks issues without a creator via `require_creator`;
+/// per-repo override for "test/repo" has no restrictions, so issues
+/// without a creator are allowed for that repo.
 #[tokio::test]
 async fn per_repo_override_applies_to_repo_operations() {
+    use crate::domain::issues::{Issue, IssueStatus, IssueType};
+
     let repo_name = metis_common::RepoName::new("test", "repo").unwrap();
 
     let config = PolicyConfig {
         global: PolicyList {
-            restrictions: vec![PolicyEntry::Name("hidden_document_path".to_string())],
+            restrictions: vec![PolicyEntry::Name("require_creator".to_string())],
             automations: vec![],
         },
         repos: {
@@ -877,47 +890,57 @@ async fn per_repo_override_applies_to_repo_operations() {
 
     let store = MemoryStore::new();
 
-    let hidden_doc_payload = OperationPayload::Document {
-        document_id: None,
-        new: crate::domain::documents::Document {
-            title: "secret".to_string(),
-            body_markdown: String::new(),
-            path: Some(".hidden/file.md".to_string()),
-            created_by: None,
-            deleted: false,
-        },
+    let issue_no_creator = Issue::new(
+        IssueType::Task,
+        "test".to_string(),
+        Username::from(""),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    let issue_payload = OperationPayload::Issue {
+        issue_id: None,
+        new: issue_no_creator,
         old: None,
     };
 
     // Without repo context → uses global restrictions → blocked
     let ctx_global = RestrictionContext {
-        operation: Operation::CreateDocument,
+        operation: Operation::CreateIssue,
         repo: None,
-        payload: &hidden_doc_payload,
+        payload: &issue_payload,
         store: &store,
     };
     let result = engine.check_restrictions(&ctx_global).await;
-    assert!(result.is_err(), "global context should block hidden doc");
+    assert!(
+        result.is_err(),
+        "global context should block issue without creator"
+    );
 
     // With repo context matching the override → uses per-repo (empty) → allowed
     let ctx_repo = RestrictionContext {
-        operation: Operation::CreateDocument,
+        operation: Operation::CreateIssue,
         repo: Some(&repo_name),
-        payload: &hidden_doc_payload,
+        payload: &issue_payload,
         store: &store,
     };
     let result = engine.check_restrictions(&ctx_repo).await;
     assert!(
         result.is_ok(),
-        "per-repo override with no restrictions should allow hidden doc"
+        "per-repo override with no restrictions should allow issue without creator"
     );
 
     // With a different repo (no override) → uses global → blocked
     let other_repo = metis_common::RepoName::new("other", "project").unwrap();
     let ctx_other = RestrictionContext {
-        operation: Operation::CreateDocument,
+        operation: Operation::CreateIssue,
         repo: Some(&other_repo),
-        payload: &hidden_doc_payload,
+        payload: &issue_payload,
         store: &store,
     };
     let result = engine.check_restrictions(&ctx_other).await;

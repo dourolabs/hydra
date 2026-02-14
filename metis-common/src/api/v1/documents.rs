@@ -154,12 +154,6 @@ impl ListDocumentVersionsResponse {
     }
 }
 
-/// Returns true if any component of the given path starts with a dot character,
-/// indicating a hidden file or directory.
-pub fn has_hidden_segment(path: &str) -> bool {
-    path.split('/').any(|seg| seg.starts_with('.'))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,16 +232,5 @@ mod tests {
         let query: SearchDocumentsQuery = serde_json::from_str(json).unwrap();
         assert_eq!(query.path_prefix.as_deref(), Some("docs/"));
         assert_eq!(query.path_is_exact, None);
-    }
-
-    #[test]
-    fn has_hidden_segment_detects_dot_prefixed_components() {
-        assert!(has_hidden_segment(".hidden"));
-        assert!(has_hidden_segment(".hidden/file.md"));
-        assert!(has_hidden_segment("dir/.hidden/file.md"));
-        assert!(has_hidden_segment("dir/.git/config"));
-        assert!(!has_hidden_segment("visible.md"));
-        assert!(!has_hidden_segment("dir/file.md"));
-        assert!(!has_hidden_segment("dir/sub/file.txt"));
     }
 }

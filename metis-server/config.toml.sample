@@ -151,7 +151,6 @@ max_backoff_secs = 30
 #     "issue_lifecycle_validation",   # Enforce parent/child lifecycle rules (e.g., close children first)
 #     "task_state_machine",           # Enforce valid task status transitions
 #     "duplicate_branch_name",        # Prevent patches with duplicate branch names
-#     "hidden_document_path",         # Block documents with hidden (dot-prefixed) path segments
 #     "running_job_validation",       # Prevent invalid status transitions on running jobs
 #     "require_creator",              # Require a creator on new issues
 # ]
