@@ -42,11 +42,12 @@ Issues additionally have a graph structure with two types of relationships `x:bl
 
 The system uses the combination of the status and graph structure to determine what issues can be worked on.
 Issues also have 2 inferred states: `Ready`, `NotReady`, that indicate whether or not the issue is ready to be worked on.
-`Open` issues are `Ready` unless they have a blocked-on edge to an issue that isn't `Closed` (`Dropped` issues do not unblock their downstream dependencies)
-`InProgress` issues are `Ready` if all of their children are `Closed`
+`Open` issues are `Ready` unless they have a blocked-on edge to an issue that isn't `Closed`, or they are a child of a parent in a terminal failure state (`Dropped`, `Rejected`, or `Failed`). Children of `Closed` parents remain ready since the parent's work completed successfully.
+`InProgress` issues are `Ready` if all of their children are in a terminal state (`Closed`, `Dropped`, `Rejected`, or `Failed`).
 `Dropped` issues are never `Ready`; they remain blocking for downstream work until users intervene.
 Whenever an issue is `Ready`, an agent may be spawned to work on it.
-When an issue is marked `Dropped` via the metis-server API, any tasks spawned from it are terminated immediately.
+When an issue is marked `Dropped` via the metis-server API, its children are recursively set to `Dropped` (since the work is explicitly cancelled), and any tasks spawned from it are terminated immediately.
+`Rejected` and `Failed` issues do not cascade status changes to their children or blocked-on dependents; instead, blocking is retained (the dependent issues remain in their current status but are not ready to run).
 
 Agents will be spawned for any `Ready` issues that are assigned to an AI agent. 
 The agent works on the task and updates the issue tracker (via the `metis` CLI) as it goes.
