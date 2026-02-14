@@ -383,6 +383,8 @@ pub struct SearchJobsQuery {
     pub spawned_from: Option<IssueId>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<Status>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -402,11 +404,13 @@ impl SearchJobsQuery {
         q: Option<String>,
         spawned_from: Option<IssueId>,
         include_deleted: Option<bool>,
+        status: Option<Status>,
     ) -> Self {
         Self {
             q,
             spawned_from,
             include_deleted,
+            status,
         }
     }
 }
@@ -437,6 +441,7 @@ mod tests {
             q: Some("test query".to_string()),
             spawned_from: Some(issue_id.clone()),
             include_deleted: None,
+            status: None,
         };
 
         let params = serialize_query_params(&query)
@@ -447,6 +452,16 @@ mod tests {
             params.get("spawned_from").map(String::as_str),
             Some(issue_id.as_ref())
         );
+    }
+
+    #[test]
+    fn search_jobs_query_serializes_status_filter() {
+        let query = SearchJobsQuery::new(None, None, None, Some(Status::Running));
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("status").map(String::as_str), Some("running"));
     }
 
     #[test]

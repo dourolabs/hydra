@@ -723,6 +723,14 @@ impl ReadOnlyStore for MemoryStore {
                     }
                 }
 
+                // Filter by status
+                if let Some(expected_status) = query.status {
+                    let server_status: Status = expected_status.into();
+                    if latest.item.status != server_status {
+                        return None;
+                    }
+                }
+
                 // Filter by text search (matches task ID, prompt, status - NOT notes)
                 if let Some(term) = search_term.as_deref() {
                     let matches_id = task_id.as_ref().to_lowercase().contains(term);
@@ -738,20 +746,6 @@ impl ReadOnlyStore for MemoryStore {
 
                 Some((task_id.clone(), latest))
             })
-            .collect())
-    }
-
-    async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
-        Ok(self
-            .tasks
-            .iter()
-            .filter(|entry| {
-                entry
-                    .value()
-                    .last()
-                    .is_some_and(|task| task.item.status == status)
-            })
-            .map(|entry| entry.key().clone())
             .collect())
     }
 
@@ -3185,7 +3179,7 @@ mod tests {
 
         // Deleted task should appear with include_deleted=true
         let tasks = store
-            .list_tasks(&SearchJobsQuery::new(None, None, Some(true)))
+            .list_tasks(&SearchJobsQuery::new(None, None, Some(true), None))
             .await
             .unwrap();
         assert_eq!(tasks.len(), 1);
@@ -3472,7 +3466,7 @@ mod tests {
         let (task_orphan_id, _) = store.add_task(task_orphan, Utc::now()).await.unwrap();
 
         // Filter by issue_a should return only tasks spawned from issue_a
-        let query = SearchJobsQuery::new(None, Some(issue_a.clone()), None);
+        let query = SearchJobsQuery::new(None, Some(issue_a.clone()), None, None);
         let tasks: HashSet<_> = store
             .list_tasks(&query)
             .await
@@ -3486,7 +3480,7 @@ mod tests {
         );
 
         // Filter by issue_b should return only tasks spawned from issue_b
-        let query = SearchJobsQuery::new(None, Some(issue_b.clone()), None);
+        let query = SearchJobsQuery::new(None, Some(issue_b.clone()), None, None);
         let tasks: HashSet<_> = store
             .list_tasks(&query)
             .await
@@ -3528,7 +3522,7 @@ mod tests {
         let (task3_id, _) = store.add_task(task3, Utc::now()).await.unwrap();
 
         // Search for "auth" should match task1
-        let query = SearchJobsQuery::new(Some("auth".to_string()), None, None);
+        let query = SearchJobsQuery::new(Some("auth".to_string()), None, None, None);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -3539,7 +3533,7 @@ mod tests {
         assert_eq!(tasks, vec![task1_id.clone()]);
 
         // Search for "login" should match task2
-        let query = SearchJobsQuery::new(Some("login".to_string()), None, None);
+        let query = SearchJobsQuery::new(Some("login".to_string()), None, None, None);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -3550,7 +3544,7 @@ mod tests {
         assert_eq!(tasks, vec![task2_id.clone()]);
 
         // Search for "FIX" (case-insensitive) should match task1
-        let query = SearchJobsQuery::new(Some("FIX".to_string()), None, None);
+        let query = SearchJobsQuery::new(Some("FIX".to_string()), None, None, None);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -3561,12 +3555,12 @@ mod tests {
         assert_eq!(tasks, vec![task1_id.clone()]);
 
         // Search for "nonexistent" should return empty
-        let query = SearchJobsQuery::new(Some("nonexistent".to_string()), None, None);
+        let query = SearchJobsQuery::new(Some("nonexistent".to_string()), None, None, None);
         let tasks: Vec<_> = store.list_tasks(&query).await.unwrap();
         assert!(tasks.is_empty());
 
         // Empty search term should return all tasks
-        let query = SearchJobsQuery::new(Some("".to_string()), None, None);
+        let query = SearchJobsQuery::new(Some("".to_string()), None, None, None);
         let tasks: HashSet<_> = store
             .list_tasks(&query)
             .await
@@ -3586,7 +3580,7 @@ mod tests {
 
         // Search by partial task ID
         let id_prefix = &task_id.as_ref()[..6]; // First 6 characters
-        let query = SearchJobsQuery::new(Some(id_prefix.to_string()), None, None);
+        let query = SearchJobsQuery::new(Some(id_prefix.to_string()), None, None, None);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -3686,7 +3680,7 @@ mod tests {
         store.update_task(&task3_id, updated).await.unwrap();
 
         // Search for "created" should match task1
-        let query = SearchJobsQuery::new(Some("created".to_string()), None, None);
+        let query = SearchJobsQuery::new(Some("created".to_string()), None, None, None);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -3697,7 +3691,7 @@ mod tests {
         assert_eq!(tasks, vec![task1_id]);
 
         // Search for "running" should match task2
-        let query = SearchJobsQuery::new(Some("running".to_string()), None, None);
+        let query = SearchJobsQuery::new(Some("running".to_string()), None, None, None);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -3708,7 +3702,7 @@ mod tests {
         assert_eq!(tasks, vec![task2_id]);
 
         // Search for "complete" should match task3
-        let query = SearchJobsQuery::new(Some("complete".to_string()), None, None);
+        let query = SearchJobsQuery::new(Some("complete".to_string()), None, None, None);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -3717,6 +3711,78 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert_eq!(tasks, vec![task3_id]);
+    }
+
+    #[tokio::test]
+    async fn list_tasks_filters_by_status_field() {
+        let store = MemoryStore::new();
+
+        // Add a task with Created status (default)
+        let task1 = spawn_task();
+        let (task1_id, _) = store.add_task(task1, Utc::now()).await.unwrap();
+
+        // Add a task and update to Running status
+        let task2 = spawn_task();
+        let (task2_id, _) = store.add_task(task2, Utc::now()).await.unwrap();
+        let mut updated = spawn_task();
+        updated.status = Status::Running;
+        store.update_task(&task2_id, updated).await.unwrap();
+
+        // Add a task and update to Complete status
+        let task3 = spawn_task();
+        let (task3_id, _) = store.add_task(task3, Utc::now()).await.unwrap();
+        let mut updated = spawn_task();
+        updated.status = Status::Complete;
+        store.update_task(&task3_id, updated).await.unwrap();
+
+        // Filter by Created should return only task1
+        let query = SearchJobsQuery::new(None, None, None, Some(Status::Created.into()));
+        let tasks: Vec<_> = store
+            .list_tasks(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(tasks, vec![task1_id]);
+
+        // Filter by Running should return only task2
+        let query = SearchJobsQuery::new(None, None, None, Some(Status::Running.into()));
+        let tasks: Vec<_> = store
+            .list_tasks(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(tasks, vec![task2_id]);
+
+        // Filter by Complete should return only task3
+        let query = SearchJobsQuery::new(None, None, None, Some(Status::Complete.into()));
+        let tasks: Vec<_> = store
+            .list_tasks(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(tasks, vec![task3_id]);
+
+        // Filter by Failed should return no tasks
+        let query = SearchJobsQuery::new(None, None, None, Some(Status::Failed.into()));
+        let tasks: Vec<_> = store.list_tasks(&query).await.unwrap();
+        assert!(tasks.is_empty());
+
+        // No status filter should return all tasks
+        let query = SearchJobsQuery::new(None, None, None, None);
+        let tasks: Vec<_> = store
+            .list_tasks(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(tasks.len(), 3);
     }
 
     #[tokio::test]

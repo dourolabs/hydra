@@ -4,6 +4,7 @@ use crate::{
     store::Status,
 };
 use async_trait::async_trait;
+use metis_common::jobs::SearchJobsQuery;
 use tracing::{error, info};
 
 /// Scheduled worker that monitors running jobs once per iteration.
@@ -35,8 +36,9 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
 
         let mut active_ids = Vec::new();
         for status in [Status::Pending, Status::Running] {
-            match self.state.list_tasks_with_status(status).await {
-                Ok(ids) => active_ids.extend(ids),
+            let query = SearchJobsQuery::new(None, None, None, Some(status.into()));
+            match self.state.list_tasks_with_query(&query).await {
+                Ok(tasks) => active_ids.extend(tasks.into_iter().map(|(id, _)| id)),
                 Err(err) => {
                     error!(error = %err, "failed to list active tasks");
                     info!(

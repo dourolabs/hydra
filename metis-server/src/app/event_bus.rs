@@ -5,7 +5,7 @@ use crate::domain::{
     patches::Patch,
     users::{User, Username},
 };
-use crate::store::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog};
+use crate::store::{ReadOnlyStore, Store, StoreError, Task, TaskStatusLog};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
@@ -896,10 +896,6 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.list_tasks(query).await
     }
 
-    async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
-        self.inner.list_tasks_with_status(status).await
-    }
-
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         self.inner.get_status_log(id).await
     }
@@ -942,7 +938,7 @@ impl ReadOnlyStore for StoreWithEvents {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::MemoryStore;
+    use crate::store::{MemoryStore, Status};
 
     #[test]
     fn seq_numbers_are_monotonically_increasing() {

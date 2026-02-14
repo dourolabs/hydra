@@ -6,7 +6,7 @@ use crate::{
         patches::Patch,
         users::{User, Username},
     },
-    store::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog},
+    store::{ReadOnlyStore, Store, StoreError, Task, TaskStatusLog},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -152,10 +152,6 @@ impl ReadOnlyStore for FailingStore {
         &self,
         _query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
-        fail()
-    }
-
-    async fn list_tasks_with_status(&self, _status: Status) -> Result<Vec<TaskId>, StoreError> {
         fail()
     }
 

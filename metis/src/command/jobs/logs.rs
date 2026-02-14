@@ -44,7 +44,12 @@ async fn stream_logs_for_issue(
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let jobs = client
-        .list_jobs(&SearchJobsQuery::new(None, Some(issue_id.clone()), None))
+        .list_jobs(&SearchJobsQuery::new(
+            None,
+            Some(issue_id.clone()),
+            None,
+            None,
+        ))
         .await
         .with_context(|| format!("failed to find jobs for issue '{issue_id}'"))?
         .jobs;

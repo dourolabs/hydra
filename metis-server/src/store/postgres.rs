@@ -544,6 +544,13 @@ impl PostgresStore {
             bindings.push(pattern); // status
         }
 
+        // Filter by status
+        if let Some(status) = query.status {
+            let server_status: Status = status.into();
+            predicates.push(format!("payload->>'status' = ${}", bindings.len() + 1));
+            bindings.push(super::status_to_db_str(server_status).to_string());
+        }
+
         // Filter deleted tasks by default
         if !query.include_deleted.unwrap_or(false) {
             predicates.push("COALESCE((payload->>'deleted')::boolean, false) = false".to_string());
@@ -1166,7 +1173,7 @@ impl ReadOnlyStore for PostgresStore {
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
         // Use spawned_from filter at the database level for efficiency
-        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None);
+        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, None);
         let tasks = self.list_tasks(&query).await?;
         Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }
@@ -1305,23 +1312,6 @@ impl ReadOnlyStore for PostgresStore {
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         self.fetch_latest_tasks(query).await
-    }
-
-    async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
-        let rows = self
-            .fetch_versioned_payloads_with_ids::<Task>(TABLE_TASKS, "task", TASK_SCHEMA_VERSION)
-            .await?;
-
-        let mut matches = Vec::new();
-        for (id, task) in rows {
-            if task.item.status == status {
-                matches.push(id.parse::<TaskId>().map_err(|err| {
-                    StoreError::Internal(format!("invalid task id stored in database: {err}"))
-                })?);
-            }
-        }
-
-        Ok(matches)
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
@@ -2251,11 +2241,15 @@ mod tests {
                 .is_empty()
         );
 
-        let complete = handles
+        let query = SearchJobsQuery::new(None, None, None, Some(Status::Complete.into()));
+        let complete: Vec<_> = handles
             .store
-            .list_tasks_with_status(Status::Complete)
+            .list_tasks(&query)
             .await
-            .unwrap();
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
         assert_eq!(complete, vec![task_id]);
 
         let (explicit_id, _) = store.add_task(sample_task(), Utc::now()).await.unwrap();

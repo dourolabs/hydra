@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{
+    jobs::SearchJobsQuery,
     repositories::Repository,
     users::{User, Username},
     RepoName, TaskId,
@@ -263,10 +264,17 @@ impl TestHarness {
     /// Transitions tasks from Created to Pending status and kicks off
     /// engine processing. Returns the IDs of tasks that were processed.
     pub async fn step_pending_jobs(&self) -> Result<Vec<TaskId>> {
+        let query = SearchJobsQuery::new(
+            None,
+            None,
+            None,
+            Some(metis_server::store::Status::Created.into()),
+        );
         let before: Vec<TaskId> = self
             .state
-            .list_tasks_with_status(metis_server::store::Status::Created)
+            .list_tasks_with_query(&query)
             .await
+            .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
             .context("failed to list created tasks before step_pending_jobs")?;
 
         let worker = ProcessPendingJobsWorker::new(self.state.clone());
