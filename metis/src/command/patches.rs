@@ -62,10 +62,6 @@ pub enum PatchesCommand {
         #[arg(long = "job", value_name = "METIS_ID", env = ENV_METIS_ID)]
         job: Option<TaskId>,
 
-        /// Create a GitHub pull request with the patch contents.
-        #[arg(long = "github")]
-        github: bool,
-
         /// Assign the merge-request issue to a user and automatically create it.
         #[arg(long = "assignee", value_name = "ASSIGNEE")]
         assignee: Option<String>,
@@ -211,7 +207,6 @@ pub async fn run(
             title,
             description,
             job,
-            github,
             assignee,
             issue_id,
             allow_uncommitted,
@@ -223,7 +218,6 @@ pub async fn run(
                 title,
                 description,
                 job,
-                github,
                 assignee,
                 issue_id,
                 allow_uncommitted,
@@ -441,7 +435,6 @@ async fn create_patch(
     title: String,
     description: String,
     job_id: Option<TaskId>,
-    create_github_pr: bool,
     assignee: Option<String>,
     issue_id: IssueId,
     allow_uncommitted: bool,
@@ -483,7 +476,6 @@ async fn create_patch(
         title.clone(),
         description.clone(),
         job_id.clone(),
-        create_github_pr,
         is_automatic_backup,
         force,
         service_repo_name,
@@ -805,7 +797,6 @@ pub async fn create_patch_artifact_from_repo(
     title: String,
     description: String,
     job_id: Option<TaskId>,
-    create_github_pr: bool,
     is_automatic_backup: bool,
     force: bool,
     service_repo_name: RepoName,
@@ -847,25 +838,8 @@ pub async fn create_patch_artifact_from_repo(
             Some(metis_common::patches::CommitRange::new(base_oid, head_oid));
     }
 
-    // Always try to get a GitHub token; fall back to pushing without one.
     let github_token = client.get_github_token().await.ok();
-
-    if create_github_pr {
-        // GitHub PR creation requires a token.
-        let token = github_token.as_deref().ok_or_else(|| {
-            anyhow!("Creator GitHub token is required to create a GitHub pull request")
-        })?;
-        if !branch_name.starts_with("metis/") {
-            bail!(
-                "Cannot push to GitHub: current branch '{branch_name}' does not have the required 'metis/' prefix. \
-                Please checkout a branch named 'metis/<issue-id>/...' before creating a patch with --github."
-            );
-        }
-        push_branch(repo_root, &branch_name, Some(token), force)?;
-    } else {
-        // Push even without --github, using the token if available.
-        push_branch(repo_root, &branch_name, github_token.as_deref(), force)?;
-    }
+    push_branch(repo_root, &branch_name, github_token.as_deref(), force)?;
 
     let upsert_request = UpsertPatchRequest::new(patch_payload.clone());
 
@@ -1033,15 +1007,6 @@ mod tests {
         server.mock(move |when, then| {
             when.method(GET).path("/v1/github/token");
             then.status(401);
-        })
-    }
-
-    fn mock_get_github_token<'a>(server: &'a MockServer, token: &'a str) -> Mock<'a> {
-        let token = token.to_string();
-        server.mock(move |when, then| {
-            when.method(GET).path("/v1/github/token");
-            then.status(200)
-                .json_body(serde_json::json!({"github_token": token}));
         })
     }
 
@@ -1254,7 +1219,6 @@ mod tests {
             patch_title.clone(),
             patch_description.clone(),
             Some(job_id),
-            false,
             None,
             issue_id.clone(),
             false,
@@ -1336,7 +1300,6 @@ mod tests {
             title.clone(),
             description.clone(),
             job_id_opt.clone(),
-            false,
             None,
             issue_id.clone(),
             false,
@@ -1364,7 +1327,6 @@ mod tests {
             "missing job".to_string(),
             "patch without job id".to_string(),
             None,
-            false,
             None,
             issue_id,
             false,
@@ -1379,67 +1341,6 @@ mod tests {
             error.contains("provide --job or set METIS_ID"),
             "error should mention missing job id: {error}"
         );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn create_patch_requires_creator_github_token_when_creating_pr() -> Result<()> {
-        let (_tempdir, repo_path, _base_commit, _head_commit) = initialize_repo_with_changes()?;
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let issue_id = issue_id("i-gh-token");
-        let job_id = task_id("t-job-gh-token");
-        let job_record = JobVersionRecord::new(
-            job_id.clone(),
-            0,
-            Utc::now(),
-            Task::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
-                    name: sample_repo_name(),
-                    rev: None,
-                },
-                None,
-                None,
-                None,
-                Default::default(),
-                None,
-                None,
-                None,
-                false,
-            ),
-        );
-        let job_mock = mock_get_job(&server, job_record);
-        // Return 401 for github token -- create with --github should fail.
-        mock_get_github_token_failure(&server);
-
-        let result = create_patch(
-            &client,
-            "pr title".to_string(),
-            "pr description".to_string(),
-            Some(job_id),
-            true,
-            None,
-            issue_id,
-            false,
-            false,
-            "origin/main",
-            Some(&repo_path),
-        )
-        .await;
-
-        let error = result.unwrap_err().to_string();
-
-        assert!(
-            error.contains("Creator GitHub token is required to create a GitHub pull request")
-                || error.contains("failed to create GitHub pull request")
-                || error.contains("failed to push branch")
-                || error.contains("GitHub token")
-                || error.contains("github"),
-            "error should reference GitHub token or PR creation: {error}"
-        );
-        job_mock.assert();
 
         Ok(())
     }
@@ -1553,7 +1454,6 @@ mod tests {
             "custom patch title".to_string(),
             "custom patch description".to_string(),
             Some(job_id),
-            false,
             Some("owner-a".to_string()),
             parent_issue.clone(),
             false,
@@ -1605,7 +1505,6 @@ mod tests {
             "backup patch".to_string(),
             "backup description".to_string(),
             Some(job_id.clone()),
-            false,
             true,
             false,
             sample_repo_name(),
@@ -1678,7 +1577,6 @@ mod tests {
             "backup patch".to_string(),
             "backup description".to_string(),
             Some(job_id.clone()),
-            false,
             None,
             issue_id.clone(),
             false,
@@ -1968,43 +1866,6 @@ mod tests {
         assert_eq!(
             String::from_utf8(output)?,
             format!("Merge queue for {repo}:{branch}\n- {patch}\n")
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn create_patch_with_github_rejects_non_metis_branch() -> Result<()> {
-        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        let diff = git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
-        let job_id = task_id("t-job-branch-check");
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        mock_get_github_token(&server, "test-token");
-
-        let result = create_patch_artifact_from_repo(
-            &client,
-            &repo_path,
-            diff,
-            "test patch".to_string(),
-            "test description".to_string(),
-            Some(job_id),
-            true,
-            false,
-            false,
-            sample_repo_name(),
-            "origin/main",
-        )
-        .await;
-
-        let error = result.unwrap_err().to_string();
-        assert!(
-            error.contains("does not have the required 'metis/' prefix"),
-            "error should mention metis/ prefix requirement: {error}"
-        );
-        assert!(
-            error.contains("main") || error.contains("master"),
-            "error should reference the current branch name: {error}"
         );
 
         Ok(())
