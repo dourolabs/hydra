@@ -37,7 +37,7 @@ where
 #[derive(Debug, Clone)]
 pub struct DocumentVersionPath {
     pub document_id: DocumentId,
-    pub version: i64,
+    pub version: super::RelativeVersionNumber,
 }
 
 #[async_trait]
@@ -49,7 +49,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let Path((document_id, version)) =
-            Path::<(DocumentId, i64)>::from_request_parts(parts, state)
+            Path::<(DocumentId, super::RelativeVersionNumber)>::from_request_parts(parts, state)
                 .await
                 .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
@@ -187,7 +187,7 @@ pub async fn get_document_version(
         version: raw_version,
     }: DocumentVersionPath,
 ) -> Result<Json<v1::documents::DocumentVersionRecord>, ApiError> {
-    info!(document_id = %document_id, raw_version, "get_document_version invoked");
+    info!(document_id = %document_id, raw_version = raw_version.as_i64(), "get_document_version invoked");
     let versions = state
         .get_document_versions(&document_id)
         .await

@@ -45,7 +45,7 @@ where
 #[derive(Debug, Clone)]
 pub struct IssueVersionPath {
     pub issue_id: IssueId,
-    pub version: i64,
+    pub version: super::RelativeVersionNumber,
 }
 
 #[async_trait]
@@ -56,9 +56,10 @@ where
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path((issue_id, version)) = Path::<(IssueId, i64)>::from_request_parts(parts, state)
-            .await
-            .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+        let Path((issue_id, version)) =
+            Path::<(IssueId, super::RelativeVersionNumber)>::from_request_parts(parts, state)
+                .await
+                .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
         Ok(Self { issue_id, version })
     }
@@ -185,7 +186,7 @@ pub async fn get_issue_version(
         version: raw_version,
     }: IssueVersionPath,
 ) -> Result<Json<api_issues::IssueVersionRecord>, ApiError> {
-    info!(issue_id = %issue_id, raw_version, "get_issue_version invoked");
+    info!(issue_id = %issue_id, raw_version = raw_version.as_i64(), "get_issue_version invoked");
     let versions = state
         .get_issue_versions(&issue_id)
         .await
