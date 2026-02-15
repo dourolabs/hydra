@@ -8,7 +8,7 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use metis_common::{TaskId, VersionNumber, api::v1};
+use metis_common::{TaskId, api::v1};
 use tracing::{error, info};
 
 pub use metis_common::api::v1::ApiError;
@@ -200,9 +200,12 @@ pub async fn list_job_versions(
 
 pub async fn get_job_version(
     State(state): State<AppState>,
-    JobVersionPath { job_id, version }: JobVersionPath,
+    JobVersionPath {
+        job_id,
+        version: raw_version,
+    }: JobVersionPath,
 ) -> Result<Json<v1::jobs::JobVersionRecord>, ApiError> {
-    info!(job_id = %job_id, version, "get_job_version invoked");
+    info!(job_id = %job_id, raw_version, "get_job_version invoked");
     let versions = state
         .get_task_versions(&job_id)
         .await
@@ -216,6 +219,9 @@ pub async fn get_job_version(
                 ApiError::internal(format!("Failed to load job '{job_id}': {other}"))
             }
         })?;
+
+    let max_version = versions.iter().map(|v| v.version).max().unwrap_or(0);
+    let version = super::resolve_version(raw_version, max_version, "job", job_id.as_ref())?;
 
     let entry = versions
         .into_iter()
@@ -278,7 +284,7 @@ where
 #[derive(Debug, Clone)]
 pub struct JobVersionPath {
     pub job_id: TaskId,
-    pub version: VersionNumber,
+    pub version: i64,
 }
 
 #[async_trait]
@@ -289,10 +295,9 @@ where
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path((job_id, version)) =
-            Path::<(TaskId, VersionNumber)>::from_request_parts(parts, state)
-                .await
-                .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+        let Path((job_id, version)) = Path::<(TaskId, i64)>::from_request_parts(parts, state)
+            .await
+            .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
         Ok(Self { job_id, version })
     }

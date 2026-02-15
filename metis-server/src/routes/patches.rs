@@ -11,7 +11,7 @@ use axum::{
     http::{HeaderMap, header::CONTENT_DISPOSITION, request::Parts},
 };
 use metis_common::{
-    PatchId, VersionNumber,
+    PatchId,
     api::v1::{self, ApiError},
 };
 use reqwest::header::{
@@ -43,7 +43,7 @@ where
 #[derive(Debug, Clone)]
 pub struct PatchVersionPath {
     pub patch_id: PatchId,
-    pub version: VersionNumber,
+    pub version: i64,
 }
 
 #[async_trait]
@@ -54,10 +54,9 @@ where
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path((patch_id, version)) =
-            Path::<(PatchId, VersionNumber)>::from_request_parts(parts, state)
-                .await
-                .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+        let Path((patch_id, version)) = Path::<(PatchId, i64)>::from_request_parts(parts, state)
+            .await
+            .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
         Ok(Self { patch_id, version })
     }
@@ -151,13 +150,19 @@ pub async fn list_patch_versions(
 
 pub async fn get_patch_version(
     State(state): State<AppState>,
-    PatchVersionPath { patch_id, version }: PatchVersionPath,
+    PatchVersionPath {
+        patch_id,
+        version: raw_version,
+    }: PatchVersionPath,
 ) -> Result<Json<v1::patches::PatchVersionRecord>, ApiError> {
-    info!(patch_id = %patch_id, version, "get_patch_version invoked");
+    info!(patch_id = %patch_id, raw_version, "get_patch_version invoked");
     let versions = state
         .get_patch_versions(&patch_id)
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
+
+    let max_version = versions.iter().map(|v| v.version).max().unwrap_or(0);
+    let version = super::resolve_version(raw_version, max_version, "patch", patch_id.as_ref())?;
 
     let entry = versions
         .into_iter()

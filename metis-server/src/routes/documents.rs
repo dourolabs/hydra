@@ -10,7 +10,7 @@ use axum::{
     http::request::Parts,
 };
 use metis_common::{
-    DocumentId, VersionNumber,
+    DocumentId,
     api::v1::{self, ApiError},
 };
 use tracing::{error, info};
@@ -37,7 +37,7 @@ where
 #[derive(Debug, Clone)]
 pub struct DocumentVersionPath {
     pub document_id: DocumentId,
-    pub version: VersionNumber,
+    pub version: i64,
 }
 
 #[async_trait]
@@ -49,7 +49,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let Path((document_id, version)) =
-            Path::<(DocumentId, VersionNumber)>::from_request_parts(parts, state)
+            Path::<(DocumentId, i64)>::from_request_parts(parts, state)
                 .await
                 .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
@@ -184,14 +184,18 @@ pub async fn get_document_version(
     State(state): State<AppState>,
     DocumentVersionPath {
         document_id,
-        version,
+        version: raw_version,
     }: DocumentVersionPath,
 ) -> Result<Json<v1::documents::DocumentVersionRecord>, ApiError> {
-    info!(document_id = %document_id, version, "get_document_version invoked");
+    info!(document_id = %document_id, raw_version, "get_document_version invoked");
     let versions = state
         .get_document_versions(&document_id)
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
+
+    let max_version = versions.iter().map(|v| v.version).max().unwrap_or(0);
+    let version =
+        super::resolve_version(raw_version, max_version, "document", document_id.as_ref())?;
 
     let entry = versions
         .into_iter()

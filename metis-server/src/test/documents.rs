@@ -642,3 +642,72 @@ async fn delete_document_non_existent() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+// ===== Negative Version Offset Tests =====
+
+#[tokio::test]
+async fn get_document_version_negative_offset_returns_correct_version() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // Create document (v1)
+    let created: UpsertDocumentResponse = client
+        .post(format!("{base}/v1/documents"))
+        .json(&UpsertDocumentRequest::new(Document::new(
+            "Doc v1".to_string(),
+            "body v1".to_string(),
+            false,
+        )))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Update document (v2)
+    client
+        .put(format!("{base}/v1/documents/{}", created.document_id))
+        .json(&UpsertDocumentRequest::new(Document::new(
+            "Doc v2".to_string(),
+            "body v2".to_string(),
+            false,
+        )))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // version=-1 should return v1 (second-to-last)
+    let v_minus_1: DocumentVersionRecord = client
+        .get(format!(
+            "{base}/v1/documents/{}/versions/-1",
+            created.document_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(v_minus_1.version, 1);
+    assert_eq!(v_minus_1.document.title, "Doc v1");
+
+    // version=0 should return 400
+    let response = client
+        .get(format!(
+            "{base}/v1/documents/{}/versions/0",
+            created.document_id
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // version=-100 should return 400 (out of range)
+    let response = client
+        .get(format!(
+            "{base}/v1/documents/{}/versions/-100",
+            created.document_id
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
