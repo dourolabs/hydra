@@ -46,6 +46,7 @@ impl Restriction for RequireCreatorRestriction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::actors::ActorRef;
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
@@ -76,9 +77,10 @@ mod tests {
             new: make_issue("jayantk"),
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -95,9 +97,10 @@ mod tests {
             new: make_issue(""),
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -118,9 +121,10 @@ mod tests {
             new: make_issue("   "),
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };

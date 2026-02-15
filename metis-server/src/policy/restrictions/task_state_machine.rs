@@ -85,6 +85,7 @@ impl Restriction for TaskStateMachineRestriction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::actors::ActorRef;
     use crate::domain::jobs::{BundleSpec, Task};
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::MemoryStore;
@@ -118,9 +119,10 @@ mod tests {
             new,
             old: Some(old),
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::UpdateJob,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -138,9 +140,10 @@ mod tests {
             new,
             old: Some(old),
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::UpdateJob,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -158,9 +161,10 @@ mod tests {
             new,
             old: Some(old),
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::UpdateJob,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -183,9 +187,10 @@ mod tests {
             new,
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreateJob,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };

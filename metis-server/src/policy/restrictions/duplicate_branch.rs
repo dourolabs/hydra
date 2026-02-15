@@ -64,6 +64,7 @@ impl Restriction for DuplicateBranchRestriction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::actors::ActorRef;
     use crate::domain::patches::{Patch, PatchStatus};
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, Store};
@@ -98,9 +99,10 @@ mod tests {
             new: make_patch(Some("feature/new-branch")),
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreatePatch,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -124,9 +126,10 @@ mod tests {
             new: make_patch(Some("feature/duplicate")),
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreatePatch,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -148,9 +151,10 @@ mod tests {
             new: make_patch(None),
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreatePatch,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };

@@ -153,7 +153,7 @@ impl AppState {
                 // Run restriction policies (require_creator, issue_lifecycle_validation)
                 {
                     self.policy_engine
-                        .check_update_issue(&id, &updated_issue, None, store)
+                        .check_update_issue(&id, &updated_issue, None, store, &actor)
                         .await?;
                 }
 
@@ -211,7 +211,9 @@ impl AppState {
 
                 // Run restriction policies (require_creator, issue_lifecycle_validation)
                 {
-                    self.policy_engine.check_create_issue(&issue, store).await?;
+                    self.policy_engine
+                        .check_create_issue(&issue, store, &actor)
+                        .await?;
                 }
 
                 let (id, version) = self

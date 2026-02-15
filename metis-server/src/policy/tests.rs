@@ -187,10 +187,12 @@ async fn check_restrictions_passes_with_no_restrictions() {
     let engine = PolicyEngine::empty();
     let store = MemoryStore::new();
     let payload = make_issue_payload();
+    let actor = ActorRef::test();
     let ctx = RestrictionContext {
         operation: Operation::CreateIssue,
         payload: &payload,
         store: &store,
+        actor: &actor,
     };
 
     let result = engine.check_restrictions(&ctx).await;
@@ -205,10 +207,12 @@ async fn check_restrictions_passes_when_all_allow() {
     );
     let store = MemoryStore::new();
     let payload = make_issue_payload();
+    let actor = ActorRef::test();
     let ctx = RestrictionContext {
         operation: Operation::CreateIssue,
         payload: &payload,
         store: &store,
+        actor: &actor,
     };
 
     let result = engine.check_restrictions(&ctx).await;
@@ -229,10 +233,12 @@ async fn check_restrictions_returns_first_violation() {
     );
     let store = MemoryStore::new();
     let payload = make_issue_payload();
+    let actor = ActorRef::test();
     let ctx = RestrictionContext {
         operation: Operation::UpdateIssue,
         payload: &payload,
         store: &store,
+        actor: &actor,
     };
 
     let result = engine.check_restrictions(&ctx).await;
@@ -615,8 +621,9 @@ async fn check_create_issue_delegates_to_check_restrictions() {
     );
     let store = MemoryStore::new();
     let issue = dummy_issue();
+    let actor = ActorRef::test();
 
-    let result = engine.check_create_issue(&issue, &store).await;
+    let result = engine.check_create_issue(&issue, &store, &actor).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().message.contains("blocked"));
 }
@@ -626,8 +633,9 @@ async fn check_create_issue_passes_when_allowed() {
     let engine = PolicyEngine::new(vec![Box::new(AllowAllRestriction)], Vec::new());
     let store = MemoryStore::new();
     let issue = dummy_issue();
+    let actor = ActorRef::test();
 
-    let result = engine.check_create_issue(&issue, &store).await;
+    let result = engine.check_create_issue(&issue, &store, &actor).await;
     assert!(result.is_ok());
 }
 
@@ -640,9 +648,10 @@ async fn check_update_issue_delegates_to_check_restrictions() {
     let store = MemoryStore::new();
     let issue = dummy_issue();
     let issue_id = IssueId::new();
+    let actor = ActorRef::test();
 
     let result = engine
-        .check_update_issue(&issue_id, &issue, None, &store)
+        .check_update_issue(&issue_id, &issue, None, &store, &actor)
         .await;
     assert!(result.is_err());
 }
@@ -655,8 +664,9 @@ async fn check_create_patch_delegates_to_check_restrictions() {
     );
     let store = MemoryStore::new();
     let patch = make_dummy_patch();
+    let actor = ActorRef::test();
 
-    let result = engine.check_create_patch(&patch, &store).await;
+    let result = engine.check_create_patch(&patch, &store, &actor).await;
     assert!(result.is_err());
 }
 
@@ -665,8 +675,9 @@ async fn check_create_patch_passes_when_allowed() {
     let engine = PolicyEngine::new(vec![Box::new(AllowAllRestriction)], Vec::new());
     let store = MemoryStore::new();
     let patch = make_dummy_patch();
+    let actor = ActorRef::test();
 
-    let result = engine.check_create_patch(&patch, &store).await;
+    let result = engine.check_create_patch(&patch, &store, &actor).await;
     assert!(result.is_ok());
 }
 
@@ -678,8 +689,9 @@ async fn check_create_document_delegates_to_check_restrictions() {
     );
     let store = MemoryStore::new();
     let doc = make_dummy_document();
+    let actor = ActorRef::test();
 
-    let result = engine.check_create_document(&doc, &store).await;
+    let result = engine.check_create_document(&doc, &store, &actor).await;
     assert!(result.is_err());
 }
 
@@ -692,9 +704,10 @@ async fn check_update_document_delegates_to_check_restrictions() {
     let store = MemoryStore::new();
     let doc = make_dummy_document();
     let doc_id = metis_common::DocumentId::new();
+    let actor = ActorRef::test();
 
     let result = engine
-        .check_update_document(&doc_id, &doc, None, &store)
+        .check_update_document(&doc_id, &doc, None, &store, &actor)
         .await;
     assert!(result.is_err());
 }
@@ -708,8 +721,11 @@ async fn check_update_job_delegates_to_check_restrictions() {
     let store = MemoryStore::new();
     let task = make_dummy_task();
     let task_id = metis_common::TaskId::new();
+    let actor = ActorRef::test();
 
-    let result = engine.check_update_job(&task_id, &task, None, &store).await;
+    let result = engine
+        .check_update_job(&task_id, &task, None, &store, &actor)
+        .await;
     assert!(result.is_err());
 }
 
@@ -719,8 +735,11 @@ async fn check_update_job_passes_when_allowed() {
     let store = MemoryStore::new();
     let task = make_dummy_task();
     let task_id = metis_common::TaskId::new();
+    let actor = ActorRef::test();
 
-    let result = engine.check_update_job(&task_id, &task, None, &store).await;
+    let result = engine
+        .check_update_job(&task_id, &task, None, &store, &actor)
+        .await;
     assert!(result.is_ok());
 }
 
@@ -788,9 +807,11 @@ async fn disabling_restriction_allows_blocked_operation() {
         Vec::new(),
     );
 
+    let actor = ActorRef::test();
+
     // Full engine should block this (empty creator)
     let result = full_engine
-        .check_create_issue(&issue_no_creator, &store)
+        .check_create_issue(&issue_no_creator, &store, &actor)
         .await;
     assert!(
         result.is_err(),
@@ -822,7 +843,7 @@ async fn disabling_restriction_allows_blocked_operation() {
 
     // Partial engine should allow this
     let result = partial_engine
-        .check_create_issue(&issue_no_creator, &store)
+        .check_create_issue(&issue_no_creator, &store, &actor)
         .await;
     assert!(
         result.is_ok(),
@@ -964,6 +985,57 @@ fn full_toml_config_with_policies_deserializes() {
         policies.global.automations[0].name(),
         "cascade_issue_status"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Test: restrictions can read the actor from RestrictionContext
+// ---------------------------------------------------------------------------
+
+/// A restriction that inspects the actor and rejects if it is a System actor.
+struct RejectSystemActorRestriction;
+
+#[async_trait]
+impl Restriction for RejectSystemActorRestriction {
+    fn name(&self) -> &str {
+        "reject_system_actor"
+    }
+
+    async fn evaluate(&self, ctx: &RestrictionContext<'_>) -> Result<(), PolicyViolation> {
+        match ctx.actor {
+            ActorRef::System { worker_name, .. } => Err(PolicyViolation {
+                policy_name: "reject_system_actor".to_string(),
+                message: format!("system actor '{worker_name}' is not allowed"),
+            }),
+            _ => Ok(()),
+        }
+    }
+}
+
+#[tokio::test]
+async fn restriction_can_read_actor_from_context() {
+    let engine = PolicyEngine::new(vec![Box::new(RejectSystemActorRestriction)], Vec::new());
+    let store = MemoryStore::new();
+    let issue = dummy_issue();
+
+    // Authenticated actor should be allowed
+    let auth_actor = ActorRef::Authenticated {
+        actor_id: crate::domain::actors::ActorId::Username(Username::from("alice")),
+    };
+    let result = engine.check_create_issue(&issue, &store, &auth_actor).await;
+    assert!(result.is_ok(), "authenticated actor should be allowed");
+
+    // System actor should be rejected
+    let system_actor = ActorRef::System {
+        worker_name: "test_worker".to_string(),
+        on_behalf_of: None,
+    };
+    let result = engine
+        .check_create_issue(&issue, &store, &system_actor)
+        .await;
+    assert!(result.is_err(), "system actor should be rejected");
+    let violation = result.unwrap_err();
+    assert_eq!(violation.policy_name, "reject_system_actor");
+    assert!(violation.message.contains("test_worker"));
 }
 
 /// Test: Config without [policies] section deserializes with policies = None.
