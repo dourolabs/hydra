@@ -1201,37 +1201,10 @@ async fn resolve_issue(
         Some(0) => {
             bail!("--version 0 is not valid; use a positive version number or a negative offset")
         }
-        Some(v) if v > 0 => {
-            let ver = v as VersionNumber;
-            client
-                .get_issue_version(issue_id, &ver)
-                .await
-                .with_context(|| format!("failed to fetch version {ver} of issue '{issue_id}'"))
-        }
-        Some(v) => {
-            // Negative offset: resolve via list_issue_versions
-            let versions_response = client
-                .list_issue_versions(issue_id)
-                .await
-                .with_context(|| format!("failed to list versions for issue '{issue_id}'"))?;
-            let latest = versions_response
-                .versions
-                .iter()
-                .map(|r| r.version)
-                .max()
-                .ok_or_else(|| anyhow!("no versions found for issue '{issue_id}'"))?;
-            let target = latest as i64 + v; // v is negative, e.g. latest=5, v=-1 -> target=4
-            if target < 1 {
-                bail!(
-                    "version offset {v} resolves to version {target}, which is before the first version of issue '{issue_id}'"
-                );
-            }
-            let ver = target as VersionNumber;
-            client
-                .get_issue_version(issue_id, &ver)
-                .await
-                .with_context(|| format!("failed to fetch version {ver} of issue '{issue_id}'"))
-        }
+        Some(v) => client
+            .get_issue_version(issue_id, v)
+            .await
+            .with_context(|| format!("failed to fetch version {v} of issue '{issue_id}'")),
         None => client
             .get_issue(issue_id, include_deleted)
             .await
