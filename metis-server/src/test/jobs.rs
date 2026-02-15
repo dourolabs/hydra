@@ -478,8 +478,12 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
     assert!(response.status().is_success());
     let created: CreateJobResponse = response.json().await?;
 
-    state.transition_task_to_pending(&created.job_id).await?;
-    state.transition_task_to_running(&created.job_id).await?;
+    state
+        .transition_task_to_pending(&created.job_id, ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_running(&created.job_id, ActorRef::test())
+        .await?;
 
     let response = client
         .post(format!(
@@ -636,8 +640,12 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
             &ActorRef::test(),
         )
         .await?;
-    state.transition_task_to_pending(&job_id).await?;
-    state.transition_task_to_running(&job_id).await?;
+    state
+        .transition_task_to_pending(&job_id, ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_running(&job_id, ActorRef::test())
+        .await?;
 
     let client = test_client();
     let response = client
@@ -890,8 +898,12 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
             &ActorRef::test(),
         )
         .await?;
-    state.transition_task_to_pending(&job_id).await?;
-    state.transition_task_to_running(&job_id).await?;
+    state
+        .transition_task_to_pending(&job_id, ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_running(&job_id, ActorRef::test())
+        .await?;
     let (_patch_id, _) = handles
         .store
         .add_patch(
@@ -958,8 +970,12 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
             &ActorRef::test(),
         )
         .await?;
-    state.transition_task_to_pending(&job_id).await?;
-    state.transition_task_to_running(&job_id).await?;
+    state
+        .transition_task_to_pending(&job_id, ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_running(&job_id, ActorRef::test())
+        .await?;
     let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
     let client = test_client();
 
@@ -1047,8 +1063,12 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
             &ActorRef::test(),
         )
         .await?;
-    state.transition_task_to_pending(&parent_job_id).await?;
-    state.transition_task_to_running(&parent_job_id).await?;
+    state
+        .transition_task_to_pending(&parent_job_id, ActorRef::test())
+        .await?;
+    state
+        .transition_task_to_running(&parent_job_id, ActorRef::test())
+        .await?;
     let (_parent_patch_id, _) = handles
         .store
         .add_patch(
@@ -1071,7 +1091,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
         )
         .await?;
     state
-        .transition_task_to_completion(&parent_job_id, Ok(()), None)
+        .transition_task_to_completion(&parent_job_id, Ok(()), None, ActorRef::test())
         .await?;
     let (ctx_job_id, _) = handles
         .store

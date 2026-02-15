@@ -12,8 +12,7 @@ use thiserror::Error;
 
 use super::app_state::AppState;
 
-const WORKER_NAME_LOGIN: &str = "login";
-const WORKER_NAME_TASK_LIFECYCLE: &str = "task_lifecycle";
+pub(crate) const WORKER_NAME_LOGIN: &str = "login";
 
 #[derive(Debug, Error)]
 pub enum LoginError {
@@ -33,9 +32,10 @@ impl AppState {
         &self,
         github_token: String,
         github_refresh_token: String,
+        actor: ActorRef,
     ) -> Result<api::login::LoginResponse, LoginError> {
         let (user, _actor, login_token) = self
-            .create_actor_for_github_token(github_token, github_refresh_token)
+            .create_actor_for_github_token(github_token, github_refresh_token, actor)
             .await?;
 
         let user_summary: api::users::UserSummary = UserSummary::from(user).into();
@@ -47,6 +47,7 @@ impl AppState {
         &self,
         github_token: String,
         github_refresh_token: String,
+        login_actor: ActorRef,
     ) -> Result<(User, Actor, String), LoginError> {
         let github_client = Octocrab::builder()
             .base_uri(self.config.github_app.api_base_url().to_string())
@@ -99,11 +100,6 @@ impl AppState {
 
         let (actor, auth_token) = Actor::new_for_user(username);
 
-        let login_actor = ActorRef::System {
-            worker_name: WORKER_NAME_LOGIN.into(),
-            on_behalf_of: None,
-        };
-
         if let Err(err) = self.store.add_user(user.clone(), login_actor.clone()).await {
             match err {
                 StoreError::UserAlreadyExists(_) => {
@@ -143,18 +139,11 @@ impl AppState {
     pub(crate) async fn create_actor_for_task(
         &self,
         task_id: TaskId,
+        lifecycle_actor: ActorRef,
     ) -> Result<(Actor, String), StoreError> {
         let task = self.get_task(&task_id).await?;
         let (actor, auth_token) = Actor::new_for_task(task_id, task.creator);
-        self.store
-            .add_actor(
-                actor.clone(),
-                ActorRef::System {
-                    worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
-                    on_behalf_of: None,
-                },
-            )
-            .await?;
+        self.store.add_actor(actor.clone(), lifecycle_actor).await?;
         Ok((actor, auth_token))
     }
 
@@ -191,7 +180,7 @@ impl AppState {
 mod tests {
     use super::LoginError;
     use crate::{
-        domain::users::Username,
+        domain::{actors::ActorRef, users::Username},
         test_utils::{github_user_response, test_state_with_github_api_base_url},
     };
     use httpmock::prelude::*;
@@ -209,7 +198,11 @@ mod tests {
         let handles = test_state_with_github_api_base_url(github_server.base_url());
         let response = handles
             .state
-            .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
+            .login_with_github_token(
+                "gh-token".to_string(),
+                "gh-refresh".to_string(),
+                ActorRef::test(),
+            )
             .await
             .expect("login should succeed");
 
@@ -236,7 +229,11 @@ mod tests {
         let handles = test_state_with_github_api_base_url(github_server.base_url());
         let err = handles
             .state
-            .login_with_github_token("bad-token".to_string(), "gh-refresh".to_string())
+            .login_with_github_token(
+                "bad-token".to_string(),
+                "gh-refresh".to_string(),
+                ActorRef::test(),
+            )
             .await
             .expect_err("login should fail for invalid token");
 

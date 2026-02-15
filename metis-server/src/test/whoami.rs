@@ -1,3 +1,4 @@
+use crate::domain::actors::ActorRef;
 use crate::test::{
     github_user_response, spawn_test_server, spawn_test_server_with_state, test_auth_token,
     test_client, test_state_with_github_api_base_url,
@@ -33,7 +34,11 @@ async fn whoami_returns_user_identity() -> anyhow::Result<()> {
     let handles = test_state_with_github_api_base_url(github_server.base_url());
     let token = handles
         .state
-        .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
+        .login_with_github_token(
+            "gh-token".to_string(),
+            "gh-refresh".to_string(),
+            ActorRef::test(),
+        )
         .await?
         .login_token;
 

@@ -43,7 +43,11 @@ async fn github_token_returns_for_username_actor() -> anyhow::Result<()> {
     let handles = test_state_with_github_urls(server.base_url(), server.base_url());
     let auth_token = handles
         .state
-        .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
+        .login_with_github_token(
+            "gh-token".to_string(),
+            "gh-refresh".to_string(),
+            ActorRef::test(),
+        )
         .await?
         .login_token;
 

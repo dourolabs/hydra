@@ -2334,12 +2334,12 @@ mod tests {
 
         handles
             .state
-            .transition_task_to_pending(&task_id)
+            .transition_task_to_pending(&task_id, ActorRef::test())
             .await
             .unwrap();
         handles
             .state
-            .transition_task_to_running(&task_id)
+            .transition_task_to_running(&task_id, ActorRef::test())
             .await
             .unwrap();
         assert_eq!(
@@ -2355,7 +2355,7 @@ mod tests {
 
         handles
             .state
-            .transition_task_to_completion(&task_id, Ok(()), Some("done".into()))
+            .transition_task_to_completion(&task_id, Ok(()), Some("done".into()), ActorRef::test())
             .await
             .unwrap();
         assert_eq!(

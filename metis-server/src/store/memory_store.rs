@@ -2420,10 +2420,16 @@ mod tests {
             .await
             .unwrap();
 
-        state.transition_task_to_pending(&task_id).await.unwrap();
-        state.transition_task_to_running(&task_id).await.unwrap();
         state
-            .transition_task_to_completion(&task_id, Ok(()), None)
+            .transition_task_to_pending(&task_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&task_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_completion(&task_id, Ok(()), None, ActorRef::test())
             .await
             .unwrap();
 
@@ -2459,11 +2465,17 @@ mod tests {
         assert_eq!(log.creation_time(), Some(created_at));
         assert_eq!(log.current_status(), Status::Created);
 
-        state.transition_task_to_pending(&task_id).await.unwrap();
+        state
+            .transition_task_to_pending(&task_id, ActorRef::test())
+            .await
+            .unwrap();
         let log = store.get_status_log(&task_id).await.unwrap();
         assert_eq!(log.current_status(), Status::Pending);
 
-        state.transition_task_to_running(&task_id).await.unwrap();
+        state
+            .transition_task_to_running(&task_id, ActorRef::test())
+            .await
+            .unwrap();
         let log = store.get_status_log(&task_id).await.unwrap();
         assert!(matches!(log.events.last(), Some(Event::Started { .. })));
 
@@ -2478,7 +2490,12 @@ mod tests {
         assert_eq!(log.events.len(), 3);
 
         state
-            .transition_task_to_completion(&task_id, Ok(()), Some("done".to_string()))
+            .transition_task_to_completion(
+                &task_id,
+                Ok(()),
+                Some("done".to_string()),
+                ActorRef::test(),
+            )
             .await
             .unwrap();
         let log = store.get_status_log(&task_id).await.unwrap();
@@ -2517,8 +2534,14 @@ mod tests {
             .add_task(running_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
-        state.transition_task_to_pending(&running_id).await.unwrap();
-        state.transition_task_to_running(&running_id).await.unwrap();
+        state
+            .transition_task_to_pending(&running_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&running_id, ActorRef::test())
+            .await
+            .unwrap();
 
         let mut completed_task = spawn_task();
         completed_task.spawned_from = Some(issue_id.clone());
@@ -2527,15 +2550,15 @@ mod tests {
             .await
             .unwrap();
         state
-            .transition_task_to_pending(&completed_id)
+            .transition_task_to_pending(&completed_id, ActorRef::test())
             .await
             .unwrap();
         state
-            .transition_task_to_running(&completed_id)
+            .transition_task_to_running(&completed_id, ActorRef::test())
             .await
             .unwrap();
         state
-            .transition_task_to_completion(&completed_id, Ok(()), None)
+            .transition_task_to_completion(&completed_id, Ok(()), None, ActorRef::test())
             .await
             .unwrap();
 
@@ -2605,7 +2628,10 @@ mod tests {
             Status::Created
         );
 
-        state.transition_task_to_pending(&root_id).await.unwrap();
+        state
+            .transition_task_to_pending(&root_id, ActorRef::test())
+            .await
+            .unwrap();
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Pending
@@ -2623,8 +2649,14 @@ mod tests {
             .await
             .unwrap();
 
-        state.transition_task_to_pending(&root_id).await.unwrap();
-        state.transition_task_to_running(&root_id).await.unwrap();
+        state
+            .transition_task_to_pending(&root_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&root_id, ActorRef::test())
+            .await
+            .unwrap();
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Running
@@ -2648,8 +2680,14 @@ mod tests {
         );
 
         // First mark as pending then running
-        state.transition_task_to_pending(&root_id).await.unwrap();
-        state.transition_task_to_running(&root_id).await.unwrap();
+        state
+            .transition_task_to_pending(&root_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&root_id, ActorRef::test())
+            .await
+            .unwrap();
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Running
@@ -2657,7 +2695,7 @@ mod tests {
 
         // Then mark as complete
         state
-            .transition_task_to_completion(&root_id, Ok(()), None)
+            .transition_task_to_completion(&root_id, Ok(()), None, ActorRef::test())
             .await
             .unwrap();
         assert_eq!(
@@ -2683,8 +2721,14 @@ mod tests {
         );
 
         // First mark as pending then running
-        state.transition_task_to_pending(&root_id).await.unwrap();
-        state.transition_task_to_running(&root_id).await.unwrap();
+        state
+            .transition_task_to_pending(&root_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&root_id, ActorRef::test())
+            .await
+            .unwrap();
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Running
@@ -2698,6 +2742,7 @@ mod tests {
                     reason: "test failure".to_string(),
                 }),
                 None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -2720,7 +2765,7 @@ mod tests {
 
         // Trying to mark as complete from pending should fail
         let err = state
-            .transition_task_to_completion(&root_id, Ok(()), None)
+            .transition_task_to_completion(&root_id, Ok(()), None, ActorRef::test())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
@@ -2745,6 +2790,7 @@ mod tests {
                     reason: "test".to_string(),
                 }),
                 None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -2765,10 +2811,21 @@ mod tests {
             .await
             .unwrap();
 
-        state.transition_task_to_pending(&root_id).await.unwrap();
-        state.transition_task_to_running(&root_id).await.unwrap();
         state
-            .transition_task_to_completion(&root_id, Ok(()), Some("first message".to_string()))
+            .transition_task_to_pending(&root_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&root_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_completion(
+                &root_id,
+                Ok(()),
+                Some("first message".to_string()),
+                ActorRef::test(),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -2778,7 +2835,12 @@ mod tests {
 
         // Second Complete transition should succeed idempotently
         let result = state
-            .transition_task_to_completion(&root_id, Ok(()), Some("second message".to_string()))
+            .transition_task_to_completion(
+                &root_id,
+                Ok(()),
+                Some("second message".to_string()),
+                ActorRef::test(),
+            )
             .await;
         assert!(result.is_ok());
 
@@ -2799,8 +2861,14 @@ mod tests {
             .await
             .unwrap();
 
-        state.transition_task_to_pending(&root_id).await.unwrap();
-        state.transition_task_to_running(&root_id).await.unwrap();
+        state
+            .transition_task_to_pending(&root_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&root_id, ActorRef::test())
+            .await
+            .unwrap();
         state
             .transition_task_to_completion(
                 &root_id,
@@ -2808,6 +2876,7 @@ mod tests {
                     reason: "first failure".to_string(),
                 }),
                 None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -2824,6 +2893,7 @@ mod tests {
                     reason: "second failure".to_string(),
                 }),
                 None,
+                ActorRef::test(),
             )
             .await;
         assert!(result.is_ok());
@@ -2848,10 +2918,16 @@ mod tests {
             .await
             .unwrap();
 
-        state.transition_task_to_pending(&root_id).await.unwrap();
-        state.transition_task_to_running(&root_id).await.unwrap();
         state
-            .transition_task_to_completion(&root_id, Ok(()), None)
+            .transition_task_to_pending(&root_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&root_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_completion(&root_id, Ok(()), None, ActorRef::test())
             .await
             .unwrap();
 
@@ -2863,6 +2939,7 @@ mod tests {
                     reason: "conflict".to_string(),
                 }),
                 None,
+                ActorRef::test(),
             )
             .await
             .unwrap_err();
@@ -2880,8 +2957,14 @@ mod tests {
             .await
             .unwrap();
 
-        state.transition_task_to_pending(&root_id).await.unwrap();
-        state.transition_task_to_running(&root_id).await.unwrap();
+        state
+            .transition_task_to_pending(&root_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&root_id, ActorRef::test())
+            .await
+            .unwrap();
         state
             .transition_task_to_completion(
                 &root_id,
@@ -2889,13 +2972,14 @@ mod tests {
                     reason: "failure".to_string(),
                 }),
                 None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
 
         // Trying to transition Failed -> Complete should fail
         let err = state
-            .transition_task_to_completion(&root_id, Ok(()), None)
+            .transition_task_to_completion(&root_id, Ok(()), None, ActorRef::test())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
@@ -4084,17 +4168,34 @@ mod tests {
             .add_task(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
-        state.transition_task_to_pending(&task1_id).await.unwrap();
-        state.transition_task_to_running(&task1_id).await.unwrap();
+        state
+            .transition_task_to_pending(&task1_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&task1_id, ActorRef::test())
+            .await
+            .unwrap();
 
         let (task2_id, _) = store
             .add_task(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
-        state.transition_task_to_pending(&task2_id).await.unwrap();
-        state.transition_task_to_running(&task2_id).await.unwrap();
         state
-            .transition_task_to_completion(&task2_id, Ok(()), Some("done".to_string()))
+            .transition_task_to_pending(&task2_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&task2_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_completion(
+                &task2_id,
+                Ok(()),
+                Some("done".to_string()),
+                ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -4102,8 +4203,14 @@ mod tests {
             .add_task(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
-        state.transition_task_to_pending(&task3_id).await.unwrap();
-        state.transition_task_to_running(&task3_id).await.unwrap();
+        state
+            .transition_task_to_pending(&task3_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&task3_id, ActorRef::test())
+            .await
+            .unwrap();
         state
             .transition_task_to_completion(
                 &task3_id,
@@ -4111,6 +4218,7 @@ mod tests {
                     reason: "test failure".to_string(),
                 }),
                 None,
+                ActorRef::test(),
             )
             .await
             .unwrap();

@@ -377,7 +377,7 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch).await.unwrap();
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         let parent = Issue::new(
             IssueType::Task,
@@ -391,13 +391,13 @@ mod tests {
             Vec::new(),
             vec![patch_id.clone()],
         );
-        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
         let mr_issue = make_merge_request_issue(&patch_id, &parent_id);
-        let (mr_id, _) = store.add_issue(mr_issue).await.unwrap();
+        let (mr_id, _) = store.add_issue(mr_issue, &ActorRef::test()).await.unwrap();
 
         let rr_issue = make_review_request_issue(&patch_id, &parent_id, IssueStatus::Open);
-        let (rr_id, _) = store.add_issue(rr_issue).await.unwrap();
+        let (rr_id, _) = store.add_issue(rr_issue, &ActorRef::test()).await.unwrap();
 
         let old_patch = make_patch(PatchStatus::Open);
         let new_patch = make_patch(PatchStatus::Merged);
@@ -438,7 +438,7 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch).await.unwrap();
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         let parent = Issue::new(
             IssueType::Task,
@@ -452,13 +452,13 @@ mod tests {
             Vec::new(),
             vec![patch_id.clone()],
         );
-        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
         let mr_issue = make_merge_request_issue(&patch_id, &parent_id);
-        let (mr_id, _) = store.add_issue(mr_issue).await.unwrap();
+        let (mr_id, _) = store.add_issue(mr_issue, &ActorRef::test()).await.unwrap();
 
         let rr_issue = make_review_request_issue(&patch_id, &parent_id, IssueStatus::InProgress);
-        let (rr_id, _) = store.add_issue(rr_issue).await.unwrap();
+        let (rr_id, _) = store.add_issue(rr_issue, &ActorRef::test()).await.unwrap();
 
         let old_patch = make_patch(PatchStatus::Open);
         let new_patch = make_patch(PatchStatus::Closed);
@@ -499,7 +499,7 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch).await.unwrap();
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         let parent = Issue::new(
             IssueType::Task,
@@ -513,17 +513,20 @@ mod tests {
             Vec::new(),
             vec![patch_id.clone()],
         );
-        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
         // Create ReviewRequest issues already in terminal statuses
         let rr_closed = make_review_request_issue(&patch_id, &parent_id, IssueStatus::Closed);
-        let (rr_closed_id, _) = store.add_issue(rr_closed).await.unwrap();
+        let (rr_closed_id, _) = store.add_issue(rr_closed, &ActorRef::test()).await.unwrap();
 
         let rr_dropped = make_review_request_issue(&patch_id, &parent_id, IssueStatus::Dropped);
-        let (rr_dropped_id, _) = store.add_issue(rr_dropped).await.unwrap();
+        let (rr_dropped_id, _) = store
+            .add_issue(rr_dropped, &ActorRef::test())
+            .await
+            .unwrap();
 
         let rr_failed = make_review_request_issue(&patch_id, &parent_id, IssueStatus::Failed);
-        let (rr_failed_id, _) = store.add_issue(rr_failed).await.unwrap();
+        let (rr_failed_id, _) = store.add_issue(rr_failed, &ActorRef::test()).await.unwrap();
 
         let old_patch = make_patch(PatchStatus::Open);
         let new_patch = make_patch(PatchStatus::Merged);

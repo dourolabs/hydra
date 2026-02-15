@@ -428,11 +428,17 @@ mod tests {
             .store
             .add_task(task, Utc::now(), &ActorRef::test())
             .await?;
-        handles.state.transition_task_to_pending(&task_id).await?;
-        handles.state.transition_task_to_running(&task_id).await?;
         handles
             .state
-            .transition_task_to_completion(&task_id, Ok(()), None)
+            .transition_task_to_pending(&task_id, ActorRef::test())
+            .await?;
+        handles
+            .state
+            .transition_task_to_running(&task_id, ActorRef::test())
+            .await?;
+        handles
+            .state
+            .transition_task_to_completion(&task_id, Ok(()), None, ActorRef::test())
             .await?;
         Ok(())
     }
@@ -840,7 +846,10 @@ mod tests {
                 &ActorRef::test(),
             )
             .await?;
-        handles.state.transition_task_to_pending(&task_id).await?;
+        handles
+            .state
+            .transition_task_to_pending(&task_id, ActorRef::test())
+            .await?;
 
         handles
             .store
@@ -921,7 +930,10 @@ mod tests {
                 &ActorRef::test(),
             )
             .await?;
-        handles.state.transition_task_to_pending(&task_id).await?;
+        handles
+            .state
+            .transition_task_to_pending(&task_id, ActorRef::test())
+            .await?;
 
         let queue = queue("agent-a");
         let tasks = queue.spawn(&handles.state).await?;
@@ -1114,7 +1126,10 @@ mod tests {
                 &ActorRef::test(),
             )
             .await?;
-        handles.state.transition_task_to_pending(&task_id).await?;
+        handles
+            .state
+            .transition_task_to_pending(&task_id, ActorRef::test())
+            .await?;
 
         let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
