@@ -171,8 +171,16 @@ pub trait MetisClientInterface: Send + Sync {
         document_id: &DocumentId,
         request: &UpsertDocumentRequest,
     ) -> Result<UpsertDocumentResponse>;
-    async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord>;
-    async fn get_document_by_path(&self, path: &str) -> Result<DocumentVersionRecord>;
+    async fn get_document(
+        &self,
+        document_id: &DocumentId,
+        include_deleted: bool,
+    ) -> Result<DocumentVersionRecord>;
+    async fn get_document_by_path(
+        &self,
+        path: &str,
+        include_deleted: bool,
+    ) -> Result<DocumentVersionRecord>;
     async fn list_documents(&self, query: &SearchDocumentsQuery) -> Result<ListDocumentsResponse>;
     async fn list_document_versions(
         &self,
@@ -831,11 +839,18 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/documents/:document_id` to fetch a document.
-    pub async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
+    pub async fn get_document(
+        &self,
+        document_id: &DocumentId,
+        include_deleted: bool,
+    ) -> Result<DocumentVersionRecord> {
         let path = format!("/v1/documents/{document_id}");
         let url = self.endpoint(&path)?;
-        let response = self
-            .authed(self.http.get(url))
+        let mut builder = self.authed(self.http.get(url));
+        if include_deleted {
+            builder = builder.query(&[("include_deleted", "true")]);
+        }
+        let response = builder
             .send()
             .await
             .context("failed to fetch document")?
@@ -852,8 +867,19 @@ impl MetisClient {
     ///
     /// Uses the list documents endpoint with a path prefix filter and
     /// path_is_exact=true to find a document with an exact path match.
-    pub async fn get_document_by_path(&self, path: &str) -> Result<DocumentVersionRecord> {
-        let query = SearchDocumentsQuery::new(None, Some(path.to_string()), Some(true), None, None);
+    pub async fn get_document_by_path(
+        &self,
+        path: &str,
+        include_deleted: bool,
+    ) -> Result<DocumentVersionRecord> {
+        let include_deleted_opt = if include_deleted { Some(true) } else { None };
+        let query = SearchDocumentsQuery::new(
+            None,
+            Some(path.to_string()),
+            Some(true),
+            None,
+            include_deleted_opt,
+        );
         let response = self.list_documents(&query).await?;
 
         response
@@ -1590,12 +1616,20 @@ impl MetisClientInterface for MetisClient {
         MetisClient::update_document(self, document_id, request).await
     }
 
-    async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
-        MetisClient::get_document(self, document_id).await
+    async fn get_document(
+        &self,
+        document_id: &DocumentId,
+        include_deleted: bool,
+    ) -> Result<DocumentVersionRecord> {
+        MetisClient::get_document(self, document_id, include_deleted).await
     }
 
-    async fn get_document_by_path(&self, path: &str) -> Result<DocumentVersionRecord> {
-        MetisClient::get_document_by_path(self, path).await
+    async fn get_document_by_path(
+        &self,
+        path: &str,
+        include_deleted: bool,
+    ) -> Result<DocumentVersionRecord> {
+        MetisClient::get_document_by_path(self, path, include_deleted).await
     }
 
     async fn list_documents(&self, query: &SearchDocumentsQuery) -> Result<ListDocumentsResponse> {

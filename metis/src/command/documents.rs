@@ -31,6 +31,15 @@ pub enum DocumentsCommand {
         /// Document ID (e.g., d-abcdef) or path (e.g., docs/plan.md).
         #[arg(value_name = "ID_OR_PATH")]
         id_or_path: String,
+
+        /// Include deleted documents in the result.
+        #[arg(long = "include-deleted")]
+        include_deleted: bool,
+
+        /// Retrieve a specific version. Positive numbers mean 'get version N'.
+        /// Negative numbers mean 'offset from latest' (e.g., -1 = one version before latest).
+        #[arg(long)]
+        version: Option<i64>,
     },
     /// Create a new document.
     Create(CreateDocumentArgs),
@@ -167,8 +176,13 @@ pub async fn run(
             let documents = list_documents(client, args).await?;
             write_documents_output(context.output_format, &documents, full_output)?;
         }
-        DocumentsCommand::Get { id_or_path } => {
-            let document = get_document_by_id_or_path(client, &id_or_path).await?;
+        DocumentsCommand::Get {
+            id_or_path,
+            include_deleted,
+            version,
+        } => {
+            let document =
+                get_document_with_options(client, &id_or_path, include_deleted, version).await?;
             write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Create(args) => {
@@ -180,7 +194,7 @@ pub async fn run(
             write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Delete { id_or_path } => {
-            let document = get_document_by_id_or_path(client, &id_or_path).await?;
+            let document = get_document_by_id_or_path(client, &id_or_path, false).await?;
             let deleted = client
                 .delete_document(&document.document_id)
                 .await
@@ -232,16 +246,87 @@ fn render_documents_to_buffer(
 async fn get_document_by_id_or_path(
     client: &dyn MetisClientInterface,
     id_or_path: &str,
+    include_deleted: bool,
 ) -> Result<DocumentVersionRecord> {
     match DocumentId::try_from(id_or_path.to_string()) {
         Ok(id) => client
-            .get_document(&id)
+            .get_document(&id, include_deleted)
             .await
             .context("failed to fetch document"),
         Err(_) => client
-            .get_document_by_path(id_or_path)
+            .get_document_by_path(id_or_path, include_deleted)
             .await
             .with_context(|| format!("failed to fetch document with path '{id_or_path}'")),
+    }
+}
+
+async fn get_document_with_options(
+    client: &dyn MetisClientInterface,
+    id_or_path: &str,
+    include_deleted: bool,
+    version: Option<i64>,
+) -> Result<DocumentVersionRecord> {
+    match version {
+        None => get_document_by_id_or_path(client, id_or_path, include_deleted).await,
+        Some(0) => bail!("--version 0 is not valid; use a positive number for an absolute version or a negative number for an offset from the latest"),
+        Some(v) if v > 0 => {
+            let document_id = resolve_document_id(client, id_or_path, include_deleted).await?;
+            let version_number = v as VersionNumber;
+            client
+                .get_document_version(&document_id, &version_number)
+                .await
+                .with_context(|| {
+                    format!("failed to fetch version {version_number} of document '{document_id}'")
+                })
+        }
+        Some(offset) => {
+            // Negative offset: resolve latest version and compute target
+            let document_id = resolve_document_id(client, id_or_path, include_deleted).await?;
+            let versions_response = client
+                .list_document_versions(&document_id)
+                .await
+                .context("failed to list document versions")?;
+            let latest = versions_response
+                .versions
+                .iter()
+                .map(|v| v.version)
+                .max()
+                .ok_or_else(|| anyhow::anyhow!("document '{document_id}' has no versions"))?;
+            let target = latest as i64 + offset;
+            if target < 1 {
+                bail!(
+                    "version offset {offset} resolves to version {target}, \
+                     which is before the first version (latest is {latest})"
+                );
+            }
+            let version_number = target as VersionNumber;
+            client
+                .get_document_version(&document_id, &version_number)
+                .await
+                .with_context(|| {
+                    format!("failed to fetch version {version_number} of document '{document_id}'")
+                })
+        }
+    }
+}
+
+/// Resolve an ID-or-path string to a DocumentId.
+async fn resolve_document_id(
+    client: &dyn MetisClientInterface,
+    id_or_path: &str,
+    include_deleted: bool,
+) -> Result<DocumentId> {
+    match DocumentId::try_from(id_or_path.to_string()) {
+        Ok(id) => Ok(id),
+        Err(_) => {
+            let record = client
+                .get_document_by_path(id_or_path, include_deleted)
+                .await
+                .with_context(|| {
+                    format!("failed to resolve path '{id_or_path}' to a document ID")
+                })?;
+            Ok(record.document_id)
+        }
     }
 }
 
@@ -303,7 +388,7 @@ async fn create_document(
         .context("failed to create document")?;
 
     client
-        .get_document(&response.document_id)
+        .get_document(&response.document_id, false)
         .await
         .context("failed to fetch created document")
 }
@@ -313,7 +398,7 @@ async fn update_document(
     args: UpdateDocumentArgs,
 ) -> Result<DocumentVersionRecord> {
     let mut record = client
-        .get_document(&args.id)
+        .get_document(&args.id, false)
         .await
         .context("failed to fetch document")?;
     let mut document = record.document.clone();
@@ -698,16 +783,15 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
             }
 
             // Local has changed — fetch the full document for the update
-            let server_record =
-                client
-                    .get_document(&entry.document_id)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "failed to fetch document '{}' from server",
-                            entry.document_id
-                        )
-                    })?;
+            let server_record = client
+                .get_document(&entry.document_id, false)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to fetch document '{}' from server",
+                        entry.document_id
+                    )
+                })?;
 
             if server_changed {
                 // Both local and server changed — warn but proceed (local wins)
@@ -1127,7 +1211,7 @@ mod tests {
         });
         let client = mock_client(&server);
 
-        let result = get_document_by_id_or_path(&client, &document_id_str)
+        let result = get_document_by_id_or_path(&client, &document_id_str, false)
             .await
             .unwrap();
 
@@ -1151,7 +1235,9 @@ mod tests {
         });
         let client = mock_client(&server);
 
-        let result = get_document_by_id_or_path(&client, path).await.unwrap();
+        let result = get_document_by_id_or_path(&client, path, false)
+            .await
+            .unwrap();
 
         assert_eq!(result.document_id, document_id);
         list_mock.assert();
@@ -1171,7 +1257,9 @@ mod tests {
         });
         let client = mock_client(&server);
 
-        let error = get_document_by_id_or_path(&client, path).await.unwrap_err();
+        let error = get_document_by_id_or_path(&client, path, false)
+            .await
+            .unwrap_err();
 
         assert!(error.to_string().contains("docs/nonexistent.md"));
         list_mock.assert();

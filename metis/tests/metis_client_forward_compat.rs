@@ -550,7 +550,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         .await?;
     assert_eq!(updated_document.document_id, document_id);
 
-    let fetched_document = client.get_document(&document_id).await?;
+    let fetched_document = client.get_document(&document_id, false).await?;
     assert_eq!(fetched_document.document_id, document_id);
     assert_eq!(
         fetched_document.document.path.as_deref(),
