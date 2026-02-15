@@ -14,7 +14,14 @@ use metis_common::{
     IssueId, VersionNumber,
     api::v1::{ApiError, issues as api_issues},
 };
+use serde::Deserialize;
 use tracing::{error, info};
+
+#[derive(Debug, Deserialize)]
+pub struct GetIssueQuery {
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
+}
 
 #[derive(Debug, Clone)]
 pub struct IssueIdPath(pub IssueId);
@@ -122,10 +129,12 @@ pub async fn update_issue(
 pub async fn get_issue(
     State(state): State<AppState>,
     IssueIdPath(issue_id): IssueIdPath,
+    Query(query): Query<GetIssueQuery>,
 ) -> Result<Json<api_issues::IssueVersionRecord>, ApiError> {
-    info!(issue_id = %issue_id, "get_issue invoked");
+    let include_deleted = query.include_deleted.unwrap_or(false);
+    info!(issue_id = %issue_id, include_deleted, "get_issue invoked");
     let issue = state
-        .get_issue(&issue_id, false)
+        .get_issue(&issue_id, include_deleted)
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 

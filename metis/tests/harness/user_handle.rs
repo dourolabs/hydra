@@ -139,7 +139,7 @@ impl UserHandle {
     pub async fn update_issue_status(&self, id: &IssueId, status: IssueStatus) -> Result<()> {
         let existing = self
             .client
-            .get_issue(id)
+            .get_issue(id, false)
             .await
             .context("UserHandle::update_issue_status: failed to get issue")?;
         let mut issue = existing.issue;
@@ -155,7 +155,7 @@ impl UserHandle {
     /// Retrieve an issue by ID.
     pub async fn get_issue(&self, id: &IssueId) -> Result<IssueVersionRecord> {
         self.client
-            .get_issue(id)
+            .get_issue(id, false)
             .await
             .context("UserHandle::get_issue failed")
     }

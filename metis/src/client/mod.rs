@@ -150,7 +150,16 @@ pub trait MetisClientInterface: Send + Sync {
         item_number: usize,
         request: &SetTodoItemStatusRequest,
     ) -> Result<TodoListResponse>;
-    async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord>;
+    async fn get_issue(
+        &self,
+        issue_id: &IssueId,
+        include_deleted: bool,
+    ) -> Result<IssueVersionRecord>;
+    async fn get_issue_version(
+        &self,
+        issue_id: &IssueId,
+        version: &VersionNumber,
+    ) -> Result<IssueVersionRecord>;
     async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse>;
     async fn list_issue_versions(&self, issue_id: &IssueId) -> Result<ListIssueVersionsResponse>;
     async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse>;
@@ -564,11 +573,18 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/issues/:issue_id` to fetch an issue.
-    pub async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
+    pub async fn get_issue(
+        &self,
+        issue_id: &IssueId,
+        include_deleted: bool,
+    ) -> Result<IssueVersionRecord> {
         let path = format!("/v1/issues/{issue_id}");
         let url = self.endpoint(&path)?;
-        let response = self
-            .authed(self.http.get(url))
+        let mut builder = self.authed(self.http.get(url));
+        if include_deleted {
+            builder = builder.query(&[("include_deleted", "true")]);
+        }
+        let response = builder
             .send()
             .await
             .context("failed to fetch issue")?
@@ -579,6 +595,30 @@ impl MetisClient {
             .json::<IssueVersionRecord>()
             .await
             .context("failed to decode get issue response")
+    }
+
+    /// Call `GET /v1/issues/:issue_id/versions/:version` to fetch a specific issue version.
+    pub async fn get_issue_version(
+        &self,
+        issue_id: &IssueId,
+        version: &VersionNumber,
+    ) -> Result<IssueVersionRecord> {
+        let path = format!("/v1/issues/{issue_id}/versions/{version}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch issue version")?
+            .error_for_status_with_body(
+                "metis-server returned an error while fetching issue version",
+            )
+            .await?;
+
+        response
+            .json::<IssueVersionRecord>()
+            .await
+            .context("failed to decode issue version response")
     }
 
     /// Call `GET /v1/issues` to list issues with optional filters.
@@ -1565,8 +1605,20 @@ impl MetisClientInterface for MetisClient {
         MetisClient::set_todo_item_status(self, issue_id, item_number, request).await
     }
 
-    async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
-        MetisClient::get_issue(self, issue_id).await
+    async fn get_issue(
+        &self,
+        issue_id: &IssueId,
+        include_deleted: bool,
+    ) -> Result<IssueVersionRecord> {
+        MetisClient::get_issue(self, issue_id, include_deleted).await
+    }
+
+    async fn get_issue_version(
+        &self,
+        issue_id: &IssueId,
+        version: &VersionNumber,
+    ) -> Result<IssueVersionRecord> {
+        MetisClient::get_issue_version(self, issue_id, version).await
     }
 
     async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse> {

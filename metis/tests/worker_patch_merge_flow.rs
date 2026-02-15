@@ -139,7 +139,9 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
         Some(head_ref)
     );
 
-    let initial_merge_request_issue = client.get_issue(&initial_merge_request_issue_id).await?;
+    let initial_merge_request_issue = client
+        .get_issue(&initial_merge_request_issue_id, false)
+        .await?;
     assert_eq!(
         initial_merge_request_issue.issue.status,
         IssueStatus::Failed
