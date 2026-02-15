@@ -9,6 +9,8 @@ use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use metis_common::IssueId;
 
+const AUTOMATION_NAME: &str = "cascade_issue_status";
+
 /// When an issue's status changes to a terminal/failure status, recursively
 /// drop all child issues.
 ///
@@ -69,7 +71,7 @@ fn parse_issue_status(s: &str) -> Result<IssueStatus, String> {
 #[async_trait]
 impl Automation for CascadeIssueStatusAutomation {
     fn name(&self) -> &str {
-        "cascade_issue_status"
+        AUTOMATION_NAME
     }
 
     fn event_filter(&self) -> EventFilter {
@@ -105,7 +107,7 @@ impl Automation for CascadeIssueStatusAutomation {
 
         let store = ctx.store;
         let actor = ActorRef::Automation {
-            automation_name: "cascade_issue_status".into(),
+            automation_name: AUTOMATION_NAME.into(),
             triggered_by: Some(Box::new(ctx.actor().clone())),
         };
 

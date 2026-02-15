@@ -250,7 +250,7 @@ async fn sync_patch_from_github(
         state
             .upsert_patch(
                 ActorRef::System {
-                    worker_name: "github_pr_poller".into(),
+                    worker_name: WORKER_NAME.into(),
                     on_behalf_of: None,
                 },
                 Some(patch_id.clone()),

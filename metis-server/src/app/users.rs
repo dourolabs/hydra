@@ -12,6 +12,9 @@ use thiserror::Error;
 
 use super::app_state::AppState;
 
+const WORKER_NAME_LOGIN: &str = "login";
+const WORKER_NAME_TASK_LIFECYCLE: &str = "task_lifecycle";
+
 #[derive(Debug, Error)]
 pub enum LoginError {
     #[error("invalid github token: {0}")]
@@ -97,7 +100,7 @@ impl AppState {
         let (actor, auth_token) = Actor::new_for_user(username);
 
         let login_actor = ActorRef::System {
-            worker_name: "login".into(),
+            worker_name: WORKER_NAME_LOGIN.into(),
             on_behalf_of: None,
         };
 
@@ -147,7 +150,7 @@ impl AppState {
             .add_actor(
                 actor.clone(),
                 ActorRef::System {
-                    worker_name: "task_lifecycle".into(),
+                    worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
                     on_behalf_of: None,
                 },
             )

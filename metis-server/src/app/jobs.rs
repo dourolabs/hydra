@@ -24,6 +24,9 @@ use tracing::{error, info, warn};
 use super::TaskResolutionError;
 use super::app_state::AppState;
 
+const WORKER_NAME_TASK_LIFECYCLE: &str = "task_lifecycle";
+const WORKER_NAME_CLEANUP_ORPHANED_TASKS: &str = "cleanup_orphaned_tasks";
+
 #[derive(Debug, Error)]
 pub enum CreateJobError {
     #[error(transparent)]
@@ -518,7 +521,7 @@ impl AppState {
                 .delete_task_with_actor(
                     &task_id,
                     ActorRef::System {
-                        worker_name: "cleanup_orphaned_tasks".into(),
+                        worker_name: WORKER_NAME_CLEANUP_ORPHANED_TASKS.into(),
                         on_behalf_of: None,
                     },
                 )
@@ -692,7 +695,7 @@ impl AppState {
                 task_id,
                 updated,
                 ActorRef::System {
-                    worker_name: "task_lifecycle".into(),
+                    worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
                     on_behalf_of: None,
                 },
             )
@@ -718,7 +721,7 @@ impl AppState {
                 task_id,
                 updated,
                 ActorRef::System {
-                    worker_name: "task_lifecycle".into(),
+                    worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
                     on_behalf_of: None,
                 },
             )
@@ -736,7 +739,7 @@ impl AppState {
             result,
             last_message,
             ActorRef::System {
-                worker_name: "task_lifecycle".into(),
+                worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
                 on_behalf_of: None,
             },
         )

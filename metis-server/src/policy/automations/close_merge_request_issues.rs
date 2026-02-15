@@ -7,6 +7,8 @@ use crate::domain::patches::PatchStatus;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 
+const AUTOMATION_NAME: &str = "close_merge_request_issues";
+
 /// When a patch status changes to Closed/Merged/ChangesRequested, close or fail
 /// all associated MergeRequest issues.
 ///
@@ -23,7 +25,7 @@ impl CloseMergeRequestIssuesAutomation {
 #[async_trait]
 impl Automation for CloseMergeRequestIssuesAutomation {
     fn name(&self) -> &str {
-        "close_merge_request_issues"
+        AUTOMATION_NAME
     }
 
     fn event_filter(&self) -> EventFilter {
@@ -99,7 +101,7 @@ impl Automation for CloseMergeRequestIssuesAutomation {
                     Some(issue_id.clone()),
                     metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
                     ActorRef::Automation {
-                        automation_name: "close_merge_request_issues".into(),
+                        automation_name: AUTOMATION_NAME.into(),
                         triggered_by: Some(Box::new(ctx.actor().clone())),
                     },
                 )
