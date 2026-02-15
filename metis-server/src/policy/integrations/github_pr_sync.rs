@@ -173,14 +173,22 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             updated.url = pr.html_url.as_ref().map(ToString::to_string);
             patch.github = Some(updated);
         } else {
-            // Determine base ref: use existing value or fetch default branch.
+            // Determine base ref: prefer patch.base_branch, then
+            // patch.github.base_ref, then fall back to the repository's
+            // configured default branch.
             let base_ref = match patch
-                .github
+                .base_branch
                 .as_ref()
-                .and_then(|github| github.base_ref.as_ref())
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
-            {
+                .or_else(|| {
+                    patch
+                        .github
+                        .as_ref()
+                        .and_then(|github| github.base_ref.as_ref())
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                }) {
                 Some(base_ref) => base_ref,
                 None => {
                     let repository = ctx

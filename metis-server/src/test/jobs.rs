@@ -909,6 +909,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
                 deleted: false,
                 branch_name: None,
                 commit_range: None,
+                base_branch: None,
             },
             &ActorRef::test(),
         )
@@ -1066,6 +1067,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 deleted: false,
                 branch_name: None,
                 commit_range: None,
+                base_branch: None,
             },
             &ActorRef::test(),
         )

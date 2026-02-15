@@ -224,6 +224,13 @@ pub struct Patch {
     /// The base-to-head commit range this patch covers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit_range: Option<CommitRange>,
+    /// The target branch this patch is intended to be applied on top of.
+    ///
+    /// Note: `base_branch` may not be upstream of `branch_name` — the two
+    /// branches share a common ancestor. The base branch may have received
+    /// additional commits since work on the patch began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
 }
 
 impl Patch {
@@ -254,6 +261,7 @@ impl Patch {
             deleted,
             branch_name: None,
             commit_range: None,
+            base_branch: None,
         }
     }
 }
@@ -506,6 +514,7 @@ mod tests {
                 "0000000000000000000000000000000000000001".parse().unwrap(),
                 "0000000000000000000000000000000000000002".parse().unwrap(),
             )),
+            base_branch: Some("main".to_string()),
         };
 
         let json = serde_json::to_string(&patch).unwrap();
@@ -534,6 +543,7 @@ mod tests {
         assert_eq!(patch.title, "old patch");
         assert_eq!(patch.branch_name, None);
         assert_eq!(patch.commit_range, None);
+        assert_eq!(patch.base_branch, None);
     }
 
     #[test]

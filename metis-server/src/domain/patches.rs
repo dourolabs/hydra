@@ -216,6 +216,13 @@ pub struct Patch {
     /// The base-to-head commit range this patch covers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit_range: Option<CommitRange>,
+    /// The target branch this patch is intended to be applied on top of.
+    ///
+    /// Note: `base_branch` may not be upstream of `branch_name` — the two
+    /// branches share a common ancestor. The base branch may have received
+    /// additional commits since work on the patch began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
 }
 
 impl Patch {
@@ -245,6 +252,7 @@ impl Patch {
             deleted: false,
             branch_name: None,
             commit_range: None,
+            base_branch: None,
         }
     }
 }
@@ -404,6 +412,7 @@ impl From<api::patches::Patch> for Patch {
             deleted: value.deleted,
             branch_name: value.branch_name,
             commit_range: value.commit_range.map(Into::into),
+            base_branch: value.base_branch,
         }
     }
 }
@@ -425,6 +434,7 @@ impl From<Patch> for api::patches::Patch {
         patch.creator = value.creator.map(Into::into);
         patch.branch_name = value.branch_name;
         patch.commit_range = value.commit_range.map(Into::into);
+        patch.base_branch = value.base_branch;
         patch
     }
 }
@@ -557,6 +567,7 @@ mod tests {
                 "0000000000000000000000000000000000000001".parse().unwrap(),
                 "0000000000000000000000000000000000000002".parse().unwrap(),
             )),
+            base_branch: Some("main".to_string()),
         };
 
         let api_patch: api::patches::Patch = domain_patch.clone().into();

@@ -916,6 +916,7 @@ mod tests {
             base_commit,
             base_commit,
         ));
+        expected_patch.base_branch = Some("main".to_string());
         let expected_request = UpsertPatchRequest::new(expected_patch);
         let server = MockServer::start();
         let patch_mock = server.mock(|when, then| {
