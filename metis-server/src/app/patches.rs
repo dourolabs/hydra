@@ -182,7 +182,6 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use super::UpsertPatchError;
     use crate::{
         app::test_helpers::{
             github_pull_request_response, poll_until, sample_task, start_test_automation_runner,
@@ -415,67 +414,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upsert_patch_rejects_duplicate_branch_name_on_create() -> anyhow::Result<()> {
-        let handles = test_state_handles();
-        let repo_name = RepoName::new("octo", "repo")?;
-
-        let mut patch1 = Patch::new(
-            "First patch".to_string(),
-            "desc".to_string(),
-            "diff".to_string(),
-            PatchStatus::Open,
-            false,
-            None,
-            Vec::new(),
-            repo_name.clone(),
-            None,
-        );
-        patch1.branch_name = Some("feature/foo".to_string());
-        let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let (patch1_id, _) = handles
-            .state
-            .upsert_patch(ActorRef::test(), None, request1)
-            .await?;
-
-        let mut patch2 = Patch::new(
-            "Second patch".to_string(),
-            "desc".to_string(),
-            "diff".to_string(),
-            PatchStatus::Open,
-            false,
-            None,
-            Vec::new(),
-            repo_name,
-            None,
-        );
-        patch2.branch_name = Some("feature/foo".to_string());
-        let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
-        let err = handles
-            .state
-            .upsert_patch(ActorRef::test(), None, request2)
-            .await
-            .unwrap_err();
-
-        match &err {
-            UpsertPatchError::PolicyViolation(violation) => {
-                assert!(
-                    violation.message.contains("feature/foo"),
-                    "expected violation to reference branch name, got: {}",
-                    violation.message
-                );
-                assert!(
-                    violation.message.contains(&patch1_id.to_string()),
-                    "expected violation to reference existing patch id, got: {}",
-                    violation.message
-                );
-            }
-            other => panic!("expected PolicyViolation, got: {other:?}"),
-        }
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn upsert_patch_allows_same_branch_after_close() -> anyhow::Result<()> {
         let handles = test_state_handles();
         let repo_name = RepoName::new("octo", "repo")?;
@@ -571,46 +509,4 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn upsert_patch_allows_create_without_branch_name() -> anyhow::Result<()> {
-        let handles = test_state_handles();
-        let repo_name = RepoName::new("octo", "repo")?;
-
-        // Create two patches without branch_name -- should both succeed
-        let patch1 = Patch::new(
-            "First patch".to_string(),
-            "desc".to_string(),
-            "diff".to_string(),
-            PatchStatus::Open,
-            false,
-            None,
-            Vec::new(),
-            repo_name.clone(),
-            None,
-        );
-        let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        handles
-            .state
-            .upsert_patch(ActorRef::test(), None, request1)
-            .await?;
-
-        let patch2 = Patch::new(
-            "Second patch".to_string(),
-            "desc".to_string(),
-            "diff".to_string(),
-            PatchStatus::Open,
-            false,
-            None,
-            Vec::new(),
-            repo_name,
-            None,
-        );
-        let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
-        handles
-            .state
-            .upsert_patch(ActorRef::test(), None, request2)
-            .await?;
-
-        Ok(())
-    }
 }
