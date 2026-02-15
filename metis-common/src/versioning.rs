@@ -63,4 +63,18 @@ impl<T> Versioned<T> {
             actor: Some(actor),
         }
     }
+
+    pub fn with_optional_actor(
+        item: T,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        actor: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            item,
+            version,
+            timestamp,
+            actor,
+        }
+    }
 }

@@ -1707,6 +1707,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn issue_versions_persist_actor() {
+        let store = MemoryStore::new();
+
+        let user_actor = ActorRef::Authenticated {
+            actor_id: ActorId::Username(Username::from("alice")),
+        };
+        let system_actor = ActorRef::System {
+            worker_name: "scheduler".into(),
+            on_behalf_of: None,
+        };
+
+        let mut issue = sample_issue(vec![]);
+        issue.description = "created by user".to_string();
+        let (issue_id, _) = store.add_issue(issue, &user_actor).await.unwrap();
+
+        let mut v2 = sample_issue(vec![]);
+        v2.description = "updated by system".to_string();
+        store
+            .update_issue(&issue_id, v2, &system_actor)
+            .await
+            .unwrap();
+
+        let versions = store.get_issue_versions(&issue_id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+
+        // Version 1 should have the user actor
+        let v1_actor: ActorRef =
+            serde_json::from_value(versions[0].actor.clone().unwrap()).unwrap();
+        assert_eq!(v1_actor, user_actor);
+
+        // Version 2 should have the system actor
+        let v2_actor: ActorRef =
+            serde_json::from_value(versions[1].actor.clone().unwrap()).unwrap();
+        assert_eq!(v2_actor, system_actor);
+
+        // Latest version should also have actor set
+        let latest = store.get_issue(&issue_id, false).await.unwrap();
+        let latest_actor: ActorRef = serde_json::from_value(latest.actor.clone().unwrap()).unwrap();
+        assert_eq!(latest_actor, system_actor);
+    }
+
+    #[tokio::test]
     async fn add_and_get_patch_assigns_id() {
         let store = MemoryStore::new();
 

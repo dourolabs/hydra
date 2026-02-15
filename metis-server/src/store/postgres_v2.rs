@@ -165,6 +165,7 @@ impl PostgresStoreV2 {
         id: &IssueId,
         version_number: VersionNumber,
         issue: &Issue,
+        actor: Option<&Value>,
     ) -> Result<(), StoreError> {
         let version_number = i64::try_from(version_number).map_err(|_| {
             StoreError::Internal(format!("version number overflow for issue '{id}'"))
@@ -180,8 +181,8 @@ impl PostgresStoreV2 {
             .map_err(|e| StoreError::Internal(format!("failed to serialize patches: {e}")))?;
 
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -197,6 +198,7 @@ impl PostgresStoreV2 {
             .bind(&dependencies_json)
             .bind(&patches_json)
             .bind(issue.deleted)
+            .bind(actor)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -245,6 +247,7 @@ impl PostgresStoreV2 {
         id: &PatchId,
         version_number: VersionNumber,
         patch: &Patch,
+        actor: Option<&Value>,
     ) -> Result<(), StoreError> {
         let version_number = i64::try_from(version_number).map_err(|_| {
             StoreError::Internal(format!("version number overflow for patch '{id}'"))
@@ -272,8 +275,8 @@ impl PostgresStoreV2 {
             .transpose()?;
 
         let query = format!(
-            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
+            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -290,6 +293,7 @@ impl PostgresStoreV2 {
             .bind(patch.deleted)
             .bind(&patch.branch_name)
             .bind(&commit_range_json)
+            .bind(actor)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -357,6 +361,7 @@ impl PostgresStoreV2 {
         id: &TaskId,
         version_number: VersionNumber,
         task: &Task,
+        actor: Option<&Value>,
     ) -> Result<(), StoreError> {
         let version_number = i64::try_from(version_number).map_err(|_| {
             StoreError::Internal(format!("version number overflow for task '{id}'"))
@@ -385,8 +390,8 @@ impl PostgresStoreV2 {
         };
 
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -403,6 +408,7 @@ impl PostgresStoreV2 {
             .bind(task.last_message.as_deref())
             .bind(&error_json)
             .bind(task.deleted)
+            .bind(actor)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -474,14 +480,15 @@ impl PostgresStoreV2 {
         id: &DocumentId,
         version_number: VersionNumber,
         document: &Document,
+        actor: Option<&Value>,
     ) -> Result<(), StoreError> {
         let version_number = i64::try_from(version_number).map_err(|_| {
             StoreError::Internal(format!("version number overflow for document '{id}'"))
         })?;
 
         let query = format!(
-            "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, created_by, deleted)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)"
+            "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, created_by, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -491,6 +498,7 @@ impl PostgresStoreV2 {
             .bind(document.path.as_ref().map(|p| p.as_str()))
             .bind(document.created_by.as_ref().map(|t| t.as_ref()))
             .bind(document.deleted)
+            .bind(actor)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -535,14 +543,15 @@ impl PostgresStoreV2 {
         id: &str,
         version_number: VersionNumber,
         repo: &Repository,
+        actor: Option<&Value>,
     ) -> Result<(), StoreError> {
         let version_number = i64::try_from(version_number).map_err(|_| {
             StoreError::Internal(format!("version number overflow for repository '{id}'"))
         })?;
 
         let query = format!(
-            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, deleted)
-             VALUES ($1, $2, $3, $4, $5, $6)"
+            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)"
         );
         sqlx::query(&query)
             .bind(id)
@@ -551,6 +560,7 @@ impl PostgresStoreV2 {
             .bind(repo.default_branch.as_deref())
             .bind(repo.default_image.as_deref())
             .bind(repo.deleted)
+            .bind(actor)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -577,14 +587,15 @@ impl PostgresStoreV2 {
         id: &str,
         version_number: VersionNumber,
         user: &User,
+        actor: Option<&Value>,
     ) -> Result<(), StoreError> {
         let version_number = i64::try_from(version_number).map_err(|_| {
             StoreError::Internal(format!("version number overflow for user '{id}'"))
         })?;
 
         let query = format!(
-            "INSERT INTO {TABLE_USERS_V2} (id, version_number, username, github_user_id, github_token, github_refresh_token, deleted)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)"
+            "INSERT INTO {TABLE_USERS_V2} (id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         );
         sqlx::query(&query)
             .bind(id)
@@ -594,6 +605,7 @@ impl PostgresStoreV2 {
             .bind(&user.github_token)
             .bind(&user.github_refresh_token)
             .bind(user.deleted)
+            .bind(actor)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -617,7 +629,7 @@ impl PostgresStoreV2 {
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         // Build query with filtering on latest version of each user
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, created_at, updated_at
+            "SELECT DISTINCT ON (id) id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              ORDER BY id, version_number DESC"
         );
@@ -673,7 +685,10 @@ impl PostgresStoreV2 {
             })?;
             let user = self.row_to_user(&row);
             let username = Username::from(row.id);
-            users.push((username, Versioned::new(user, version, row.created_at)));
+            users.push((
+                username,
+                Versioned::with_optional_actor(user, version, row.created_at, row.actor),
+            ));
         }
 
         Ok(users)
@@ -688,6 +703,7 @@ impl PostgresStoreV2 {
         id: &str,
         version_number: VersionNumber,
         actor: &Actor,
+        acting_as: Option<&Value>,
     ) -> Result<(), StoreError> {
         let version_number = i64::try_from(version_number).map_err(|_| {
             StoreError::Internal(format!("version number overflow for actor '{id}'"))
@@ -699,8 +715,8 @@ impl PostgresStoreV2 {
         let creator_str = actor.creator.as_ref().map(|u| u.to_string());
 
         let query = format!(
-            "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator)
-             VALUES ($1, $2, $3, $4, $5, $6)"
+            "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)"
         );
         sqlx::query(&query)
             .bind(id)
@@ -709,6 +725,7 @@ impl PostgresStoreV2 {
             .bind(&actor.auth_token_salt)
             .bind(&actor_id_json)
             .bind(&creator_str)
+            .bind(acting_as)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -748,6 +765,7 @@ struct IssueRow {
     dependencies: Value,
     patches: Value,
     deleted: bool,
+    actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -769,6 +787,7 @@ struct PatchRow {
     deleted: bool,
     branch_name: Option<String>,
     commit_range: Option<Value>,
+    actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -790,6 +809,7 @@ struct TaskRow {
     last_message: Option<String>,
     error: Option<Value>,
     deleted: bool,
+    actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -804,6 +824,7 @@ struct DocumentRow {
     path: Option<String>,
     created_by: Option<String>,
     deleted: bool,
+    actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -817,6 +838,7 @@ struct RepositoryRow {
     default_branch: Option<String>,
     default_image: Option<String>,
     deleted: bool,
+    actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -831,6 +853,7 @@ struct UserRow {
     github_token: String,
     github_refresh_token: String,
     deleted: bool,
+    actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -844,6 +867,7 @@ struct ActorRow {
     auth_token_salt: String,
     actor_id: Value,
     creator: Option<String>,
+    actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -851,6 +875,10 @@ struct ActorRow {
 
 fn map_sqlx_error(err: sqlx::Error) -> StoreError {
     StoreError::Internal(err.to_string())
+}
+
+fn actor_to_json(actor: &ActorRef) -> Value {
+    serde_json::to_value(actor).expect("ActorRef serialization should not fail")
 }
 
 #[async_trait]
@@ -866,7 +894,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let query = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -889,7 +917,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ))
         })?;
         let repo = self.row_to_repository(&row);
-        Ok(Versioned::new(repo, version, row.created_at))
+        Ok(Versioned::with_optional_actor(
+            repo,
+            version,
+            row.created_at,
+            row.actor,
+        ))
     }
 
     async fn list_repositories(
@@ -898,7 +931,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         let include_deleted = query.include_deleted.unwrap_or(false);
         let sql = format!(
-            "SELECT DISTINCT ON (id) id, version_number, remote_url, default_branch, default_image, deleted, created_at, updated_at
+            "SELECT DISTINCT ON (id) id, version_number, remote_url, default_branch, default_image, deleted, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              ORDER BY id, version_number DESC"
         );
@@ -924,7 +957,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 StoreError::Internal(format!("invalid repository id stored in database: {e}"))
             })?;
             let repo = self.row_to_repository(&row);
-            results.push((name, Versioned::new(repo, version, row.created_at)));
+            results.push((
+                name,
+                Versioned::with_optional_actor(repo, version, row.created_at, row.actor),
+            ));
         }
 
         results.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -941,7 +977,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, created_at, updated_at
+            "SELECT id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -966,12 +1002,17 @@ impl ReadOnlyStore for PostgresStoreV2 {
             return Err(StoreError::IssueNotFound(id.clone()));
         }
 
-        Ok(Versioned::new(issue, version, row.created_at))
+        Ok(Versioned::with_optional_actor(
+            issue,
+            version,
+            row.created_at,
+            row.actor,
+        ))
     }
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, created_at, updated_at
+            "SELECT id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -995,7 +1036,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 ))
             })?;
             let issue = self.row_to_issue(&row)?;
-            results.push(Versioned::new(issue, version, row.created_at));
+            results.push(Versioned::with_optional_actor(
+                issue,
+                version,
+                row.created_at,
+                row.actor,
+            ));
         }
 
         Ok(results)
@@ -1009,7 +1055,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each issue, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, created_at, updated_at \
+            "SELECT DISTINCT ON (id) id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at \
              FROM {TABLE_ISSUES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -1104,7 +1150,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let issue_id = row.id.parse::<IssueId>().map_err(|err| {
                 StoreError::Internal(format!("invalid issue id stored in database: {err}"))
             })?;
-            issues.push((issue_id, Versioned::new(issue, version, row.created_at)));
+            issues.push((
+                issue_id,
+                Versioned::with_optional_actor(issue, version, row.created_at, row.actor),
+            ));
         }
 
         Ok(issues)
@@ -1179,7 +1228,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Patch>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, created_at, updated_at
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, actor, created_at, updated_at
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1202,12 +1251,17 @@ impl ReadOnlyStore for PostgresStoreV2 {
         if !include_deleted && patch.deleted {
             return Err(StoreError::PatchNotFound(id.clone()));
         }
-        Ok(Versioned::new(patch, version, row.created_at))
+        Ok(Versioned::with_optional_actor(
+            patch,
+            version,
+            row.created_at,
+            row.actor,
+        ))
     }
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, created_at, updated_at
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, actor, created_at, updated_at
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -1231,7 +1285,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 ))
             })?;
             let patch = self.row_to_patch(&row)?;
-            results.push(Versioned::new(patch, version, row.created_at));
+            results.push(Versioned::with_optional_actor(
+                patch,
+                version,
+                row.created_at,
+                row.actor,
+            ));
         }
 
         Ok(results)
@@ -1245,7 +1304,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each patch, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, created_at, updated_at \
+            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, actor, created_at, updated_at \
              FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -1350,7 +1409,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let patch_id = row.id.parse::<PatchId>().map_err(|err| {
                 StoreError::Internal(format!("invalid patch id stored in database: {err}"))
             })?;
-            patches.push((patch_id, Versioned::new(patch, version, row.created_at)));
+            patches.push((
+                patch_id,
+                Versioned::with_optional_actor(patch, version, row.created_at, row.actor),
+            ));
         }
 
         Ok(patches)
@@ -1377,7 +1439,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Document>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, created_at, updated_at
+            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1400,7 +1462,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ))
         })?;
         let document = self.row_to_document(&row)?;
-        Ok(Versioned::new(document, version, row.created_at))
+        Ok(Versioned::with_optional_actor(
+            document,
+            version,
+            row.created_at,
+            row.actor,
+        ))
     }
 
     async fn get_document_versions(
@@ -1408,7 +1475,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &DocumentId,
     ) -> Result<Vec<Versioned<Document>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, created_at, updated_at
+            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -1432,7 +1499,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 ))
             })?;
             let document = self.row_to_document(&row)?;
-            results.push(Versioned::new(document, version, row.created_at));
+            results.push(Versioned::with_optional_actor(
+                document,
+                version,
+                row.created_at,
+                row.actor,
+            ));
         }
 
         Ok(results)
@@ -1446,7 +1518,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each document, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, body_markdown, path, created_by, deleted, created_at, updated_at \
+            "SELECT DISTINCT ON (id) id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at \
              FROM {TABLE_DOCUMENTS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -1522,7 +1594,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             })?;
             documents.push((
                 document_id,
-                Versioned::new(document, version, row.created_at),
+                Versioned::with_optional_actor(document, version, row.created_at, row.actor),
             ));
         }
 
@@ -1553,7 +1625,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Task>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, created_at, updated_at
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1576,12 +1648,17 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ))
         })?;
         let task = self.row_to_task(&row)?;
-        Ok(Versioned::new(task, version, row.created_at))
+        Ok(Versioned::with_optional_actor(
+            task,
+            version,
+            row.created_at,
+            row.actor,
+        ))
     }
 
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, created_at, updated_at
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -1605,7 +1682,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 ))
             })?;
             let task = self.row_to_task(&row)?;
-            results.push(Versioned::new(task, version, row.created_at));
+            results.push(Versioned::with_optional_actor(
+                task,
+                version,
+                row.created_at,
+                row.actor,
+            ));
         }
 
         Ok(results)
@@ -1619,7 +1701,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each task, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, created_at, updated_at \
+            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at \
              FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -1692,7 +1774,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let task_id = row.id.parse::<TaskId>().map_err(|err| {
                 StoreError::Internal(format!("invalid task id stored in database: {err}"))
             })?;
-            tasks.push((task_id, Versioned::new(task, version, row.created_at)));
+            tasks.push((
+                task_id,
+                Versioned::with_optional_actor(task, version, row.created_at, row.actor),
+            ));
         }
 
         Ok(tasks)
@@ -1714,7 +1799,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, created_at, updated_at
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"
@@ -1740,7 +1825,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             grouped
                 .entry(task_id)
                 .or_default()
-                .push(Versioned::new(task, version, row.created_at));
+                .push(Versioned::with_optional_actor(
+                    task,
+                    version,
+                    row.created_at,
+                    row.actor,
+                ));
         }
 
         let mut result = HashMap::new();
@@ -1760,7 +1850,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         let query = format!(
-            "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, created_at, updated_at
+            "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1780,12 +1870,17 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ))
         })?;
         let actor = self.row_to_actor(&row)?;
-        Ok(Versioned::new(actor, version, row.created_at))
+        Ok(Versioned::with_optional_actor(
+            actor,
+            version,
+            row.created_at,
+            row.actor,
+        ))
     }
 
     async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         let query = format!(
-            "SELECT DISTINCT ON (id) id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, created_at, updated_at
+            "SELECT DISTINCT ON (id) id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
              ORDER BY id, version_number DESC"
         );
@@ -1803,7 +1898,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 ))
             })?;
             let actor = self.row_to_actor(&row)?;
-            actors.push((row.id, Versioned::new(actor, version, row.created_at)));
+            actors.push((
+                row.id,
+                Versioned::with_optional_actor(actor, version, row.created_at, row.actor),
+            ));
         }
 
         actors.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -1820,7 +1918,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<User>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1843,7 +1941,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ))
         })?;
         let user = self.row_to_user(&row);
-        Ok(Versioned::new(user, version, row.created_at))
+        Ok(Versioned::with_optional_actor(
+            user,
+            version,
+            row.created_at,
+            row.actor,
+        ))
     }
 
     async fn list_users(
@@ -1878,7 +1981,9 @@ impl Store for PostgresStoreV2 {
             }
             Ok(_) => Err(StoreError::RepositoryAlreadyExists(name)),
             Err(StoreError::RepositoryNotFound(_)) => {
-                self.insert_repository(name_str.as_str(), 1, &config).await
+                let actor_json = actor_to_json(actor);
+                self.insert_repository(name_str.as_str(), 1, &config, Some(&actor_json))
+                    .await
             }
             Err(e) => Err(e),
         }
@@ -1888,7 +1993,7 @@ impl Store for PostgresStoreV2 {
         &self,
         name: RepoName,
         config: Repository,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<(), StoreError> {
         let name_str = name.as_str();
         self.ensure_repository_exists(&name).await?;
@@ -1905,7 +2010,8 @@ impl Store for PostgresStoreV2 {
             ))
         })?;
 
-        self.insert_repository(name_str.as_str(), next_version, &config)
+        let actor_json = actor_to_json(actor);
+        self.insert_repository(name_str.as_str(), next_version, &config, Some(&actor_json))
             .await
     }
 
@@ -1924,12 +2030,13 @@ impl Store for PostgresStoreV2 {
     async fn add_issue(
         &self,
         issue: Issue,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<(IssueId, VersionNumber), StoreError> {
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
         let id = IssueId::new();
-        self.insert_issue(&id, 1, &issue).await?;
+        let actor_json = actor_to_json(actor);
+        self.insert_issue(&id, 1, &issue, Some(&actor_json)).await?;
         Ok((id, 1))
     }
 
@@ -1937,7 +2044,7 @@ impl Store for PostgresStoreV2 {
         &self,
         id: &IssueId,
         issue: Issue,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         self.get_issue(id, true).await?;
         self.validate_issue_dependencies(&issue.dependencies)
@@ -1953,7 +2060,9 @@ impl Store for PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for issue '{id}'"))
         })?;
 
-        self.insert_issue(id, next_version, &issue).await?;
+        let actor_json = actor_to_json(actor);
+        self.insert_issue(id, next_version, &issue, Some(&actor_json))
+            .await?;
         Ok(next_version)
     }
 
@@ -1975,10 +2084,11 @@ impl Store for PostgresStoreV2 {
     async fn add_patch(
         &self,
         patch: Patch,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
         let id = PatchId::new();
-        self.insert_patch(&id, 1, &patch).await?;
+        let actor_json = actor_to_json(actor);
+        self.insert_patch(&id, 1, &patch, Some(&actor_json)).await?;
         Ok((id, 1))
     }
 
@@ -1986,7 +2096,7 @@ impl Store for PostgresStoreV2 {
         &self,
         id: &PatchId,
         patch: Patch,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         self.get_patch(id, true).await?;
 
@@ -2000,7 +2110,9 @@ impl Store for PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for patch '{id}'"))
         })?;
 
-        self.insert_patch(id, next_version, &patch).await?;
+        let actor_json = actor_to_json(actor);
+        self.insert_patch(id, next_version, &patch, Some(&actor_json))
+            .await?;
         Ok(next_version)
     }
 
@@ -2022,10 +2134,12 @@ impl Store for PostgresStoreV2 {
     async fn add_document(
         &self,
         document: Document,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let id = DocumentId::new();
-        self.insert_document(&id, 1, &document).await?;
+        let actor_json = actor_to_json(actor);
+        self.insert_document(&id, 1, &document, Some(&actor_json))
+            .await?;
         Ok((id, 1))
     }
 
@@ -2033,7 +2147,7 @@ impl Store for PostgresStoreV2 {
         &self,
         id: &DocumentId,
         document: Document,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         self.get_document(id, true).await?;
 
@@ -2047,7 +2161,9 @@ impl Store for PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for document '{id}'"))
         })?;
 
-        self.insert_document(id, next_version, &document).await?;
+        let actor_json = actor_to_json(actor);
+        self.insert_document(id, next_version, &document, Some(&actor_json))
+            .await?;
         Ok(next_version)
     }
 
@@ -2070,7 +2186,7 @@ impl Store for PostgresStoreV2 {
         &self,
         task: Task,
         _creation_time: DateTime<Utc>,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
         let mut task = task;
@@ -2082,7 +2198,8 @@ impl Store for PostgresStoreV2 {
             self.ensure_issue_exists(issue_id).await?;
         }
 
-        self.insert_task(&id, 1, &task).await?;
+        let actor_json = actor_to_json(actor);
+        self.insert_task(&id, 1, &task, Some(&actor_json)).await?;
         Ok((id, 1))
     }
 
@@ -2090,7 +2207,7 @@ impl Store for PostgresStoreV2 {
         &self,
         metis_id: &TaskId,
         task: Task,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<Versioned<Task>, StoreError> {
         self.ensure_task_exists(metis_id).await?;
         if let Some(issue_id) = task.spawned_from.as_ref() {
@@ -2107,7 +2224,9 @@ impl Store for PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for task '{metis_id}'"))
         })?;
 
-        self.insert_task(metis_id, next_version, &task).await?;
+        let actor_json = actor_to_json(actor);
+        self.insert_task(metis_id, next_version, &task, Some(&actor_json))
+            .await?;
         self.get_task(metis_id, true).await
     }
 
@@ -2127,7 +2246,7 @@ impl Store for PostgresStoreV2 {
     // Actor methods
     // -------------------------------------------------------------------------
 
-    async fn add_actor(&self, actor: Actor, _acting_as: &ActorRef) -> Result<(), StoreError> {
+    async fn add_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError> {
         let name = actor.name();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT COUNT(1) FROM {TABLE_ACTORS_V2} WHERE id = $1"
@@ -2141,10 +2260,12 @@ impl Store for PostgresStoreV2 {
             return Err(StoreError::ActorAlreadyExists(name));
         }
 
-        self.insert_actor(&name, 1, &actor).await
+        let acting_as_json = actor_to_json(acting_as);
+        self.insert_actor(&name, 1, &actor, Some(&acting_as_json))
+            .await
     }
 
-    async fn update_actor(&self, actor: Actor, _acting_as: &ActorRef) -> Result<(), StoreError> {
+    async fn update_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError> {
         let name = actor.name();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT COUNT(1) FROM {TABLE_ACTORS_V2} WHERE id = $1"
@@ -2168,7 +2289,9 @@ impl Store for PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for actor '{name}'"))
         })?;
 
-        self.insert_actor(&name, next_version, &actor).await
+        let acting_as_json = actor_to_json(acting_as);
+        self.insert_actor(&name, next_version, &actor, Some(&acting_as_json))
+            .await
     }
 
     // -------------------------------------------------------------------------
@@ -2178,7 +2301,7 @@ impl Store for PostgresStoreV2 {
     async fn add_user(&self, user: User, actor: &ActorRef) -> Result<(), StoreError> {
         // Check if user already exists by fetching the latest version
         let query = format!(
-            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -2202,7 +2325,9 @@ impl Store for PostgresStoreV2 {
             }
             None => {
                 // User doesn't exist, insert new
-                self.insert_user(user.username.as_str(), 1, &user).await
+                let actor_json = actor_to_json(actor);
+                self.insert_user(user.username.as_str(), 1, &user, Some(&actor_json))
+                    .await
             }
         }
     }
@@ -2210,7 +2335,7 @@ impl Store for PostgresStoreV2 {
     async fn update_user(
         &self,
         user: User,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<Versioned<User>, StoreError> {
         let username = user.username.clone();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
@@ -2241,12 +2366,18 @@ impl Store for PostgresStoreV2 {
             ))
         })?;
 
-        self.insert_user(user.username.as_str(), next_version, &user)
-            .await?;
+        let actor_json = actor_to_json(actor);
+        self.insert_user(
+            user.username.as_str(),
+            next_version,
+            &user,
+            Some(&actor_json),
+        )
+        .await?;
 
         // Fetch and return the updated user
         let query = format!(
-            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -2268,7 +2399,12 @@ impl Store for PostgresStoreV2 {
             ))
         })?;
         let user = self.row_to_user(&row);
-        Ok(Versioned::new(user, version, row.created_at))
+        Ok(Versioned::with_optional_actor(
+            user,
+            version,
+            row.created_at,
+            row.actor,
+        ))
     }
 
     async fn delete_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError> {
