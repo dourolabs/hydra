@@ -696,7 +696,9 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
         }
     }
 
-    assert_eq!(merge_request_issues.len(), 2);
+    // 3 MergeRequest issues: one auto-created on PatchCreated, one manually created
+    // ("linked merge request"), and one auto-created on reopen (ChangesRequested -> Open).
+    assert_eq!(merge_request_issues.len(), 3);
     let open_issue = merge_request_issues
         .iter()
         .find(|issue| issue.item.status == IssueStatus::Open)
@@ -779,7 +781,10 @@ async fn updating_open_patch_does_not_create_merge_request_issue() -> anyhow::Re
         }
     }
 
-    assert_eq!(merge_request_issues.len(), 1);
+    // There should be 2 MergeRequest issues: the one auto-created by the PatchCreated
+    // automation, and the manually-created "previous merge request". The patch update
+    // (Open -> Open title change) should NOT have created a third one.
+    assert_eq!(merge_request_issues.len(), 2);
     let existing_issue = merge_request_issues
         .iter()
         .find(|issue| issue.item.status == IssueStatus::Closed)
