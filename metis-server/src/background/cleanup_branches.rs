@@ -1,7 +1,6 @@
 use crate::{
     app::AppState,
     background::scheduler::{ScheduledWorker, WorkerOutcome},
-    store::StoreError,
 };
 use async_trait::async_trait;
 use metis_common::{IssueId, SearchRepositoriesQuery, TaskId};
@@ -191,16 +190,16 @@ impl CleanupBranchesWorker {
     async fn is_branch_stale(&self, branch: &MetisBranch) -> bool {
         match &branch.id_kind {
             MetisIdKind::Issue(id) => {
-                matches!(
-                    self.state.store().get_issue(id, false).await,
-                    Err(StoreError::IssueNotFound(_))
-                )
+                match self.state.store().get_issue(id, true).await {
+                    Ok(versioned) => versioned.item.deleted,
+                    Err(_) => false, // Unknown issue -- do not delete
+                }
             }
             MetisIdKind::Task(id) => {
-                matches!(
-                    self.state.store().get_task(id, false).await,
-                    Err(StoreError::TaskNotFound(_))
-                )
+                match self.state.store().get_task(id, true).await {
+                    Ok(versioned) => versioned.item.deleted,
+                    Err(_) => false, // Unknown task -- do not delete
+                }
             }
         }
     }
@@ -494,7 +493,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn is_branch_stale_returns_true_for_missing_issue() {
+    async fn is_branch_stale_returns_false_for_unknown_issue() {
         let state = crate::test_utils::test_state();
         let worker = CleanupBranchesWorker::new(state);
 
@@ -504,11 +503,11 @@ mod tests {
             suffix: "head".to_string(),
         };
 
-        assert!(worker.is_branch_stale(&branch).await);
+        assert!(!worker.is_branch_stale(&branch).await);
     }
 
     #[tokio::test]
-    async fn is_branch_stale_returns_true_for_missing_task() {
+    async fn is_branch_stale_returns_false_for_unknown_task() {
         let state = crate::test_utils::test_state();
         let worker = CleanupBranchesWorker::new(state);
 
@@ -518,7 +517,7 @@ mod tests {
             suffix: "head".to_string(),
         };
 
-        assert!(worker.is_branch_stale(&branch).await);
+        assert!(!worker.is_branch_stale(&branch).await);
     }
 
     #[tokio::test]
@@ -601,6 +600,38 @@ mod tests {
         let branch = MetisBranch {
             full_ref: format!("refs/heads/metis/{issue_id}/head"),
             id_kind: MetisIdKind::Issue(issue_id),
+            suffix: "head".to_string(),
+        };
+
+        assert!(worker.is_branch_stale(&branch).await);
+    }
+
+    #[tokio::test]
+    async fn is_branch_stale_returns_true_for_deleted_task() {
+        let handles = crate::test_utils::test_state_handles();
+        let task = crate::store::Task::new(
+            "deleted task".to_string(),
+            crate::domain::jobs::BundleSpec::None,
+            None,
+            None,
+            None,
+            None,
+            std::collections::HashMap::new(),
+            None,
+            None,
+            None,
+        );
+        let (task_id, _) = handles
+            .store
+            .add_task(task, chrono::Utc::now())
+            .await
+            .unwrap();
+        handles.store.delete_task(&task_id).await.unwrap();
+
+        let worker = CleanupBranchesWorker::new(handles.state);
+        let branch = MetisBranch {
+            full_ref: format!("refs/heads/metis/{task_id}/head"),
+            id_kind: MetisIdKind::Task(task_id),
             suffix: "head".to_string(),
         };
 
