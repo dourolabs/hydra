@@ -446,7 +446,8 @@ impl TestHarnessBuilder {
         let mut user_credentials: Vec<(String, String)> = Vec::new();
 
         // Default user
-        let (default_actor, default_token) = Actor::new_for_task(TaskId::new());
+        let (default_actor, default_token) =
+            Actor::new_for_task(TaskId::new(), Some(Username::from("default").into()));
         store.add_actor(default_actor).await?;
         let default_user = User::new(
             Username::from("default"),
@@ -462,7 +463,10 @@ impl TestHarnessBuilder {
             if user_name == "default" {
                 continue; // Already created
             }
-            let (actor, token) = Actor::new_for_task(TaskId::new());
+            let (actor, token) = Actor::new_for_task(
+                TaskId::new(),
+                Some(Username::from(user_name.as_str()).into()),
+            );
             store.add_actor(actor).await?;
             let user = User::new(
                 Username::from(user_name.as_str()),

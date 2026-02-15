@@ -110,7 +110,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         None,
     );
     let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
-    let (actor, auth_token) = Actor::new_for_task(task_id);
+    let (actor, auth_token) = Actor::new_for_task(task_id, Some(Username::from("creator")));
     handles.store.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
@@ -221,7 +221,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         None,
     );
     let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
-    let (actor, auth_token) = Actor::new_for_task(task_id);
+    let (actor, auth_token) = Actor::new_for_task(task_id, Some(Username::from("creator")));
     handles.store.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
@@ -306,7 +306,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         None,
     );
     let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
-    let (actor, auth_token) = Actor::new_for_task(task_id);
+    let (actor, auth_token) = Actor::new_for_task(task_id, Some(Username::from("creator")));
     handles.store.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
@@ -325,7 +325,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
 async fn github_token_returns_not_found_for_missing_task() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let task_id = TaskId::new();
-    let (actor, auth_token) = Actor::new_for_task(task_id);
+    let (actor, auth_token) = Actor::new_for_task(task_id, Some(Username::from("creator")));
     handles.store.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;

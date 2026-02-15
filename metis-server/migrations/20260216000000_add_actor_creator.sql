@@ -1,0 +1,1 @@
+ALTER TABLE metis.actors_v2 ADD COLUMN IF NOT EXISTS creator TEXT;

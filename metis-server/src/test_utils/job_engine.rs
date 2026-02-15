@@ -266,7 +266,10 @@ mod tests {
         let engine = MockJobEngine::new();
         let env_vars = HashMap::from([("FOO".to_string(), "bar".to_string())]);
         let metis_id = TaskId::new();
-        let (actor, _) = crate::domain::actors::Actor::new_for_task(TaskId::new());
+        let (actor, _) = crate::domain::actors::Actor::new_for_task(
+            TaskId::new(),
+            Some(crate::domain::users::Username::from("creator")),
+        );
 
         engine
             .create_job(
@@ -306,7 +309,10 @@ mod tests {
         let env_vars = HashMap::new();
         let secrets = vec!["db-secret".to_string(), "api-key".to_string()];
         let metis_id = TaskId::new();
-        let (actor, _) = crate::domain::actors::Actor::new_for_task(TaskId::new());
+        let (actor, _) = crate::domain::actors::Actor::new_for_task(
+            TaskId::new(),
+            Some(crate::domain::users::Username::from("creator")),
+        );
 
         engine
             .create_job(
@@ -335,7 +341,10 @@ mod tests {
         let engine = MockJobEngine::new();
         let env_vars = HashMap::new();
         let metis_id = TaskId::new();
-        let (actor, _) = crate::domain::actors::Actor::new_for_task(TaskId::new());
+        let (actor, _) = crate::domain::actors::Actor::new_for_task(
+            TaskId::new(),
+            Some(crate::domain::users::Username::from("creator")),
+        );
 
         engine
             .create_job(

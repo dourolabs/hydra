@@ -93,10 +93,22 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 "github_pr_sync: failed to parse actor name '{actor_name}': {e}"
             ))
         })?;
+        let creator = match &actor_id {
+            crate::domain::actors::ActorId::Username(username) => Some(username.clone()),
+            crate::domain::actors::ActorId::Task(task_id) => {
+                let task = ctx.app_state.get_task(task_id).await.map_err(|e| {
+                    AutomationError::Other(anyhow::anyhow!(
+                        "github_pr_sync: failed to load task '{task_id}': {e}"
+                    ))
+                })?;
+                task.creator
+            }
+        };
         let actor = Actor {
             auth_token_hash: String::new(),
             auth_token_salt: String::new(),
             actor_id,
+            creator,
         };
 
         let token = actor.get_github_token(ctx.app_state).await.map_err(|e| {
