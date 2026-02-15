@@ -38,7 +38,7 @@ use metis_common::{
     },
     users::UserSummary,
     whoami::WhoAmIResponse,
-    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber,
+    DocumentId, IssueId, PatchId, RepoName, TaskId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
 use sse::SseEventStream;
@@ -118,6 +118,7 @@ pub trait MetisClientInterface: Send + Sync {
     async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
     async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse>;
     async fn get_job(&self, job_id: &TaskId) -> Result<JobVersionRecord>;
+    async fn get_job_version(&self, job_id: &TaskId, version: i64) -> Result<JobVersionRecord>;
     async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse>;
     async fn get_job_logs(&self, job_id: &TaskId, query: &LogsQuery) -> Result<LogStream>;
     async fn set_job_status(
@@ -158,7 +159,7 @@ pub trait MetisClientInterface: Send + Sync {
     async fn get_issue_version(
         &self,
         issue_id: &IssueId,
-        version: &VersionNumber,
+        version: i64,
     ) -> Result<IssueVersionRecord>;
     async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse>;
     async fn list_issue_versions(&self, issue_id: &IssueId) -> Result<ListIssueVersionsResponse>;
@@ -169,6 +170,11 @@ pub trait MetisClientInterface: Send + Sync {
         request: &UpsertPatchRequest,
     ) -> Result<UpsertPatchResponse>;
     async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord>;
+    async fn get_patch_version(
+        &self,
+        patch_id: &PatchId,
+        version: i64,
+    ) -> Result<PatchVersionRecord>;
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse>;
     async fn list_patch_versions(&self, patch_id: &PatchId) -> Result<ListPatchVersionsResponse>;
     async fn create_document(
@@ -198,7 +204,7 @@ pub trait MetisClientInterface: Send + Sync {
     async fn get_document_version(
         &self,
         document_id: &DocumentId,
-        version: &VersionNumber,
+        version: i64,
     ) -> Result<DocumentVersionRecord>;
     async fn create_patch_asset(&self, patch_id: &PatchId, file_path: &Path) -> Result<String>;
     async fn list_repositories(
@@ -442,6 +448,24 @@ impl MetisClient {
             .context("failed to decode job response")
     }
 
+    /// Call `GET /v1/jobs/:job_id/versions/:version` to fetch a specific job version.
+    pub async fn get_job_version(&self, job_id: &TaskId, version: i64) -> Result<JobVersionRecord> {
+        let path = format!("/v1/jobs/{job_id}/versions/{version}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch job version")?
+            .error_for_status_with_body("metis-server returned an error while fetching job version")
+            .await?;
+
+        response
+            .json::<JobVersionRecord>()
+            .await
+            .context("failed to decode job version response")
+    }
+
     /// Call `DELETE /v1/jobs/:job_id` to terminate a running job.
     pub async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse> {
         let path = format!("/v1/jobs/{job_id}");
@@ -601,7 +625,7 @@ impl MetisClient {
     pub async fn get_issue_version(
         &self,
         issue_id: &IssueId,
-        version: &VersionNumber,
+        version: i64,
     ) -> Result<IssueVersionRecord> {
         let path = format!("/v1/issues/{issue_id}/versions/{version}");
         let url = self.endpoint(&path)?;
@@ -793,6 +817,30 @@ impl MetisClient {
             .context("failed to decode get patch response")
     }
 
+    /// Call `GET /v1/patches/:patch_id/versions/:version` to fetch a specific patch version.
+    pub async fn get_patch_version(
+        &self,
+        patch_id: &PatchId,
+        version: i64,
+    ) -> Result<PatchVersionRecord> {
+        let path = format!("/v1/patches/{patch_id}/versions/{version}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch patch version")?
+            .error_for_status_with_body(
+                "metis-server returned an error while fetching patch version",
+            )
+            .await?;
+
+        response
+            .json::<PatchVersionRecord>()
+            .await
+            .context("failed to decode patch version response")
+    }
+
     /// Call `GET /v1/patches` to list patches with optional filters.
     pub async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse> {
         let url = self.endpoint("/v1/patches")?;
@@ -977,7 +1025,7 @@ impl MetisClient {
     pub async fn get_document_version(
         &self,
         document_id: &DocumentId,
-        version: &VersionNumber,
+        version: i64,
     ) -> Result<DocumentVersionRecord> {
         let path = format!("/v1/documents/{document_id}/versions/{version}");
         let url = self.endpoint(&path)?;
@@ -1544,6 +1592,10 @@ impl MetisClientInterface for MetisClient {
         MetisClient::get_job(self, job_id).await
     }
 
+    async fn get_job_version(&self, job_id: &TaskId, version: i64) -> Result<JobVersionRecord> {
+        MetisClient::get_job_version(self, job_id, version).await
+    }
+
     async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse> {
         MetisClient::kill_job(self, job_id).await
     }
@@ -1616,7 +1668,7 @@ impl MetisClientInterface for MetisClient {
     async fn get_issue_version(
         &self,
         issue_id: &IssueId,
-        version: &VersionNumber,
+        version: i64,
     ) -> Result<IssueVersionRecord> {
         MetisClient::get_issue_version(self, issue_id, version).await
     }
@@ -1643,6 +1695,14 @@ impl MetisClientInterface for MetisClient {
 
     async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
         MetisClient::get_patch(self, patch_id).await
+    }
+
+    async fn get_patch_version(
+        &self,
+        patch_id: &PatchId,
+        version: i64,
+    ) -> Result<PatchVersionRecord> {
+        MetisClient::get_patch_version(self, patch_id, version).await
     }
 
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse> {
@@ -1698,7 +1758,7 @@ impl MetisClientInterface for MetisClient {
     async fn get_document_version(
         &self,
         document_id: &DocumentId,
-        version: &VersionNumber,
+        version: i64,
     ) -> Result<DocumentVersionRecord> {
         MetisClient::get_document_version(self, document_id, version).await
     }

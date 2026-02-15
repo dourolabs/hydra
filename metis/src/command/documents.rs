@@ -269,42 +269,13 @@ async fn get_document_with_options(
     match version {
         None => get_document_by_id_or_path(client, id_or_path, include_deleted).await,
         Some(0) => bail!("--version 0 is not valid; use a positive number for an absolute version or a negative number for an offset from the latest"),
-        Some(v) if v > 0 => {
+        Some(v) => {
             let document_id = resolve_document_id(client, id_or_path, include_deleted).await?;
-            let version_number = v as VersionNumber;
             client
-                .get_document_version(&document_id, &version_number)
+                .get_document_version(&document_id, v)
                 .await
                 .with_context(|| {
-                    format!("failed to fetch version {version_number} of document '{document_id}'")
-                })
-        }
-        Some(offset) => {
-            // Negative offset: resolve latest version and compute target
-            let document_id = resolve_document_id(client, id_or_path, include_deleted).await?;
-            let versions_response = client
-                .list_document_versions(&document_id)
-                .await
-                .context("failed to list document versions")?;
-            let latest = versions_response
-                .versions
-                .iter()
-                .map(|v| v.version)
-                .max()
-                .ok_or_else(|| anyhow::anyhow!("document '{document_id}' has no versions"))?;
-            let target = latest as i64 + offset;
-            if target < 1 {
-                bail!(
-                    "version offset {offset} resolves to version {target}, \
-                     which is before the first version (latest is {latest})"
-                );
-            }
-            let version_number = target as VersionNumber;
-            client
-                .get_document_version(&document_id, &version_number)
-                .await
-                .with_context(|| {
-                    format!("failed to fetch version {version_number} of document '{document_id}'")
+                    format!("failed to fetch version {v} of document '{document_id}'")
                 })
         }
     }

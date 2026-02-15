@@ -1,8 +1,9 @@
 use crate::{
-    client::MetisClientInterface, command::output::CommandContext,
+    client::MetisClientInterface,
+    command::output::{render_job_records, CommandContext},
     worker_commands::ModelAwareCommands,
 };
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use metis_common::{
     constants::{
@@ -69,6 +70,16 @@ pub enum JobsCommand {
         /// Filter jobs that were spawned from a specific issue.
         #[arg(long = "from", value_name = "ISSUE_ID")]
         spawned_from: Option<IssueId>,
+    },
+    /// Get a single job by ID.
+    Get {
+        /// Job identifier returned by `metis jobs create` or `metis jobs list`.
+        #[arg(value_name = "JOB_ID")]
+        id: TaskId,
+
+        /// Retrieve a specific version (positive = exact version, negative = offset from latest).
+        #[arg(long)]
+        version: Option<i64>,
     },
     /// Show logs for an existing Metis job.
     Logs {
@@ -141,6 +152,7 @@ pub async fn run(
             limit,
             spawned_from,
         } => list::run(client, limit, spawned_from, context).await?,
+        JobsCommand::Get { id, version } => get_job(client, &id, version, context).await?,
         JobsCommand::Logs { id, watch } => logs::run(client, id, watch, context).await?,
         JobsCommand::Kill { job } => kill::run(client, job, context).await?,
         JobsCommand::WorkerRun {
@@ -167,5 +179,28 @@ pub async fn run(
         }
     }
 
+    Ok(())
+}
+
+async fn get_job(
+    client: &dyn MetisClientInterface,
+    job_id: &TaskId,
+    version: Option<i64>,
+    context: &CommandContext,
+) -> Result<()> {
+    let job = match version {
+        Some(0) => {
+            bail!("--version 0 is not valid; use a positive version number or a negative offset")
+        }
+        Some(v) => client
+            .get_job_version(job_id, v)
+            .await
+            .with_context(|| format!("failed to fetch version {v} of job '{job_id}'"))?,
+        None => client
+            .get_job(job_id)
+            .await
+            .with_context(|| format!("failed to fetch job '{job_id}'"))?,
+    };
+    render_job_records(context.output_format, &[job], &mut std::io::stdout())?;
     Ok(())
 }

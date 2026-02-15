@@ -43,6 +43,17 @@ pub enum PatchesCommand {
         include_deleted: bool,
     },
 
+    /// Get a single patch by ID.
+    Get {
+        /// Patch ID to retrieve.
+        #[arg(value_name = "PATCH_ID")]
+        id: PatchId,
+
+        /// Retrieve a specific version (positive = exact version, negative = offset from latest).
+        #[arg(long)]
+        version: Option<i64>,
+    },
+
     /// Create a patch from the current git repository.
     Create {
         /// Title for the patch.
@@ -194,6 +205,9 @@ pub async fn run(
             query,
             include_deleted,
         } => list_patches(client, id, query, include_deleted, context.output_format).await,
+        PatchesCommand::Get { id, version } => {
+            get_patch_by_version(client, &id, version, context.output_format).await
+        }
         PatchesCommand::Create {
             title,
             description,
@@ -393,6 +407,29 @@ async fn list_patches_with_writer(
 
     render_patch_records(output_format, &patches, writer)?;
 
+    Ok(())
+}
+
+async fn get_patch_by_version(
+    client: &dyn MetisClientInterface,
+    patch_id: &PatchId,
+    version: Option<i64>,
+    output_format: ResolvedOutputFormat,
+) -> Result<()> {
+    let patch = match version {
+        Some(0) => {
+            bail!("--version 0 is not valid; use a positive version number or a negative offset")
+        }
+        Some(v) => client
+            .get_patch_version(patch_id, v)
+            .await
+            .with_context(|| format!("failed to fetch version {v} of patch '{patch_id}'"))?,
+        None => client
+            .get_patch(patch_id)
+            .await
+            .with_context(|| format!("failed to fetch patch '{patch_id}'"))?,
+    };
+    render_patch_records(output_format, &[patch], &mut std::io::stdout())?;
     Ok(())
 }
 
