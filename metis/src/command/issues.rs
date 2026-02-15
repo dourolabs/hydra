@@ -20,8 +20,8 @@ use metis_common::{
     task_status::Status,
     users::Username,
     whoami::ActorIdentity,
-    ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange, MetisId, PatchId, RepoName,
-    TaskId, VersionNumber, Versioned,
+    ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange, MetisId, PatchId,
+    RelativeVersionNumber, RepoName, TaskId, VersionNumber, Versioned,
 };
 use owo_colors::OwoColorize;
 use serde::{de::DeserializeOwned, Serialize};
@@ -1202,7 +1202,7 @@ async fn resolve_issue(
             bail!("--version 0 is not valid; use a positive version number or a negative offset")
         }
         Some(v) => client
-            .get_issue_version(issue_id, v)
+            .get_issue_version(issue_id, RelativeVersionNumber::new(v))
             .await
             .with_context(|| format!("failed to fetch version {v} of issue '{issue_id}'")),
         None => client

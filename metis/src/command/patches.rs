@@ -12,7 +12,7 @@ use metis_common::{
         Patch, PatchStatus, PatchVersionRecord, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
-    PatchId, RepoName, TaskId,
+    PatchId, RelativeVersionNumber, RepoName, TaskId,
 };
 use serde::Serialize;
 
@@ -421,7 +421,7 @@ async fn get_patch_by_version(
             bail!("--version 0 is not valid; use a positive version number or a negative offset")
         }
         Some(v) => client
-            .get_patch_version(patch_id, v)
+            .get_patch_version(patch_id, RelativeVersionNumber::new(v))
             .await
             .with_context(|| format!("failed to fetch version {v} of patch '{patch_id}'"))?,
         None => client

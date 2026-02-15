@@ -9,7 +9,7 @@ use metis_common::{
     constants::{
         ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID, ENV_OPENAI_API_KEY,
     },
-    IssueId, MetisId, TaskId,
+    IssueId, MetisId, RelativeVersionNumber, TaskId,
 };
 use std::path::PathBuf;
 
@@ -193,7 +193,7 @@ async fn get_job(
             bail!("--version 0 is not valid; use a positive version number or a negative offset")
         }
         Some(v) => client
-            .get_job_version(job_id, v)
+            .get_job_version(job_id, RelativeVersionNumber::new(v))
             .await
             .with_context(|| format!("failed to fetch version {v} of job '{job_id}'"))?,
         None => client

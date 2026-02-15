@@ -23,7 +23,7 @@ use metis_common::{
     task_status::Status,
     users::Username,
     whoami::ActorIdentity,
-    DocumentId, IssueId, PatchId, RepoName, TaskId,
+    DocumentId, IssueId, PatchId, RelativeVersionNumber, RepoName, TaskId,
 };
 use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
@@ -572,7 +572,10 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(versions.versions.len(), 1);
     let version_number = versions.versions[0].version;
     let document_version = client
-        .get_document_version(&document_id, version_number as i64)
+        .get_document_version(
+            &document_id,
+            RelativeVersionNumber::new(version_number as i64),
+        )
         .await?;
     assert_eq!(document_version.version, version_number);
 

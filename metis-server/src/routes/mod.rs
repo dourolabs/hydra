@@ -1,5 +1,4 @@
-use metis_common::{VersionNumber, api::v1::ApiError};
-use serde::Deserialize;
+use metis_common::{RelativeVersionNumber, VersionNumber, api::v1::ApiError};
 
 pub mod agents;
 pub mod auth;
@@ -14,17 +13,6 @@ pub mod patches;
 pub mod repositories;
 pub mod users;
 pub mod whoami;
-
-/// A version number that can be positive (exact version) or negative (offset
-/// from the latest version).
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub struct RelativeVersionNumber(i64);
-
-impl RelativeVersionNumber {
-    pub(crate) fn as_i64(self) -> i64 {
-        self.0
-    }
-}
 
 /// Resolve a version number that may be negative (offset from latest) into an
 /// absolute positive version number.
