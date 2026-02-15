@@ -11,7 +11,7 @@ use axum::{
     http::request::Parts,
 };
 use metis_common::{
-    IssueId, VersionNumber,
+    IssueId,
     api::v1::{ApiError, issues as api_issues},
 };
 use serde::Deserialize;
@@ -45,7 +45,7 @@ where
 #[derive(Debug, Clone)]
 pub struct IssueVersionPath {
     pub issue_id: IssueId,
-    pub version: VersionNumber,
+    pub version: i64,
 }
 
 #[async_trait]
@@ -56,10 +56,9 @@ where
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path((issue_id, version)) =
-            Path::<(IssueId, VersionNumber)>::from_request_parts(parts, state)
-                .await
-                .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+        let Path((issue_id, version)) = Path::<(IssueId, i64)>::from_request_parts(parts, state)
+            .await
+            .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
         Ok(Self { issue_id, version })
     }
@@ -181,13 +180,19 @@ pub async fn list_issue_versions(
 
 pub async fn get_issue_version(
     State(state): State<AppState>,
-    IssueVersionPath { issue_id, version }: IssueVersionPath,
+    IssueVersionPath {
+        issue_id,
+        version: raw_version,
+    }: IssueVersionPath,
 ) -> Result<Json<api_issues::IssueVersionRecord>, ApiError> {
-    info!(issue_id = %issue_id, version, "get_issue_version invoked");
+    info!(issue_id = %issue_id, raw_version, "get_issue_version invoked");
     let versions = state
         .get_issue_versions(&issue_id)
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
+
+    let max_version = versions.iter().map(|v| v.version).max().unwrap_or(0);
+    let version = super::resolve_version(raw_version, max_version, "issue", issue_id.as_ref())?;
 
     let entry = versions
         .into_iter()

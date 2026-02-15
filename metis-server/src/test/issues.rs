@@ -1539,3 +1539,232 @@ async fn delete_issue_non_existent() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+// ===== Negative Version Offset Tests =====
+
+#[tokio::test]
+async fn get_issue_version_negative_offset_returns_correct_version() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create issue (v1)
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "version one",
+                default_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Update issue (v2)
+    client
+        .put(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "version two",
+                default_user(),
+                String::new(),
+                IssueStatus::InProgress,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Update issue (v3)
+    client
+        .put(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "version three",
+                default_user(),
+                String::new(),
+                IssueStatus::InProgress,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // version=-1 should return v2 (second-to-last, i.e. max_version + (-1) = 3 + (-1) = 2)
+    let v_minus_1: IssueVersionRecord = client
+        .get(format!(
+            "{}/v1/issues/{}/versions/-1",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(v_minus_1.version, 2);
+    assert_eq!(v_minus_1.issue.description, "version two");
+
+    // version=-2 should return v1
+    let v_minus_2: IssueVersionRecord = client
+        .get(format!(
+            "{}/v1/issues/{}/versions/-2",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(v_minus_2.version, 1);
+    assert_eq!(v_minus_2.issue.description, "version one");
+
+    // Positive versions still work
+    let v_positive: IssueVersionRecord = client
+        .get(format!(
+            "{}/v1/issues/{}/versions/3",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(v_positive.version, 3);
+    assert_eq!(v_positive.issue.description, "version three");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_issue_version_zero_returns_400() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "test",
+                default_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let response = client
+        .get(format!(
+            "{}/v1/issues/{}/versions/0",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_issue_version_out_of_range_negative_offset_returns_400() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create a single-version issue
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "only version",
+                default_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // -1 on a single-version issue resolves to version 0 which is < 1
+    let response = client
+        .get(format!(
+            "{}/v1/issues/{}/versions/-1",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await?;
+    let error = body["error"].as_str().unwrap();
+    assert!(
+        error.contains("out of range"),
+        "expected out-of-range message, got: {error}"
+    );
+
+    // -100 is also out of range
+    let response = client
+        .get(format!(
+            "{}/v1/issues/{}/versions/-100",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
