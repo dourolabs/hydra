@@ -161,7 +161,6 @@ max_backoff_secs = 30
 #     "kill_tasks_on_issue_failure",  # Kill running tasks when their issue fails/drops
 #     "close_merge_request_issues",   # Close merge-request tracking issues when a patch is merged/closed
 #     "create_merge_request_issue",   # Create a merge-request tracking issue when a patch is created
-#     "inherit_creator_from_parent",  # Set a new issue's creator to match its parent's creator
 # ]
 #
 # ## Parameterized automation example:
