@@ -1,8 +1,5 @@
 use crate::{
-    domain::{
-        actors::ActorRef,
-        patches::Patch,
-    },
+    domain::{actors::ActorRef, patches::Patch},
     store::{ReadOnlyStore, Status, StoreError},
 };
 use metis_common::{
@@ -433,7 +430,10 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let (patch1_id, _) = handles.state.upsert_patch(ActorRef::test(), None, request1).await?;
+        let (patch1_id, _) = handles
+            .state
+            .upsert_patch(ActorRef::test(), None, request1)
+            .await?;
 
         let mut patch2 = Patch::new(
             "Second patch".to_string(),
@@ -491,7 +491,10 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let (patch1_id, _) = handles.state.upsert_patch(ActorRef::test(), None, request1).await?;
+        let (patch1_id, _) = handles
+            .state
+            .upsert_patch(ActorRef::test(), None, request1)
+            .await?;
 
         // Close the first patch
         let mut closed_patch = handles.store.get_patch(&patch1_id, false).await?.item;
@@ -512,7 +515,10 @@ mod tests {
         );
         patch2.branch_name = Some("feature/foo".to_string());
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
-        handles.state.upsert_patch(ActorRef::test(), None, request2).await?;
+        handles
+            .state
+            .upsert_patch(ActorRef::test(), None, request2)
+            .await?;
 
         Ok(())
     }
@@ -535,7 +541,10 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let (patch1_id, _) = handles.state.upsert_patch(ActorRef::test(), None, request1).await?;
+        let (patch1_id, _) = handles
+            .state
+            .upsert_patch(ActorRef::test(), None, request1)
+            .await?;
 
         // Updating the same patch should succeed (the uniqueness check is only
         // on creates, not updates).
@@ -578,7 +587,10 @@ mod tests {
             None,
         );
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        handles.state.upsert_patch(ActorRef::test(), None, request1).await?;
+        handles
+            .state
+            .upsert_patch(ActorRef::test(), None, request1)
+            .await?;
 
         let patch2 = Patch::new(
             "Second patch".to_string(),
@@ -592,7 +604,10 @@ mod tests {
             None,
         );
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
-        handles.state.upsert_patch(ActorRef::test(), None, request2).await?;
+        handles
+            .state
+            .upsert_patch(ActorRef::test(), None, request2)
+            .await?;
 
         Ok(())
     }

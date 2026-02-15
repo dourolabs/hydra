@@ -718,19 +718,11 @@ impl StoreWithEvents {
 
     // ---- Actor mutations (inherent, with actor) ----
 
-    pub async fn add_actor(
-        &self,
-        actor: Actor,
-        _acting_as: ActorRef,
-    ) -> Result<(), StoreError> {
+    pub async fn add_actor(&self, actor: Actor, _acting_as: ActorRef) -> Result<(), StoreError> {
         self.inner.add_actor(actor).await
     }
 
-    pub async fn update_actor(
-        &self,
-        actor: Actor,
-        _acting_as: ActorRef,
-    ) -> Result<(), StoreError> {
+    pub async fn update_actor(&self, actor: Actor, _acting_as: ActorRef) -> Result<(), StoreError> {
         self.inner.update_actor(actor).await
     }
 
@@ -1048,7 +1040,10 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue_with_actor(issue, ActorRef::test()).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
 
         let event = rx.recv().await.expect("should receive IssueCreated");
         match &event {
@@ -1137,7 +1132,10 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue_with_actor(issue, ActorRef::test()).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         store
@@ -1277,7 +1275,10 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue_with_actor(issue, ActorRef::test()).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         store

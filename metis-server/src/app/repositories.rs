@@ -1,4 +1,7 @@
-use crate::{domain::actors::ActorRef, store::{ReadOnlyStore, StoreError}};
+use crate::{
+    domain::actors::ActorRef,
+    store::{ReadOnlyStore, StoreError},
+};
 use metis_common::{RepoName, api::v1::repositories::SearchRepositoriesQuery};
 
 use super::app_state::AppState;

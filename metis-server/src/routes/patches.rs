@@ -1,4 +1,7 @@
-use crate::domain::{actors::{Actor, ActorRef}, patches::GithubPr};
+use crate::domain::{
+    actors::{Actor, ActorRef},
+    patches::GithubPr,
+};
 use crate::{
     app::{AppState, UpsertPatchError},
     store::StoreError,

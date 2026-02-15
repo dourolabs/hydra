@@ -489,7 +489,10 @@ mod tests {
         let (issue_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_issue_with_actor(issue_with_status("open", IssueStatus::Open, vec![]), ActorRef::test())
+                .add_issue_with_actor(
+                    issue_with_status("open", IssueStatus::Open, vec![]),
+                    ActorRef::test(),
+                )
                 .await
                 .unwrap()
         };
@@ -1258,11 +1261,17 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue_with_actor(parent, ActorRef::test())
+            .await
+            .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child = issue_with_status("child", IssueStatus::Rejected, vec![child_dep]);
-        store.add_issue_with_actor(child, ActorRef::test()).await.unwrap();
+        store
+            .add_issue_with_actor(child, ActorRef::test())
+            .await
+            .unwrap();
 
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
     }
@@ -1273,11 +1282,17 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue_with_actor(parent, ActorRef::test())
+            .await
+            .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child = issue_with_status("child", IssueStatus::Failed, vec![child_dep]);
-        store.add_issue_with_actor(child, ActorRef::test()).await.unwrap();
+        store
+            .add_issue_with_actor(child, ActorRef::test())
+            .await
+            .unwrap();
 
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
     }
@@ -1288,7 +1303,10 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue_with_actor(parent, ActorRef::test())
+            .await
+            .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
@@ -1337,7 +1355,10 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue_with_actor(parent, ActorRef::test())
+            .await
+            .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
 
@@ -1375,7 +1396,10 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue_with_actor(parent, ActorRef::test())
+            .await
+            .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
 
@@ -1407,7 +1431,10 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue_with_actor(parent, ActorRef::test())
+            .await
+            .unwrap();
 
         // No children — trivially, no child is Ready
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
@@ -1420,11 +1447,17 @@ mod tests {
         let store = state.store.as_ref();
         // Grandparent (InProgress) -> Parent (InProgress) -> Child (Failed)
         let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
-        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, ActorRef::test()).await.unwrap();
+        let (grandparent_id, _) = store
+            .add_issue_with_actor(grandparent, ActorRef::test())
+            .await
+            .unwrap();
 
         let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue_with_actor(parent, ActorRef::test())
+            .await
+            .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
@@ -1448,11 +1481,17 @@ mod tests {
         let store = state.store.as_ref();
         // Grandparent (InProgress) -> Parent (InProgress) -> Child (Open, unblocked)
         let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
-        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, ActorRef::test()).await.unwrap();
+        let (grandparent_id, _) = store
+            .add_issue_with_actor(grandparent, ActorRef::test())
+            .await
+            .unwrap();
 
         let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue_with_actor(parent, ActorRef::test())
+            .await
+            .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
@@ -1477,15 +1516,24 @@ mod tests {
         let store = state.store.as_ref();
         // Grandparent (InProgress) -> Parent (InProgress) -> Child (Open, blocked)
         let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
-        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, ActorRef::test()).await.unwrap();
+        let (grandparent_id, _) = store
+            .add_issue_with_actor(grandparent, ActorRef::test())
+            .await
+            .unwrap();
 
         let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue_with_actor(parent, ActorRef::test())
+            .await
+            .unwrap();
 
         // Create a blocker issue that is still open (not closed)
         let blocker = issue_with_status("blocker", IssueStatus::Open, vec![]);
-        let (blocker_id, _) = store.add_issue_with_actor(blocker, ActorRef::test()).await.unwrap();
+        let (blocker_id, _) = store
+            .add_issue_with_actor(blocker, ActorRef::test())
+            .await
+            .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let blocked_dep = IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id);

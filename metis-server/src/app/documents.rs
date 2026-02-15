@@ -186,7 +186,9 @@ mod tests {
             deleted: false,
         };
 
-        let result = state.upsert_document(None, document, ActorRef::test()).await;
+        let result = state
+            .upsert_document(None, document, ActorRef::test())
+            .await;
         assert!(result.is_ok());
     }
 
@@ -201,7 +203,9 @@ mod tests {
             deleted: false,
         };
 
-        let result = state.upsert_document(None, document, ActorRef::test()).await;
+        let result = state
+            .upsert_document(None, document, ActorRef::test())
+            .await;
         assert!(result.is_ok());
     }
 }

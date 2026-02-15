@@ -1,6 +1,9 @@
 use crate::{
     app::Repository as RepositoryConfig,
-    domain::{actors::ActorRef, patches::{Patch, PatchStatus}},
+    domain::{
+        actors::ActorRef,
+        patches::{Patch, PatchStatus},
+    },
     test::{TestStateHandles, spawn_test_server_with_state, test_client, test_state_handles},
 };
 use git2::{Repository as GitRepository, Signature, build::CheckoutBuilder};

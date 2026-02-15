@@ -202,17 +202,15 @@ impl AppState {
                     Some(issue.item.creator.clone())
                 }
             },
-            ActorRef::System { on_behalf_of, .. } => {
-                match on_behalf_of.as_ref()? {
-                    ActorId::Username(username) => Some(username.clone()),
-                    ActorId::Task(task_id) => {
-                        let task = self.get_task(task_id).await.ok()?;
-                        let issue_id = task.spawned_from.as_ref()?;
-                        let issue = self.get_issue(issue_id, false).await.ok()?;
-                        Some(issue.item.creator.clone())
-                    }
+            ActorRef::System { on_behalf_of, .. } => match on_behalf_of.as_ref()? {
+                ActorId::Username(username) => Some(username.clone()),
+                ActorId::Task(task_id) => {
+                    let task = self.get_task(task_id).await.ok()?;
+                    let issue_id = task.spawned_from.as_ref()?;
+                    let issue = self.get_issue(issue_id, false).await.ok()?;
+                    Some(issue.item.creator.clone())
                 }
-            }
+            },
             ActorRef::Automation { .. } => None,
         }
     }
@@ -1137,7 +1135,10 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), ActorRef::test())
+            .add_issue_with_actor(
+                issue_with_status("parent", IssueStatus::Open, vec![]),
+                ActorRef::test(),
+            )
             .await
             .unwrap();
         let (task_id, _) = store
@@ -1169,7 +1170,10 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), ActorRef::test())
+            .add_issue_with_actor(
+                issue_with_status("parent", IssueStatus::Open, vec![]),
+                ActorRef::test(),
+            )
             .await
             .unwrap();
         let (task_id, _) = store
@@ -1213,7 +1217,10 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), ActorRef::test())
+            .add_issue_with_actor(
+                issue_with_status("parent", IssueStatus::Open, vec![]),
+                ActorRef::test(),
+            )
             .await
             .unwrap();
         let (task_id, _) = store
