@@ -748,7 +748,7 @@ async fn migrate_actors_internal(pool: &PgStorePool) -> Result<u64> {
                 .get("auth_token_salt")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let user_or_worker = row
+            let actor_id = row
                 .payload
                 .get("user_or_worker")
                 .cloned()
@@ -756,7 +756,7 @@ async fn migrate_actors_internal(pool: &PgStorePool) -> Result<u64> {
 
             sqlx::query(&format!(
                 "INSERT INTO {V2_TABLE_ACTORS}
-                 (id, version_number, auth_token_hash, auth_token_salt, user_or_worker, created_at)
+                 (id, version_number, auth_token_hash, auth_token_salt, actor_id, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT (id, version_number) DO NOTHING"
             ))
@@ -764,7 +764,7 @@ async fn migrate_actors_internal(pool: &PgStorePool) -> Result<u64> {
             .bind(row.version_number)
             .bind(auth_token_hash)
             .bind(auth_token_salt)
-            .bind(&user_or_worker)
+            .bind(&actor_id)
             .bind(row.created_at)
             .execute(pool)
             .await

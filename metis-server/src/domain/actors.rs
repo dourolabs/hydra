@@ -60,26 +60,26 @@ impl AuthToken {
 pub struct Actor {
     pub auth_token_hash: String,
     pub auth_token_salt: String,
-    pub user_or_worker: UserOrWorker,
+    pub actor_id: ActorId,
 }
 
 impl Actor {
     pub fn new_for_user(username: Username) -> (Actor, String) {
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
-        let user_or_worker = UserOrWorker::Username(username);
+        let actor_id = ActorId::Username(username);
         let actor = Actor {
             auth_token_hash,
             auth_token_salt,
-            user_or_worker,
+            actor_id,
         };
         let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
         (actor, auth_token)
     }
 
     pub fn name(&self) -> String {
-        match &self.user_or_worker {
-            UserOrWorker::Username(username) => format!("u-{username}"),
-            UserOrWorker::Task(task_id) => format!("w-{task_id}"),
+        match &self.actor_id {
+            ActorId::Username(username) => format!("u-{username}"),
+            ActorId::Task(task_id) => format!("w-{task_id}"),
         }
     }
 
@@ -92,11 +92,11 @@ impl Actor {
 
     pub fn new_for_task(task_id: TaskId) -> (Actor, String) {
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
-        let user_or_worker = UserOrWorker::Task(task_id);
+        let actor_id = ActorId::Task(task_id);
         let actor = Actor {
             auth_token_hash,
             auth_token_salt,
-            user_or_worker,
+            actor_id,
         };
         let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
         (actor, auth_token)
@@ -124,12 +124,12 @@ impl Actor {
         format!("{}:{raw_token}", actor.name())
     }
 
-    pub fn parse_name(name: &str) -> Result<UserOrWorker, ActorError> {
+    pub fn parse_name(name: &str) -> Result<ActorId, ActorError> {
         if let Some(username) = name.strip_prefix("u-") {
             if username.is_empty() {
                 return Err(ActorError::InvalidActorName(name.to_string()));
             }
-            return Ok(UserOrWorker::Username(Username::from(username)));
+            return Ok(ActorId::Username(Username::from(username)));
         }
 
         if let Some(task_id) = name.strip_prefix("w-") {
@@ -138,7 +138,7 @@ impl Actor {
             }
             let task_id = TaskId::from_str(task_id)
                 .map_err(|_| ActorError::InvalidActorName(name.to_string()))?;
-            return Ok(UserOrWorker::Task(task_id));
+            return Ok(ActorId::Task(task_id));
         }
 
         Err(ActorError::InvalidActorName(name.to_string()))
@@ -150,9 +150,9 @@ impl Actor {
     ) -> Result<GithubTokenResponse, ApiError> {
         info!(actor = %self.name(), "get_github_token invoked");
         let (username, user) = {
-            let username = match &self.user_or_worker {
-                UserOrWorker::Username(username) => username.clone(),
-                UserOrWorker::Task(task_id) => {
+            let username = match &self.actor_id {
+                ActorId::Username(username) => username.clone(),
+                ActorId::Task(task_id) => {
                     let task = state.get_task(task_id).await.map_err(|err| match err {
                         StoreError::TaskNotFound(_) => {
                             error!(task_id = %task_id, "task not found");
@@ -333,7 +333,7 @@ fn join_url(base: &str, path: &str) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum UserOrWorker {
+pub enum ActorId {
     Username(Username),
     Task(TaskId),
 }
@@ -348,10 +348,7 @@ mod tests {
         let (actor, auth_token) = Actor::new_for_user(username.clone());
 
         assert!(!auth_token.is_empty());
-        assert_eq!(
-            actor.user_or_worker,
-            UserOrWorker::Username(username.clone())
-        );
+        assert_eq!(actor.actor_id, ActorId::Username(username.clone()));
         assert!(!actor.auth_token_salt.is_empty());
         let prefix = format!("{}:", actor.name());
         let raw_token = auth_token
