@@ -1,6 +1,11 @@
 use crate::{
     config::non_empty,
-    domain::{issues::JobSettings, jobs::BundleSpec},
+    domain::{
+        actors::{Actor, ActorId},
+        issues::{Issue, JobSettings},
+        jobs::BundleSpec,
+        users::Username,
+    },
     job_engine::{JobEngineError, JobStatus},
     store::{ReadOnlyStore, Status, StoreError, Task, TaskError, TaskStatusLog},
 };
@@ -137,11 +142,15 @@ impl AppState {
             }
         }
 
+        let creator = self
+            .resolve_creator_for_job(actor.as_deref(), issue.as_ref().map(|i| &i.item))
+            .await;
+
         let task = Task::new(
             request.prompt,
             context,
             request.issue_id.clone(),
-            None,
+            creator,
             image,
             model,
             env_vars,
@@ -171,6 +180,28 @@ impl AppState {
         }
 
         settings
+    }
+
+    async fn resolve_creator_for_job(
+        &self,
+        actor: Option<&str>,
+        issue: Option<&Issue>,
+    ) -> Option<Username> {
+        if let Some(issue) = issue {
+            return Some(issue.creator.clone());
+        }
+
+        let actor_name = actor?;
+        match Actor::parse_name(actor_name) {
+            Ok(ActorId::Username(username)) => Some(username),
+            Ok(ActorId::Task(task_id)) => {
+                let task = self.get_task(&task_id).await.ok()?;
+                let issue_id = task.spawned_from.as_ref()?;
+                let issue = self.get_issue(issue_id, false).await.ok()?;
+                Some(issue.item.creator.clone())
+            }
+            Err(_) => None,
+        }
     }
 
     pub async fn set_job_status(

@@ -33,7 +33,7 @@ pub fn task_for_issue(issue_id: &IssueId) -> Task {
         "Spawn me".to_string(),
         BundleSpec::None,
         Some(issue_id.clone()),
-        None,
+        Some(Username::from("creator")),
         Some("worker:latest".to_string()),
         None,
         HashMap::new(),
