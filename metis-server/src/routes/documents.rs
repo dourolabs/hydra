@@ -113,11 +113,12 @@ pub async fn get_document(
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
-    let response = v1::documents::DocumentVersionRecord::new(
+    let response = v1::documents::DocumentVersionRecord::with_actor(
         document_id.clone(),
         document.version,
         document.timestamp,
         document.item.into(),
+        document.actor,
     );
     info!(document_id = %document_id, "get_document completed");
     Ok(Json(response))
@@ -136,11 +137,12 @@ pub async fn list_documents(
     let records = documents
         .into_iter()
         .map(|(id, versioned)| {
-            v1::documents::DocumentVersionRecord::new(
+            v1::documents::DocumentVersionRecord::with_actor(
                 id,
                 versioned.version,
                 versioned.timestamp,
                 versioned.item.into(),
+                versioned.actor,
             )
         })
         .collect();
@@ -166,11 +168,12 @@ pub async fn list_document_versions(
     let records = versions
         .into_iter()
         .map(|version| {
-            v1::documents::DocumentVersionRecord::new(
+            v1::documents::DocumentVersionRecord::with_actor(
                 document_id.clone(),
                 version.version,
                 version.timestamp,
                 version.item.into(),
+                version.actor,
             )
         })
         .collect();
@@ -206,11 +209,12 @@ pub async fn get_document_version(
             ))
         })?;
 
-    let response = v1::documents::DocumentVersionRecord::new(
+    let response = v1::documents::DocumentVersionRecord::with_actor(
         document_id.clone(),
         entry.version,
         entry.timestamp,
         entry.item.into(),
+        entry.actor,
     );
     info!(document_id = %document_id, version, "get_document_version completed");
     Ok(Json(response))
@@ -278,11 +282,12 @@ pub async fn delete_document(
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
     info!(document_id = %document_id, "delete_document completed");
-    let response = v1::documents::DocumentVersionRecord::new(
+    let response = v1::documents::DocumentVersionRecord::with_actor(
         document_id,
         document.version,
         document.timestamp,
         document.item.into(),
+        document.actor,
     );
     Ok(Json(response))
 }

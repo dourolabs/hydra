@@ -92,11 +92,12 @@ pub async fn list_jobs(
             } else {
                 api_task
             };
-            v1::jobs::JobVersionRecord::new(
+            v1::jobs::JobVersionRecord::with_actor(
                 task_id,
                 versioned_task.version,
                 versioned_task.timestamp,
                 api_task,
+                versioned_task.actor,
             )
         })
         .collect();
@@ -152,8 +153,13 @@ pub async fn get_job(
     } else {
         api_task
     };
-    let record =
-        v1::jobs::JobVersionRecord::new(job_id.clone(), latest.version, latest.timestamp, api_task);
+    let record = v1::jobs::JobVersionRecord::with_actor(
+        job_id.clone(),
+        latest.version,
+        latest.timestamp,
+        api_task,
+        latest.actor.clone(),
+    );
     info!(job_id = %record.job_id, "get_job completed successfully");
     Ok(Json(record))
 }
@@ -180,11 +186,12 @@ pub async fn list_job_versions(
     let records = versions
         .into_iter()
         .map(|version| {
-            v1::jobs::JobVersionRecord::new(
+            v1::jobs::JobVersionRecord::with_actor(
                 job_id.clone(),
                 version.version,
                 version.timestamp,
                 version.item.into(),
+                version.actor,
             )
         })
         .collect();
@@ -230,11 +237,12 @@ pub async fn get_job_version(
             ApiError::not_found(format!("job '{job_id}' version {version} not found"))
         })?;
 
-    let response = v1::jobs::JobVersionRecord::new(
+    let response = v1::jobs::JobVersionRecord::with_actor(
         job_id.clone(),
         entry.version,
         entry.timestamp,
         entry.item.into(),
+        entry.actor,
     );
     info!(job_id = %job_id, version, "get_job_version completed");
     Ok(Json(response))

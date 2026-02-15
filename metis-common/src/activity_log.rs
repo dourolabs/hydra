@@ -40,6 +40,8 @@ pub struct ActivityLogEntry {
     pub timestamp: DateTime<Utc>,
     pub event: ActivityEvent,
     pub object: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<Value>,
 }
 
 pub fn activity_log_for_issue_versions(
@@ -106,6 +108,7 @@ pub fn activity_log_from_versions<T: Serialize>(
             timestamp: versioned.timestamp,
             event,
             object: current_value.clone(),
+            actor: versioned.actor.clone(),
         });
 
         previous_value = Some(current_value);
@@ -275,6 +278,58 @@ mod tests {
         assert!(matches!(log[0].event, ActivityEvent::Created));
         assert!(matches!(log[1].event, ActivityEvent::Updated { .. }));
         assert!(log[0].timestamp < log[1].timestamp);
+    }
+
+    #[test]
+    fn activity_log_includes_actor_from_versioned() {
+        let issue_id = IssueId::new();
+        let base_issue = Issue {
+            issue_type: IssueType::Task,
+            description: "Initial".to_string(),
+            creator: "alice".into(),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: None,
+            job_settings: Default::default(),
+            todo_list: Vec::new(),
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+            deleted: false,
+        };
+
+        let actor_json = serde_json::json!({
+            "type": "authenticated",
+            "actor_id": {"type": "username", "id": "alice"}
+        });
+
+        let versions = vec![
+            Versioned::new(
+                base_issue.clone(),
+                1,
+                Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+            ),
+            Versioned::with_actor(
+                Issue {
+                    description: "Updated".to_string(),
+                    ..base_issue
+                },
+                2,
+                Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
+                actor_json.clone(),
+            ),
+        ];
+
+        let log = activity_log_for_issue_versions(issue_id, &versions);
+        assert_eq!(log.len(), 2);
+        assert_eq!(
+            log[0].actor, None,
+            "historical version should have no actor"
+        );
+        assert_eq!(
+            log[1].actor,
+            Some(actor_json),
+            "new version should carry actor"
+        );
     }
 
     #[test]

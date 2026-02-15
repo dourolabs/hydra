@@ -265,6 +265,8 @@ pub struct PatchVersionRecord {
     pub version: VersionNumber,
     pub timestamp: DateTime<Utc>,
     pub patch: Patch,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<serde_json::Value>,
 }
 
 impl PatchVersionRecord {
@@ -279,6 +281,23 @@ impl PatchVersionRecord {
             version,
             timestamp,
             patch,
+            actor: None,
+        }
+    }
+
+    pub fn with_actor(
+        patch_id: PatchId,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        patch: Patch,
+        actor: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            patch_id,
+            version,
+            timestamp,
+            patch,
+            actor,
         }
     }
 }

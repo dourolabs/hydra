@@ -533,6 +533,8 @@ pub struct IssueVersionRecord {
     pub version: VersionNumber,
     pub timestamp: DateTime<Utc>,
     pub issue: Issue,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<serde_json::Value>,
 }
 
 impl IssueVersionRecord {
@@ -547,6 +549,23 @@ impl IssueVersionRecord {
             version,
             timestamp,
             issue,
+            actor: None,
+        }
+    }
+
+    pub fn with_actor(
+        issue_id: IssueId,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        issue: Issue,
+        actor: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            issue_id,
+            version,
+            timestamp,
+            issue,
+            actor,
         }
     }
 }
@@ -833,5 +852,76 @@ mod tests {
         let round_trip: Issue = serde_json::from_value(value).expect("issue should deserialize");
         assert_eq!(round_trip.todo_list, todos);
         assert_eq!(round_trip.job_settings, job_settings);
+    }
+
+    #[test]
+    fn issue_version_record_serializes_actor_when_present() {
+        let issue_id: IssueId = "i-test".parse().unwrap();
+        let issue = Issue {
+            issue_type: IssueType::Task,
+            description: "test".to_string(),
+            creator: Username::from("alice"),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: None,
+            job_settings: Default::default(),
+            todo_list: Vec::new(),
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+            deleted: false,
+        };
+
+        let actor =
+            json!({"type": "authenticated", "actor_id": {"type": "username", "id": "alice"}});
+        let record = IssueVersionRecord::with_actor(
+            issue_id,
+            1,
+            chrono::Utc::now(),
+            issue,
+            Some(actor.clone()),
+        );
+
+        let value = serde_json::to_value(&record).expect("should serialize");
+        assert_eq!(value["actor"], actor);
+    }
+
+    #[test]
+    fn issue_version_record_omits_actor_when_none() {
+        let issue_id: IssueId = "i-test".parse().unwrap();
+        let issue = Issue {
+            issue_type: IssueType::Task,
+            description: "test".to_string(),
+            creator: Username::from("alice"),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: None,
+            job_settings: Default::default(),
+            todo_list: Vec::new(),
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+            deleted: false,
+        };
+
+        let record = IssueVersionRecord::new(issue_id, 1, chrono::Utc::now(), issue);
+
+        let value = serde_json::to_value(&record).expect("should serialize");
+        assert!(
+            value.get("actor").is_none(),
+            "actor should be omitted when None"
+        );
+    }
+
+    #[test]
+    fn issue_version_record_deserializes_without_actor() {
+        let json = r#"{
+            "issue_id": "i-test",
+            "version": 1,
+            "timestamp": "2024-01-01T00:00:00Z",
+            "issue": {"type": "task", "description": "test", "creator": "alice"}
+        }"#;
+
+        let record: IssueVersionRecord =
+            serde_json::from_str(json).expect("should deserialize without actor");
+        assert_eq!(record.actor, None);
     }
 }

@@ -536,6 +536,8 @@ struct ActivityLogEntrySummary {
     timestamp: DateTime<Utc>,
     event: ActivityEventSummary,
     object: ActivityObjectSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -718,6 +720,7 @@ fn summarize_activity_log_entry(entry: &ActivityLogEntry) -> Result<ActivityLogE
         timestamp: entry.timestamp,
         event,
         object,
+        actor: entry.actor.clone(),
     })
 }
 
@@ -2080,20 +2083,51 @@ fn write_activity_log_entry_pretty(
         ActivityEventSummary::Updated { .. } => "updated",
     };
 
+    let actor_label = entry
+        .actor
+        .as_ref()
+        .and_then(format_actor_label)
+        .map(|label| format!(" by {label}"))
+        .unwrap_or_default();
+
     writeln!(
         writer,
-        "{indent}{} {} {} v{} {}",
+        "{indent}{} {} {} v{} {}{}",
         colorize_dimmed(&timestamp),
         colorize_bold(kind_label),
         entry.object_id,
         entry.version,
-        event_label
+        event_label,
+        actor_label
     )?;
 
     let detail_indent = format!("{indent}  ");
     write_activity_object_summary(&entry.object, &entry.event, &detail_indent, writer)?;
 
     Ok(())
+}
+
+fn format_actor_label(actor: &Value) -> Option<String> {
+    let obj = actor.as_object()?;
+    match obj.get("type")?.as_str()? {
+        "authenticated" => {
+            let actor_id = obj.get("actor_id")?.as_object()?;
+            match actor_id.get("type")?.as_str()? {
+                "username" => Some(actor_id.get("id")?.as_str()?.to_string()),
+                "task" => Some(format!("task:{}", actor_id.get("id")?.as_str()?)),
+                _ => None,
+            }
+        }
+        "system" => {
+            let name = obj.get("worker_name")?.as_str()?;
+            Some(format!("system:{name}"))
+        }
+        "automation" => {
+            let name = obj.get("automation_name")?.as_str()?;
+            Some(format!("automation:{name}"))
+        }
+        _ => None,
+    }
 }
 
 fn write_activity_object_summary(

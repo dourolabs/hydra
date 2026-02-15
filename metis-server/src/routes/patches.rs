@@ -112,11 +112,12 @@ pub async fn get_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     info!(patch_id = %patch_id, "get_patch completed");
-    let response = v1::patches::PatchVersionRecord::new(
+    let response = v1::patches::PatchVersionRecord::with_actor(
         patch_id,
         patch.version,
         patch.timestamp,
         patch.item.into(),
+        patch.actor,
     );
     Ok(Json(response))
 }
@@ -134,11 +135,12 @@ pub async fn list_patch_versions(
     let records = versions
         .into_iter()
         .map(|version| {
-            v1::patches::PatchVersionRecord::new(
+            v1::patches::PatchVersionRecord::with_actor(
                 patch_id.clone(),
                 version.version,
                 version.timestamp,
                 version.item.into(),
+                version.actor,
             )
         })
         .collect();
@@ -175,11 +177,12 @@ pub async fn get_patch_version(
             ApiError::not_found(format!("patch '{patch_id}' version {version} not found"))
         })?;
 
-    let response = v1::patches::PatchVersionRecord::new(
+    let response = v1::patches::PatchVersionRecord::with_actor(
         patch_id.clone(),
         entry.version,
         entry.timestamp,
         entry.item.into(),
+        entry.actor,
     );
     info!(patch_id = %patch_id, version, "get_patch_version completed");
     Ok(Json(response))
@@ -199,11 +202,12 @@ pub async fn list_patches(
     let records: Vec<v1::patches::PatchVersionRecord> = patches
         .into_iter()
         .map(|(id, versioned)| {
-            v1::patches::PatchVersionRecord::new(
+            v1::patches::PatchVersionRecord::with_actor(
                 id,
                 versioned.version,
                 versioned.timestamp,
                 versioned.item.into(),
+                versioned.actor,
             )
         })
         .collect();
@@ -537,11 +541,12 @@ pub async fn delete_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     info!(patch_id = %patch_id, "delete_patch completed");
-    let response = v1::patches::PatchVersionRecord::new(
+    let response = v1::patches::PatchVersionRecord::with_actor(
         patch_id,
         patch.version,
         patch.timestamp,
         patch.item.into(),
+        patch.actor,
     );
     Ok(Json(response))
 }

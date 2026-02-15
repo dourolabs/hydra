@@ -46,6 +46,8 @@ pub struct DocumentVersionRecord {
     pub version: VersionNumber,
     pub timestamp: DateTime<Utc>,
     pub document: Document,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<serde_json::Value>,
 }
 
 impl DocumentVersionRecord {
@@ -60,6 +62,23 @@ impl DocumentVersionRecord {
             version,
             timestamp,
             document,
+            actor: None,
+        }
+    }
+
+    pub fn with_actor(
+        document_id: DocumentId,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        document: Document,
+        actor: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            document_id,
+            version,
+            timestamp,
+            document,
+            actor,
         }
     }
 }

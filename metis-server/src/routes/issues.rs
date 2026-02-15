@@ -139,11 +139,12 @@ pub async fn get_issue(
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
     info!(issue_id = %issue_id, "get_issue completed");
-    let response = api_issues::IssueVersionRecord::new(
+    let response = api_issues::IssueVersionRecord::with_actor(
         issue_id,
         issue.version,
         issue.timestamp,
         issue.item.into(),
+        issue.actor,
     );
     Ok(Json(response))
 }
@@ -161,11 +162,12 @@ pub async fn list_issue_versions(
     let records = versions
         .into_iter()
         .map(|version| {
-            api_issues::IssueVersionRecord::new(
+            api_issues::IssueVersionRecord::with_actor(
                 issue_id.clone(),
                 version.version,
                 version.timestamp,
                 version.item.into(),
+                version.actor,
             )
         })
         .collect();
@@ -202,11 +204,12 @@ pub async fn get_issue_version(
             ApiError::not_found(format!("issue '{issue_id}' version {version} not found"))
         })?;
 
-    let response = api_issues::IssueVersionRecord::new(
+    let response = api_issues::IssueVersionRecord::with_actor(
         issue_id.clone(),
         entry.version,
         entry.timestamp,
         entry.item.into(),
+        entry.actor,
     );
     info!(issue_id = %issue_id, version, "get_issue_version completed");
     Ok(Json(response))
@@ -259,11 +262,12 @@ pub async fn list_issues(
                 .is_none_or(|allowed| allowed.contains(id))
         })
         .map(|(id, versioned)| {
-            api_issues::IssueVersionRecord::new(
+            api_issues::IssueVersionRecord::with_actor(
                 id,
                 versioned.version,
                 versioned.timestamp,
                 versioned.item.into(),
+                versioned.actor,
             )
         })
         .collect();
@@ -497,11 +501,12 @@ pub async fn delete_issue(
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
     info!(issue_id = %issue_id, "delete_issue completed");
-    let response = api_issues::IssueVersionRecord::new(
+    let response = api_issues::IssueVersionRecord::with_actor(
         issue_id,
         issue.version,
         issue.timestamp,
         issue.item.into(),
+        issue.actor,
     );
     Ok(Json(response))
 }
