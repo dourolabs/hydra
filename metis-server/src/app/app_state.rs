@@ -68,6 +68,7 @@ impl AppState {
                     PolicyEntry::Name("cascade_issue_status".to_string()),
                     PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
                     PolicyEntry::Name("close_merge_request_issues".to_string()),
+                    PolicyEntry::Name("sync_review_request_issues".to_string()),
                     PolicyEntry::Name("patch_workflow".to_string()),
                     PolicyEntry::Name("github_pr_sync".to_string()),
                 ],
