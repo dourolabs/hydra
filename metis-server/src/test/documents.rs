@@ -1,5 +1,8 @@
 use crate::{
-    domain::jobs::{BundleSpec, Task},
+    domain::{
+        actors::ActorRef,
+        jobs::{BundleSpec, Task},
+    },
     store::Status,
     test_utils::{
         spawn_test_server, spawn_test_server_with_state, test_client, test_state_handles,
@@ -156,7 +159,10 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     // Non-running job also returns 400
     let handles = test_state_handles();
     let task = sample_task(Status::Complete);
-    let (non_running, _) = handles.store.add_task(task, Utc::now()).await?;
+    let (non_running, _) = handles
+        .store
+        .add_task(task, Utc::now(), &ActorRef::test())
+        .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
     let response = client
@@ -172,8 +178,14 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     // Running job succeeds
     let handles = test_state_handles();
     let task = sample_task(Status::Running);
-    let (running_job, _) = handles.store.add_task(task.clone(), Utc::now()).await?;
-    handles.store.update_task(&running_job, task).await?;
+    let (running_job, _) = handles
+        .store
+        .add_task(task.clone(), Utc::now(), &ActorRef::test())
+        .await?;
+    handles
+        .store
+        .update_task(&running_job, task, &ActorRef::test())
+        .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
     let response = client
@@ -193,8 +205,14 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
 async fn documents_support_search_filters() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let task = sample_task(Status::Running);
-    let (running_task, _) = handles.store.add_task(task.clone(), Utc::now()).await?;
-    handles.store.update_task(&running_task, task).await?;
+    let (running_task, _) = handles
+        .store
+        .add_task(task.clone(), Utc::now(), &ActorRef::test())
+        .await?;
+    handles
+        .store
+        .update_task(&running_task, task, &ActorRef::test())
+        .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
     let base = server.base_url();

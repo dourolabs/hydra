@@ -163,22 +163,28 @@ mod tests {
         let store = handles.store.clone();
 
         let issue = make_issue(IssueStatus::Open);
-        let (issue_id, _) = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
         // Add a task for the issue
         let task = make_task(&issue_id);
-        let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Mark task as Running
         let mut running_task = store.get_task(&task_id, false).await.unwrap().item;
         running_task.status = Status::Running;
-        store.update_task(&task_id, running_task).await.unwrap();
+        store
+            .update_task(&task_id, running_task, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Update issue to Dropped
         let old_issue = make_issue(IssueStatus::Open);
         let new_issue = make_issue(IssueStatus::Dropped);
         store
-            .update_issue(&issue_id, new_issue.clone())
+            .update_issue(&issue_id, new_issue.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -215,7 +221,10 @@ mod tests {
         let old_issue = make_issue(IssueStatus::Open);
         let new_issue = make_issue(IssueStatus::InProgress);
 
-        let (issue_id, _) = store.add_issue(new_issue.clone()).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(new_issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(old_issue),

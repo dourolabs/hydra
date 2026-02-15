@@ -454,7 +454,7 @@ impl StoreWithEvents {
         actor: ActorRef,
     ) -> Result<(IssueId, VersionNumber), StoreError> {
         let new_issue = issue.clone();
-        let (issue_id, version) = self.inner.add_issue(issue).await?;
+        let (issue_id, version) = self.inner.add_issue(issue, &actor).await?;
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: new_issue,
@@ -473,7 +473,7 @@ impl StoreWithEvents {
     ) -> Result<VersionNumber, StoreError> {
         let old_issue = self.inner.get_issue(id, false).await.ok().map(|v| v.item);
         let new_issue = issue.clone();
-        let version = self.inner.update_issue(id, issue).await?;
+        let version = self.inner.update_issue(id, issue, &actor).await?;
         let payload = Arc::new(MutationPayload::Issue {
             old: old_issue,
             new: new_issue,
@@ -490,7 +490,7 @@ impl StoreWithEvents {
         actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let old_issue = self.inner.get_issue(id, false).await.ok().map(|v| v.item);
-        let version = self.inner.delete_issue(id).await?;
+        let version = self.inner.delete_issue(id, &actor).await?;
         let new_issue = self
             .inner
             .get_issue(id, true)
@@ -514,7 +514,7 @@ impl StoreWithEvents {
         actor: ActorRef,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
         let new_patch = patch.clone();
-        let (patch_id, version) = self.inner.add_patch(patch).await?;
+        let (patch_id, version) = self.inner.add_patch(patch, &actor).await?;
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
             new: new_patch,
@@ -533,7 +533,7 @@ impl StoreWithEvents {
     ) -> Result<VersionNumber, StoreError> {
         let old_patch = self.inner.get_patch(id, false).await.ok().map(|v| v.item);
         let new_patch = patch.clone();
-        let version = self.inner.update_patch(id, patch).await?;
+        let version = self.inner.update_patch(id, patch, &actor).await?;
         let payload = Arc::new(MutationPayload::Patch {
             old: old_patch,
             new: new_patch,
@@ -550,7 +550,7 @@ impl StoreWithEvents {
         actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let old_patch = self.inner.get_patch(id, false).await.ok().map(|v| v.item);
-        let version = self.inner.delete_patch(id).await?;
+        let version = self.inner.delete_patch(id, &actor).await?;
         let new_patch = self
             .inner
             .get_patch(id, true)
@@ -574,7 +574,7 @@ impl StoreWithEvents {
         actor: ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let new_document = document.clone();
-        let (document_id, version) = self.inner.add_document(document).await?;
+        let (document_id, version) = self.inner.add_document(document, &actor).await?;
         let payload = Arc::new(MutationPayload::Document {
             old: None,
             new: new_document,
@@ -598,7 +598,7 @@ impl StoreWithEvents {
             .ok()
             .map(|v| v.item);
         let new_document = document.clone();
-        let version = self.inner.update_document(id, document).await?;
+        let version = self.inner.update_document(id, document, &actor).await?;
         let payload = Arc::new(MutationPayload::Document {
             old: old_document,
             new: new_document,
@@ -620,7 +620,7 @@ impl StoreWithEvents {
             .await
             .ok()
             .map(|v| v.item);
-        let version = self.inner.delete_document(id).await?;
+        let version = self.inner.delete_document(id, &actor).await?;
         let new_document = self
             .inner
             .get_document(id, true)
@@ -645,7 +645,7 @@ impl StoreWithEvents {
         actor: ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let new_task = task.clone();
-        let (task_id, version) = self.inner.add_task(task, creation_time).await?;
+        let (task_id, version) = self.inner.add_task(task, creation_time, &actor).await?;
         let payload = Arc::new(MutationPayload::Job {
             old: None,
             new: new_task,
@@ -669,7 +669,7 @@ impl StoreWithEvents {
             .ok()
             .map(|v| v.item);
         let new_task = task.clone();
-        let result = self.inner.update_task(metis_id, task).await?;
+        let result = self.inner.update_task(metis_id, task, &actor).await?;
         let payload = Arc::new(MutationPayload::Job {
             old: old_task,
             new: new_task,
@@ -683,9 +683,9 @@ impl StoreWithEvents {
     pub async fn delete_task_with_actor(
         &self,
         id: &TaskId,
-        _actor: ActorRef,
+        actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.inner.delete_task(id).await
+        self.inner.delete_task(id, &actor).await
     }
 
     // ---- Repository mutations (inherent, with actor) ----
@@ -694,58 +694,58 @@ impl StoreWithEvents {
         &self,
         name: RepoName,
         config: Repository,
-        _actor: ActorRef,
+        actor: ActorRef,
     ) -> Result<(), StoreError> {
-        self.inner.add_repository(name, config).await
+        self.inner.add_repository(name, config, &actor).await
     }
 
     pub async fn update_repository(
         &self,
         name: RepoName,
         config: Repository,
-        _actor: ActorRef,
+        actor: ActorRef,
     ) -> Result<(), StoreError> {
-        self.inner.update_repository(name, config).await
+        self.inner.update_repository(name, config, &actor).await
     }
 
     pub async fn delete_repository(
         &self,
         name: &RepoName,
-        _actor: ActorRef,
+        actor: ActorRef,
     ) -> Result<(), StoreError> {
-        self.inner.delete_repository(name).await
+        self.inner.delete_repository(name, &actor).await
     }
 
     // ---- Actor mutations (inherent, with actor) ----
 
-    pub async fn add_actor(&self, actor: Actor, _acting_as: ActorRef) -> Result<(), StoreError> {
-        self.inner.add_actor(actor).await
+    pub async fn add_actor(&self, actor: Actor, acting_as: ActorRef) -> Result<(), StoreError> {
+        self.inner.add_actor(actor, &acting_as).await
     }
 
-    pub async fn update_actor(&self, actor: Actor, _acting_as: ActorRef) -> Result<(), StoreError> {
-        self.inner.update_actor(actor).await
+    pub async fn update_actor(&self, actor: Actor, acting_as: ActorRef) -> Result<(), StoreError> {
+        self.inner.update_actor(actor, &acting_as).await
     }
 
     // ---- User mutations (inherent, with actor) ----
 
-    pub async fn add_user(&self, user: User, _actor: ActorRef) -> Result<(), StoreError> {
-        self.inner.add_user(user).await
+    pub async fn add_user(&self, user: User, actor: ActorRef) -> Result<(), StoreError> {
+        self.inner.add_user(user, &actor).await
     }
 
     pub async fn update_user(
         &self,
         user: User,
-        _actor: ActorRef,
+        actor: ActorRef,
     ) -> Result<Versioned<User>, StoreError> {
-        self.inner.update_user(user).await
+        self.inner.update_user(user, &actor).await
     }
 
     pub async fn delete_user(
         &self,
         username: &Username,
-        _actor: ActorRef,
+        actor: ActorRef,
     ) -> Result<(), StoreError> {
-        self.inner.delete_user(username).await
+        self.inner.delete_user(username, &actor).await
     }
 }
 

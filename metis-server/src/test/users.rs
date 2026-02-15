@@ -1,5 +1,8 @@
 use crate::{
-    domain::users::{User, Username},
+    domain::{
+        actors::ActorRef,
+        users::{User, Username},
+    },
     test::{spawn_test_server_with_state, test_client, test_state_handles},
 };
 use metis_common::api::v1::users::UserSummary;
@@ -14,7 +17,7 @@ async fn get_user_returns_user_summary() -> anyhow::Result<()> {
         "gh-token".to_string(),
         "gh-refresh".to_string(),
     );
-    handles.store.add_user(user).await?;
+    handles.store.add_user(user, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
@@ -58,7 +61,7 @@ async fn get_user_does_not_expose_tokens() -> anyhow::Result<()> {
         "secret-gh-token".to_string(),
         "secret-gh-refresh".to_string(),
     );
-    handles.store.add_user(user).await?;
+    handles.store.add_user(user, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();

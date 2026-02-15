@@ -980,6 +980,7 @@ async fn migrate_documents_internal(pool: &PgStorePool) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::actors::ActorRef;
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
     use crate::domain::users::Username;
     use crate::store::postgres::{PgStorePool, PostgresStore};
@@ -1029,7 +1030,11 @@ mod tests {
             patches: vec![],
             deleted: false,
         };
-        let (issue_id, _) = v1_store.add_issue(issue.clone()).await.unwrap();
+        let actor = ActorRef::System {
+            worker_name: "migration-test".into(),
+            on_behalf_of: None,
+        };
+        let (issue_id, _) = v1_store.add_issue(issue.clone(), &actor).await.unwrap();
 
         // Run migration
         let result = migrate_v1_to_v2(&pool).await.unwrap();
@@ -1067,7 +1072,11 @@ mod tests {
             patches: vec![],
             deleted: false,
         };
-        let (issue_id, _) = v2_store.add_issue(issue.clone()).await.unwrap();
+        let actor = ActorRef::System {
+            worker_name: "migration-test".into(),
+            on_behalf_of: None,
+        };
+        let (issue_id, _) = v2_store.add_issue(issue.clone(), &actor).await.unwrap();
 
         // Verify data can be read back
         let retrieved = v2_store.get_issue(&issue_id, false).await.unwrap();

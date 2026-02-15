@@ -234,9 +234,17 @@ mod tests {
             "token-123".to_string(),
             "refresh-123".to_string(),
         );
-        handles.store.as_ref().add_user(user).await?;
+        handles
+            .store
+            .as_ref()
+            .add_user(user, &ActorRef::test())
+            .await?;
         let (actor, _auth_token) = Actor::new_for_user(username);
-        handles.store.as_ref().add_actor(actor.clone()).await?;
+        handles
+            .store
+            .as_ref()
+            .add_actor(actor.clone(), &ActorRef::test())
+            .await?;
         let repo_name = RepoName::new("octo", "repo")?;
         let existing_patch = Patch::new(
             "Original".to_string(),
@@ -258,7 +266,11 @@ mod tests {
             )),
         );
 
-        let (patch_id, _) = handles.store.as_ref().add_patch(existing_patch).await?;
+        let (patch_id, _) = handles
+            .store
+            .as_ref()
+            .add_patch(existing_patch, &ActorRef::test())
+            .await?;
 
         let mut request_patch = Patch::new(
             "Updated title".to_string(),
@@ -344,9 +356,17 @@ mod tests {
             "token-456".to_string(),
             "refresh-456".to_string(),
         );
-        handles.store.as_ref().add_user(user).await?;
+        handles
+            .store
+            .as_ref()
+            .add_user(user, &ActorRef::test())
+            .await?;
         let (actor, _auth_token) = Actor::new_for_user(username);
-        handles.store.as_ref().add_actor(actor.clone()).await?;
+        handles
+            .store
+            .as_ref()
+            .add_actor(actor.clone(), &ActorRef::test())
+            .await?;
         let repo_name = RepoName::new("octo", "repo")?;
         add_repository(
             &handles.state,
@@ -364,10 +384,14 @@ mod tests {
         let (task_id, _) = handles
             .store
             .as_ref()
-            .add_task(task.clone(), created_at)
+            .add_task(task.clone(), created_at, &ActorRef::test())
             .await?;
         task.status = Status::Running;
-        handles.store.as_ref().update_task(&task_id, task).await?;
+        handles
+            .store
+            .as_ref()
+            .update_task(&task_id, task, &ActorRef::test())
+            .await?;
         let mut patch = Patch::new(
             "New patch".to_string(),
             "New patch description".to_string(),
@@ -439,7 +463,10 @@ mod tests {
         // Close the first patch
         let mut closed_patch = handles.store.get_patch(&patch1_id, false).await?.item;
         closed_patch.status = PatchStatus::Closed;
-        handles.store.update_patch(&patch1_id, closed_patch).await?;
+        handles
+            .store
+            .update_patch(&patch1_id, closed_patch, &ActorRef::test())
+            .await?;
 
         // Creating a new patch with the same branch_name should succeed
         let mut patch2 = Patch::new(
@@ -508,5 +535,4 @@ mod tests {
 
         Ok(())
     }
-
 }

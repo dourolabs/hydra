@@ -636,25 +636,28 @@ mod tests {
         let handles = test_state_handles();
         handles
             .store
-            .add_patch(Patch::new(
-                "test".to_string(),
-                "desc".to_string(),
-                sample_diff(),
-                PatchStatus::Open,
-                false,
-                None,
-                Vec::new(),
-                RepoName::from_str("dourolabs/api")?,
-                Some(GithubPr::new(
-                    "octo".to_string(),
-                    "repo".to_string(),
-                    1,
+            .add_patch(
+                Patch::new(
+                    "test".to_string(),
+                    "desc".to_string(),
+                    sample_diff(),
+                    PatchStatus::Open,
+                    false,
                     None,
-                    None,
-                    None,
-                    None,
-                )),
-            ))
+                    Vec::new(),
+                    RepoName::from_str("dourolabs/api")?,
+                    Some(GithubPr::new(
+                        "octo".to_string(),
+                        "repo".to_string(),
+                        1,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )),
+                ),
+                &ActorRef::test(),
+            )
             .await?;
         let worker = GithubPollerWorker::new(handles.state, 60);
 

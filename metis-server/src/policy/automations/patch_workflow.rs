@@ -513,7 +513,7 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch(PatchStatus::ChangesRequested);
-        let (patch_id, _) = store.add_patch(patch).await.unwrap();
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         let parent = Issue::new(
             IssueType::Task,
@@ -527,7 +527,7 @@ mod tests {
             Vec::new(),
             vec![patch_id.clone()],
         );
-        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
         let mr_issue = Issue::new(
             IssueType::MergeRequest,
@@ -544,7 +544,7 @@ mod tests {
             )],
             vec![patch_id.clone()],
         );
-        let (_mr_id, _) = store.add_issue(mr_issue).await.unwrap();
+        let (_mr_id, _) = store.add_issue(mr_issue, &ActorRef::test()).await.unwrap();
 
         let old_patch = make_patch(PatchStatus::ChangesRequested);
         let new_patch = make_patch(PatchStatus::Open);
@@ -593,7 +593,10 @@ mod tests {
         let old_patch = make_patch(PatchStatus::Open);
         let new_patch = make_patch(PatchStatus::Merged);
 
-        let (patch_id, _) = store.add_patch(new_patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
@@ -625,7 +628,10 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let parent = Issue::new(
             IssueType::Task,
@@ -639,7 +645,7 @@ mod tests {
             Vec::new(),
             vec![patch_id.clone()],
         );
-        let (_parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (_parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
@@ -684,7 +690,10 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch(PatchStatus::ChangesRequested);
-        let (patch_id, _) = store.add_patch(patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
@@ -726,7 +735,10 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_backup_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
@@ -768,7 +780,10 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
@@ -954,7 +969,10 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
@@ -1023,7 +1041,10 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
@@ -1098,7 +1119,10 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch_with_creator(PatchStatus::Open, "alice");
-        let (patch_id, _) = store.add_patch(patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
@@ -1152,7 +1176,10 @@ mod tests {
 
         // Make a patch for "test/repo"
         let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
@@ -1215,7 +1242,10 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = Arc::new(MutationPayload::Patch {
             old: None,

@@ -373,6 +373,7 @@ async fn children_have_running_task(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::actors::ActorRef;
     use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::domain::patches::{Patch, PatchStatus, Review};
@@ -423,7 +424,10 @@ mod tests {
     }
 
     async fn record_completed_task(handles: &TestStateHandles, task: Task) -> anyhow::Result<()> {
-        let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
+        let (task_id, _) = handles
+            .store
+            .add_task(task, Utc::now(), &ActorRef::test())
+            .await?;
         handles.state.transition_task_to_pending(&task_id).await?;
         handles.state.transition_task_to_running(&task_id).await?;
         handles
@@ -514,35 +518,44 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         let (assigned_issue_id, _) = handles
             .store
-            .add_issue(issue(
-                "Fix login page",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Fix login page",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         let (in_progress_issue_id, _) = handles
             .store
-            .add_issue(issue(
-                "In-progress but ready",
-                IssueStatus::InProgress,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "In-progress but ready",
+                    IssueStatus::InProgress,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         handles
             .store
-            .add_issue(issue(
-                "Ignore closed",
-                IssueStatus::Closed,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Ignore closed",
+                    IssueStatus::Closed,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         let queue = queue("agent-a");
@@ -595,13 +608,16 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         let (issue_id, _) = handles
             .store
-            .add_issue(issue(
-                "Already queued",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Already queued",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         handles
@@ -618,6 +634,7 @@ mod tests {
                     ]),
                 ),
                 Utc::now(),
+                &ActorRef::test(),
             )
             .await?;
 
@@ -641,22 +658,25 @@ mod tests {
             repo_name.clone(),
             None,
         );
-        let (patch_id, _) = handles.store.add_patch(patch).await?;
+        let (patch_id, _) = handles.store.add_patch(patch, &ActorRef::test()).await?;
         handles
             .store
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "Review patch".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("agent-a".to_string()),
-                job_settings: job_settings(&repo_name),
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: vec![patch_id.clone()],
-                deleted: false,
-            })
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    description: "Review patch".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: job_settings(&repo_name),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: vec![patch_id.clone()],
+                    deleted: false,
+                },
+                &ActorRef::test(),
+            )
             .await?;
 
         let mut tasks = queue("agent-a").spawn(&handles.state).await?;
@@ -673,7 +693,10 @@ mod tests {
             "reviewer".to_string(),
             None,
         )];
-        handles.store.update_patch(&patch_id, updated_patch).await?;
+        handles
+            .store
+            .update_patch(&patch_id, updated_patch, &ActorRef::test())
+            .await?;
 
         let tasks = queue("agent-a").spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
@@ -686,14 +709,17 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         handles
             .store
-            .add_issue(issue_with_type(
-                IssueType::Task,
-                "Task",
-                IssueStatus::Open,
-                Some("pm"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue_with_type(
+                    IssueType::Task,
+                    "Task",
+                    IssueStatus::Open,
+                    Some("pm"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         let tasks = queue("agent-b").spawn(&handles.state).await?;
@@ -707,11 +733,10 @@ mod tests {
         let handles = test_state_handles();
         let (issue_id, _) = handles
             .store
-            .add_issue(issue_without_repo(
-                "Needs assignment",
-                IssueStatus::Open,
-                None,
-            ))
+            .add_issue(
+                issue_without_repo("Needs assignment", IssueStatus::Open, None),
+                &ActorRef::test(),
+            )
             .await?;
 
         let queue = queue("assignment");
@@ -734,11 +759,10 @@ mod tests {
         let handles = test_state_handles();
         handles
             .store
-            .add_issue(issue_without_repo(
-                "Needs assignment",
-                IssueStatus::Open,
-                None,
-            ))
+            .add_issue(
+                issue_without_repo("Needs assignment", IssueStatus::Open, None),
+                &ActorRef::test(),
+            )
             .await?;
 
         let queue = queue("agent-a");
@@ -753,27 +777,27 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         let (blocker_id, _) = handles
             .store
-            .add_issue(issue(
-                "Blocker",
-                IssueStatus::Open,
-                None,
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue("Blocker", IssueStatus::Open, None, vec![], &repo_name),
+                &ActorRef::test(),
+            )
             .await?;
 
         handles
             .store
-            .add_issue(issue(
-                "Blocked issue",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![IssueDependency::new(
-                    IssueDependencyType::BlockedOn,
-                    blocker_id.clone(),
-                )],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Blocked issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::BlockedOn,
+                        blocker_id.clone(),
+                    )],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         let tasks = queue("agent-a").spawn(&handles.state).await?;
@@ -787,13 +811,16 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         let (parent_id, _) = handles
             .store
-            .add_issue(issue(
-                "Parent issue",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Parent issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         let (task_id, _) = handles
@@ -810,22 +837,26 @@ mod tests {
                     ]),
                 ),
                 Utc::now(),
+                &ActorRef::test(),
             )
             .await?;
         handles.state.transition_task_to_pending(&task_id).await?;
 
         handles
             .store
-            .add_issue(issue(
-                "Child issue",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent_id.clone(),
-                )],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Child issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::ChildOf,
+                        parent_id.clone(),
+                    )],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         let queue = queue("agent-a");
@@ -842,28 +873,34 @@ mod tests {
         // Create parent issue (InProgress, all children stuck so it would be ready)
         let (parent_id, _) = handles
             .store
-            .add_issue(issue(
-                "Parent issue",
-                IssueStatus::InProgress,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Parent issue",
+                    IssueStatus::InProgress,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         // Create child issue with a running task
         let (child_id, _) = handles
             .store
-            .add_issue(issue(
-                "Child issue",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent_id.clone(),
-                )],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Child issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::ChildOf,
+                        parent_id.clone(),
+                    )],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         // Create a running task for the child
@@ -881,6 +918,7 @@ mod tests {
                     ]),
                 ),
                 Utc::now(),
+                &ActorRef::test(),
             )
             .await?;
         handles.state.transition_task_to_pending(&task_id).await?;
@@ -908,56 +946,62 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         handles
             .store
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "Missing repo".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("agent-a".to_string()),
-                job_settings: JobSettings {
-                    repo_name: None,
-                    remote_url: None,
-                    image: Some("metis-worker:latest".to_string()),
-                    model: None,
-                    branch: None,
-                    max_retries: None,
-                    cpu_limit: None,
-                    memory_limit: None,
-                    secrets: None,
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    description: "Missing repo".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings {
+                        repo_name: None,
+                        remote_url: None,
+                        image: Some("metis-worker:latest".to_string()),
+                        model: None,
+                        branch: None,
+                        max_retries: None,
+                        cpu_limit: None,
+                        memory_limit: None,
+                        secrets: None,
+                    },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
                 },
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-                deleted: false,
-            })
+                &ActorRef::test(),
+            )
             .await?;
 
         handles
             .store
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "Missing image".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("agent-a".to_string()),
-                job_settings: JobSettings {
-                    repo_name: Some(repo_name.clone()),
-                    remote_url: None,
-                    image: None,
-                    model: None,
-                    branch: None,
-                    max_retries: None,
-                    cpu_limit: None,
-                    memory_limit: None,
-                    secrets: None,
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    description: "Missing image".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings {
+                        repo_name: Some(repo_name.clone()),
+                        remote_url: None,
+                        image: None,
+                        model: None,
+                        branch: None,
+                        max_retries: None,
+                        cpu_limit: None,
+                        memory_limit: None,
+                        secrets: None,
+                    },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
                 },
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-                deleted: false,
-            })
+                &ActorRef::test(),
+            )
             .await?;
 
         let tasks = queue("agent-a").spawn(&handles.state).await?;
@@ -980,29 +1024,32 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         handles
             .store
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "Override retries".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("agent-a".to_string()),
-                job_settings: JobSettings {
-                    repo_name: Some(repo_name),
-                    remote_url: None,
-                    image: Some("metis-worker:latest".to_string()),
-                    model: None,
-                    branch: Some("main".to_string()),
-                    max_retries: Some(1),
-                    cpu_limit: None,
-                    memory_limit: None,
-                    secrets: None,
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    description: "Override retries".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings {
+                        repo_name: Some(repo_name),
+                        remote_url: None,
+                        image: Some("metis-worker:latest".to_string()),
+                        model: None,
+                        branch: Some("main".to_string()),
+                        max_retries: Some(1),
+                        cpu_limit: None,
+                        memory_limit: None,
+                        secrets: None,
+                    },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
                 },
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-                deleted: false,
-            })
+                &ActorRef::test(),
+            )
             .await?;
 
         let mut tasks = queue.spawn(&handles.state).await?;
@@ -1023,19 +1070,22 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         let (issue_id, _) = handles
             .store
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "Already running".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("agent-a".to_string()),
-                job_settings: job_settings(&repo_name),
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-                deleted: false,
-            })
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    description: "Already running".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: job_settings(&repo_name),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
+                },
+                &ActorRef::test(),
+            )
             .await?;
 
         let (task_id, _) = handles
@@ -1061,6 +1111,7 @@ mod tests {
                     deleted: false,
                 },
                 Utc::now(),
+                &ActorRef::test(),
             )
             .await?;
         handles.state.transition_task_to_pending(&task_id).await?;
@@ -1079,35 +1130,41 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         let (first_issue_id, _) = handles
             .store
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "First issue".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("agent-a".to_string()),
-                job_settings: job_settings(&repo_name),
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-                deleted: false,
-            })
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    description: "First issue".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: job_settings(&repo_name),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
+                },
+                &ActorRef::test(),
+            )
             .await?;
         let (second_issue_id, _) = handles
             .store
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "Second issue".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("agent-a".to_string()),
-                job_settings: job_settings(&repo_name),
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-                deleted: false,
-            })
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    description: "Second issue".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: job_settings(&repo_name),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
+                },
+                &ActorRef::test(),
+            )
             .await?;
 
         handles
@@ -1133,6 +1190,7 @@ mod tests {
                     deleted: false,
                 },
                 Utc::now(),
+                &ActorRef::test(),
             )
             .await?;
 
@@ -1154,13 +1212,16 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         handles
             .store
-            .add_issue(issue(
-                "Retry limited",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Retry limited",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         let mut tasks = queue.spawn(&handles.state).await?;
@@ -1185,13 +1246,16 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         let (issue_id, _) = handles
             .store
-            .add_issue(issue(
-                "State change reset",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "State change reset",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         let first_run = queue.spawn(&handles.state).await?;
@@ -1201,7 +1265,10 @@ mod tests {
         let issue = handles.store.get_issue(&issue_id, false).await?;
         let mut issue = issue.item;
         issue.status = IssueStatus::InProgress;
-        handles.store.update_issue(&issue_id, issue).await?;
+        handles
+            .store
+            .update_issue(&issue_id, issue, &ActorRef::test())
+            .await?;
 
         let tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
@@ -1217,13 +1284,16 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         let (parent_id, _) = handles
             .store
-            .add_issue(issue(
-                "Parent with children progress",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Parent with children progress",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         // First spawn attempt succeeds (attempt 1 of 1).
@@ -1238,16 +1308,19 @@ mod tests {
         // Assign to a different agent so it doesn't spawn here.
         handles
             .store
-            .add_issue(issue(
-                "Child issue",
-                IssueStatus::Open,
-                Some("agent-b"),
-                vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent_id.clone(),
-                )],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Child issue",
+                    IssueStatus::Open,
+                    Some("agent-b"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::ChildOf,
+                        parent_id.clone(),
+                    )],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         // Now the counter should have reset, so spawning succeeds again.
@@ -1269,28 +1342,34 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         let (parent_id, _) = handles
             .store
-            .add_issue(issue(
-                "Parent with child update",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Parent with child update",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         // Create a child before the first spawn.
         let (child_id, _) = handles
             .store
-            .add_issue(issue(
-                "Child issue",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent_id.clone(),
-                )],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Child issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::ChildOf,
+                        parent_id.clone(),
+                    )],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         // First spawn attempt succeeds.
@@ -1307,7 +1386,10 @@ mod tests {
         let child = handles.store.get_issue(&child_id, false).await?;
         let mut child_item = child.item;
         child_item.status = IssueStatus::InProgress;
-        handles.store.update_issue(&child_id, child_item).await?;
+        handles
+            .store
+            .update_issue(&child_id, child_item, &ActorRef::test())
+            .await?;
 
         // Parent's counter should have reset (child version changed).
         // Child's counter should also reset (its status changed).
@@ -1325,28 +1407,34 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         let (parent_id, _) = handles
             .store
-            .add_issue(issue(
-                "Parent no progress",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Parent no progress",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         // Create a child before the first spawn.
         handles
             .store
-            .add_issue(issue(
-                "Child issue",
-                IssueStatus::Open,
-                Some("agent-a"),
-                vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent_id.clone(),
-                )],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Child issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::ChildOf,
+                        parent_id.clone(),
+                    )],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         // First spawn consumes both parent and child.
@@ -1385,13 +1473,16 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         handles
             .store
-            .add_issue(issue(
-                "Rejected issue",
-                IssueStatus::Rejected,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Rejected issue",
+                    IssueStatus::Rejected,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         let tasks = queue("agent-a").spawn(&handles.state).await?;
@@ -1405,13 +1496,16 @@ mod tests {
         let (handles, repo_name) = state_with_repository().await?;
         handles
             .store
-            .add_issue(issue(
-                "Failed issue",
-                IssueStatus::Failed,
-                Some("agent-a"),
-                vec![],
-                &repo_name,
-            ))
+            .add_issue(
+                issue(
+                    "Failed issue",
+                    IssueStatus::Failed,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
             .await?;
 
         let tasks = queue("agent-a").spawn(&handles.state).await?;
@@ -1431,29 +1525,32 @@ mod tests {
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
         let (issue_id, _) = handles
             .store
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "Assigned".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("agent-a".to_string()),
-                job_settings: JobSettings {
-                    repo_name: Some(repo_name.clone()),
-                    remote_url: None,
-                    image: Some(default_image.clone()),
-                    model: None,
-                    branch: None,
-                    max_retries: None,
-                    cpu_limit: None,
-                    memory_limit: None,
-                    secrets: None,
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    description: "Assigned".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings {
+                        repo_name: Some(repo_name.clone()),
+                        remote_url: None,
+                        image: Some(default_image.clone()),
+                        model: None,
+                        branch: None,
+                        max_retries: None,
+                        cpu_limit: None,
+                        memory_limit: None,
+                        secrets: None,
+                    },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
                 },
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-                deleted: false,
-            })
+                &ActorRef::test(),
+            )
             .await?;
         let queue = queue("agent-a");
 
@@ -1494,29 +1591,32 @@ mod tests {
         let secrets = vec!["db-secret".to_string(), "api-key".to_string()];
         handles
             .store
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "Issue with secrets".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("agent-a".to_string()),
-                job_settings: JobSettings {
-                    repo_name: Some(repo_name.clone()),
-                    remote_url: None,
-                    image: Some("worker:latest".to_string()),
-                    model: None,
-                    branch: None,
-                    max_retries: None,
-                    cpu_limit: None,
-                    memory_limit: None,
-                    secrets: Some(secrets.clone()),
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    description: "Issue with secrets".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings {
+                        repo_name: Some(repo_name.clone()),
+                        remote_url: None,
+                        image: Some("worker:latest".to_string()),
+                        model: None,
+                        branch: None,
+                        max_retries: None,
+                        cpu_limit: None,
+                        memory_limit: None,
+                        secrets: Some(secrets.clone()),
+                    },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
                 },
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-                deleted: false,
-            })
+                &ActorRef::test(),
+            )
             .await?;
         let queue = queue("agent-a");
 
@@ -1535,29 +1635,32 @@ mod tests {
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
         handles
             .store
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "Issue without secrets".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("agent-a".to_string()),
-                job_settings: JobSettings {
-                    repo_name: Some(repo_name.clone()),
-                    remote_url: None,
-                    image: Some("worker:latest".to_string()),
-                    model: None,
-                    branch: None,
-                    max_retries: None,
-                    cpu_limit: None,
-                    memory_limit: None,
-                    secrets: None,
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    description: "Issue without secrets".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings {
+                        repo_name: Some(repo_name.clone()),
+                        remote_url: None,
+                        image: Some("worker:latest".to_string()),
+                        model: None,
+                        branch: None,
+                        max_retries: None,
+                        cpu_limit: None,
+                        memory_limit: None,
+                        secrets: None,
+                    },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
                 },
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-                deleted: false,
-            })
+                &ActorRef::test(),
+            )
             .await?;
         let queue = queue("agent-a");
 

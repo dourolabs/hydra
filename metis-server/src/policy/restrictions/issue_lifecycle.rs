@@ -247,14 +247,14 @@ mod tests {
 
         // Create parent and child
         let parent = make_issue(IssueStatus::Open);
-        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
         let mut child = make_issue(IssueStatus::Open);
         child.dependencies = vec![IssueDependency::new(
             IssueDependencyType::ChildOf,
             parent_id.clone(),
         )];
-        store.add_issue(child).await.unwrap();
+        store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         // Try to close parent
         let mut closing_parent = make_issue(IssueStatus::Closed);
@@ -294,14 +294,14 @@ mod tests {
             let store = MemoryStore::new();
 
             let parent = make_issue(IssueStatus::Open);
-            let (parent_id, _) = store.add_issue(parent).await.unwrap();
+            let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
             let mut child = make_issue(status);
             child.dependencies = vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
             )];
-            store.add_issue(child).await.unwrap();
+            store.add_issue(child, &ActorRef::test()).await.unwrap();
 
             let closing_parent = make_issue(IssueStatus::Closed);
             let payload = OperationPayload::Issue {
@@ -329,14 +329,14 @@ mod tests {
         let store = MemoryStore::new();
 
         let parent = make_issue(IssueStatus::Open);
-        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
         let mut child = make_issue(IssueStatus::InProgress);
         child.dependencies = vec![IssueDependency::new(
             IssueDependencyType::ChildOf,
             parent_id.clone(),
         )];
-        store.add_issue(child).await.unwrap();
+        store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         let closing_parent = make_issue(IssueStatus::Closed);
         let payload = OperationPayload::Issue {
@@ -368,7 +368,7 @@ mod tests {
 
         // Create blocker that is still open
         let blocker = make_issue(IssueStatus::Open);
-        let (blocker_id, _) = store.add_issue(blocker).await.unwrap();
+        let (blocker_id, _) = store.add_issue(blocker, &ActorRef::test()).await.unwrap();
 
         let mut issue = make_issue(IssueStatus::Closed);
         issue.dependencies = vec![IssueDependency::new(

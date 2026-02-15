@@ -353,6 +353,7 @@ async fn delete_ref(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::actors::ActorRef;
 
     #[test]
     fn parse_github_owner_repo_https_with_git_suffix() {
@@ -535,7 +536,11 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        let (issue_id, _) = handles.store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue, &ActorRef::test())
+            .await
+            .unwrap();
 
         let worker = CleanupBranchesWorker::new(handles.state);
         let branch = MetisBranch {
@@ -564,7 +569,7 @@ mod tests {
         );
         let (task_id, _) = handles
             .store
-            .add_task(task, chrono::Utc::now())
+            .add_task(task, chrono::Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -593,8 +598,16 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        let (issue_id, _) = handles.store.add_issue(issue).await.unwrap();
-        handles.store.delete_issue(&issue_id).await.unwrap();
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue, &ActorRef::test())
+            .await
+            .unwrap();
+        handles
+            .store
+            .delete_issue(&issue_id, &ActorRef::test())
+            .await
+            .unwrap();
 
         let worker = CleanupBranchesWorker::new(handles.state);
         let branch = MetisBranch {
@@ -623,10 +636,14 @@ mod tests {
         );
         let (task_id, _) = handles
             .store
-            .add_task(task, chrono::Utc::now())
+            .add_task(task, chrono::Utc::now(), &ActorRef::test())
             .await
             .unwrap();
-        handles.store.delete_task(&task_id).await.unwrap();
+        handles
+            .store
+            .delete_task(&task_id, &ActorRef::test())
+            .await
+            .unwrap();
 
         let worker = CleanupBranchesWorker::new(handles.state);
         let branch = MetisBranch {

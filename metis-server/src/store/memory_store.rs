@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use super::issue_graph::IssueGraphContext;
 use super::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog};
 use crate::domain::{
-    actors::Actor,
+    actors::{Actor, ActorRef},
     documents::Document,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
@@ -85,12 +85,25 @@ impl MemoryStore {
             .unwrap_or(1)
     }
 
-    fn versioned_now<T>(item: T, version: VersionNumber) -> Versioned<T> {
-        Versioned::new(item, version, Utc::now())
+    fn actor_to_json(actor: &ActorRef) -> serde_json::Value {
+        serde_json::to_value(actor).expect("ActorRef serialization should not fail")
     }
 
-    fn versioned_at<T>(item: T, version: VersionNumber, timestamp: DateTime<Utc>) -> Versioned<T> {
-        Versioned::new(item, version, timestamp)
+    fn versioned_now_with_actor<T>(
+        item: T,
+        version: VersionNumber,
+        actor: &ActorRef,
+    ) -> Versioned<T> {
+        Versioned::with_actor(item, version, Utc::now(), Self::actor_to_json(actor))
+    }
+
+    fn versioned_at_with_actor<T>(
+        item: T,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        actor: &ActorRef,
+    ) -> Versioned<T> {
+        Versioned::with_actor(item, version, timestamp, Self::actor_to_json(actor))
     }
 
     /// Returns true if the patch matches the search term.
@@ -846,21 +859,26 @@ impl ReadOnlyStore for MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
-    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
+    async fn add_repository(
+        &self,
+        name: RepoName,
+        config: Repository,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError> {
         // Check if exists and if deleted
         if let Some(entry) = self.repositories.get(&name) {
             if let Some(latest) = Self::latest_versioned(entry.value()) {
                 if latest.item.deleted {
                     // Re-create over deleted: use caller's config as-is
                     drop(entry);
-                    return self.update_repository(name, config).await;
+                    return self.update_repository(name, config, actor).await;
                 }
                 return Err(StoreError::RepositoryAlreadyExists(name));
             }
         }
 
         self.repositories
-            .insert(name, vec![Self::versioned_now(config, 1)]);
+            .insert(name, vec![Self::versioned_now_with_actor(config, 1, actor)]);
         Ok(())
     }
 
@@ -868,6 +886,7 @@ impl Store for MemoryStore {
         &self,
         name: RepoName,
         config: Repository,
+        actor: &ActorRef,
     ) -> Result<(), StoreError> {
         let mut versions = self
             .repositories
@@ -875,26 +894,32 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
         let next_version = Self::next_version(&versions);
 
-        versions.push(Self::versioned_now(config, next_version));
+        versions.push(Self::versioned_now_with_actor(config, next_version, actor));
         Ok(())
     }
 
-    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
+    async fn delete_repository(&self, name: &RepoName, actor: &ActorRef) -> Result<(), StoreError> {
         // Use include_deleted: true since we need to access the repository to mark it as deleted
         let current = self.get_repository(name, true).await?;
         let mut repo = current.item;
         repo.deleted = true;
-        self.update_repository(name.clone(), repo).await
+        self.update_repository(name.clone(), repo, actor).await
     }
 
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
+    async fn add_issue(
+        &self,
+        issue: Issue,
+        actor: &ActorRef,
+    ) -> Result<(IssueId, VersionNumber), StoreError> {
         let id = IssueId::new();
         let new_dependencies = issue.dependencies.clone();
         let new_patches = issue.patches.clone();
 
         self.validate_dependencies(&new_dependencies)?;
-        self.issues
-            .insert(id.clone(), vec![Self::versioned_now(issue, 1)]);
+        self.issues.insert(
+            id.clone(),
+            vec![Self::versioned_now_with_actor(issue, 1, actor)],
+        );
 
         if !new_dependencies.is_empty() {
             self.apply_issue_dependency_delta(&id, &[], &new_dependencies);
@@ -905,7 +930,12 @@ impl Store for MemoryStore {
         Ok((id, 1))
     }
 
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
+    async fn update_issue(
+        &self,
+        id: &IssueId,
+        issue: Issue,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         let (previous_dependencies, previous_patches) = match self.issues.get(id) {
             Some(entry) => match entry.value().last() {
                 Some(latest) => (
@@ -922,7 +952,7 @@ impl Store for MemoryStore {
         self.validate_dependencies(&updated_dependencies)?;
         let next_version = if let Some(mut versions) = self.issues.get_mut(id) {
             let next_version = Self::next_version(&versions);
-            versions.push(Self::versioned_now(issue, next_version));
+            versions.push(Self::versioned_now_with_actor(issue, next_version, actor));
             next_version
         } else {
             return Err(StoreError::IssueNotFound(id.clone()));
@@ -937,45 +967,67 @@ impl Store for MemoryStore {
         Ok(next_version)
     }
 
-    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
+    async fn delete_issue(
+        &self,
+        id: &IssueId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
         issue.deleted = true;
-        self.update_issue(id, issue).await
+        self.update_issue(id, issue, actor).await
     }
 
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
+    async fn add_patch(
+        &self,
+        patch: Patch,
+        actor: &ActorRef,
+    ) -> Result<(PatchId, VersionNumber), StoreError> {
         let id = PatchId::new();
-        self.patches
-            .insert(id.clone(), vec![Self::versioned_now(patch, 1)]);
+        self.patches.insert(
+            id.clone(),
+            vec![Self::versioned_now_with_actor(patch, 1, actor)],
+        );
         Ok((id, 1))
     }
 
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
+    async fn update_patch(
+        &self,
+        id: &PatchId,
+        patch: Patch,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         let mut versions = self
             .patches
             .get_mut(id)
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
         let next_version = Self::next_version(&versions);
-        versions.push(Self::versioned_now(patch, next_version));
+        versions.push(Self::versioned_now_with_actor(patch, next_version, actor));
         Ok(next_version)
     }
 
-    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
+    async fn delete_patch(
+        &self,
+        id: &PatchId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
         patch.deleted = true;
-        self.update_patch(id, patch).await
+        self.update_patch(id, patch, actor).await
     }
 
     async fn add_document(
         &self,
         document: Document,
+        actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let id = DocumentId::new();
         let path = document.path.clone();
-        self.documents
-            .insert(id.clone(), vec![Self::versioned_now(document, 1)]);
+        self.documents.insert(
+            id.clone(),
+            vec![Self::versioned_now_with_actor(document, 1, actor)],
+        );
         self.index_document_path(&id, path.as_deref());
         Ok((id, 1))
     }
@@ -984,6 +1036,7 @@ impl Store for MemoryStore {
         &self,
         id: &DocumentId,
         document: Document,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let mut versions = self
             .documents
@@ -994,7 +1047,11 @@ impl Store for MemoryStore {
             .and_then(|version| version.item.path.clone());
         let new_path = document.path.clone();
         let next_version = Self::next_version(&versions);
-        versions.push(Self::versioned_now(document, next_version));
+        versions.push(Self::versioned_now_with_actor(
+            document,
+            next_version,
+            actor,
+        ));
 
         if previous_path != new_path {
             self.remove_document_path(id, previous_path.as_deref());
@@ -1004,17 +1061,22 @@ impl Store for MemoryStore {
         Ok(next_version)
     }
 
-    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
+    async fn delete_document(
+        &self,
+        id: &DocumentId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         let current = self.get_document(id, true).await?;
         let mut document = current.item;
         document.deleted = true;
-        self.update_document(id, document).await
+        self.update_document(id, document, actor).await
     }
 
     async fn add_task(
         &self,
         task: Task,
         creation_time: DateTime<Utc>,
+        actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
         let mut task = task;
@@ -1023,8 +1085,10 @@ impl Store for MemoryStore {
         task.error = None;
         let spawned_from = task.spawned_from.clone();
 
-        self.tasks
-            .insert(id.clone(), vec![Self::versioned_at(task, 1, creation_time)]);
+        self.tasks.insert(
+            id.clone(),
+            vec![Self::versioned_at_with_actor(task, 1, creation_time, actor)],
+        );
 
         if let Some(issue_id) = spawned_from.as_ref() {
             self.index_task_for_issue(issue_id, id.clone());
@@ -1037,6 +1101,7 @@ impl Store for MemoryStore {
         &self,
         metis_id: &TaskId,
         task: Task,
+        actor: &ActorRef,
     ) -> Result<Versioned<Task>, StoreError> {
         let previous_spawned_from = match self.tasks.get(metis_id) {
             Some(entry) => entry
@@ -1056,7 +1121,7 @@ impl Store for MemoryStore {
         let updated = match self.tasks.get_mut(metis_id) {
             Some(mut versions) => {
                 let next_version = Self::next_version(&versions);
-                let versioned = Self::versioned_now(task.clone(), next_version);
+                let versioned = Self::versioned_now_with_actor(task.clone(), next_version, actor);
                 versions.push(versioned.clone());
                 versioned
             }
@@ -1069,44 +1134,54 @@ impl Store for MemoryStore {
         Ok(updated)
     }
 
-    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
+    async fn delete_task(
+        &self,
+        id: &TaskId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         let current = self.get_task(id, true).await?;
         let mut task = current.item;
         task.deleted = true;
-        let versioned = self.update_task(id, task).await?;
+        let versioned = self.update_task(id, task, actor).await?;
         Ok(versioned.version)
     }
 
-    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
+    async fn add_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError> {
         let name = actor.name();
         if self.actors.contains_key(&name) {
             return Err(StoreError::ActorAlreadyExists(name));
         }
 
-        self.actors
-            .insert(name, vec![Self::versioned_now(actor, 1)]);
+        self.actors.insert(
+            name,
+            vec![Self::versioned_now_with_actor(actor, 1, acting_as)],
+        );
         Ok(())
     }
 
-    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
+    async fn update_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError> {
         let name = actor.name();
         let mut versions = self
             .actors
             .get_mut(&name)
             .ok_or_else(|| StoreError::ActorNotFound(name.clone()))?;
         let next_version = Self::next_version(&versions);
-        versions.push(Self::versioned_now(actor, next_version));
+        versions.push(Self::versioned_now_with_actor(
+            actor,
+            next_version,
+            acting_as,
+        ));
         Ok(())
     }
 
-    async fn add_user(&self, user: User) -> Result<(), StoreError> {
+    async fn add_user(&self, user: User, actor: &ActorRef) -> Result<(), StoreError> {
         if let Some(mut versions) = self.users.get_mut(&user.username) {
             // Check if the user is deleted
             if let Some(latest) = Self::latest_versioned(versions.value()) {
                 if latest.item.deleted {
                     // Allow re-creation with the provided user
                     let next_version = Self::next_version(&versions);
-                    let versioned = Self::versioned_now(user, next_version);
+                    let versioned = Self::versioned_now_with_actor(user, next_version, actor);
                     versions.push(versioned);
                     return Ok(());
                 }
@@ -1114,27 +1189,33 @@ impl Store for MemoryStore {
             return Err(StoreError::UserAlreadyExists(user.username.clone()));
         }
 
-        self.users
-            .insert(user.username.clone(), vec![Self::versioned_now(user, 1)]);
+        self.users.insert(
+            user.username.clone(),
+            vec![Self::versioned_now_with_actor(user, 1, actor)],
+        );
         Ok(())
     }
 
-    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError> {
+    async fn update_user(
+        &self,
+        user: User,
+        actor: &ActorRef,
+    ) -> Result<Versioned<User>, StoreError> {
         let mut versions = self
             .users
             .get_mut(&user.username)
             .ok_or_else(|| StoreError::UserNotFound(user.username.clone()))?;
         let next_version = Self::next_version(&versions);
-        let versioned = Self::versioned_now(user, next_version);
+        let versioned = Self::versioned_now_with_actor(user, next_version, actor);
         versions.push(versioned.clone());
         Ok(versioned)
     }
 
-    async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {
+    async fn delete_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError> {
         let current = self.get_user(username, true).await?;
         let mut user = current.item;
         user.deleted = true;
-        self.update_user(user).await?;
+        self.update_user(user, actor).await?;
         Ok(())
     }
 }
@@ -1193,7 +1274,7 @@ mod tests {
     use super::*;
     use crate::{
         domain::{
-            actors::{Actor, ActorId},
+            actors::{Actor, ActorId, ActorRef},
             issues::{
                 Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus,
                 IssueType,
@@ -1299,7 +1380,7 @@ mod tests {
         let config = sample_repository_config();
 
         store
-            .add_repository(name.clone(), config.clone())
+            .add_repository(name.clone(), config.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -1310,7 +1391,7 @@ mod tests {
         let mut updated = config.clone();
         updated.default_branch = Some("develop".to_string());
         store
-            .update_repository(name.clone(), updated.clone())
+            .update_repository(name.clone(), updated.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -1335,14 +1416,14 @@ mod tests {
 
         let config = sample_repository_config();
         store
-            .add_repository(name.clone(), config.clone())
+            .add_repository(name.clone(), config.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut updated = config.clone();
         updated.default_branch = Some("release".to_string());
         store
-            .update_repository(name.clone(), updated.clone())
+            .update_repository(name.clone(), updated.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -1360,12 +1441,12 @@ mod tests {
         let name = RepoName::from_str("dourolabs/metis").unwrap();
 
         store
-            .add_repository(name.clone(), sample_repository_config())
+            .add_repository(name.clone(), sample_repository_config(), &ActorRef::test())
             .await
             .unwrap();
 
         let err = store
-            .add_repository(name.clone(), sample_repository_config())
+            .add_repository(name.clone(), sample_repository_config(), &ActorRef::test())
             .await
             .unwrap_err();
 
@@ -1376,7 +1457,11 @@ mod tests {
 
         let missing_name = RepoName::from_str("dourolabs/other").unwrap();
         let err = store
-            .update_repository(missing_name.clone(), sample_repository_config())
+            .update_repository(
+                missing_name.clone(),
+                sample_repository_config(),
+                &ActorRef::test(),
+            )
             .await
             .unwrap_err();
         assert!(matches!(
@@ -1392,12 +1477,15 @@ mod tests {
         let config = sample_repository_config();
 
         store
-            .add_repository(name.clone(), config.clone())
+            .add_repository(name.clone(), config.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         // Delete the repository
-        store.delete_repository(&name).await.unwrap();
+        store
+            .delete_repository(&name, &ActorRef::test())
+            .await
+            .unwrap();
 
         // With include_deleted=false, deleted repository returns RepositoryNotFound
         let err = store.get_repository(&name, false).await.unwrap_err();
@@ -1430,17 +1518,20 @@ mod tests {
 
         // Create and delete
         store
-            .add_repository(name.clone(), config.clone())
+            .add_repository(name.clone(), config.clone(), &ActorRef::test())
             .await
             .unwrap();
-        store.delete_repository(&name).await.unwrap();
+        store
+            .delete_repository(&name, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Re-create with deleted=false (caller controls the deleted field)
         let mut new_config = config.clone();
         new_config.default_branch = Some("develop".to_string());
         new_config.deleted = false;
         store
-            .add_repository(name.clone(), new_config.clone())
+            .add_repository(name.clone(), new_config.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -1467,17 +1558,20 @@ mod tests {
 
         // Create and delete
         store
-            .add_repository(name.clone(), config.clone())
+            .add_repository(name.clone(), config.clone(), &ActorRef::test())
             .await
             .unwrap();
-        store.delete_repository(&name).await.unwrap();
+        store
+            .delete_repository(&name, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Re-create with deleted=true (caller wants to keep it deleted)
         let mut new_config = config.clone();
         new_config.default_branch = Some("develop".to_string());
         new_config.deleted = true;
         store
-            .add_repository(name.clone(), new_config.clone())
+            .add_repository(name.clone(), new_config.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -1501,7 +1595,10 @@ mod tests {
         let store = MemoryStore::new();
         let name = RepoName::from_str("dourolabs/nonexistent").unwrap();
 
-        let err = store.delete_repository(&name).await.unwrap_err();
+        let err = store
+            .delete_repository(&name, &ActorRef::test())
+            .await
+            .unwrap_err();
         assert!(matches!(
             err,
             StoreError::RepositoryNotFound(n) if n == name
@@ -1514,10 +1611,13 @@ mod tests {
         let missing_dependency = IssueId::new();
 
         let err = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::BlockedOn,
-                missing_dependency.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::BlockedOn,
+                    missing_dependency.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap_err();
 
@@ -1531,7 +1631,10 @@ mod tests {
     async fn update_issue_rejects_missing_dependencies() {
         let store = MemoryStore::new();
 
-        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
         let missing_dependency = IssueId::new();
 
         let err = store
@@ -1541,6 +1644,7 @@ mod tests {
                     IssueDependencyType::ChildOf,
                     missing_dependency.clone(),
                 )]),
+                &ActorRef::test(),
             )
             .await
             .unwrap_err();
@@ -1555,11 +1659,14 @@ mod tests {
     async fn issue_versions_increment_and_latest_returned() {
         let store = MemoryStore::new();
 
-        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
         let mut updated = sample_issue(vec![]);
         updated.description = "updated details".to_string();
         store
-            .update_issue(&issue_id, updated.clone())
+            .update_issue(&issue_id, updated.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -1577,15 +1684,21 @@ mod tests {
 
         let mut issue = sample_issue(vec![]);
         issue.description = "v1".to_string();
-        let (issue_id, _) = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
         let mut v2 = sample_issue(vec![]);
         v2.description = "v2".to_string();
-        store.update_issue(&issue_id, v2).await.unwrap();
+        store
+            .update_issue(&issue_id, v2, &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut v3 = sample_issue(vec![]);
         v3.description = "v3".to_string();
-        store.update_issue(&issue_id, v3).await.unwrap();
+        store
+            .update_issue(&issue_id, v3, &ActorRef::test())
+            .await
+            .unwrap();
 
         let versions = store.get_issue_versions(&issue_id).await.unwrap();
         assert_eq!(version_numbers(&versions), vec![1, 2, 3]);
@@ -1594,11 +1707,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn issue_versions_persist_actor() {
+        let store = MemoryStore::new();
+
+        let user_actor = ActorRef::Authenticated {
+            actor_id: ActorId::Username(Username::from("alice")),
+        };
+        let system_actor = ActorRef::System {
+            worker_name: "scheduler".into(),
+            on_behalf_of: None,
+        };
+
+        let mut issue = sample_issue(vec![]);
+        issue.description = "created by user".to_string();
+        let (issue_id, _) = store.add_issue(issue, &user_actor).await.unwrap();
+
+        let mut v2 = sample_issue(vec![]);
+        v2.description = "updated by system".to_string();
+        store
+            .update_issue(&issue_id, v2, &system_actor)
+            .await
+            .unwrap();
+
+        let versions = store.get_issue_versions(&issue_id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+
+        // Version 1 should have the user actor
+        let v1_actor: ActorRef =
+            serde_json::from_value(versions[0].actor.clone().unwrap()).unwrap();
+        assert_eq!(v1_actor, user_actor);
+
+        // Version 2 should have the system actor
+        let v2_actor: ActorRef =
+            serde_json::from_value(versions[1].actor.clone().unwrap()).unwrap();
+        assert_eq!(v2_actor, system_actor);
+
+        // Latest version should also have actor set
+        let latest = store.get_issue(&issue_id, false).await.unwrap();
+        let latest_actor: ActorRef = serde_json::from_value(latest.actor.clone().unwrap()).unwrap();
+        assert_eq!(latest_actor, system_actor);
+    }
+
+    #[tokio::test]
     async fn add_and_get_patch_assigns_id() {
         let store = MemoryStore::new();
 
         let patch = sample_patch();
-        let (id, _) = store.add_patch(patch.clone()).await.unwrap();
+        let (id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let fetched = store.get_patch(&id, false).await.unwrap();
         assert_eq!(fetched.item, patch);
@@ -1609,7 +1767,10 @@ mod tests {
     async fn update_patch_overwrites_existing_value() {
         let store = MemoryStore::new();
 
-        let (id, _) = store.add_patch(sample_patch()).await.unwrap();
+        let (id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
         let updated = Patch::new(
             "new title".to_string(),
             "updated patch".to_string(),
@@ -1622,7 +1783,10 @@ mod tests {
             None,
         );
 
-        store.update_patch(&id, updated.clone()).await.unwrap();
+        store
+            .update_patch(&id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let fetched = store.get_patch(&id, false).await.unwrap();
         assert_eq!(fetched.item, updated);
@@ -1638,11 +1802,14 @@ mod tests {
 
         let mut patch = sample_patch();
         patch.title = "v1".to_string();
-        let (patch_id, _) = store.add_patch(patch).await.unwrap();
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         let mut v2 = sample_patch();
         v2.title = "v2".to_string();
-        store.update_patch(&patch_id, v2).await.unwrap();
+        store
+            .update_patch(&patch_id, v2, &ActorRef::test())
+            .await
+            .unwrap();
 
         let versions = store.get_patch_versions(&patch_id).await.unwrap();
         assert_eq!(version_numbers(&versions), vec![1, 2]);
@@ -1669,6 +1836,7 @@ mod tests {
                     RepoName::from_str("dourolabs/sample").unwrap(),
                     None,
                 ),
+                &ActorRef::test(),
             )
             .await
             .unwrap_err();
@@ -1680,14 +1848,23 @@ mod tests {
     async fn issue_dependency_indexes_populated_on_create() {
         let store = MemoryStore::new();
 
-        let (parent_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let (blocker_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (blocker_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         let (child_id, _) = store
-            .add_issue(sample_issue(vec![
-                IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone()),
-                IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone()),
-            ]))
+            .add_issue(
+                sample_issue(vec![
+                    IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone()),
+                    IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone()),
+                ]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -1705,16 +1882,31 @@ mod tests {
     async fn issue_dependency_indexes_updated_on_update_and_removal() {
         let store = MemoryStore::new();
 
-        let (original_parent, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let (new_parent, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let (original_blocker, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let (new_blocker, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (original_parent, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (new_parent, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (original_blocker, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (new_blocker, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         let (issue_id, _) = store
-            .add_issue(sample_issue(vec![
-                IssueDependency::new(IssueDependencyType::ChildOf, original_parent.clone()),
-                IssueDependency::new(IssueDependencyType::BlockedOn, original_blocker.clone()),
-            ]))
+            .add_issue(
+                sample_issue(vec![
+                    IssueDependency::new(IssueDependencyType::ChildOf, original_parent.clone()),
+                    IssueDependency::new(IssueDependencyType::BlockedOn, original_blocker.clone()),
+                ]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -1734,6 +1926,7 @@ mod tests {
                     IssueDependency::new(IssueDependencyType::ChildOf, new_parent.clone()),
                     IssueDependency::new(IssueDependencyType::BlockedOn, new_blocker.clone()),
                 ]),
+                &ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1762,7 +1955,7 @@ mod tests {
         );
 
         store
-            .update_issue(&issue_id, sample_issue(vec![]))
+            .update_issue(&issue_id, sample_issue(vec![]), &ActorRef::test())
             .await
             .unwrap();
 
@@ -1786,19 +1979,28 @@ mod tests {
     async fn graph_filter_returns_children() {
         let store = MemoryStore::new();
 
-        let (parent, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (parent, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
         let (child, _) = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::ChildOf,
-                parent.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         let (_grandchild, _) = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::ChildOf,
-                child.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    child.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -1812,19 +2014,28 @@ mod tests {
     async fn graph_filter_returns_transitive_children() {
         let store = MemoryStore::new();
 
-        let (parent, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (parent, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
         let (child, _) = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::ChildOf,
-                parent.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         let (grandchild, _) = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::ChildOf,
-                child.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    child.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -1838,19 +2049,28 @@ mod tests {
     async fn graph_filter_returns_ancestors_for_right_wildcards() {
         let store = MemoryStore::new();
 
-        let (root, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (root, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
         let (child, _) = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::ChildOf,
-                root.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    root.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         let (grandchild, _) = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::ChildOf,
-                child.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    child.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -1864,38 +2084,62 @@ mod tests {
     async fn graph_filters_intersect_multiple_constraints() {
         let store = MemoryStore::new();
 
-        let (parent, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let (blocker, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let (other_parent, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let (other_blocker, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (parent, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (blocker, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (other_parent, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (other_blocker, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         let (matching_issue, _) = store
-            .add_issue(sample_issue(vec![
-                IssueDependency::new(IssueDependencyType::ChildOf, parent.clone()),
-                IssueDependency::new(IssueDependencyType::BlockedOn, blocker.clone()),
-            ]))
+            .add_issue(
+                sample_issue(vec![
+                    IssueDependency::new(IssueDependencyType::ChildOf, parent.clone()),
+                    IssueDependency::new(IssueDependencyType::BlockedOn, blocker.clone()),
+                ]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
         let (non_matching_child, _) = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::ChildOf,
-                parent.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         let (non_matching_blocked, _) = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::BlockedOn,
-                blocker.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::BlockedOn,
+                    blocker.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         let (unrelated_issue, _) = store
-            .add_issue(sample_issue(vec![
-                IssueDependency::new(IssueDependencyType::ChildOf, other_parent),
-                IssueDependency::new(IssueDependencyType::BlockedOn, other_blocker),
-            ]))
+            .add_issue(
+                sample_issue(vec![
+                    IssueDependency::new(IssueDependencyType::ChildOf, other_parent),
+                    IssueDependency::new(IssueDependencyType::BlockedOn, other_blocker),
+                ]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -1918,7 +2162,10 @@ mod tests {
         let store = MemoryStore::new();
         let missing = IssueId::new();
 
-        store.add_issue(sample_issue(vec![])).await.unwrap();
+        store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         let filter: IssueGraphFilter = format!("*:child-of:{missing}").parse().unwrap();
         let result = store.search_issue_graph(&[filter]).await;
@@ -1929,12 +2176,18 @@ mod tests {
     #[tokio::test]
     async fn patch_issue_indexes_updated_on_issue_changes() {
         let store = MemoryStore::new();
-        let (patch_a, _) = store.add_patch(sample_patch()).await.unwrap();
-        let (patch_b, _) = store.add_patch(sample_patch()).await.unwrap();
+        let (patch_a, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (patch_b, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut issue = sample_issue(vec![]);
         issue.patches = vec![patch_a.clone()];
-        let (issue_id, _) = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
         assert_eq!(
             store.get_issues_for_patch(&patch_a).await.unwrap(),
@@ -1950,7 +2203,10 @@ mod tests {
 
         let mut updated_issue = sample_issue(vec![]);
         updated_issue.patches = vec![patch_b.clone()];
-        store.update_issue(&issue_id, updated_issue).await.unwrap();
+        store
+            .update_issue(&issue_id, updated_issue, &ActorRef::test())
+            .await
+            .unwrap();
 
         assert!(
             store
@@ -1969,7 +2225,10 @@ mod tests {
     async fn documents_round_trip() {
         let store = MemoryStore::new();
         let (doc_id, _) = store
-            .add_document(sample_document(Some("docs/guides/intro.md"), None))
+            .add_document(
+                sample_document(Some("docs/guides/intro.md"), None),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -1980,7 +2239,7 @@ mod tests {
         let mut updated = fetched.item.clone();
         updated.body_markdown = "Updated body".to_string();
         store
-            .update_document(&doc_id, updated.clone())
+            .update_document(&doc_id, updated.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -2007,17 +2266,17 @@ mod tests {
         let other_task = TaskId::new();
 
         let (first, _) = store
-            .add_document(sample_document(
-                Some("docs/howto.md"),
-                Some(task_id.clone()),
-            ))
+            .add_document(
+                sample_document(Some("docs/howto.md"), Some(task_id.clone())),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         store
-            .add_document(sample_document(
-                Some("notes/todo.md"),
-                Some(other_task.clone()),
-            ))
+            .add_document(
+                sample_document(Some("notes/todo.md"), Some(other_task.clone())),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -2050,13 +2309,19 @@ mod tests {
     async fn document_path_index_updates_on_change() {
         let store = MemoryStore::new();
         let (doc_id, _) = store
-            .add_document(sample_document(Some("docs/old.md"), None))
+            .add_document(
+                sample_document(Some("docs/old.md"), None),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
         let mut updated = store.get_document(&doc_id, false).await.unwrap().item;
         updated.path = Some("docs/new.md".parse().unwrap());
-        store.update_document(&doc_id, updated).await.unwrap();
+        store
+            .update_document(&doc_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
 
         assert!(
             store
@@ -2075,7 +2340,10 @@ mod tests {
         let store = MemoryStore::new();
 
         let task = spawn_task();
-        let (task_id, _) = store.add_task(task.clone(), Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let fetched = store.get_task(&task_id, false).await.unwrap();
         assert_versioned(&fetched, &task, 1);
@@ -2100,11 +2368,17 @@ mod tests {
 
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
-        let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut updated = spawn_task();
         updated.prompt = "v2".to_string();
-        store.update_task(&task_id, updated.clone()).await.unwrap();
+        store
+            .update_task(&task_id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let fetched = store.get_task(&task_id, false).await.unwrap();
         assert_versioned(&fetched, &updated, 2);
@@ -2119,11 +2393,17 @@ mod tests {
 
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
-        let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut v2 = spawn_task();
         v2.prompt = "v2".to_string();
-        store.update_task(&task_id, v2).await.unwrap();
+        store
+            .update_task(&task_id, v2, &ActorRef::test())
+            .await
+            .unwrap();
 
         let versions = store.get_task_versions(&task_id).await.unwrap();
         assert_eq!(version_numbers(&versions), vec![1, 2]);
@@ -2135,7 +2415,10 @@ mod tests {
     async fn task_versions_increment_on_transitions() {
         let store = Arc::new(MemoryStore::new());
         let state = test_state_with_store(store.clone()).state;
-        let (task_id, _) = store.add_task(spawn_task(), Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         state.transition_task_to_pending(&task_id).await.unwrap();
         state.transition_task_to_running(&task_id).await.unwrap();
@@ -2159,11 +2442,17 @@ mod tests {
         let created_at = Utc::now() - Duration::seconds(60);
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
-        let (task_id, _) = store.add_task(task.clone(), created_at).await.unwrap();
+        let (task_id, _) = store
+            .add_task(task.clone(), created_at, &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut updated = task.clone();
         updated.prompt = "v2".to_string();
-        store.update_task(&task_id, updated).await.unwrap();
+        store
+            .update_task(&task_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
 
         let log = store.get_status_log(&task_id).await.unwrap();
         assert_eq!(log.events.len(), 1);
@@ -2180,7 +2469,10 @@ mod tests {
 
         let mut running = store.get_task(&task_id, false).await.unwrap().item;
         running.prompt = "v3".to_string();
-        store.update_task(&task_id, running).await.unwrap();
+        store
+            .update_task(&task_id, running, &ActorRef::test())
+            .await
+            .unwrap();
 
         let log = store.get_status_log(&task_id).await.unwrap();
         assert_eq!(log.events.len(), 3);
@@ -2203,22 +2495,37 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let state = test_state_with_store(store.clone()).state;
 
-        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let (other_issue, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (other_issue, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut pending_task = spawn_task();
         pending_task.spawned_from = Some(issue_id.clone());
-        let (pending_id, _) = store.add_task(pending_task, Utc::now()).await.unwrap();
+        let (pending_id, _) = store
+            .add_task(pending_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut running_task = spawn_task();
         running_task.spawned_from = Some(issue_id.clone());
-        let (running_id, _) = store.add_task(running_task, Utc::now()).await.unwrap();
+        let (running_id, _) = store
+            .add_task(running_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
         state.transition_task_to_pending(&running_id).await.unwrap();
         state.transition_task_to_running(&running_id).await.unwrap();
 
         let mut completed_task = spawn_task();
         completed_task.spawned_from = Some(issue_id.clone());
-        let (completed_id, _) = store.add_task(completed_task, Utc::now()).await.unwrap();
+        let (completed_id, _) = store
+            .add_task(completed_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
         state
             .transition_task_to_pending(&completed_id)
             .await
@@ -2234,7 +2541,10 @@ mod tests {
 
         let mut unrelated_task = spawn_task();
         unrelated_task.spawned_from = Some(other_issue.clone());
-        let (unrelated_id, _) = store.add_task(unrelated_task, Utc::now()).await.unwrap();
+        let (unrelated_id, _) = store
+            .add_task(unrelated_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let tasks: HashSet<_> = store
             .get_tasks_for_issue(&issue_id)
@@ -2268,7 +2578,10 @@ mod tests {
         let store = MemoryStore::new();
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store
+            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
@@ -2282,7 +2595,10 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store
+            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
@@ -2302,7 +2618,10 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store
+            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
@@ -2318,7 +2637,10 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store
+            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
@@ -2350,7 +2672,10 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store
+            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         assert_eq!(
             store.get_task(&root_id, false).await.unwrap().item.status,
@@ -2388,7 +2713,10 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store
+            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Trying to mark as complete from pending should fail
         let err = state
@@ -2404,7 +2732,10 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store
+            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Marking as failed from pending should succeed
         state
@@ -2429,7 +2760,10 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store
+            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
@@ -2460,7 +2794,10 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store
+            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
@@ -2506,7 +2843,10 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store
+            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
@@ -2535,7 +2875,10 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
-        let (root_id, _) = store.add_task(root_task, Utc::now()).await.unwrap();
+        let (root_id, _) = store
+            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
@@ -2564,24 +2907,30 @@ mod tests {
         let username = Username::from("alice");
 
         store
-            .add_user(User {
-                username: username.clone(),
-                github_user_id: 101,
-                github_token: "old-token".to_string(),
-                github_refresh_token: "old-refresh".to_string(),
-                deleted: false,
-            })
+            .add_user(
+                User {
+                    username: username.clone(),
+                    github_user_id: 101,
+                    github_token: "old-token".to_string(),
+                    github_refresh_token: "old-refresh".to_string(),
+                    deleted: false,
+                },
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
         let updated = store
-            .update_user(User {
-                username: username.clone(),
-                github_user_id: 202,
-                github_token: "new-token".to_string(),
-                github_refresh_token: "new-refresh".to_string(),
-                deleted: false,
-            })
+            .update_user(
+                User {
+                    username: username.clone(),
+                    github_user_id: 202,
+                    github_token: "new-token".to_string(),
+                    github_refresh_token: "new-refresh".to_string(),
+                    deleted: false,
+                },
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -2608,14 +2957,17 @@ mod tests {
             github_refresh_token: "refresh".to_string(),
             deleted: false,
         };
-        store.add_user(user).await.unwrap();
+        store.add_user(user, &ActorRef::test()).await.unwrap();
 
         // User is accessible when not deleted
         let fetched = store.get_user(&username, false).await.unwrap();
         assert_eq!(fetched.item.username, username);
 
         // Delete the user
-        store.delete_user(&username).await.unwrap();
+        store
+            .delete_user(&username, &ActorRef::test())
+            .await
+            .unwrap();
 
         // User is not found with include_deleted=false
         let err = store.get_user(&username, false).await.unwrap_err();
@@ -2638,7 +2990,10 @@ mod tests {
         };
 
         let name = actor.name();
-        store.add_actor(actor.clone()).await.unwrap();
+        store
+            .add_actor(actor.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let fetched = store.get_actor(&name).await.unwrap();
         assert_eq!(fetched.item, actor);
@@ -2656,8 +3011,11 @@ mod tests {
         };
         let name = actor.name();
 
-        store.add_actor(actor.clone()).await.unwrap();
-        let err = store.add_actor(actor).await.unwrap_err();
+        store
+            .add_actor(actor.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        let err = store.add_actor(actor, &ActorRef::test()).await.unwrap_err();
 
         assert!(matches!(
             err,
@@ -2678,8 +3036,14 @@ mod tests {
         let mut updated = actor.clone();
         updated.auth_token_hash = "new-hash".to_string();
 
-        store.add_actor(actor.clone()).await.unwrap();
-        store.update_actor(updated.clone()).await.unwrap();
+        store
+            .add_actor(actor.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .update_actor(updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let fetched = store.get_actor(&updated.name()).await.unwrap();
         assert_eq!(fetched.item, updated);
@@ -2696,7 +3060,10 @@ mod tests {
             creator: Some(Username::from("ada")),
         };
 
-        let err = store.update_actor(actor).await.unwrap_err();
+        let err = store
+            .update_actor(actor, &ActorRef::test())
+            .await
+            .unwrap_err();
 
         assert!(matches!(
             err,
@@ -2735,15 +3102,24 @@ mod tests {
         let store = MemoryStore::new();
 
         let (exact_doc, _) = store
-            .add_document(sample_document(Some("docs/guide.md"), None))
+            .add_document(
+                sample_document(Some("docs/guide.md"), None),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         store
-            .add_document(sample_document(Some("docs/guide.md.bak"), None))
+            .add_document(
+                sample_document(Some("docs/guide.md.bak"), None),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         store
-            .add_document(sample_document(Some("docs/guide.md/extra"), None))
+            .add_document(
+                sample_document(Some("docs/guide.md/extra"), None),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -2791,7 +3167,10 @@ mod tests {
     #[tokio::test]
     async fn delete_issue_sets_deleted_flag_and_filters_from_list() {
         let store = MemoryStore::new();
-        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Issue should be visible in list initially
         let issues = store
@@ -2802,7 +3181,10 @@ mod tests {
         assert!(!issues[0].1.item.deleted);
 
         // Delete the issue
-        store.delete_issue(&issue_id).await.unwrap();
+        store
+            .delete_issue(&issue_id, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Deleted issue should not appear in default list
         let issues = store
@@ -2839,14 +3221,20 @@ mod tests {
     async fn get_issue_filters_deleted_issues() {
         let store = MemoryStore::new();
         let issue = sample_issue(vec![]);
-        let (issue_id, _) = store.add_issue(issue.clone()).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Issue is accessible when not deleted
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(fetched.item.description, issue.description);
 
         // Delete the issue
-        store.delete_issue(&issue_id).await.unwrap();
+        store
+            .delete_issue(&issue_id, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Issue is not found with include_deleted=false
         let err = store.get_issue(&issue_id, false).await.unwrap_err();
@@ -2861,7 +3249,10 @@ mod tests {
     #[tokio::test]
     async fn delete_patch_sets_deleted_flag_and_filters_from_list() {
         let store = MemoryStore::new();
-        let (patch_id, _) = store.add_patch(sample_patch()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Patch should be visible in list initially
         let patches = store
@@ -2872,7 +3263,10 @@ mod tests {
         assert!(!patches[0].1.item.deleted);
 
         // Delete the patch
-        store.delete_patch(&patch_id).await.unwrap();
+        store
+            .delete_patch(&patch_id, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Deleted patch should not appear in default list
         let patches = store
@@ -2898,14 +3292,20 @@ mod tests {
     async fn get_patch_filters_deleted_patches() {
         let store = MemoryStore::new();
         let patch = sample_patch();
-        let (patch_id, _) = store.add_patch(patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Patch is accessible when not deleted
         let fetched = store.get_patch(&patch_id, false).await.unwrap();
         assert_eq!(fetched.item.title, patch.title);
 
         // Delete the patch
-        store.delete_patch(&patch_id).await.unwrap();
+        store
+            .delete_patch(&patch_id, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Patch is not found with include_deleted=false
         let err = store.get_patch(&patch_id, false).await.unwrap_err();
@@ -2925,17 +3325,17 @@ mod tests {
         let mut patch1 = sample_patch();
         patch1.title = "first patch".to_string();
         patch1.description = "adds the login feature".to_string();
-        let (patch1_id, _) = store.add_patch(patch1).await.unwrap();
+        let (patch1_id, _) = store.add_patch(patch1, &ActorRef::test()).await.unwrap();
 
         let mut patch2 = sample_patch();
         patch2.title = "second patch".to_string();
         patch2.description = "fixes authentication bug".to_string();
-        let (patch2_id, _) = store.add_patch(patch2).await.unwrap();
+        let (patch2_id, _) = store.add_patch(patch2, &ActorRef::test()).await.unwrap();
 
         let mut patch3 = sample_patch();
         patch3.title = "third update".to_string();
         patch3.description = "refactors login module".to_string();
-        store.add_patch(patch3).await.unwrap();
+        store.add_patch(patch3, &ActorRef::test()).await.unwrap();
 
         // Search by title
         let patches = store
@@ -3009,7 +3409,7 @@ mod tests {
             None,
             None,
         ));
-        let (patch1_id, _) = store.add_patch(patch1).await.unwrap();
+        let (patch1_id, _) = store.add_patch(patch1, &ActorRef::test()).await.unwrap();
 
         let mut patch2 = sample_patch();
         patch2.github = Some(GithubPr::new(
@@ -3021,7 +3421,7 @@ mod tests {
             None,
             None,
         ));
-        let (patch2_id, _) = store.add_patch(patch2).await.unwrap();
+        let (patch2_id, _) = store.add_patch(patch2, &ActorRef::test()).await.unwrap();
 
         // Search by github owner
         let patches = store
@@ -3081,7 +3481,7 @@ mod tests {
 
         let mut patch = sample_patch();
         patch.title = "Important Feature".to_string();
-        let (patch_id, _) = store.add_patch(patch).await.unwrap();
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         // Search with different cases
         let patches = store
@@ -3119,7 +3519,7 @@ mod tests {
     async fn delete_document_sets_deleted_flag_and_filters_from_list() {
         let store = MemoryStore::new();
         let (doc_id, _) = store
-            .add_document(sample_document(Some("test.md"), None))
+            .add_document(sample_document(Some("test.md"), None), &ActorRef::test())
             .await
             .unwrap();
 
@@ -3132,7 +3532,10 @@ mod tests {
         assert!(!docs[0].1.item.deleted);
 
         // Delete the document
-        store.delete_document(&doc_id).await.unwrap();
+        store
+            .delete_document(&doc_id, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Deleted document should not appear in default list
         let docs = store
@@ -3168,7 +3571,10 @@ mod tests {
     async fn delete_task_sets_deleted_flag_and_filters_from_list() {
         let store = MemoryStore::new();
         let task = spawn_task();
-        let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Task should be visible in list initially
         let tasks = store.list_tasks(&SearchJobsQuery::default()).await.unwrap();
@@ -3176,7 +3582,10 @@ mod tests {
         assert!(!tasks[0].1.item.deleted);
 
         // Delete the task
-        store.delete_task(&task_id).await.unwrap();
+        store
+            .delete_task(&task_id, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Deleted task should not appear in default list
         let tasks = store.list_tasks(&SearchJobsQuery::default()).await.unwrap();
@@ -3204,7 +3613,10 @@ mod tests {
         let store = MemoryStore::new();
         let missing_id = IssueId::new();
 
-        let err = store.delete_issue(&missing_id).await.unwrap_err();
+        let err = store
+            .delete_issue(&missing_id, &ActorRef::test())
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, StoreError::IssueNotFound(id) if id == missing_id));
     }
@@ -3214,7 +3626,10 @@ mod tests {
         let store = MemoryStore::new();
         let missing_id = PatchId::new();
 
-        let err = store.delete_patch(&missing_id).await.unwrap_err();
+        let err = store
+            .delete_patch(&missing_id, &ActorRef::test())
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, StoreError::PatchNotFound(id) if id == missing_id));
     }
@@ -3224,7 +3639,10 @@ mod tests {
         let store = MemoryStore::new();
         let missing_id = DocumentId::new();
 
-        let err = store.delete_document(&missing_id).await.unwrap_err();
+        let err = store
+            .delete_document(&missing_id, &ActorRef::test())
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, StoreError::DocumentNotFound(id) if id == missing_id));
     }
@@ -3234,7 +3652,10 @@ mod tests {
         let store = MemoryStore::new();
         let missing_id = TaskId::new();
 
-        let err = store.delete_task(&missing_id).await.unwrap_err();
+        let err = store
+            .delete_task(&missing_id, &ActorRef::test())
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, StoreError::TaskNotFound(id) if id == missing_id));
     }
@@ -3242,10 +3663,16 @@ mod tests {
     #[tokio::test]
     async fn delete_increments_version() {
         let store = MemoryStore::new();
-        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         let version_before = store.get_issue(&issue_id, false).await.unwrap().version;
-        store.delete_issue(&issue_id).await.unwrap();
+        store
+            .delete_issue(&issue_id, &ActorRef::test())
+            .await
+            .unwrap();
         // After deletion, we need include_deleted: true to get the issue
         let version_after = store.get_issue(&issue_id, true).await.unwrap().version;
 
@@ -3257,12 +3684,15 @@ mod tests {
         let store = MemoryStore::new();
 
         // Create a task issue
-        let (task_issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (task_issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Create a bug issue
         let mut bug_issue = sample_issue(vec![]);
         bug_issue.issue_type = IssueType::Bug;
-        let (bug_issue_id, _) = store.add_issue(bug_issue).await.unwrap();
+        let (bug_issue_id, _) = store.add_issue(bug_issue, &ActorRef::test()).await.unwrap();
 
         // Filter by task type
         let query = SearchIssuesQuery::new(
@@ -3296,12 +3726,18 @@ mod tests {
         let store = MemoryStore::new();
 
         // Create an open issue
-        let (open_issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (open_issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Create a closed issue
         let mut closed_issue = sample_issue(vec![]);
         closed_issue.status = IssueStatus::Closed;
-        let (closed_issue_id, _) = store.add_issue(closed_issue).await.unwrap();
+        let (closed_issue_id, _) = store
+            .add_issue(closed_issue, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Filter by open status
         let query = SearchIssuesQuery::new(
@@ -3337,10 +3773,16 @@ mod tests {
         // Create an issue with assignee
         let mut assigned_issue = sample_issue(vec![]);
         assigned_issue.assignee = Some("alice".to_string());
-        let (assigned_issue_id, _) = store.add_issue(assigned_issue).await.unwrap();
+        let (assigned_issue_id, _) = store
+            .add_issue(assigned_issue, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Create an issue without assignee
-        store.add_issue(sample_issue(vec![])).await.unwrap();
+        store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Filter by assignee
         let query = SearchIssuesQuery::new(
@@ -3376,11 +3818,11 @@ mod tests {
         // Create issues with different descriptions
         let mut issue1 = sample_issue(vec![]);
         issue1.description = "fix the login bug".to_string();
-        let (issue1_id, _) = store.add_issue(issue1).await.unwrap();
+        let (issue1_id, _) = store.add_issue(issue1, &ActorRef::test()).await.unwrap();
 
         let mut issue2 = sample_issue(vec![]);
         issue2.description = "add new feature".to_string();
-        store.add_issue(issue2).await.unwrap();
+        store.add_issue(issue2, &ActorRef::test()).await.unwrap();
 
         // Search for "login"
         let query = SearchIssuesQuery::new(
@@ -3400,7 +3842,10 @@ mod tests {
     async fn list_issues_search_term_matches_issue_id() {
         let store = MemoryStore::new();
 
-        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Search by issue ID prefix
         let id_prefix = issue_id.to_string()[..4].to_string();
@@ -3418,19 +3863,22 @@ mod tests {
         let mut bug_alice = sample_issue(vec![]);
         bug_alice.issue_type = IssueType::Bug;
         bug_alice.assignee = Some("alice".to_string());
-        let (bug_alice_id, _) = store.add_issue(bug_alice).await.unwrap();
+        let (bug_alice_id, _) = store.add_issue(bug_alice, &ActorRef::test()).await.unwrap();
 
         // Create a bug issue assigned to bob
         let mut bug_bob = sample_issue(vec![]);
         bug_bob.issue_type = IssueType::Bug;
         bug_bob.assignee = Some("bob".to_string());
-        store.add_issue(bug_bob).await.unwrap();
+        store.add_issue(bug_bob, &ActorRef::test()).await.unwrap();
 
         // Create a task issue assigned to alice
         let mut task_alice = sample_issue(vec![]);
         task_alice.issue_type = IssueType::Task;
         task_alice.assignee = Some("alice".to_string());
-        store.add_issue(task_alice).await.unwrap();
+        store
+            .add_issue(task_alice, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Filter by bug type AND alice assignee
         let query = SearchIssuesQuery::new(
@@ -3451,24 +3899,42 @@ mod tests {
         let store = MemoryStore::new();
 
         // Create two issues to spawn tasks from
-        let (issue_a, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let (issue_b, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_a, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (issue_b, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Create tasks spawned from different issues
         let mut task_a1 = spawn_task();
         task_a1.spawned_from = Some(issue_a.clone());
-        let (task_a1_id, _) = store.add_task(task_a1, Utc::now()).await.unwrap();
+        let (task_a1_id, _) = store
+            .add_task(task_a1, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut task_a2 = spawn_task();
         task_a2.spawned_from = Some(issue_a.clone());
-        let (task_a2_id, _) = store.add_task(task_a2, Utc::now()).await.unwrap();
+        let (task_a2_id, _) = store
+            .add_task(task_a2, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut task_b1 = spawn_task();
         task_b1.spawned_from = Some(issue_b.clone());
-        let (task_b1_id, _) = store.add_task(task_b1, Utc::now()).await.unwrap();
+        let (task_b1_id, _) = store
+            .add_task(task_b1, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let task_orphan = spawn_task(); // no spawned_from
-        let (task_orphan_id, _) = store.add_task(task_orphan, Utc::now()).await.unwrap();
+        let (task_orphan_id, _) = store
+            .add_task(task_orphan, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Filter by issue_a should return only tasks spawned from issue_a
         let query = SearchJobsQuery::new(None, Some(issue_a.clone()), None, None);
@@ -3516,15 +3982,24 @@ mod tests {
         // Create tasks with different prompts
         let mut task1 = spawn_task();
         task1.prompt = "Fix authentication bug".to_string();
-        let (task1_id, _) = store.add_task(task1, Utc::now()).await.unwrap();
+        let (task1_id, _) = store
+            .add_task(task1, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut task2 = spawn_task();
         task2.prompt = "Add new feature for login".to_string();
-        let (task2_id, _) = store.add_task(task2, Utc::now()).await.unwrap();
+        let (task2_id, _) = store
+            .add_task(task2, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut task3 = spawn_task();
         task3.prompt = "Refactor database layer".to_string();
-        let (task3_id, _) = store.add_task(task3, Utc::now()).await.unwrap();
+        let (task3_id, _) = store
+            .add_task(task3, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Search for "auth" should match task1
         let query = SearchJobsQuery::new(Some("auth".to_string()), None, None, None);
@@ -3581,7 +4056,10 @@ mod tests {
         let store = MemoryStore::new();
 
         let task = spawn_task();
-        let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Search by partial task ID
         let id_prefix = &task_id.as_ref()[..6]; // First 6 characters
@@ -3602,11 +4080,17 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
 
         // Create three tasks and transition them to different states
-        let (task1_id, _) = store.add_task(spawn_task(), Utc::now()).await.unwrap();
+        let (task1_id, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
         state.transition_task_to_pending(&task1_id).await.unwrap();
         state.transition_task_to_running(&task1_id).await.unwrap();
 
-        let (task2_id, _) = store.add_task(spawn_task(), Utc::now()).await.unwrap();
+        let (task2_id, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
         state.transition_task_to_pending(&task2_id).await.unwrap();
         state.transition_task_to_running(&task2_id).await.unwrap();
         state
@@ -3614,7 +4098,10 @@ mod tests {
             .await
             .unwrap();
 
-        let (task3_id, _) = store.add_task(spawn_task(), Utc::now()).await.unwrap();
+        let (task3_id, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
         state.transition_task_to_pending(&task3_id).await.unwrap();
         state.transition_task_to_running(&task3_id).await.unwrap();
         state
@@ -3668,21 +4155,36 @@ mod tests {
 
         // Create a task in Created status
         let task1 = spawn_task();
-        let (task1_id, _) = store.add_task(task1, Utc::now()).await.unwrap();
+        let (task1_id, _) = store
+            .add_task(task1, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Create a task and update to Running status
         let task2 = spawn_task();
-        let (task2_id, _) = store.add_task(task2, Utc::now()).await.unwrap();
+        let (task2_id, _) = store
+            .add_task(task2, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
         let mut updated = spawn_task();
         updated.status = Status::Running;
-        store.update_task(&task2_id, updated).await.unwrap();
+        store
+            .update_task(&task2_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Create a task and update to Complete status
         let task3 = spawn_task();
-        let (task3_id, _) = store.add_task(task3, Utc::now()).await.unwrap();
+        let (task3_id, _) = store
+            .add_task(task3, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
         let mut updated = spawn_task();
         updated.status = Status::Complete;
-        store.update_task(&task3_id, updated).await.unwrap();
+        store
+            .update_task(&task3_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Search for "created" should match task1
         let query = SearchJobsQuery::new(Some("created".to_string()), None, None, None);
@@ -3724,21 +4226,36 @@ mod tests {
 
         // Add a task with Created status (default)
         let task1 = spawn_task();
-        let (task1_id, _) = store.add_task(task1, Utc::now()).await.unwrap();
+        let (task1_id, _) = store
+            .add_task(task1, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Add a task and update to Running status
         let task2 = spawn_task();
-        let (task2_id, _) = store.add_task(task2, Utc::now()).await.unwrap();
+        let (task2_id, _) = store
+            .add_task(task2, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
         let mut updated = spawn_task();
         updated.status = Status::Running;
-        store.update_task(&task2_id, updated).await.unwrap();
+        store
+            .update_task(&task2_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Add a task and update to Complete status
         let task3 = spawn_task();
-        let (task3_id, _) = store.add_task(task3, Utc::now()).await.unwrap();
+        let (task3_id, _) = store
+            .add_task(task3, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
         let mut updated = spawn_task();
         updated.status = Status::Complete;
-        store.update_task(&task3_id, updated).await.unwrap();
+        store
+            .update_task(&task3_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Filter by Created should return only task1
         let query = SearchJobsQuery::new(None, None, None, Some(Status::Created.into()));
@@ -3798,15 +4315,24 @@ mod tests {
 
         let mut open_patch = sample_patch();
         open_patch.status = PatchStatus::Open;
-        let (open_id, _) = store.add_patch(open_patch).await.unwrap();
+        let (open_id, _) = store
+            .add_patch(open_patch, &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut closed_patch = sample_patch();
         closed_patch.status = PatchStatus::Closed;
-        store.add_patch(closed_patch).await.unwrap();
+        store
+            .add_patch(closed_patch, &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut merged_patch = sample_patch();
         merged_patch.status = PatchStatus::Merged;
-        store.add_patch(merged_patch).await.unwrap();
+        store
+            .add_patch(merged_patch, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Filter for Open only
         let query = SearchPatchesQuery::new(None, None).with_status(vec![ApiPatchStatus::Open]);
@@ -3827,15 +4353,15 @@ mod tests {
 
         let mut patch1 = sample_patch();
         patch1.branch_name = Some("feature/foo".to_string());
-        let (patch1_id, _) = store.add_patch(patch1).await.unwrap();
+        let (patch1_id, _) = store.add_patch(patch1, &ActorRef::test()).await.unwrap();
 
         let mut patch2 = sample_patch();
         patch2.branch_name = Some("feature/bar".to_string());
-        store.add_patch(patch2).await.unwrap();
+        store.add_patch(patch2, &ActorRef::test()).await.unwrap();
 
         let mut patch3 = sample_patch();
         patch3.branch_name = None;
-        store.add_patch(patch3).await.unwrap();
+        store.add_patch(patch3, &ActorRef::test()).await.unwrap();
 
         let query = SearchPatchesQuery::new(None, None).with_branch_name("feature/foo".to_string());
         let patches = store.list_patches(&query).await.unwrap();
@@ -3852,17 +4378,20 @@ mod tests {
         let mut open_foo = sample_patch();
         open_foo.status = PatchStatus::Open;
         open_foo.branch_name = Some("feature/foo".to_string());
-        let (open_foo_id, _) = store.add_patch(open_foo).await.unwrap();
+        let (open_foo_id, _) = store.add_patch(open_foo, &ActorRef::test()).await.unwrap();
 
         let mut closed_foo = sample_patch();
         closed_foo.status = PatchStatus::Closed;
         closed_foo.branch_name = Some("feature/foo".to_string());
-        store.add_patch(closed_foo).await.unwrap();
+        store
+            .add_patch(closed_foo, &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut open_bar = sample_patch();
         open_bar.status = PatchStatus::Open;
         open_bar.branch_name = Some("feature/bar".to_string());
-        store.add_patch(open_bar).await.unwrap();
+        store.add_patch(open_bar, &ActorRef::test()).await.unwrap();
 
         // Open patches with branch "feature/foo"
         let query = SearchPatchesQuery::new(None, None)
@@ -3879,7 +4408,7 @@ mod tests {
 
         let mut patch = sample_patch();
         patch.branch_name = Some("feature/foo".to_string());
-        store.add_patch(patch).await.unwrap();
+        store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         let query =
             SearchPatchesQuery::new(None, None).with_branch_name("feature/nonexistent".to_string());
@@ -3893,8 +4422,11 @@ mod tests {
 
         let mut patch = sample_patch();
         patch.branch_name = Some("feature/foo".to_string());
-        let (patch_id, _) = store.add_patch(patch).await.unwrap();
-        store.delete_patch(&patch_id).await.unwrap();
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
+        store
+            .delete_patch(&patch_id, &ActorRef::test())
+            .await
+            .unwrap();
 
         let query = SearchPatchesQuery::new(None, None).with_branch_name("feature/foo".to_string());
         let patches = store.list_patches(&query).await.unwrap();

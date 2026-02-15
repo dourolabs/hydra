@@ -6,7 +6,7 @@ use crate::{
         DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES, DatabaseSection, GithubAppSection,
         JobSection, KubernetesSection, MetisSection,
     },
-    domain::actors::Actor,
+    domain::actors::{Actor, ActorRef},
     job_engine::JobEngine,
     run_with_state,
     store::{MemoryStore, Store, StoreError},
@@ -230,7 +230,7 @@ pub async fn spawn_test_server_with_state(
 
 async fn seed_test_actor(store: &dyn Store) -> anyhow::Result<()> {
     let (actor, _) = test_auth();
-    match store.add_actor(actor).await {
+    match store.add_actor(actor, &ActorRef::test()).await {
         Ok(_) => Ok(()),
         Err(StoreError::ActorAlreadyExists(_)) => Ok(()),
         Err(err) => Err(anyhow::anyhow!("failed to seed test actor: {err}")),

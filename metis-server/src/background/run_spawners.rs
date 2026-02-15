@@ -202,7 +202,7 @@ mod tests {
         add_repository(&handles.state, repo_name.clone(), repository(&repo_name)).await?;
         handles
             .store
-            .add_issue(issue_for_agent(agent_name, &repo_name))
+            .add_issue(issue_for_agent(agent_name, &repo_name), &ActorRef::test())
             .await?;
 
         let worker = RunSpawnersWorker::new(handles.state.clone());
@@ -237,7 +237,7 @@ mod tests {
         }
         handles
             .store
-            .add_issue(issue_for_agent(agent_name, &repo_name))
+            .add_issue(issue_for_agent(agent_name, &repo_name), &ActorRef::test())
             .await?;
         let worker = RunSpawnersWorker::new(handles.state);
 

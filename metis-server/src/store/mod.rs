@@ -1,5 +1,5 @@
 use crate::domain::{
-    actors::{Actor, ActorError},
+    actors::{Actor, ActorError, ActorRef},
     documents::Document,
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
@@ -352,32 +352,50 @@ pub trait Store: ReadOnlyStore {
     /// Adds a repository configuration under the provided name.
     ///
     /// Returns an error if a repository with the same name already exists.
-    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError>;
+    async fn add_repository(
+        &self,
+        name: RepoName,
+        config: Repository,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError>;
 
     /// Updates an existing repository configuration.
     ///
     /// Returns an error if the repository does not exist.
-    async fn update_repository(&self, name: RepoName, config: Repository)
-    -> Result<(), StoreError>;
+    async fn update_repository(
+        &self,
+        name: RepoName,
+        config: Repository,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError>;
 
     /// Soft-deletes a repository by setting its `deleted` flag to true.
     ///
     /// This creates a new version of the repository with `deleted: true`.
     /// The repository can still be retrieved via `get_repository` but will be filtered
     /// from `list_repositories` by default.
-    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError>;
+    async fn delete_repository(&self, name: &RepoName, actor: &ActorRef) -> Result<(), StoreError>;
 
     /// Adds a new issue to the store and assigns it an IssueId.
     ///
     /// Returns the new IssueId and its initial version number, or an error if
     /// any declared dependencies reference missing issues.
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError>;
+    async fn add_issue(
+        &self,
+        issue: Issue,
+        actor: &ActorRef,
+    ) -> Result<(IssueId, VersionNumber), StoreError>;
 
     /// Updates an existing issue in the store.
     ///
     /// Returns the new version number, or an error if the issue does not exist
     /// or if any dependencies reference missing issues.
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError>;
+    async fn update_issue(
+        &self,
+        id: &IssueId,
+        issue: Issue,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
 
     /// Soft-deletes an issue by setting its `deleted` flag to true.
     ///
@@ -385,17 +403,30 @@ pub trait Store: ReadOnlyStore {
     /// The issue can still be retrieved via `get_issue` but will be filtered
     /// from `list_issues` by default. Returns the version number of the
     /// deletion record.
-    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError>;
+    async fn delete_issue(
+        &self,
+        id: &IssueId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
 
     /// Adds a new patch to the store and assigns it a PatchId.
     ///
     /// Returns the new PatchId and its initial version number.
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError>;
+    async fn add_patch(
+        &self,
+        patch: Patch,
+        actor: &ActorRef,
+    ) -> Result<(PatchId, VersionNumber), StoreError>;
 
     /// Updates an existing patch in the store.
     ///
     /// Returns the new version number.
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError>;
+    async fn update_patch(
+        &self,
+        id: &PatchId,
+        patch: Patch,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
 
     /// Soft-deletes a patch by setting its `deleted` flag to true.
     ///
@@ -403,7 +434,11 @@ pub trait Store: ReadOnlyStore {
     /// The patch can still be retrieved via `get_patch` but will be filtered
     /// from `list_patches` by default. Returns the version number of the
     /// deletion record.
-    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError>;
+    async fn delete_patch(
+        &self,
+        id: &PatchId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
 
     /// Adds a new document to the store and assigns it a DocumentId.
     ///
@@ -411,6 +446,7 @@ pub trait Store: ReadOnlyStore {
     async fn add_document(
         &self,
         document: Document,
+        actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError>;
 
     /// Updates an existing document in the store.
@@ -420,6 +456,7 @@ pub trait Store: ReadOnlyStore {
         &self,
         id: &DocumentId,
         document: Document,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 
     /// Soft-deletes a document by setting its `deleted` flag to true.
@@ -429,7 +466,11 @@ pub trait Store: ReadOnlyStore {
     /// but will be filtered from `get_document` with `include_deleted: false` and from
     /// `list_documents` by default (unless `include_deleted: true` is in the query).
     /// Returns the version number of the deletion record.
-    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError>;
+    async fn delete_document(
+        &self,
+        id: &DocumentId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
 
     /// Adds a task to the store.
     ///
@@ -437,12 +478,14 @@ pub trait Store: ReadOnlyStore {
     /// # Arguments
     /// * `task` - The task to add
     /// * `creation_time` - The timestamp when the task is being created
+    /// * `actor` - The actor performing this mutation
     ///
     /// Returns the new TaskId and its initial version number.
     async fn add_task(
         &self,
         task: Task,
         creation_time: DateTime<Utc>,
+        actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError>;
 
     /// Updates an existing task in the store.
@@ -452,6 +495,7 @@ pub trait Store: ReadOnlyStore {
     /// # Arguments
     /// * `metis_id` - The TaskId of the task to update
     /// * `task` - The new Task to store for this vertex
+    /// * `actor` - The actor performing this mutation
     ///
     /// # Returns
     /// The stored task version if successful, or an error if the task doesn't exist
@@ -459,6 +503,7 @@ pub trait Store: ReadOnlyStore {
         &self,
         metis_id: &TaskId,
         task: Task,
+        actor: &ActorRef,
     ) -> Result<Versioned<Task>, StoreError>;
 
     /// Soft-deletes a task by setting its `deleted` flag to true.
@@ -467,22 +512,27 @@ pub trait Store: ReadOnlyStore {
     /// The task can still be retrieved via `get_task` but will be filtered
     /// from `list_tasks` by default. Returns the version number of the
     /// deletion record.
-    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError>;
+    async fn delete_task(&self, id: &TaskId, actor: &ActorRef)
+    -> Result<VersionNumber, StoreError>;
 
     /// Adds a new actor to the store.
-    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError>;
+    async fn add_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError>;
 
     /// Updates an existing actor in the store.
-    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError>;
+    async fn update_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError>;
 
     /// Adds a new user to the store.
     ///
     /// If a user with the same username exists but is deleted, this will
     /// undelete the user by creating a new version with `deleted: false`.
-    async fn add_user(&self, user: User) -> Result<(), StoreError>;
+    async fn add_user(&self, user: User, actor: &ActorRef) -> Result<(), StoreError>;
 
     /// Updates an existing user in the store.
-    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError>;
+    async fn update_user(
+        &self,
+        user: User,
+        actor: &ActorRef,
+    ) -> Result<Versioned<User>, StoreError>;
 
     /// Soft-deletes a user by setting its `deleted` flag to true.
     ///
@@ -490,7 +540,7 @@ pub trait Store: ReadOnlyStore {
     /// The user can still be retrieved via `get_user` with `include_deleted: true`,
     /// but will be filtered from `get_user` with `include_deleted: false` and from
     /// `list_users` by default (unless `include_deleted: true` is in the query).
-    async fn delete_user(&self, username: &Username) -> Result<(), StoreError>;
+    async fn delete_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError>;
 }
 
 pub use memory_store::MemoryStore;
