@@ -139,6 +139,9 @@ pub async fn run(
     // Sync documents to a well-known sibling directory next to the repo checkout (best-effort).
     let documents_path = dest.join("documents");
     std::fs::create_dir_all(&documents_path).context("failed to create documents directory")?;
+    let documents_path = documents_path
+        .canonicalize()
+        .context("failed to canonicalize documents directory path")?;
     match sync_documents(
         client,
         SyncArgs {
@@ -1229,6 +1232,44 @@ mod tests {
                 .context("failed to push updated main branch")?;
             Ok(())
         }
+    }
+
+    #[test]
+    fn documents_path_is_absolute_after_canonicalize() -> Result<()> {
+        // Simulate the worker_run logic: start with a relative dest, create the documents
+        // directory, then canonicalize it. The resulting path must be absolute.
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let original_dir = std::env::current_dir().context("failed to get current dir")?;
+        std::env::set_current_dir(tempdir.path()).context("failed to change to temp directory")?;
+
+        let dest = PathBuf::from(".");
+        let documents_path = dest.join("documents");
+        std::fs::create_dir_all(&documents_path).context("failed to create documents directory")?;
+        let documents_path = documents_path
+            .canonicalize()
+            .context("failed to canonicalize documents directory path")?;
+
+        // Restore the original working directory before assertions so test cleanup works.
+        std::env::set_current_dir(&original_dir).context("failed to restore original directory")?;
+
+        assert!(
+            documents_path.is_absolute(),
+            "documents_path should be absolute after canonicalize, got: {documents_path:?}"
+        );
+
+        // Verify the path would be correct in execution_env.
+        let mut execution_env = HashMap::new();
+        execution_env.insert(
+            ENV_METIS_DOCUMENTS_DIR.to_string(),
+            documents_path.to_string_lossy().to_string(),
+        );
+        let env_value = execution_env.get(ENV_METIS_DOCUMENTS_DIR).unwrap();
+        assert!(
+            PathBuf::from(env_value).is_absolute(),
+            "ENV_METIS_DOCUMENTS_DIR should be an absolute path, got: {env_value}"
+        );
+
+        Ok(())
     }
 
     fn promote_branch_to_main(repo: &Repository) -> Result<()> {
