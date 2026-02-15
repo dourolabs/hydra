@@ -123,7 +123,7 @@ impl AgentQueue {
             prompt,
             bundle,
             Some(issue_id.clone()),
-            None,
+            Some(issue.creator.clone()),
             image,
             job_settings.model.clone(),
             env_vars,
