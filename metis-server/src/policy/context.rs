@@ -1,5 +1,6 @@
 use crate::app::AppState;
 use crate::app::event_bus::ServerEvent;
+use crate::domain::actors::ActorRef;
 use crate::store::ReadOnlyStore;
 
 /// The type of mutation being proposed.
@@ -62,8 +63,8 @@ pub struct AutomationContext<'a> {
 }
 
 impl<'a> AutomationContext<'a> {
-    /// Returns the actor name from the event payload, if available.
-    pub fn actor(&self) -> Option<&str> {
+    /// Returns the actor reference from the event payload.
+    pub fn actor(&self) -> &ActorRef {
         self.event.payload().actor()
     }
 }

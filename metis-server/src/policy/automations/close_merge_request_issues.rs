@@ -97,7 +97,7 @@ impl Automation for CloseMergeRequestIssuesAutomation {
                 .upsert_issue(
                     Some(issue_id.clone()),
                     metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
-                    ctx.actor().map(String::from),
+                    Some(ctx.actor().display_name()),
                 )
                 .await
                 .map_err(|e| {
@@ -136,6 +136,7 @@ impl Automation for CloseMergeRequestIssuesAutomation {
 mod tests {
     use super::*;
     use crate::app::event_bus::MutationPayload;
+    use crate::domain::actors::ActorRef;
     use crate::domain::issues::{
         Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
     };
@@ -217,7 +218,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::PatchUpdated {
@@ -272,7 +273,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::PatchUpdated {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
+use crate::domain::actors::ActorRef;
 use crate::domain::issues::{Issue, IssueStatus, IssueType};
 use crate::domain::users::Username;
 use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
@@ -31,7 +32,7 @@ fn dummy_issue_payload() -> Arc<MutationPayload> {
     Arc::new(MutationPayload::Issue {
         old: None,
         new: dummy_issue(),
-        actor: None,
+        actor: ActorRef::test(),
     })
 }
 
@@ -49,7 +50,7 @@ fn dummy_patch_payload() -> Arc<MutationPayload> {
             metis_common::RepoName::new("test", "repo").unwrap(),
             None,
         ),
-        actor: None,
+        actor: ActorRef::test(),
     })
 }
 
@@ -63,7 +64,7 @@ fn dummy_document_payload() -> Arc<MutationPayload> {
             created_by: None,
             deleted: false,
         },
-        actor: None,
+        actor: ActorRef::test(),
     })
 }
 
