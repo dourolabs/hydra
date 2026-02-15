@@ -141,6 +141,7 @@ impl AppState {
             request.prompt,
             context,
             request.issue_id.clone(),
+            None,
             image,
             model,
             env_vars,

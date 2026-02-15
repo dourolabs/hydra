@@ -91,6 +91,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             HashMap::new(),
             None,
             None,

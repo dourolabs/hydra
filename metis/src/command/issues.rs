@@ -4628,6 +4628,7 @@ mod tests {
             Some(main_issue_id.clone()),
             None,
             None,
+            None,
             HashMap::new(),
             None,
             None,
