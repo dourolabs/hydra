@@ -1,5 +1,5 @@
 use crate::domain::{
-    actors::Actor,
+    actors::{Actor, ActorRef},
     documents::Document,
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
@@ -32,33 +32,33 @@ pub enum MutationPayload {
     Issue {
         old: Option<Issue>,
         new: Issue,
-        actor: Option<String>,
+        actor: ActorRef,
     },
     Patch {
         old: Option<Patch>,
         new: Patch,
-        actor: Option<String>,
+        actor: ActorRef,
     },
     Job {
         old: Option<Task>,
         new: Task,
-        actor: Option<String>,
+        actor: ActorRef,
     },
     Document {
         old: Option<Document>,
         new: Document,
-        actor: Option<String>,
+        actor: ActorRef,
     },
 }
 
 impl MutationPayload {
-    /// Returns the actor name associated with this mutation, if available.
-    pub fn actor(&self) -> Option<&str> {
+    /// Returns the actor reference associated with this mutation.
+    pub fn actor(&self) -> &ActorRef {
         match self {
             MutationPayload::Issue { actor, .. }
             | MutationPayload::Patch { actor, .. }
             | MutationPayload::Job { actor, .. }
-            | MutationPayload::Document { actor, .. } => actor.as_deref(),
+            | MutationPayload::Document { actor, .. } => actor,
         }
     }
 }
@@ -459,7 +459,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: new_issue,
-            actor,
+            actor: ActorRef::from(actor),
         });
         self.event_bus
             .emit_issue_created(issue_id.clone(), version, payload);
@@ -478,7 +478,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Issue {
             old: old_issue,
             new: new_issue,
-            actor,
+            actor: ActorRef::from(actor),
         });
         self.event_bus
             .emit_issue_updated(id.clone(), version, payload);
@@ -502,7 +502,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Issue {
             old: old_issue,
             new: new_issue.expect("entity must exist after successful delete"),
-            actor,
+            actor: ActorRef::from(actor),
         });
         self.event_bus
             .emit_issue_deleted(id.clone(), version, payload);
@@ -519,7 +519,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
             new: new_patch,
-            actor,
+            actor: ActorRef::from(actor),
         });
         self.event_bus
             .emit_patch_created(patch_id.clone(), version, payload);
@@ -538,7 +538,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Patch {
             old: old_patch,
             new: new_patch,
-            actor,
+            actor: ActorRef::from(actor),
         });
         self.event_bus
             .emit_patch_updated(id.clone(), version, payload);
@@ -562,7 +562,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Patch {
             old: old_patch,
             new: new_patch.expect("entity must exist after successful delete"),
-            actor,
+            actor: ActorRef::from(actor),
         });
         self.event_bus
             .emit_patch_deleted(id.clone(), version, payload);
@@ -579,7 +579,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Document {
             old: None,
             new: new_document,
-            actor,
+            actor: ActorRef::from(actor),
         });
         self.event_bus
             .emit_document_created(document_id.clone(), version, payload);
@@ -603,7 +603,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Document {
             old: old_document,
             new: new_document,
-            actor,
+            actor: ActorRef::from(actor),
         });
         self.event_bus
             .emit_document_updated(id.clone(), version, payload);
@@ -632,7 +632,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Document {
             old: old_document,
             new: new_document.expect("entity must exist after successful delete"),
-            actor,
+            actor: ActorRef::from(actor),
         });
         self.event_bus
             .emit_document_deleted(id.clone(), version, payload);
@@ -650,7 +650,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Job {
             old: None,
             new: new_task,
-            actor,
+            actor: ActorRef::from(actor),
         });
         self.event_bus
             .emit_job_created(task_id.clone(), version, payload);
@@ -674,7 +674,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Job {
             old: old_task,
             new: new_task,
-            actor,
+            actor: ActorRef::from(actor),
         });
         self.event_bus
             .emit_job_updated(metis_id.clone(), result.version, payload);
@@ -978,7 +978,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: dummy_issue(),
-            actor: None,
+            actor: ActorRef::test(),
         });
         bus.emit_issue_created(issue_id.clone(), 1, payload);
 
@@ -1009,13 +1009,13 @@ mod tests {
         let payload1 = Arc::new(MutationPayload::Issue {
             old: None,
             new: issue.clone(),
-            actor: None,
+            actor: ActorRef::test(),
         });
         bus.emit_issue_created(issue_id.clone(), 1, payload1);
         let payload2 = Arc::new(MutationPayload::Issue {
             old: Some(issue.clone()),
             new: issue,
-            actor: None,
+            actor: ActorRef::test(),
         });
         bus.emit_issue_updated(issue_id, 2, payload2);
 
@@ -1373,6 +1373,7 @@ mod tests {
 
     #[tokio::test]
     async fn actor_context_carried_through_events() {
+        use crate::domain::actors::ActorId;
         use crate::domain::issues::{Issue, IssueStatus, IssueType};
         use crate::domain::users::Username;
 
@@ -1403,8 +1404,10 @@ mod tests {
         match &event {
             ServerEvent::IssueCreated { payload, .. } => {
                 assert_eq!(
-                    payload.actor(),
-                    Some("u-testuser"),
+                    *payload.actor(),
+                    ActorRef::Authenticated {
+                        actor_id: ActorId::Username(Username::from("testuser"))
+                    },
                     "actor should be carried through the event payload"
                 );
             }
@@ -1413,7 +1416,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn actor_context_is_none_when_not_set() {
+    async fn actor_context_is_system_when_not_set() {
         use crate::domain::issues::{Issue, IssueStatus, IssueType};
         use crate::domain::users::Username;
 
@@ -1441,9 +1444,12 @@ mod tests {
         match &event {
             ServerEvent::IssueCreated { payload, .. } => {
                 assert_eq!(
-                    payload.actor(),
-                    None,
-                    "actor should be None when no context is set"
+                    *payload.actor(),
+                    ActorRef::System {
+                        worker_name: "unknown".into(),
+                        on_behalf_of: None,
+                    },
+                    "actor should be System(unknown) when no context is set"
                 );
             }
             other => panic!("expected IssueCreated, got {other:?}"),

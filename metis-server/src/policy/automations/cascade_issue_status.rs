@@ -103,7 +103,7 @@ impl Automation for CascadeIssueStatusAutomation {
         }
 
         let store = ctx.store;
-        let actor = ctx.actor().map(String::from);
+        let actor = Some(ctx.actor().display_name());
 
         // Drop all children recursively
         drop_children_recursively(ctx.app_state, store, issue_id, actor).await?;
@@ -181,6 +181,7 @@ async fn drop_children_recursively(
 mod tests {
     use super::*;
     use crate::app::event_bus::MutationPayload;
+    use crate::domain::actors::ActorRef;
     use crate::domain::issues::{
         Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
     };
@@ -234,7 +235,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
             new: dropped_parent,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -286,7 +287,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
             new: failed_a,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -340,7 +341,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
             new: failed_parent,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -393,7 +394,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
             new: rejected_parent,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -429,7 +430,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(issue.clone()),
             new: issue,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::IssueUpdated {

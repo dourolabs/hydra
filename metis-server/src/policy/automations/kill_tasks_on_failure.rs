@@ -117,6 +117,7 @@ impl Automation for KillTasksOnFailureAutomation {
 mod tests {
     use super::*;
     use crate::app::event_bus::MutationPayload;
+    use crate::domain::actors::ActorRef;
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
     use crate::domain::jobs::BundleSpec;
     use crate::domain::users::Username;
@@ -184,7 +185,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(old_issue),
             new: new_issue,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::IssueUpdated {
@@ -219,7 +220,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(old_issue),
             new: new_issue,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::IssueUpdated {

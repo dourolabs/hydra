@@ -371,6 +371,7 @@ fn merge_request_issue_title(patch: &Patch) -> String {
 mod tests {
     use super::*;
     use crate::app::event_bus::MutationPayload;
+    use crate::domain::actors::ActorRef;
     use crate::domain::patches::{Patch, PatchStatus};
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
@@ -456,7 +457,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::PatchUpdated {
@@ -504,7 +505,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: Some(old_patch),
             new: new_patch,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::PatchUpdated {
@@ -552,7 +553,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
             new: patch,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::PatchCreated {
@@ -600,7 +601,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
             new: patch,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::PatchCreated {
@@ -644,7 +645,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
             new: patch,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::PatchCreated {
@@ -688,7 +689,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
             new: patch,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::PatchCreated {
@@ -749,7 +750,7 @@ mod tests {
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
             new: patch,
-            actor: None,
+            actor: ActorRef::test(),
         });
 
         let event = ServerEvent::PatchCreated {
