@@ -31,7 +31,7 @@ pub use repositories::{
     RepositoryRecord, SearchRepositoriesQuery, UpdateRepositoryRequest, UpsertRepositoryResponse,
 };
 pub use util::EnvGuard;
-pub use versioning::{VersionNumber, Versioned};
+pub use versioning::{RelativeVersionNumber, VersionNumber, Versioned};
 
 #[cfg(test)]
 pub mod test_helpers {

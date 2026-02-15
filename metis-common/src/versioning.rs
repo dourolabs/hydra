@@ -1,8 +1,31 @@
+use std::fmt;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Monotonic version number associated with stored objects.
 pub type VersionNumber = u64;
+
+/// A version number that can be positive (exact version) or negative (offset
+/// from the latest version).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct RelativeVersionNumber(i64);
+
+impl RelativeVersionNumber {
+    pub fn new(value: i64) -> Self {
+        Self(value)
+    }
+
+    pub fn as_i64(self) -> i64 {
+        self.0
+    }
+}
+
+impl fmt::Display for RelativeVersionNumber {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// Pairs a value with its version number.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

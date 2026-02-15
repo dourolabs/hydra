@@ -11,7 +11,7 @@ use metis_common::{
         UpsertDocumentRequest,
     },
     versioning::VersionNumber,
-    DocumentId, TaskId,
+    DocumentId, RelativeVersionNumber, TaskId,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -272,7 +272,7 @@ async fn get_document_with_options(
         Some(v) => {
             let document_id = resolve_document_id(client, id_or_path, include_deleted).await?;
             client
-                .get_document_version(&document_id, v)
+                .get_document_version(&document_id, RelativeVersionNumber::new(v))
                 .await
                 .with_context(|| {
                     format!("failed to fetch version {v} of document '{document_id}'")
