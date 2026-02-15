@@ -197,7 +197,7 @@ impl AppState {
 
         match actor {
             ActorRef::Authenticated { actor_id } => match actor_id {
-                ActorId::Username(username) => Some(username.clone()),
+                ActorId::Username(username) => Some(username.clone().into()),
                 ActorId::Task(task_id) => {
                     let task = self.get_task(task_id).await.ok()?;
                     let issue_id = task.spawned_from.as_ref()?;
@@ -206,7 +206,7 @@ impl AppState {
                 }
             },
             ActorRef::System { on_behalf_of, .. } => match on_behalf_of.as_ref()? {
-                ActorId::Username(username) => Some(username.clone()),
+                ActorId::Username(username) => Some(username.clone().into()),
                 ActorId::Task(task_id) => {
                     let task = self.get_task(task_id).await.ok()?;
                     let issue_id = task.spawned_from.as_ref()?;

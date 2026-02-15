@@ -104,7 +104,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         // Build a temporary Actor to fetch the GitHub token.
         let creator = match &actor_id {
-            ActorId::Username(username) => Some(username.clone()),
+            ActorId::Username(username) => Some(username.clone().into()),
             ActorId::Task(task_id) => {
                 let task = ctx.app_state.get_task(task_id).await.map_err(|e| {
                     AutomationError::Other(anyhow::anyhow!(

@@ -1,4 +1,5 @@
 use crate::{app::AppState, config::GithubAppSection, domain::users::Username, store::StoreError};
+pub use metis_common::{ActorId, ActorRef, parse_actor_name};
 use metis_common::{TaskId, api::v1::ApiError, github::GithubTokenResponse};
 use reqwest::{
     Client, StatusCode,
@@ -7,7 +8,6 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt::Write;
-use std::str::FromStr;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -69,7 +69,7 @@ impl Actor {
     pub fn new_for_user(username: Username) -> (Actor, String) {
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
         let creator = Some(username.clone());
-        let actor_id = ActorId::Username(username);
+        let actor_id = ActorId::Username(username.into());
         let actor = Actor {
             auth_token_hash,
             auth_token_salt,
@@ -130,23 +130,7 @@ impl Actor {
     }
 
     pub fn parse_name(name: &str) -> Result<ActorId, ActorError> {
-        if let Some(username) = name.strip_prefix("u-") {
-            if username.is_empty() {
-                return Err(ActorError::InvalidActorName(name.to_string()));
-            }
-            return Ok(ActorId::Username(Username::from(username)));
-        }
-
-        if let Some(task_id) = name.strip_prefix("w-") {
-            if task_id.is_empty() {
-                return Err(ActorError::InvalidActorName(name.to_string()));
-            }
-            let task_id = TaskId::from_str(task_id)
-                .map_err(|_| ActorError::InvalidActorName(name.to_string()))?;
-            return Ok(ActorId::Task(task_id));
-        }
-
-        Err(ActorError::InvalidActorName(name.to_string()))
+        parse_actor_name(name).ok_or_else(|| ActorError::InvalidActorName(name.to_string()))
     }
 
     pub async fn get_github_token(
@@ -300,79 +284,6 @@ fn join_url(base: &str, path: &str) -> String {
     format!("{base}/{path}")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ActorId {
-    Username(Username),
-    Task(TaskId),
-}
-
-/// A typed reference to who performed an operation.
-///
-/// Used in event payloads (`MutationPayload`) to attribute mutations.
-/// During the migration period, `From<Option<String>>` provides backward
-/// compatibility with callers that still pass `Option<String>`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ActorRef {
-    Authenticated {
-        actor_id: ActorId,
-    },
-    System {
-        worker_name: String,
-        on_behalf_of: Option<ActorId>,
-    },
-    Automation {
-        automation_name: String,
-        triggered_by: Option<Box<ActorRef>>,
-    },
-}
-
-impl ActorRef {
-    /// Human-readable display name for this actor reference.
-    pub fn display_name(&self) -> String {
-        match self {
-            ActorRef::Authenticated { actor_id } => match actor_id {
-                ActorId::Username(username) => username.to_string(),
-                ActorId::Task(task_id) => task_id.to_string(),
-            },
-            ActorRef::System {
-                worker_name,
-                on_behalf_of,
-            } => {
-                if let Some(behalf) = on_behalf_of {
-                    let behalf_name = match behalf {
-                        ActorId::Username(username) => username.to_string(),
-                        ActorId::Task(task_id) => task_id.to_string(),
-                    };
-                    format!("{worker_name} (on behalf of {behalf_name})")
-                } else {
-                    worker_name.clone()
-                }
-            }
-            ActorRef::Automation {
-                automation_name,
-                triggered_by,
-            } => {
-                if let Some(trigger) = triggered_by {
-                    format!(
-                        "{automation_name} (triggered by {})",
-                        trigger.display_name()
-                    )
-                } else {
-                    automation_name.clone()
-                }
-            }
-        }
-    }
-
-    /// Returns a test helper `ActorRef` for use in tests.
-    pub fn test() -> ActorRef {
-        ActorRef::System {
-            worker_name: "test".into(),
-            on_behalf_of: None,
-        }
-    }
-}
-
 impl From<&Actor> for ActorRef {
     fn from(actor: &Actor) -> Self {
         ActorRef::Authenticated {
@@ -381,27 +292,10 @@ impl From<&Actor> for ActorRef {
     }
 }
 
-impl From<Option<String>> for ActorRef {
-    fn from(value: Option<String>) -> Self {
-        match value {
-            None => ActorRef::System {
-                worker_name: "unknown".into(),
-                on_behalf_of: None,
-            },
-            Some(name) => match Actor::parse_name(&name) {
-                Ok(actor_id) => ActorRef::Authenticated { actor_id },
-                Err(_) => ActorRef::System {
-                    worker_name: name,
-                    on_behalf_of: None,
-                },
-            },
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use metis_common::api::v1::users::Username as CommonUsername;
 
     #[test]
     fn new_for_user_creates_user_actor() {
@@ -409,7 +303,10 @@ mod tests {
         let (actor, auth_token) = Actor::new_for_user(username.clone());
 
         assert!(!auth_token.is_empty());
-        assert_eq!(actor.actor_id, ActorId::Username(username.clone()));
+        assert_eq!(
+            actor.actor_id,
+            ActorId::Username(CommonUsername::from("octo"))
+        );
         assert!(!actor.auth_token_salt.is_empty());
         let prefix = format!("{}:", actor.name());
         let raw_token = auth_token
@@ -451,134 +348,15 @@ mod tests {
         assert!(!actor.verify_auth_token(&parsed_invalid));
     }
 
-    // ---- ActorRef tests ----
-
     #[test]
-    fn actor_ref_from_none_produces_system_unknown() {
-        let actor_ref = ActorRef::from(None);
-        assert_eq!(
-            actor_ref,
-            ActorRef::System {
-                worker_name: "unknown".into(),
-                on_behalf_of: None,
-            }
-        );
-    }
-
-    #[test]
-    fn actor_ref_from_some_user_name() {
-        let actor_ref = ActorRef::from(Some("u-alice".to_string()));
+    fn from_actor_ref() {
+        let username = Username::from("alice");
+        let (actor, _) = Actor::new_for_user(username);
+        let actor_ref = ActorRef::from(&actor);
         assert_eq!(
             actor_ref,
             ActorRef::Authenticated {
-                actor_id: ActorId::Username(Username::from("alice")),
-            }
-        );
-    }
-
-    #[test]
-    fn actor_ref_from_some_task_name() {
-        let task_id = TaskId::from_str("t-abcdef").unwrap();
-        let actor_ref = ActorRef::from(Some("w-t-abcdef".to_string()));
-        assert_eq!(
-            actor_ref,
-            ActorRef::Authenticated {
-                actor_id: ActorId::Task(task_id),
-            }
-        );
-    }
-
-    #[test]
-    fn actor_ref_from_some_unparseable_falls_back_to_system() {
-        let actor_ref = ActorRef::from(Some("invalid-name".to_string()));
-        assert_eq!(
-            actor_ref,
-            ActorRef::System {
-                worker_name: "invalid-name".into(),
-                on_behalf_of: None,
-            }
-        );
-    }
-
-    #[test]
-    fn actor_ref_serialization_round_trip_authenticated() {
-        let actor_ref = ActorRef::Authenticated {
-            actor_id: ActorId::Username(Username::from("bob")),
-        };
-        let json = serde_json::to_string(&actor_ref).unwrap();
-        let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
-        assert_eq!(actor_ref, deserialized);
-    }
-
-    #[test]
-    fn actor_ref_serialization_round_trip_system() {
-        let actor_ref = ActorRef::System {
-            worker_name: "task-spawner".into(),
-            on_behalf_of: Some(ActorId::Username(Username::from("carol"))),
-        };
-        let json = serde_json::to_string(&actor_ref).unwrap();
-        let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
-        assert_eq!(actor_ref, deserialized);
-    }
-
-    #[test]
-    fn actor_ref_serialization_round_trip_automation() {
-        let actor_ref = ActorRef::Automation {
-            automation_name: "cascade_issue_status".into(),
-            triggered_by: Some(Box::new(ActorRef::Authenticated {
-                actor_id: ActorId::Username(Username::from("dave")),
-            })),
-        };
-        let json = serde_json::to_string(&actor_ref).unwrap();
-        let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
-        assert_eq!(actor_ref, deserialized);
-    }
-
-    #[test]
-    fn actor_ref_display_name_authenticated() {
-        let actor_ref = ActorRef::Authenticated {
-            actor_id: ActorId::Username(Username::from("alice")),
-        };
-        assert_eq!(actor_ref.display_name(), "alice");
-    }
-
-    #[test]
-    fn actor_ref_display_name_system_with_on_behalf_of() {
-        let actor_ref = ActorRef::System {
-            worker_name: "task-spawner".into(),
-            on_behalf_of: Some(ActorId::Username(Username::from("bob"))),
-        };
-        assert_eq!(actor_ref.display_name(), "task-spawner (on behalf of bob)");
-    }
-
-    #[test]
-    fn actor_ref_display_name_system_without_on_behalf_of() {
-        let actor_ref = ActorRef::System {
-            worker_name: "background".into(),
-            on_behalf_of: None,
-        };
-        assert_eq!(actor_ref.display_name(), "background");
-    }
-
-    #[test]
-    fn actor_ref_display_name_automation() {
-        let actor_ref = ActorRef::Automation {
-            automation_name: "cascade".into(),
-            triggered_by: Some(Box::new(ActorRef::Authenticated {
-                actor_id: ActorId::Username(Username::from("eve")),
-            })),
-        };
-        assert_eq!(actor_ref.display_name(), "cascade (triggered by eve)");
-    }
-
-    #[test]
-    fn actor_ref_test_helper() {
-        let actor_ref = ActorRef::test();
-        assert_eq!(
-            actor_ref,
-            ActorRef::System {
-                worker_name: "test".into(),
-                on_behalf_of: None,
+                actor_id: ActorId::Username(CommonUsername::from("alice")),
             }
         );
     }

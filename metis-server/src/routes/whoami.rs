@@ -15,7 +15,9 @@ pub async fn whoami(
     info!(actor = %actor.name(), "whoami invoked");
 
     let identity = match actor.actor_id {
-        ActorId::Username(username) => ActorIdentity::User { username },
+        ActorId::Username(username) => ActorIdentity::User {
+            username: username.into(),
+        },
         ActorId::Task(task_id) => ActorIdentity::Task { task_id },
     };
 
