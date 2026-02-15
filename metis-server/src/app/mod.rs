@@ -28,10 +28,12 @@ pub use documents::UpsertDocumentError;
 pub use event_bus::{EventBus, ServerEvent, StoreWithEvents};
 pub use issues::{UpdateTodoListError, UpsertIssueError};
 pub use jobs::{CreateJobError, SetJobStatusError};
+pub(crate) use jobs::{WORKER_NAME_CLEANUP_ORPHANED_TASKS, WORKER_NAME_TASK_LIFECYCLE};
 pub use metis_common::repositories::{Repository, RepositoryRecord};
 pub use patches::UpsertPatchError;
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
 pub use users::LoginError;
+pub(crate) use users::WORKER_NAME_LOGIN;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedBundle {

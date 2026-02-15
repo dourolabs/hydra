@@ -231,10 +231,13 @@ mod tests {
                 Some(Utc::now()),
             )],
         );
-        let (patch_id, _) = store.add_patch(new_patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let rr_issue = make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::Open);
-        let (rr_id, _) = store.add_issue(rr_issue).await.unwrap();
+        let (rr_id, _) = store.add_issue(rr_issue, &ActorRef::test()).await.unwrap();
 
         let event = make_patch_updated_event(patch_id, old_patch, new_patch);
 
@@ -266,10 +269,13 @@ mod tests {
                 Some(Utc::now()),
             )],
         );
-        let (patch_id, _) = store.add_patch(new_patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let rr_issue = make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::Open);
-        let (rr_id, _) = store.add_issue(rr_issue).await.unwrap();
+        let (rr_id, _) = store.add_issue(rr_issue, &ActorRef::test()).await.unwrap();
 
         let event = make_patch_updated_event(patch_id, old_patch, new_patch);
 
@@ -301,18 +307,30 @@ mod tests {
                 Some(Utc::now()),
             )],
         );
-        let (patch_id, _) = store.add_patch(new_patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Create ReviewRequest issues in various terminal statuses
         let closed_issue = make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::Closed);
-        let (closed_id, _) = store.add_issue(closed_issue).await.unwrap();
+        let (closed_id, _) = store
+            .add_issue(closed_issue, &ActorRef::test())
+            .await
+            .unwrap();
 
         let failed_issue = make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::Failed);
-        let (failed_id, _) = store.add_issue(failed_issue).await.unwrap();
+        let (failed_id, _) = store
+            .add_issue(failed_issue, &ActorRef::test())
+            .await
+            .unwrap();
 
         let dropped_issue =
             make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::Dropped);
-        let (dropped_id, _) = store.add_issue(dropped_issue).await.unwrap();
+        let (dropped_id, _) = store
+            .add_issue(dropped_issue, &ActorRef::test())
+            .await
+            .unwrap();
 
         let event = make_patch_updated_event(patch_id, old_patch, new_patch);
 
@@ -362,10 +380,13 @@ mod tests {
                 ),
             ],
         );
-        let (patch_id, _) = store.add_patch(new_patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let rr_issue = make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::Open);
-        let (rr_id, _) = store.add_issue(rr_issue).await.unwrap();
+        let (rr_id, _) = store.add_issue(rr_issue, &ActorRef::test()).await.unwrap();
 
         let event = make_patch_updated_event(patch_id, old_patch, new_patch);
 
@@ -412,10 +433,13 @@ mod tests {
                 ),
             ],
         );
-        let (patch_id, _) = store.add_patch(new_patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let rr_issue = make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::Open);
-        let (rr_id, _) = store.add_issue(rr_issue).await.unwrap();
+        let (rr_id, _) = store.add_issue(rr_issue, &ActorRef::test()).await.unwrap();
 
         let event = make_patch_updated_event(patch_id, old_patch, new_patch);
 
@@ -451,10 +475,13 @@ mod tests {
                 Some(Utc::now()),
             )],
         );
-        let (patch_id, _) = store.add_patch(new_patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let rr_issue = make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::Open);
-        let (rr_id, _) = store.add_issue(rr_issue).await.unwrap();
+        let (rr_id, _) = store.add_issue(rr_issue, &ActorRef::test()).await.unwrap();
 
         let event = make_patch_updated_event(patch_id, old_patch, new_patch);
 
@@ -498,13 +525,16 @@ mod tests {
                 ),
             ],
         );
-        let (patch_id, _) = store.add_patch(new_patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let rr_a = make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::Open);
-        let (rr_a_id, _) = store.add_issue(rr_a).await.unwrap();
+        let (rr_a_id, _) = store.add_issue(rr_a, &ActorRef::test()).await.unwrap();
 
         let rr_b = make_review_request_issue(&patch_id, "reviewer-b", IssueStatus::Open);
-        let (rr_b_id, _) = store.add_issue(rr_b).await.unwrap();
+        let (rr_b_id, _) = store.add_issue(rr_b, &ActorRef::test()).await.unwrap();
 
         let event = make_patch_updated_event(patch_id, old_patch, new_patch);
 
@@ -539,10 +569,13 @@ mod tests {
 
         let old_patch = make_patch(PatchStatus::Open, vec![]);
         let new_patch = make_patch(PatchStatus::Open, vec![]);
-        let (patch_id, _) = store.add_patch(new_patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let rr_issue = make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::Open);
-        let (rr_id, _) = store.add_issue(rr_issue).await.unwrap();
+        let (rr_id, _) = store.add_issue(rr_issue, &ActorRef::test()).await.unwrap();
 
         let event = make_patch_updated_event(patch_id, old_patch, new_patch);
 
@@ -578,10 +611,13 @@ mod tests {
                 Some(Utc::now()),
             )],
         );
-        let (patch_id, _) = store.add_patch(new_patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let rr_issue = make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::Open);
-        let (rr_id, _) = store.add_issue(rr_issue).await.unwrap();
+        let (rr_id, _) = store.add_issue(rr_issue, &ActorRef::test()).await.unwrap();
 
         let event = make_patch_updated_event(patch_id, old_patch, new_patch);
 
@@ -617,10 +653,13 @@ mod tests {
                 Some(Utc::now()),
             )],
         );
-        let (patch_id, _) = store.add_patch(new_patch.clone()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let rr_issue = make_review_request_issue(&patch_id, "reviewer-a", IssueStatus::InProgress);
-        let (rr_id, _) = store.add_issue(rr_issue).await.unwrap();
+        let (rr_id, _) = store.add_issue(rr_issue, &ActorRef::test()).await.unwrap();
 
         let event = make_patch_updated_event(patch_id, old_patch, new_patch);
 

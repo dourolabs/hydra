@@ -15,6 +15,7 @@ use metis_server::background::spawner::AgentQueue;
 use metis_server::config::{
     AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES,
 };
+use metis_server::domain::actors::ActorRef;
 use metis_server::test_utils::{GitHubMockBuilder, MockPr, MockReview};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -213,7 +214,10 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
         .context("expected review task to be spawned for merge request")?;
     let job_id = job.job_id.clone();
 
-    harness.state().start_pending_task(job_id.clone()).await;
+    harness
+        .state()
+        .start_pending_task(job_id.clone(), ActorRef::test())
+        .await;
 
     let main_head_before = harness.remote("octo/repo").branch_sha("main")?;
 

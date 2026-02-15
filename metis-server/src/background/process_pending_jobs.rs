@@ -1,6 +1,7 @@
 use crate::{
-    app::AppState,
+    app::{AppState, WORKER_NAME_TASK_LIFECYCLE},
     background::scheduler::{ScheduledWorker, WorkerOutcome},
+    domain::actors::ActorRef,
     store::Status,
 };
 use async_trait::async_trait;
@@ -54,8 +55,14 @@ impl ScheduledWorker for ProcessPendingJobsWorker {
             "found created tasks to process"
         );
 
+        let lifecycle_actor = ActorRef::System {
+            worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
+            on_behalf_of: None,
+        };
         for metis_id in &pending_ids {
-            self.state.start_pending_task(metis_id.clone()).await;
+            self.state
+                .start_pending_task(metis_id.clone(), lifecycle_actor.clone())
+                .await;
         }
 
         info!(

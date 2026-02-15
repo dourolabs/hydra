@@ -1,4 +1,5 @@
-use crate::app::{AppState, LoginError};
+use crate::app::{AppState, LoginError, WORKER_NAME_LOGIN};
+use crate::domain::actors::ActorRef;
 use crate::routes::jobs::ApiError;
 use axum::{Json, extract::State};
 use metis_common::api::v1;
@@ -13,8 +14,12 @@ pub async fn login(
         normalize_non_empty("github_refresh_token", payload.github_refresh_token)?;
     info!("login invoked");
 
+    let login_actor = ActorRef::System {
+        worker_name: WORKER_NAME_LOGIN.into(),
+        on_behalf_of: None,
+    };
     let response = state
-        .login_with_github_token(github_token, github_refresh_token)
+        .login_with_github_token(github_token, github_refresh_token, login_actor)
         .await
         .map_err(map_login_error)?;
 

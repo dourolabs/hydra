@@ -1,6 +1,7 @@
 use crate::{
-    app::AppState,
+    app::{AppState, WORKER_NAME_CLEANUP_ORPHANED_TASKS, WORKER_NAME_TASK_LIFECYCLE},
     background::scheduler::{ScheduledWorker, WorkerOutcome},
+    domain::actors::ActorRef,
     store::Status,
 };
 use async_trait::async_trait;
@@ -32,7 +33,11 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
         self.state.reap_orphaned_jobs().await;
 
         // Clean up tasks whose spawned_from issue has been deleted
-        self.state.cleanup_orphaned_tasks().await;
+        let cleanup_actor = ActorRef::System {
+            worker_name: WORKER_NAME_CLEANUP_ORPHANED_TASKS.into(),
+            on_behalf_of: None,
+        };
+        self.state.cleanup_orphaned_tasks(cleanup_actor).await;
 
         let mut active_ids = Vec::new();
         for status in [Status::Pending, Status::Running] {
@@ -65,8 +70,14 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
         );
 
         // Check each active job's status
+        let lifecycle_actor = ActorRef::System {
+            worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
+            on_behalf_of: None,
+        };
         for metis_id in active_ids {
-            self.state.reconcile_running_task(metis_id).await;
+            self.state
+                .reconcile_running_task(metis_id, lifecycle_actor.clone())
+                .await;
         }
 
         info!(
@@ -135,7 +146,7 @@ mod tests {
             .expect("task should be added");
         handles
             .state
-            .transition_task_to_pending(&task_id)
+            .transition_task_to_pending(&task_id, ActorRef::test())
             .await
             .expect("task should be marked pending");
 

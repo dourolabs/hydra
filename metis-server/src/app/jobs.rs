@@ -24,8 +24,8 @@ use tracing::{error, info, warn};
 use super::TaskResolutionError;
 use super::app_state::AppState;
 
-const WORKER_NAME_TASK_LIFECYCLE: &str = "task_lifecycle";
-const WORKER_NAME_CLEANUP_ORPHANED_TASKS: &str = "cleanup_orphaned_tasks";
+pub(crate) const WORKER_NAME_TASK_LIFECYCLE: &str = "task_lifecycle";
+pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_TASKS: &str = "cleanup_orphaned_tasks";
 
 #[derive(Debug, Error)]
 pub enum CreateJobError {
@@ -236,7 +236,7 @@ impl AppState {
                     job_id: job_id.clone(),
                 })?;
 
-            self.transition_task_to_completion_with_actor(
+            self.transition_task_to_completion(
                 &job_id,
                 status.to_result().map_err(TaskError::from),
                 status.last_message(),
@@ -257,7 +257,7 @@ impl AppState {
         Ok(SetJobStatusResponse::new(job_id, status.as_status()))
     }
 
-    pub async fn start_pending_task(&self, task_id: TaskId) {
+    pub async fn start_pending_task(&self, task_id: TaskId, actor: ActorRef) {
         let job_config = self.config.job.clone();
         let (resolved, cpu_limit, memory_limit) = {
             let store = self.store.as_ref();
@@ -293,7 +293,10 @@ impl AppState {
         let cpu_request = job_config.cpu_request.clone();
         let memory_request = job_config.memory_request.clone();
 
-        let (actor, auth_token) = match self.create_actor_for_task(task_id.clone()).await {
+        let (task_actor, auth_token) = match self
+            .create_actor_for_task(task_id.clone(), actor.clone())
+            .await
+        {
             Ok(values) => values,
             Err(err) => {
                 let failure_reason = format!("Failed to create actor for task: {err}");
@@ -304,6 +307,7 @@ impl AppState {
                             reason: failure_reason,
                         }),
                         None,
+                        actor,
                     )
                     .await
                 {
@@ -326,7 +330,7 @@ impl AppState {
             .job_engine
             .create_job(
                 &task_id,
-                &actor,
+                &task_actor,
                 &auth_token,
                 &resolved.image,
                 &resolved.env_vars,
@@ -338,7 +342,10 @@ impl AppState {
             )
             .await
         {
-            Ok(()) => match self.transition_task_to_pending(&task_id).await {
+            Ok(()) => match self
+                .transition_task_to_pending(&task_id, actor.clone())
+                .await
+            {
                 Ok(_) => {
                     info!(
                         metis_id = %task_id,
@@ -371,7 +378,10 @@ impl AppState {
                                 job_status = %job.status,
                                 "create_job failed but job exists in K8s; treating as successful"
                             );
-                            match self.transition_task_to_pending(&task_id).await {
+                            match self
+                                .transition_task_to_pending(&task_id, actor.clone())
+                                .await
+                            {
                                 Ok(_) => {
                                     info!(
                                         metis_id = %task_id,
@@ -403,6 +413,7 @@ impl AppState {
                             reason: failure_reason,
                         }),
                         None,
+                        actor,
                     )
                     .await
                 {
@@ -476,7 +487,7 @@ impl AppState {
     /// whether that issue still exists. If it does not (i.e., it has been
     /// soft-deleted), the task is soft-deleted and any running/pending job is
     /// killed in the engine.
-    pub async fn cleanup_orphaned_tasks(&self) {
+    pub async fn cleanup_orphaned_tasks(&self, actor: ActorRef) {
         let store = self.store.as_ref();
         let tasks = match store.list_tasks(&SearchJobsQuery::default()).await {
             Ok(tasks) => tasks,
@@ -518,13 +529,7 @@ impl AppState {
 
             if let Err(err) = self
                 .store
-                .delete_task_with_actor(
-                    &task_id,
-                    ActorRef::System {
-                        worker_name: WORKER_NAME_CLEANUP_ORPHANED_TASKS.into(),
-                        on_behalf_of: None,
-                    },
-                )
+                .delete_task_with_actor(&task_id, actor.clone())
                 .await
             {
                 warn!(
@@ -550,7 +555,7 @@ impl AppState {
         }
     }
 
-    pub async fn reconcile_running_task(&self, task_id: TaskId) {
+    pub async fn reconcile_running_task(&self, task_id: TaskId, actor: ActorRef) {
         let current_status = {
             let store = self.store.as_ref();
             match store.get_task(&task_id, false).await {
@@ -571,7 +576,10 @@ impl AppState {
                 JobStatus::Pending => {}
                 JobStatus::Running => {
                     if current_status == Status::Pending {
-                        match self.transition_task_to_running(&task_id).await {
+                        match self
+                            .transition_task_to_running(&task_id, actor.clone())
+                            .await
+                        {
                             Ok(_) => {
                                 info!(
                                     metis_id = %task_id,
@@ -612,6 +620,7 @@ impl AppState {
                                 reason: failure_reason,
                             }),
                             None,
+                            actor.clone(),
                         )
                         .await
                     {
@@ -634,6 +643,7 @@ impl AppState {
                                 reason: failure_reason,
                             }),
                             None,
+                            actor.clone(),
                         )
                         .await
                     {
@@ -660,6 +670,7 @@ impl AppState {
                             reason: failure_reason,
                         }),
                         None,
+                        actor,
                     )
                     .await
                 {
@@ -679,6 +690,7 @@ impl AppState {
     pub async fn transition_task_to_pending(
         &self,
         task_id: &TaskId,
+        actor: ActorRef,
     ) -> Result<Versioned<Task>, StoreError> {
         let latest = self.store.get_task(task_id, false).await?;
         if latest.item.status != Status::Created {
@@ -691,20 +703,14 @@ impl AppState {
         updated.error = None;
 
         self.store
-            .update_task_with_actor(
-                task_id,
-                updated,
-                ActorRef::System {
-                    worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
-                    on_behalf_of: None,
-                },
-            )
+            .update_task_with_actor(task_id, updated, actor)
             .await
     }
 
     pub async fn transition_task_to_running(
         &self,
         task_id: &TaskId,
+        actor: ActorRef,
     ) -> Result<Versioned<Task>, StoreError> {
         let latest = self.store.get_task(task_id, false).await?;
         if !matches!(latest.item.status, Status::Created | Status::Pending) {
@@ -717,36 +723,11 @@ impl AppState {
         updated.error = None;
 
         self.store
-            .update_task_with_actor(
-                task_id,
-                updated,
-                ActorRef::System {
-                    worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
-                    on_behalf_of: None,
-                },
-            )
+            .update_task_with_actor(task_id, updated, actor)
             .await
     }
 
     pub async fn transition_task_to_completion(
-        &self,
-        task_id: &TaskId,
-        result: Result<(), TaskError>,
-        last_message: Option<String>,
-    ) -> Result<Versioned<Task>, StoreError> {
-        self.transition_task_to_completion_with_actor(
-            task_id,
-            result,
-            last_message,
-            ActorRef::System {
-                worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
-                on_behalf_of: None,
-            },
-        )
-        .await
-    }
-
-    async fn transition_task_to_completion_with_actor(
         &self,
         task_id: &TaskId,
         result: Result<(), TaskError>,
@@ -870,7 +851,9 @@ mod tests {
                 .unwrap()
         };
 
-        state.start_pending_task(task_id.clone()).await;
+        state
+            .start_pending_task(task_id.clone(), ActorRef::test())
+            .await;
 
         {
             let store = state.store.as_ref();
@@ -935,7 +918,9 @@ mod tests {
                 .unwrap()
         };
 
-        state.start_pending_task(task_id.clone()).await;
+        state
+            .start_pending_task(task_id.clone(), ActorRef::test())
+            .await;
 
         let limits = job_engine
             .resource_limits_for_job(&task_id)
@@ -963,7 +948,9 @@ mod tests {
         job_engine.insert_job(&task_id, JobStatus::Running).await;
         job_engine.set_create_job_error(Some("etcdserver: request timed out".to_string()));
 
-        state.start_pending_task(task_id.clone()).await;
+        state
+            .start_pending_task(task_id.clone(), ActorRef::test())
+            .await;
 
         let store = state.store.as_ref();
         let status = store.get_task(&task_id, false).await.unwrap().item.status;
@@ -988,7 +975,9 @@ mod tests {
         // find_job_by_metis_id will return NotFound.
         job_engine.set_create_job_error(Some("etcdserver: request timed out".to_string()));
 
-        state.start_pending_task(task_id.clone()).await;
+        state
+            .start_pending_task(task_id.clone(), ActorRef::test())
+            .await;
 
         let store = state.store.as_ref();
         let status = store.get_task(&task_id, false).await.unwrap().item.status;
@@ -1066,13 +1055,15 @@ mod tests {
                 .await
                 .unwrap();
             state
-                .transition_task_to_pending(&task_id)
+                .transition_task_to_pending(&task_id, ActorRef::test())
                 .await
                 .expect("task should transition to pending");
             task_id
         };
 
-        state.reconcile_running_task(task_id.clone()).await;
+        state
+            .reconcile_running_task(task_id.clone(), ActorRef::test())
+            .await;
 
         let store = state.store.as_ref();
         assert_eq!(
@@ -1102,7 +1093,7 @@ mod tests {
                 .await
                 .unwrap();
             state
-                .transition_task_to_pending(&task_id)
+                .transition_task_to_pending(&task_id, ActorRef::test())
                 .await
                 .expect("task should transition to pending");
             task_id
@@ -1112,7 +1103,9 @@ mod tests {
             .insert_job_with_metadata(&task_id, JobStatus::Complete, Some(completion_time), None)
             .await;
 
-        state.reconcile_running_task(task_id.clone()).await;
+        state
+            .reconcile_running_task(task_id.clone(), ActorRef::test())
+            .await;
 
         let store = state.store.as_ref();
         assert_eq!(
@@ -1154,7 +1147,7 @@ mod tests {
             .await
             .unwrap();
 
-        state.cleanup_orphaned_tasks().await;
+        state.cleanup_orphaned_tasks(ActorRef::test()).await;
 
         let result = store.get_task(&task_id, false).await;
         assert!(
@@ -1184,7 +1177,7 @@ mod tests {
             .await
             .unwrap();
 
-        state.cleanup_orphaned_tasks().await;
+        state.cleanup_orphaned_tasks(ActorRef::test()).await;
 
         let task = store.get_task(&task_id, false).await.unwrap();
         assert!(
@@ -1204,7 +1197,7 @@ mod tests {
             .await
             .unwrap();
 
-        state.cleanup_orphaned_tasks().await;
+        state.cleanup_orphaned_tasks(ActorRef::test()).await;
 
         let task = store.get_task(&task_id, false).await.unwrap();
         assert!(
@@ -1231,7 +1224,7 @@ mod tests {
             .await
             .unwrap();
         state
-            .transition_task_to_pending(&task_id)
+            .transition_task_to_pending(&task_id, ActorRef::test())
             .await
             .expect("task should transition to pending");
 
@@ -1242,7 +1235,7 @@ mod tests {
             .await
             .unwrap();
 
-        state.cleanup_orphaned_tasks().await;
+        state.cleanup_orphaned_tasks(ActorRef::test()).await;
 
         let result = store.get_task(&task_id, false).await;
         assert!(
