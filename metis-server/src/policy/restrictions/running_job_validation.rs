@@ -77,6 +77,7 @@ impl Restriction for RunningJobValidationRestriction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::actors::ActorRef;
     use crate::domain::documents::Document;
     use crate::domain::jobs::{BundleSpec, Task};
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
@@ -118,8 +119,10 @@ mod tests {
             new: make_doc(None),
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreateDocument,
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -146,8 +149,10 @@ mod tests {
             new: make_doc(Some(task_id)),
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreateDocument,
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -167,8 +172,10 @@ mod tests {
             new: make_doc(Some(task_id.clone())),
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreateDocument,
+            actor: &actor,
             payload: &payload,
             store: &store,
         };

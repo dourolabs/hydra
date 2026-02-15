@@ -53,6 +53,7 @@ pub struct RestrictionContext<'a> {
     pub operation: Operation,
     pub payload: &'a OperationPayload,
     pub store: &'a dyn ReadOnlyStore,
+    pub actor: &'a ActorRef,
 }
 
 /// Context provided to automations when an event fires.

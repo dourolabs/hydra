@@ -155,6 +155,7 @@ impl PolicyEngine {
         &self,
         new: &crate::domain::issues::Issue,
         store: &dyn crate::store::ReadOnlyStore,
+        actor: &crate::domain::actors::ActorRef,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Issue {
             issue_id: None,
@@ -165,6 +166,7 @@ impl PolicyEngine {
             operation: context::Operation::CreateIssue,
             payload: &payload,
             store,
+            actor,
         };
         self.check_restrictions(&ctx).await
     }
@@ -176,6 +178,7 @@ impl PolicyEngine {
         new: &crate::domain::issues::Issue,
         old: Option<&crate::domain::issues::Issue>,
         store: &dyn crate::store::ReadOnlyStore,
+        actor: &crate::domain::actors::ActorRef,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Issue {
             issue_id: Some(issue_id.clone()),
@@ -186,6 +189,7 @@ impl PolicyEngine {
             operation: context::Operation::UpdateIssue,
             payload: &payload,
             store,
+            actor,
         };
         self.check_restrictions(&ctx).await
     }
@@ -195,6 +199,7 @@ impl PolicyEngine {
         &self,
         new: &crate::domain::patches::Patch,
         store: &dyn crate::store::ReadOnlyStore,
+        actor: &crate::domain::actors::ActorRef,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Patch {
             patch_id: None,
@@ -205,6 +210,7 @@ impl PolicyEngine {
             operation: context::Operation::CreatePatch,
             payload: &payload,
             store,
+            actor,
         };
         self.check_restrictions(&ctx).await
     }
@@ -214,6 +220,7 @@ impl PolicyEngine {
         &self,
         new: &crate::domain::documents::Document,
         store: &dyn crate::store::ReadOnlyStore,
+        actor: &crate::domain::actors::ActorRef,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Document {
             document_id: None,
@@ -224,6 +231,7 @@ impl PolicyEngine {
             operation: context::Operation::CreateDocument,
             payload: &payload,
             store,
+            actor,
         };
         self.check_restrictions(&ctx).await
     }
@@ -235,6 +243,7 @@ impl PolicyEngine {
         new: &crate::domain::documents::Document,
         old: Option<&crate::domain::documents::Document>,
         store: &dyn crate::store::ReadOnlyStore,
+        actor: &crate::domain::actors::ActorRef,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Document {
             document_id: Some(document_id.clone()),
@@ -245,6 +254,7 @@ impl PolicyEngine {
             operation: context::Operation::UpdateDocument,
             payload: &payload,
             store,
+            actor,
         };
         self.check_restrictions(&ctx).await
     }
@@ -256,6 +266,7 @@ impl PolicyEngine {
         new: &crate::store::Task,
         old: Option<&crate::store::Task>,
         store: &dyn crate::store::ReadOnlyStore,
+        actor: &crate::domain::actors::ActorRef,
     ) -> Result<(), PolicyViolation> {
         let payload = context::OperationPayload::Job {
             task_id: Some(task_id.clone()),
@@ -266,6 +277,7 @@ impl PolicyEngine {
             operation: context::Operation::UpdateJob,
             payload: &payload,
             store,
+            actor,
         };
         self.check_restrictions(&ctx).await
     }

@@ -154,7 +154,9 @@ impl AppState {
             None => {
                 // Run restriction policies before persisting
                 {
-                    self.policy_engine.check_create_patch(&patch, store).await?;
+                    self.policy_engine
+                        .check_create_patch(&patch, store, &actor)
+                        .await?;
                 }
 
                 let (id, version) = self

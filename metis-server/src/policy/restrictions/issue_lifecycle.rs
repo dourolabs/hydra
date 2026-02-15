@@ -144,6 +144,7 @@ fn join_issue_ids(ids: &[IssueId]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::actors::ActorRef;
     use crate::domain::issues::{Issue, IssueDependency, IssueType, TodoItem};
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
@@ -175,9 +176,10 @@ mod tests {
             new: issue,
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -195,9 +197,10 @@ mod tests {
             new: issue,
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -219,9 +222,10 @@ mod tests {
             new: issue,
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::UpdateIssue,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -260,9 +264,10 @@ mod tests {
             new: closing_parent,
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::UpdateIssue,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -304,9 +309,10 @@ mod tests {
                 new: closing_parent,
                 old: None,
             };
+            let actor = ActorRef::test();
             let ctx = RestrictionContext {
                 operation: Operation::UpdateIssue,
-
+                actor: &actor,
                 payload: &payload,
                 store: &store,
             };
@@ -338,9 +344,10 @@ mod tests {
             new: closing_parent,
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::UpdateIssue,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };
@@ -373,9 +380,10 @@ mod tests {
             new: issue,
             old: None,
         };
+        let actor = ActorRef::test();
         let ctx = RestrictionContext {
             operation: Operation::CreateIssue,
-
+            actor: &actor,
             payload: &payload,
             store: &store,
         };

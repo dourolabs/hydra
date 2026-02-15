@@ -77,12 +77,12 @@ impl AppState {
         match &document_id {
             Some(id) => {
                 self.policy_engine
-                    .check_update_document(id, &document, old_document.as_ref(), store)
+                    .check_update_document(id, &document, old_document.as_ref(), store, &actor)
                     .await?;
             }
             None => {
                 self.policy_engine
-                    .check_create_document(&document, store)
+                    .check_create_document(&document, store, &actor)
                     .await?;
             }
         }
