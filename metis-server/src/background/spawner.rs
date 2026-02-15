@@ -123,6 +123,7 @@ impl AgentQueue {
             prompt,
             bundle,
             Some(issue_id.clone()),
+            None,
             image,
             job_settings.model.clone(),
             env_vars,
@@ -498,6 +499,7 @@ mod tests {
             prompt.to_string(),
             context,
             spawned_from,
+            None,
             image.map(str::to_string),
             None,
             env_vars,
@@ -1043,6 +1045,7 @@ mod tests {
                     prompt: "Existing".to_string(),
                     context: BundleSpec::None,
                     spawned_from: Some(issue_id.clone()),
+                    creator: None,
                     image: None,
                     model: None,
                     env_vars: HashMap::from([
@@ -1114,6 +1117,7 @@ mod tests {
                     prompt: "Pending work".to_string(),
                     context: BundleSpec::None,
                     spawned_from: Some(first_issue_id.clone()),
+                    creator: None,
                     image: None,
                     model: None,
                     env_vars: HashMap::from([

@@ -23,6 +23,7 @@ fn sample_task(status: Status) -> Task {
         None,
         None,
         None,
+        None,
         HashMap::new(),
         None,
         None,

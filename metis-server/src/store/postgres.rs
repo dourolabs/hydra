@@ -1862,6 +1862,7 @@ mod tests {
             "prompt".to_string(),
             BundleSpec::None,
             None,
+            None,
             Some("metis-worker:latest".to_string()),
             None,
             Default::default(),

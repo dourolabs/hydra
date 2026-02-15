@@ -1,4 +1,5 @@
 use super::task_status::{Status, TaskError};
+use super::users::Username;
 use metis_common::api::v1 as api;
 use metis_common::{IssueId, RepoName};
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,8 @@ pub struct Task {
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<Username>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,6 +45,7 @@ impl Task {
         prompt: String,
         context: BundleSpec,
         spawned_from: Option<IssueId>,
+        creator: Option<Username>,
         image: Option<String>,
         model: Option<String>,
         env_vars: HashMap<String, String>,
@@ -53,6 +57,7 @@ impl Task {
             prompt,
             context,
             spawned_from,
+            creator,
             image,
             model,
             env_vars,
@@ -169,6 +174,7 @@ impl From<api::jobs::Task> for Task {
             prompt: value.prompt,
             context: value.context.into(),
             spawned_from: value.spawned_from,
+            creator: value.creator.map(Into::into),
             image: value.image,
             model: value.model,
             env_vars: value.env_vars,
@@ -189,6 +195,7 @@ impl From<Task> for api::jobs::Task {
             value.prompt,
             value.context.into(),
             value.spawned_from,
+            value.creator.map(Into::into),
             value.image,
             value.model,
             value.env_vars,
@@ -232,6 +239,7 @@ mod tests {
             "test prompt".to_string(),
             BundleSpec::None,
             None,
+            None,
             Some("worker:latest".to_string()),
             Some("gpt-4o".to_string()),
             HashMap::new(),
@@ -254,6 +262,7 @@ mod tests {
         let domain_task = Task::new(
             "test prompt".to_string(),
             BundleSpec::None,
+            None,
             None,
             None,
             None,

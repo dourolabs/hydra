@@ -146,6 +146,7 @@ mod tests {
             "test task".to_string(),
             BundleSpec::None,
             Some(issue_id.clone()),
+            None,
             Some("worker:latest".to_string()),
             None,
             HashMap::new(),

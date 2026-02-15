@@ -598,6 +598,7 @@ fn make_dummy_task() -> crate::store::Task {
         None,
         None,
         None,
+        None,
         Default::default(),
         None,
         None,

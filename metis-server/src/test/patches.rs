@@ -219,6 +219,7 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
                 spawned_from: None,
+                creator: None,
                 image: Some(default_image),
                 model: None,
                 env_vars: HashMap::new(),

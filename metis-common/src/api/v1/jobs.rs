@@ -1,6 +1,7 @@
 use crate::{
     BuildCacheContext, IssueId, RepoName, TaskId, VersionNumber,
     task_status::{Status, TaskError},
+    users::Username,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,8 @@ pub struct Task {
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<Username>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -48,6 +51,7 @@ impl Task {
         prompt: String,
         context: BundleSpec,
         spawned_from: Option<IssueId>,
+        creator: Option<Username>,
         image: Option<String>,
         model: Option<String>,
         env_vars: HashMap<String, String>,
@@ -60,6 +64,7 @@ impl Task {
             prompt,
             context,
             spawned_from,
+            creator,
             image,
             model,
             env_vars,
@@ -81,6 +86,7 @@ impl Task {
         prompt: String,
         context: BundleSpec,
         spawned_from: Option<IssueId>,
+        creator: Option<Username>,
         image: Option<String>,
         model: Option<String>,
         env_vars: HashMap<String, String>,
@@ -96,6 +102,7 @@ impl Task {
             prompt,
             context,
             spawned_from,
+            creator,
             image,
             model,
             env_vars,
@@ -484,6 +491,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             HashMap::new(),
             None,
             None,
@@ -513,6 +521,7 @@ mod tests {
         let task = Task::new_with_status(
             short_prompt.clone(),
             BundleSpec::None,
+            None,
             None,
             None,
             None,

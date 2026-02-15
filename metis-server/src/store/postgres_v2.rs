@@ -450,6 +450,7 @@ impl PostgresStoreV2 {
             prompt: row.prompt.clone(),
             context,
             spawned_from,
+            creator: None,
             image: row.image.clone(),
             model: row.model.clone(),
             env_vars,
@@ -2298,6 +2299,7 @@ mod tests {
         Task::new(
             "prompt".to_string(),
             BundleSpec::None,
+            None,
             None,
             Some("metis-worker:latest".to_string()),
             None,

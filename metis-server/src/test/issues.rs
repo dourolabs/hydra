@@ -901,6 +901,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
                 prompt: "do work".to_string(),
                 context: BundleSpec::None,
                 spawned_from: Some(created.issue_id.clone()),
+                creator: None,
                 image: Some(default_image()),
                 model: None,
                 env_vars: HashMap::new(),
