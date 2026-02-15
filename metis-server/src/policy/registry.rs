@@ -153,8 +153,8 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_automation("close_merge_request_issues", |params| {
         Ok(Box::new(CloseMergeRequestIssuesAutomation::new(params)?))
     });
-    registry.register_automation("create_merge_request_issue", |params| {
-        Ok(Box::new(CreateMergeRequestIssueAutomation::new(params)?))
+    registry.register_automation("patch_workflow", |params| {
+        Ok(Box::new(PatchWorkflowAutomation::new(params)?))
     });
     registry.register_automation("github_pr_sync", |params| {
         Ok(Box::new(

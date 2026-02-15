@@ -160,14 +160,31 @@ max_backoff_secs = 30
 #     "cascade_issue_status",         # Drop children/dependents when an issue enters a terminal state
 #     "kill_tasks_on_issue_failure",  # Kill running tasks when their issue fails/drops
 #     "close_merge_request_issues",   # Close merge-request tracking issues when a patch is merged/closed
-#     "create_merge_request_issue",   # Create a merge-request tracking issue when a patch is created
+#     "patch_workflow",               # Create MergeRequest/ReviewRequest issues when a patch is created or reopened
 # ]
 #
-# ## Parameterized automation example:
+# ## Parameterized automation examples:
 # # [[automations]]
 # # name = "cascade_issue_status"
 # # [automations.params]
 # # trigger_statuses = ["dropped", "failed"]
+#
+# ## patch_workflow with per-repo config:
+# # { name = "patch_workflow", params = {
+# #     merge_request = { assignee = "$patch_creator" }
+# #     repos = { "myorg/myrepo" = {
+# #         review_requests = [{ assignee = "reviewer-username" }]
+# #         merge_request = { assignee = "swe" }
+# #     }}
+# # }}
+# #
+# # Config keys:
+# #   review_requests: list of { assignee } — creates ReviewRequest issues for the patch
+# #   merge_request: { assignee } — creates a MergeRequest issue blocked-on all ReviewRequests
+# #   repos: per-repo overrides keyed by "owner/repo" name
+# #   $patch_creator in assignee strings resolves to the patch creator's username
+# #
+# # Default (no params): creates a single MergeRequest issue with no assignee.
 
 [kubernetes]
 # Set to true when the server runs inside a Kubernetes cluster and should use
