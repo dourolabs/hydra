@@ -80,6 +80,7 @@ mod tests {
             branch_name: branch_name.map(String::from),
             service_repo_name: RepoName::from_str("test/repo").unwrap(),
             created_by: None,
+            creator: None,
             github: None,
             commit_range: None,
             reviews: Vec::new(),

@@ -71,7 +71,7 @@ pub enum IssueCommands {
     },
     /// Create a new issue.
     Create {
-        /// Issue type: bug, feature, task, chore, or merge-request (defaults to task).
+        /// Issue type: bug, feature, task, chore, merge-request, or review-request (defaults to task).
         #[arg(long, value_name = "ISSUE_TYPE", default_value_t = IssueType::Task)]
         r#type: IssueType,
 

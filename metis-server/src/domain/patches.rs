@@ -1,3 +1,4 @@
+use super::users::Username;
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use metis_common::api::v1 as api;
@@ -198,6 +199,9 @@ pub struct Patch {
     pub is_automatic_backup: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<TaskId>,
+    /// The resolved username of the human/agent that authored the patch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<Username>,
     #[serde(default)]
     pub reviews: Vec<Review>,
     /// Name of the configured service repository this patch targets, when known.
@@ -234,6 +238,7 @@ impl Patch {
             status,
             is_automatic_backup,
             created_by,
+            creator: None,
             reviews,
             service_repo_name,
             github,
@@ -392,6 +397,7 @@ impl From<api::patches::Patch> for Patch {
             status: value.status.into(),
             is_automatic_backup: value.is_automatic_backup,
             created_by: value.created_by,
+            creator: value.creator.map(Into::into),
             reviews: value.reviews.into_iter().map(Into::into).collect(),
             service_repo_name: value.service_repo_name,
             github: value.github.map(Into::into),
@@ -416,6 +422,7 @@ impl From<Patch> for api::patches::Patch {
             value.github.map(Into::into),
             value.deleted,
         );
+        patch.creator = value.creator.map(Into::into);
         patch.branch_name = value.branch_name;
         patch.commit_range = value.commit_range.map(Into::into);
         patch
@@ -540,6 +547,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             created_by: None,
+            creator: None,
             reviews: vec![],
             service_repo_name: "org/repo".parse().unwrap(),
             github: None,
