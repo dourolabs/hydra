@@ -102,6 +102,12 @@ impl SearchDocumentsQuery {
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GetDocumentQuery {
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct UpsertDocumentRequest {

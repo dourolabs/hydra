@@ -104,10 +104,12 @@ pub async fn update_document(
 pub async fn get_document(
     State(state): State<AppState>,
     DocumentIdPath(document_id): DocumentIdPath,
+    Query(query): Query<v1::documents::GetDocumentQuery>,
 ) -> Result<Json<v1::documents::DocumentVersionRecord>, ApiError> {
-    info!(document_id = %document_id, "get_document invoked");
+    let include_deleted = query.include_deleted.unwrap_or(false);
+    info!(document_id = %document_id, include_deleted, "get_document invoked");
     let document = state
-        .get_document(&document_id, false)
+        .get_document(&document_id, include_deleted)
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
