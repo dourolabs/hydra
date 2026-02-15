@@ -135,14 +135,23 @@ mod tests {
         let store = MemoryStore::new();
 
         let task = make_task();
-        let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
         // Transition to running
         let mut t = store.get_task(&task_id, false).await.unwrap().item;
         t.status = Status::Pending;
-        store.update_task(&task_id, t).await.unwrap();
+        store
+            .update_task(&task_id, t, &ActorRef::test())
+            .await
+            .unwrap();
         let mut t = store.get_task(&task_id, false).await.unwrap().item;
         t.status = Status::Running;
-        store.update_task(&task_id, t).await.unwrap();
+        store
+            .update_task(&task_id, t, &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = OperationPayload::Document {
             document_id: None,
@@ -165,7 +174,10 @@ mod tests {
         let store = MemoryStore::new();
 
         let task = make_task();
-        let (task_id, _) = store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = store
+            .add_task(task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = OperationPayload::Document {
             document_id: None,

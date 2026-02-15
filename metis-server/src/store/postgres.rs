@@ -1,7 +1,7 @@
 use crate::{
     config::DatabaseSection,
     domain::{
-        actors::Actor,
+        actors::{Actor, ActorRef},
         documents::Document,
         issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
         patches::Patch,
@@ -1419,7 +1419,12 @@ impl ReadOnlyStore for PostgresStore {
 
 #[async_trait]
 impl Store for PostgresStore {
-    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
+    async fn add_repository(
+        &self,
+        name: RepoName,
+        config: Repository,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError> {
         let name_str = name.as_str();
 
         // Check if repository exists (including deleted)
@@ -1435,15 +1440,7 @@ impl Store for PostgresStore {
         match existing {
             Some(repo) if repo.item.deleted => {
                 // Re-create over deleted: use caller's config as-is
-                self.update_payload(
-                    TABLE_REPOSITORIES,
-                    "repository",
-                    name_str.as_str(),
-                    REPOSITORY_SCHEMA_VERSION,
-                    &config,
-                )
-                .await?;
-                Ok(())
+                self.update_repository(name, config, actor).await
             }
             Some(_) => Err(StoreError::RepositoryAlreadyExists(name)),
             None => {
@@ -1464,6 +1461,7 @@ impl Store for PostgresStore {
         &self,
         name: RepoName,
         config: Repository,
+        _actor: &ActorRef,
     ) -> Result<(), StoreError> {
         let name_str = name.as_str();
         self.ensure_repository_exists(&name).await?;
@@ -1479,15 +1477,19 @@ impl Store for PostgresStore {
         Ok(())
     }
 
-    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
+    async fn delete_repository(&self, name: &RepoName, actor: &ActorRef) -> Result<(), StoreError> {
         // Use include_deleted: true since we need to access the repository to mark it as deleted
         let current = self.get_repository(name, true).await?;
         let mut repo = current.item;
         repo.deleted = true;
-        self.update_repository(name.clone(), repo).await
+        self.update_repository(name.clone(), repo, actor).await
     }
 
-    async fn add_issue(&self, issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
+    async fn add_issue(
+        &self,
+        issue: Issue,
+        _actor: &ActorRef,
+    ) -> Result<(IssueId, VersionNumber), StoreError> {
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
         let id = IssueId::new();
@@ -1505,7 +1507,12 @@ impl Store for PostgresStore {
         Ok((id, 1))
     }
 
-    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<VersionNumber, StoreError> {
+    async fn update_issue(
+        &self,
+        id: &IssueId,
+        issue: Issue,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         self.get_issue(id, true).await?;
 
         self.validate_issue_dependencies(&issue.dependencies)
@@ -1520,14 +1527,22 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn delete_issue(&self, id: &IssueId) -> Result<VersionNumber, StoreError> {
+    async fn delete_issue(
+        &self,
+        id: &IssueId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
         issue.deleted = true;
-        self.update_issue(id, issue).await
+        self.update_issue(id, issue, actor).await
     }
 
-    async fn add_patch(&self, patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
+    async fn add_patch(
+        &self,
+        patch: Patch,
+        _actor: &ActorRef,
+    ) -> Result<(PatchId, VersionNumber), StoreError> {
         let id = PatchId::new();
         self.insert_payload(
             TABLE_PATCHES,
@@ -1541,7 +1556,12 @@ impl Store for PostgresStore {
         Ok((id, 1))
     }
 
-    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<VersionNumber, StoreError> {
+    async fn update_patch(
+        &self,
+        id: &PatchId,
+        patch: Patch,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         self.get_patch(id, true).await?;
 
         self.update_payload(
@@ -1554,16 +1574,21 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn delete_patch(&self, id: &PatchId) -> Result<VersionNumber, StoreError> {
+    async fn delete_patch(
+        &self,
+        id: &PatchId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
         patch.deleted = true;
-        self.update_patch(id, patch).await
+        self.update_patch(id, patch, actor).await
     }
 
     async fn add_document(
         &self,
         document: Document,
+        _actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let id = DocumentId::new();
         self.insert_payload(
@@ -1582,6 +1607,7 @@ impl Store for PostgresStore {
         &self,
         id: &DocumentId,
         document: Document,
+        _actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         self.get_document(id, true).await?;
         self.update_payload(
@@ -1594,17 +1620,22 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn delete_document(&self, id: &DocumentId) -> Result<VersionNumber, StoreError> {
+    async fn delete_document(
+        &self,
+        id: &DocumentId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         let current = self.get_document(id, true).await?;
         let mut document = current.item;
         document.deleted = true;
-        self.update_document(id, document).await
+        self.update_document(id, document, actor).await
     }
 
     async fn add_task(
         &self,
         task: Task,
         _creation_time: chrono::DateTime<Utc>,
+        _actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
         let mut task = task;
@@ -1633,6 +1664,7 @@ impl Store for PostgresStore {
         &self,
         metis_id: &TaskId,
         task: Task,
+        _actor: &ActorRef,
     ) -> Result<Versioned<Task>, StoreError> {
         self.ensure_task_exists(metis_id).await?;
         if let Some(issue_id) = task.spawned_from.as_ref() {
@@ -1653,15 +1685,19 @@ impl Store for PostgresStore {
             .ok_or_else(|| StoreError::TaskNotFound(metis_id.clone()))
     }
 
-    async fn delete_task(&self, id: &TaskId) -> Result<VersionNumber, StoreError> {
+    async fn delete_task(
+        &self,
+        id: &TaskId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         let current = self.get_task(id, true).await?;
         let mut task = current.item;
         task.deleted = true;
-        let versioned = self.update_task(id, task).await?;
+        let versioned = self.update_task(id, task, actor).await?;
         Ok(versioned.version)
     }
 
-    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
+    async fn add_actor(&self, actor: Actor, _acting_as: &ActorRef) -> Result<(), StoreError> {
         let name = actor.name();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT COUNT(1) FROM {TABLE_ACTORS} WHERE id = $1"
@@ -1686,7 +1722,7 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
+    async fn update_actor(&self, actor: Actor, _acting_as: &ActorRef) -> Result<(), StoreError> {
         let name = actor.name();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT COUNT(1) FROM {TABLE_ACTORS} WHERE id = $1"
@@ -1705,7 +1741,7 @@ impl Store for PostgresStore {
         Ok(())
     }
 
-    async fn add_user(&self, user: User) -> Result<(), StoreError> {
+    async fn add_user(&self, user: User, actor: &ActorRef) -> Result<(), StoreError> {
         // Check if user already exists
         let existing = self
             .fetch_versioned_payload::<User>(
@@ -1720,7 +1756,7 @@ impl Store for PostgresStore {
             Some(versioned) => {
                 // If user exists but is deleted, allow re-creation with the provided user
                 if versioned.item.deleted {
-                    self.update_user(user).await?;
+                    self.update_user(user, actor).await?;
                     Ok(())
                 } else {
                     Err(StoreError::UserAlreadyExists(user.username.clone()))
@@ -1741,7 +1777,11 @@ impl Store for PostgresStore {
         }
     }
 
-    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError> {
+    async fn update_user(
+        &self,
+        user: User,
+        _actor: &ActorRef,
+    ) -> Result<Versioned<User>, StoreError> {
         let username = user.username.clone();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT COUNT(1) FROM {TABLE_USERS} WHERE id = $1"
@@ -1779,11 +1819,11 @@ impl Store for PostgresStore {
         })
     }
 
-    async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {
+    async fn delete_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError> {
         let current = self.get_user(username, true).await?;
         let mut user = current.item;
         user.deleted = true;
-        self.update_user(user).await?;
+        self.update_user(user, actor).await?;
         Ok(())
     }
 }
@@ -1888,7 +1928,7 @@ mod tests {
         let config = sample_repository_config();
 
         store
-            .add_repository(name.clone(), config.clone())
+            .add_repository(name.clone(), config.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -1899,7 +1939,7 @@ mod tests {
         let mut updated = config.clone();
         updated.default_image = Some("other:latest".to_string());
         store
-            .update_repository(name.clone(), updated.clone())
+            .update_repository(name.clone(), updated.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -1933,12 +1973,12 @@ mod tests {
         let name = RepoName::from_str("dourolabs/metis").unwrap();
 
         store
-            .add_repository(name.clone(), sample_repository_config())
+            .add_repository(name.clone(), sample_repository_config(), &ActorRef::test())
             .await
             .unwrap();
 
         let err = store
-            .add_repository(name.clone(), sample_repository_config())
+            .add_repository(name.clone(), sample_repository_config(), &ActorRef::test())
             .await
             .unwrap_err();
         assert!(matches!(
@@ -1948,7 +1988,11 @@ mod tests {
 
         let missing = RepoName::from_str("dourolabs/missing").unwrap();
         let err = store
-            .update_repository(missing.clone(), sample_repository_config())
+            .update_repository(
+                missing.clone(),
+                sample_repository_config(),
+                &ActorRef::test(),
+            )
             .await
             .unwrap_err();
         assert!(matches!(
@@ -1995,12 +2039,18 @@ mod tests {
     async fn issue_round_trip(pool: PgStorePool) {
         let store = PostgresStore::new(pool);
 
-        let (parent, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (parent, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
         let (issue, _) = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::ChildOf,
-                parent.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -2020,13 +2070,19 @@ mod tests {
         let children = store.get_issue_children(&parent).await.unwrap();
         assert_eq!(children, vec![issue.clone()]);
 
-        let (new_parent, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (new_parent, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
         let mut updated_issue = sample_issue(vec![IssueDependency::new(
             IssueDependencyType::ChildOf,
             new_parent.clone(),
         )]);
         updated_issue.patches = Vec::new();
-        store.update_issue(&issue, updated_issue).await.unwrap();
+        store
+            .update_issue(&issue, updated_issue, &ActorRef::test())
+            .await
+            .unwrap();
 
         let fetched_after_update = store.get_issue(&issue, false).await.unwrap();
         assert_eq!(fetched_after_update.version, 2);
@@ -2045,16 +2101,22 @@ mod tests {
         let missing = IssueId::new();
 
         let err = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::BlockedOn,
-                missing.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::BlockedOn,
+                    missing.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap_err();
 
         assert!(matches!(err, StoreError::InvalidDependency(id) if id == missing));
 
-        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
         let err = store
             .update_issue(
                 &issue_id,
@@ -2062,6 +2124,7 @@ mod tests {
                     IssueDependencyType::ChildOf,
                     missing.clone(),
                 )]),
+                &ActorRef::test(),
             )
             .await
             .unwrap_err();
@@ -2074,7 +2137,10 @@ mod tests {
         let pool_for_update = pool.clone();
         let store = PostgresStore::new(pool);
 
-        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         sqlx::query(&format!(
             "UPDATE {TABLE_ISSUES} SET schema_version = $1 WHERE id = $2"
@@ -2093,7 +2159,10 @@ mod tests {
     #[ignore]
     async fn migrates_outdated_payloads(pool: PgStorePool) {
         let store = PostgresStore::new(pool.clone());
-        let (issue_id, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         let migration = PayloadTable {
             object_type: "issue",
@@ -2118,12 +2187,18 @@ mod tests {
     #[ignore]
     async fn issue_graph_searches_blockers(pool: PgStorePool) {
         let store = PostgresStore::new(pool);
-        let (blocker, _) = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (blocker, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
         let (blocked, _) = store
-            .add_issue(sample_issue(vec![IssueDependency::new(
-                IssueDependencyType::BlockedOn,
-                blocker.clone(),
-            )]))
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::BlockedOn,
+                    blocker.clone(),
+                )]),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -2139,10 +2214,13 @@ mod tests {
     #[ignore]
     async fn patch_associations_round_trip(pool: PgStorePool) {
         let store = PostgresStore::new(pool);
-        let (patch_id, _) = store.add_patch(sample_patch()).await.unwrap();
+        let (patch_id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
         let mut issue = sample_issue(vec![]);
         issue.patches = vec![patch_id.clone()];
-        let (issue_id, _) = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
         let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
         assert_eq!(issues, vec![issue_id]);
@@ -2150,7 +2228,7 @@ mod tests {
         let mut updated = sample_patch();
         updated.title = "updated".to_string();
         store
-            .update_patch(&patch_id, updated.clone())
+            .update_patch(&patch_id, updated.clone(), &ActorRef::test())
             .await
             .unwrap();
         let fetched = store.get_patch(&patch_id, false).await.unwrap();
@@ -2163,13 +2241,17 @@ mod tests {
     async fn task_lifecycle_updates_status(pool: PgStorePool) {
         let store = Arc::new(PostgresStore::new(pool));
         let handles = test_state_with_store(store.clone());
-        let (issue_id, _) = handles.store.add_issue(sample_issue(vec![])).await.unwrap();
+        let (issue_id, _) = handles
+            .store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
 
         let mut task = sample_task();
         task.spawned_from = Some(issue_id.clone());
         let (task_id, _) = handles
             .store
-            .add_task(task.clone(), Utc::now())
+            .add_task(task.clone(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         assert_eq!(
@@ -2227,7 +2309,7 @@ mod tests {
         updated_task.spawned_from = None;
         let updated_version = handles
             .store
-            .update_task(&task_id, updated_task.clone())
+            .update_task(&task_id, updated_task.clone(), &ActorRef::test())
             .await
             .unwrap();
         assert_eq!(updated_version.item, updated_task);
@@ -2253,7 +2335,10 @@ mod tests {
             .collect();
         assert_eq!(complete, vec![task_id]);
 
-        let (explicit_id, _) = store.add_task(sample_task(), Utc::now()).await.unwrap();
+        let (explicit_id, _) = store
+            .add_task(sample_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
         let all_tasks: HashSet<_> = store
             .list_tasks(&SearchJobsQuery::default())
             .await
@@ -2269,7 +2354,7 @@ mod tests {
     async fn documents_round_trip(pool: PgStorePool) {
         let store = PostgresStore::new(pool);
         let (doc_id, _) = store
-            .add_document(sample_document("docs/guide.md", None))
+            .add_document(sample_document("docs/guide.md", None), &ActorRef::test())
             .await
             .unwrap();
 
@@ -2280,7 +2365,7 @@ mod tests {
         let mut updated = fetched.item.clone();
         updated.title = "Updated Doc".to_string();
         store
-            .update_document(&doc_id, updated.clone())
+            .update_document(&doc_id, updated.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -2306,11 +2391,17 @@ mod tests {
         let store = PostgresStore::new(pool);
         let task_id = TaskId::new();
         let (doc_id, _) = store
-            .add_document(sample_document("docs/howto.md", Some(task_id.clone())))
+            .add_document(
+                sample_document("docs/howto.md", Some(task_id.clone())),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         store
-            .add_document(sample_document("notes/todo.md", Some(TaskId::new())))
+            .add_document(
+                sample_document("notes/todo.md", Some(TaskId::new())),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -2338,7 +2429,10 @@ mod tests {
             github_refresh_token: "refresh-token".to_string(),
             deleted: false,
         };
-        store.add_user(user.clone()).await.unwrap();
+        store
+            .add_user(user.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let fetched = store
             .get_user(&Username::from("alice"), false)
@@ -2348,13 +2442,16 @@ mod tests {
         assert_eq!(fetched.version, 1);
 
         let updated = store
-            .update_user(User {
-                username: Username::from("alice"),
-                github_user_id: 202,
-                github_token: "new-token".to_string(),
-                github_refresh_token: "new-refresh".to_string(),
-                deleted: false,
-            })
+            .update_user(
+                User {
+                    username: Username::from("alice"),
+                    github_user_id: 202,
+                    github_token: "new-token".to_string(),
+                    github_refresh_token: "new-refresh".to_string(),
+                    deleted: false,
+                },
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         assert_eq!(updated.item.github_token, "new-token");
@@ -2375,7 +2472,7 @@ mod tests {
             created_by: None,
             deleted: false,
         };
-        let (doc_id, _) = store.add_document(doc).await.unwrap();
+        let (doc_id, _) = store.add_document(doc, &ActorRef::test()).await.unwrap();
 
         // Update the document to change the title to "changed_title"
         let updated_doc = Document {
@@ -2385,7 +2482,10 @@ mod tests {
             created_by: None,
             deleted: false,
         };
-        store.update_document(&doc_id, updated_doc).await.unwrap();
+        store
+            .update_document(&doc_id, updated_doc, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Search for the old title - should return NO results
         let old_query =
@@ -2424,7 +2524,7 @@ mod tests {
             vec![],
             vec![],
         );
-        let (issue_id, _) = store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
         // Update the issue to change the description
         let updated_issue = Issue::new(
@@ -2439,7 +2539,10 @@ mod tests {
             vec![],
             vec![],
         );
-        store.update_issue(&issue_id, updated_issue).await.unwrap();
+        store
+            .update_issue(&issue_id, updated_issue, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Search for the old description - should return NO results
         let old_query = SearchIssuesQuery::new(
@@ -2495,7 +2598,7 @@ mod tests {
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
         );
-        let (patch_id, _) = store.add_patch(patch).await.unwrap();
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         // Update the patch to change the title
         let updated_patch = Patch::new(
@@ -2509,7 +2612,10 @@ mod tests {
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
         );
-        store.update_patch(&patch_id, updated_patch).await.unwrap();
+        store
+            .update_patch(&patch_id, updated_patch, &ActorRef::test())
+            .await
+            .unwrap();
 
         // Search for the old title - should return NO results
         let old_query =

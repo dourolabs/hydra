@@ -16,6 +16,8 @@ use metis_common::{
     PatchId, TaskId,
 };
 
+use metis_server::domain::actors::ActorRef;
+
 use super::TestHarness;
 
 /// Output captured from a single command executed by the worker.
@@ -189,7 +191,7 @@ async fn ensure_worker_env_vars(harness: &TestHarness, job_id: &TaskId) -> Resul
 
     if changed {
         store
-            .update_task(job_id, task)
+            .update_task(job_id, task, &ActorRef::test())
             .await
             .context("failed to update task env vars for worker")?;
     }

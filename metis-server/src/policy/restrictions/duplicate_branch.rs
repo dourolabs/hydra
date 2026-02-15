@@ -117,7 +117,7 @@ mod tests {
         // Add an existing open patch with the same branch name
         let existing_patch = make_patch(Some("feature/duplicate"));
         store
-            .add_patch(existing_patch)
+            .add_patch(existing_patch, &ActorRef::test())
             .await
             .expect("should add patch");
 

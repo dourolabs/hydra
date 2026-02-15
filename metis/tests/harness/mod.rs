@@ -23,7 +23,7 @@ use metis_server::{
         scheduler::{ScheduledWorker, WorkerOutcome},
         spawner::AgentQueue,
     },
-    domain::actors::Actor,
+    domain::actors::{Actor, ActorRef},
     policy::integrations::github_pr_poller::GithubPollerWorker,
     store::{MemoryStore, Store},
     test_utils::{
@@ -395,7 +395,7 @@ impl TestHarnessBuilder {
             let repository =
                 Repository::new(git_remote.url().to_string(), Some("main".to_string()), None);
             store
-                .add_repository(repo_name.clone(), repository)
+                .add_repository(repo_name.clone(), repository, &ActorRef::test())
                 .await
                 .with_context(|| format!("failed to add repository '{repo_name_str}' to store"))?;
             remotes.insert(repo_name, git_remote);
@@ -448,14 +448,16 @@ impl TestHarnessBuilder {
         // Default user
         let (default_actor, default_token) =
             Actor::new_for_task(TaskId::new(), Some(Username::from("default").into()));
-        store.add_actor(default_actor).await?;
+        store.add_actor(default_actor, &ActorRef::test()).await?;
         let default_user = User::new(
             Username::from("default"),
             1,
             default_token.clone(),
             "gh-refresh-default".to_string(),
         );
-        store.add_user(default_user.into()).await?;
+        store
+            .add_user(default_user.into(), &ActorRef::test())
+            .await?;
         user_credentials.push(("default".to_string(), default_token));
 
         // Additional named users
@@ -467,14 +469,14 @@ impl TestHarnessBuilder {
                 TaskId::new(),
                 Some(Username::from(user_name.as_str()).into()),
             );
-            store.add_actor(actor).await?;
+            store.add_actor(actor, &ActorRef::test()).await?;
             let user = User::new(
                 Username::from(user_name.as_str()),
                 (i + 2) as u64, // github_id, avoid collision with default (1)
                 token.clone(),
                 format!("gh-refresh-{user_name}"),
             );
-            store.add_user(user.into()).await?;
+            store.add_user(user.into(), &ActorRef::test()).await?;
             user_credentials.push((user_name.clone(), token));
         }
 

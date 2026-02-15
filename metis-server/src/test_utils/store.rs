@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        actors::Actor,
+        actors::{Actor, ActorRef},
         documents::Document,
         issues::{Issue, IssueGraphFilter},
         patches::Patch,
@@ -193,7 +193,12 @@ impl ReadOnlyStore for FailingStore {
 
 #[async_trait]
 impl Store for FailingStore {
-    async fn add_repository(&self, _name: RepoName, _config: Repository) -> Result<(), StoreError> {
+    async fn add_repository(
+        &self,
+        _name: RepoName,
+        _config: Repository,
+        _actor: &ActorRef,
+    ) -> Result<(), StoreError> {
         fail()
     }
 
@@ -201,15 +206,24 @@ impl Store for FailingStore {
         &self,
         _name: RepoName,
         _config: Repository,
+        _actor: &ActorRef,
     ) -> Result<(), StoreError> {
         fail()
     }
 
-    async fn delete_repository(&self, _name: &RepoName) -> Result<(), StoreError> {
+    async fn delete_repository(
+        &self,
+        _name: &RepoName,
+        _actor: &ActorRef,
+    ) -> Result<(), StoreError> {
         fail()
     }
 
-    async fn add_issue(&self, _issue: Issue) -> Result<(IssueId, VersionNumber), StoreError> {
+    async fn add_issue(
+        &self,
+        _issue: Issue,
+        _actor: &ActorRef,
+    ) -> Result<(IssueId, VersionNumber), StoreError> {
         fail()
     }
 
@@ -217,15 +231,24 @@ impl Store for FailingStore {
         &self,
         _id: &IssueId,
         _issue: Issue,
+        _actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
-    async fn delete_issue(&self, _id: &IssueId) -> Result<VersionNumber, StoreError> {
+    async fn delete_issue(
+        &self,
+        _id: &IssueId,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
-    async fn add_patch(&self, _patch: Patch) -> Result<(PatchId, VersionNumber), StoreError> {
+    async fn add_patch(
+        &self,
+        _patch: Patch,
+        _actor: &ActorRef,
+    ) -> Result<(PatchId, VersionNumber), StoreError> {
         fail()
     }
 
@@ -233,17 +256,23 @@ impl Store for FailingStore {
         &self,
         _id: &PatchId,
         _patch: Patch,
+        _actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
-    async fn delete_patch(&self, _id: &PatchId) -> Result<VersionNumber, StoreError> {
+    async fn delete_patch(
+        &self,
+        _id: &PatchId,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
     async fn add_document(
         &self,
         _document: Document,
+        _actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
         fail()
     }
@@ -252,11 +281,16 @@ impl Store for FailingStore {
         &self,
         _id: &DocumentId,
         _document: Document,
+        _actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
-    async fn delete_document(&self, _id: &DocumentId) -> Result<VersionNumber, StoreError> {
+    async fn delete_document(
+        &self,
+        _id: &DocumentId,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
@@ -264,6 +298,7 @@ impl Store for FailingStore {
         &self,
         _task: Task,
         _creation_time: DateTime<Utc>,
+        _actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         fail()
     }
@@ -272,31 +307,40 @@ impl Store for FailingStore {
         &self,
         _metis_id: &TaskId,
         _task: Task,
+        _actor: &ActorRef,
     ) -> Result<Versioned<Task>, StoreError> {
         fail()
     }
 
-    async fn delete_task(&self, _id: &TaskId) -> Result<VersionNumber, StoreError> {
+    async fn delete_task(
+        &self,
+        _id: &TaskId,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 
-    async fn add_actor(&self, _actor: Actor) -> Result<(), StoreError> {
+    async fn add_actor(&self, _actor: Actor, _acting_as: &ActorRef) -> Result<(), StoreError> {
         fail()
     }
 
-    async fn update_actor(&self, _actor: Actor) -> Result<(), StoreError> {
+    async fn update_actor(&self, _actor: Actor, _acting_as: &ActorRef) -> Result<(), StoreError> {
         fail()
     }
 
-    async fn add_user(&self, _user: User) -> Result<(), StoreError> {
+    async fn add_user(&self, _user: User, _actor: &ActorRef) -> Result<(), StoreError> {
         fail()
     }
 
-    async fn update_user(&self, _user: User) -> Result<Versioned<User>, StoreError> {
+    async fn update_user(
+        &self,
+        _user: User,
+        _actor: &ActorRef,
+    ) -> Result<Versioned<User>, StoreError> {
         fail()
     }
 
-    async fn delete_user(&self, _username: &Username) -> Result<(), StoreError> {
+    async fn delete_user(&self, _username: &Username, _actor: &ActorRef) -> Result<(), StoreError> {
         fail()
     }
 }

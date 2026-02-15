@@ -87,6 +87,7 @@ mod tests {
     use super::*;
     use crate::{
         domain::{
+            actors::ActorRef,
             issues::{Issue, IssueStatus, IssueType},
             jobs::BundleSpec,
             users::Username,
@@ -129,7 +130,7 @@ mod tests {
         );
         let (task_id, _) = handles
             .store
-            .add_task(task, Utc::now())
+            .add_task(task, Utc::now(), &ActorRef::test())
             .await
             .expect("task should be added");
         handles
@@ -189,7 +190,11 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        let (issue_id, _) = handles.store.add_issue(issue).await.unwrap();
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue, &ActorRef::test())
+            .await
+            .unwrap();
 
         let task = Task::new(
             "spawned task".to_string(),
@@ -203,9 +208,17 @@ mod tests {
             None,
             None,
         );
-        let (task_id, _) = handles.store.add_task(task, Utc::now()).await.unwrap();
+        let (task_id, _) = handles
+            .store
+            .add_task(task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
 
-        handles.store.delete_issue(&issue_id).await.unwrap();
+        handles
+            .store
+            .delete_issue(&issue_id, &ActorRef::test())
+            .await
+            .unwrap();
 
         let worker = MonitorRunningJobsWorker::new(handles.state);
         worker.run_iteration().await;

@@ -219,7 +219,10 @@ mod tests {
 
         // Create parent and child
         let parent = make_issue(IssueStatus::Open, Vec::new());
-        let (parent_id, _) = store.add_issue(parent.clone()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let child = make_issue(
             IssueStatus::Open,
@@ -228,13 +231,13 @@ mod tests {
                 parent_id.clone(),
             )],
         );
-        let (child_id, _) = store.add_issue(child).await.unwrap();
+        let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         // Update parent to Dropped
         let mut dropped_parent = parent;
         dropped_parent.status = IssueStatus::Dropped;
         store
-            .update_issue(&parent_id, dropped_parent.clone())
+            .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -272,7 +275,10 @@ mod tests {
 
         // Create issue A (will fail)
         let issue_a = make_issue(IssueStatus::Open, Vec::new());
-        let (id_a, _) = store.add_issue(issue_a.clone()).await.unwrap();
+        let (id_a, _) = store
+            .add_issue(issue_a.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Create issue B that is blocked on A
         let issue_b = make_issue(
@@ -282,13 +288,16 @@ mod tests {
                 id_a.clone(),
             )],
         );
-        let (id_b, _) = store.add_issue(issue_b).await.unwrap();
+        let (id_b, _) = store.add_issue(issue_b, &ActorRef::test()).await.unwrap();
 
         // Fail issue A — Failed is no longer a trigger status,
         // so the automation should not fire and B should stay Open.
         let mut failed_a = issue_a;
         failed_a.status = IssueStatus::Failed;
-        store.update_issue(&id_a, failed_a.clone()).await.unwrap();
+        store
+            .update_issue(&id_a, failed_a.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(make_issue(IssueStatus::Open, Vec::new())),
@@ -325,7 +334,10 @@ mod tests {
 
         // Create parent and child
         let parent = make_issue(IssueStatus::Open, Vec::new());
-        let (parent_id, _) = store.add_issue(parent.clone()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let child = make_issue(
             IssueStatus::Open,
@@ -334,13 +346,13 @@ mod tests {
                 parent_id.clone(),
             )],
         );
-        let (child_id, _) = store.add_issue(child).await.unwrap();
+        let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         // Fail the parent — children should be dropped.
         let mut failed_parent = parent;
         failed_parent.status = IssueStatus::Failed;
         store
-            .update_issue(&parent_id, failed_parent.clone())
+            .update_issue(&parent_id, failed_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -378,7 +390,10 @@ mod tests {
 
         // Create parent and child
         let parent = make_issue(IssueStatus::Open, Vec::new());
-        let (parent_id, _) = store.add_issue(parent.clone()).await.unwrap();
+        let (parent_id, _) = store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         let child = make_issue(
             IssueStatus::Open,
@@ -387,13 +402,13 @@ mod tests {
                 parent_id.clone(),
             )],
         );
-        let (child_id, _) = store.add_issue(child).await.unwrap();
+        let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         // Reject the parent — children should be dropped.
         let mut rejected_parent = parent;
         rejected_parent.status = IssueStatus::Rejected;
         store
-            .update_issue(&parent_id, rejected_parent.clone())
+            .update_issue(&parent_id, rejected_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -430,7 +445,10 @@ mod tests {
         let store = handles.store.clone();
 
         let issue = make_issue(IssueStatus::Failed, Vec::new());
-        let (issue_id, _) = store.add_issue(issue.clone()).await.unwrap();
+        let (issue_id, _) = store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
 
         // Event where old and new status are both Failed (no change)
         let payload = Arc::new(MutationPayload::Issue {

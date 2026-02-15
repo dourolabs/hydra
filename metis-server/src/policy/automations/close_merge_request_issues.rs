@@ -196,7 +196,7 @@ mod tests {
 
         // Create a patch
         let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch).await.unwrap();
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         // Create a parent issue for the merge request
         let parent = Issue::new(
@@ -211,11 +211,11 @@ mod tests {
             Vec::new(),
             vec![patch_id.clone()],
         );
-        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
         // Create a merge request issue linked to the patch
         let mr_issue = make_merge_request_issue(&patch_id, &parent_id);
-        let (mr_id, _) = store.add_issue(mr_issue).await.unwrap();
+        let (mr_id, _) = store.add_issue(mr_issue, &ActorRef::test()).await.unwrap();
 
         // Simulate patch merging
         let old_patch = make_patch(PatchStatus::Open);
@@ -254,7 +254,7 @@ mod tests {
         let store = handles.store.clone();
 
         let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store.add_patch(patch).await.unwrap();
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         let parent = Issue::new(
             IssueType::Task,
@@ -268,10 +268,10 @@ mod tests {
             Vec::new(),
             vec![patch_id.clone()],
         );
-        let (parent_id, _) = store.add_issue(parent).await.unwrap();
+        let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
         let mr_issue = make_merge_request_issue(&patch_id, &parent_id);
-        let (mr_id, _) = store.add_issue(mr_issue).await.unwrap();
+        let (mr_id, _) = store.add_issue(mr_issue, &ActorRef::test()).await.unwrap();
 
         let old_patch = make_patch(PatchStatus::Open);
         let new_patch = make_patch(PatchStatus::Closed);

@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        actors::Actor,
+        actors::{Actor, ActorRef},
         issues::{Issue, IssueStatus, IssueType},
         jobs::{BundleSpec, Task},
         users::{User, Username},
@@ -80,21 +80,24 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         "refresh-token".to_string(),
     );
 
-    handles.store.add_user(user).await?;
+    handles.store.add_user(user, &ActorRef::test()).await?;
     let (issue_id, _) = handles
         .store
-        .add_issue(Issue::new(
-            IssueType::Task,
-            "task".to_string(),
-            username.clone(),
-            String::new(),
-            IssueStatus::Open,
-            None,
-            None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ))
+        .add_issue(
+            Issue::new(
+                IssueType::Task,
+                "task".to_string(),
+                username.clone(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+            &ActorRef::test(),
+        )
         .await?;
 
     let task = Task::new(
@@ -109,9 +112,12 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         None,
         None,
     );
-    let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
+    let (task_id, _) = handles
+        .store
+        .add_task(task, Utc::now(), &ActorRef::test())
+        .await?;
     let (actor, auth_token) = Actor::new_for_task(task_id, Some(Username::from("creator")));
-    handles.store.add_actor(actor).await?;
+    handles.store.add_actor(actor, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
@@ -145,7 +151,7 @@ async fn github_token_requires_auth() -> anyhow::Result<()> {
 async fn github_token_returns_not_found_for_missing_user() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let (actor, auth_token) = Actor::new_for_user(Username::from("octo"));
-    handles.store.add_actor(actor).await?;
+    handles.store.add_actor(actor, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
@@ -191,21 +197,24 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         deleted: false,
     };
 
-    handles.store.add_user(user).await?;
+    handles.store.add_user(user, &ActorRef::test()).await?;
     let (issue_id, _) = handles
         .store
-        .add_issue(Issue::new(
-            IssueType::Task,
-            "task".to_string(),
-            username.clone(),
-            String::new(),
-            IssueStatus::Open,
-            None,
-            None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ))
+        .add_issue(
+            Issue::new(
+                IssueType::Task,
+                "task".to_string(),
+                username.clone(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+            &ActorRef::test(),
+        )
         .await?;
 
     let task = Task::new(
@@ -220,9 +229,12 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         None,
         None,
     );
-    let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
+    let (task_id, _) = handles
+        .store
+        .add_task(task, Utc::now(), &ActorRef::test())
+        .await?;
     let (actor, auth_token) = Actor::new_for_task(task_id, Some(Username::from("creator")));
-    handles.store.add_actor(actor).await?;
+    handles.store.add_actor(actor, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
     let client = auth_client(&auth_token);
@@ -276,21 +288,24 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         deleted: false,
     };
 
-    handles.store.add_user(user).await?;
+    handles.store.add_user(user, &ActorRef::test()).await?;
     let (issue_id, _) = handles
         .store
-        .add_issue(Issue::new(
-            IssueType::Task,
-            "task".to_string(),
-            username.clone(),
-            String::new(),
-            IssueStatus::Open,
-            None,
-            None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        ))
+        .add_issue(
+            Issue::new(
+                IssueType::Task,
+                "task".to_string(),
+                username.clone(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+            &ActorRef::test(),
+        )
         .await?;
 
     let task = Task::new(
@@ -305,9 +320,12 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         None,
         None,
     );
-    let (task_id, _) = handles.store.add_task(task, Utc::now()).await?;
+    let (task_id, _) = handles
+        .store
+        .add_task(task, Utc::now(), &ActorRef::test())
+        .await?;
     let (actor, auth_token) = Actor::new_for_task(task_id, Some(Username::from("creator")));
-    handles.store.add_actor(actor).await?;
+    handles.store.add_actor(actor, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
@@ -326,7 +344,7 @@ async fn github_token_returns_not_found_for_missing_task() -> anyhow::Result<()>
     let handles = test_state_handles();
     let task_id = TaskId::new();
     let (actor, auth_token) = Actor::new_for_task(task_id, Some(Username::from("creator")));
-    handles.store.add_actor(actor).await?;
+    handles.store.add_actor(actor, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);

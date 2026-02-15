@@ -2,6 +2,7 @@ use super::common::{default_image, patch_diff, service_repo_name, service_reposi
 use crate::app::{AppState, ServiceState};
 use crate::config::BuildCacheSection;
 use crate::domain::{
+    actors::ActorRef,
     issues::{Issue, IssueStatus, IssueType, JobSettings},
     jobs::{Bundle, BundleSpec},
     patches::{Patch, PatchStatus},
@@ -216,19 +217,22 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
 
     let (issue_id, _) = handles
         .store
-        .add_issue(Issue {
-            issue_type: IssueType::Task,
-            description: "use overrides".to_string(),
-            creator: Username::from("tester"),
-            progress: String::new(),
-            status: IssueStatus::Open,
-            assignee: None,
-            job_settings: job_settings.clone(),
-            todo_list: Vec::new(),
-            dependencies: Vec::new(),
-            patches: Vec::new(),
-            deleted: false,
-        })
+        .add_issue(
+            Issue {
+                issue_type: IssueType::Task,
+                description: "use overrides".to_string(),
+                creator: Username::from("tester"),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                job_settings: job_settings.clone(),
+                todo_list: Vec::new(),
+                dependencies: Vec::new(),
+                patches: Vec::new(),
+                deleted: false,
+            },
+            &ActorRef::test(),
+        )
         .await?;
 
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
@@ -300,19 +304,22 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
 
     let (issue_id, _) = handles
         .store
-        .add_issue(Issue {
-            issue_type: IssueType::Task,
-            description: "use repo override".to_string(),
-            creator: Username::from("tester"),
-            progress: String::new(),
-            status: IssueStatus::Open,
-            assignee: None,
-            job_settings: job_settings.clone(),
-            todo_list: Vec::new(),
-            dependencies: Vec::new(),
-            patches: Vec::new(),
-            deleted: false,
-        })
+        .add_issue(
+            Issue {
+                issue_type: IssueType::Task,
+                description: "use repo override".to_string(),
+                creator: Username::from("tester"),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                job_settings: job_settings.clone(),
+                todo_list: Vec::new(),
+                dependencies: Vec::new(),
+                patches: Vec::new(),
+                deleted: false,
+            },
+            &ActorRef::test(),
+        )
         .await?;
 
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
@@ -626,6 +633,7 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
                 deleted: false,
             },
             now - Duration::seconds(30),
+            &ActorRef::test(),
         )
         .await?;
     state.transition_task_to_pending(&job_id).await?;
@@ -879,27 +887,31 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
                 deleted: false,
             },
             Utc::now(),
+            &ActorRef::test(),
         )
         .await?;
     state.transition_task_to_pending(&job_id).await?;
     state.transition_task_to_running(&job_id).await?;
     let (_patch_id, _) = handles
         .store
-        .add_patch(Patch {
-            title: "done".to_string(),
-            description: "done".to_string(),
-            diff: patch_diff(),
-            status: PatchStatus::Open,
-            is_automatic_backup: false,
-            created_by: Some(job_id.clone()),
-            creator: None,
-            reviews: Vec::new(),
-            service_repo_name: service_repo_name(),
-            github: None,
-            deleted: false,
-            branch_name: None,
-            commit_range: None,
-        })
+        .add_patch(
+            Patch {
+                title: "done".to_string(),
+                description: "done".to_string(),
+                diff: patch_diff(),
+                status: PatchStatus::Open,
+                is_automatic_backup: false,
+                created_by: Some(job_id.clone()),
+                creator: None,
+                reviews: Vec::new(),
+                service_repo_name: service_repo_name(),
+                github: None,
+                deleted: false,
+                branch_name: None,
+                commit_range: None,
+            },
+            &ActorRef::test(),
+        )
         .await?;
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
@@ -943,6 +955,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
                 deleted: false,
             },
             Utc::now(),
+            &ActorRef::test(),
         )
         .await?;
     state.transition_task_to_pending(&job_id).await?;
@@ -1031,27 +1044,31 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 deleted: false,
             },
             Utc::now(),
+            &ActorRef::test(),
         )
         .await?;
     state.transition_task_to_pending(&parent_job_id).await?;
     state.transition_task_to_running(&parent_job_id).await?;
     let (_parent_patch_id, _) = handles
         .store
-        .add_patch(Patch {
-            title: "done".to_string(),
-            description: "done".to_string(),
-            diff: patch_diff(),
-            status: PatchStatus::Open,
-            is_automatic_backup: false,
-            created_by: Some(parent_job_id.clone()),
-            creator: None,
-            reviews: Vec::new(),
-            service_repo_name: service_repo_name(),
-            github: None,
-            deleted: false,
-            branch_name: None,
-            commit_range: None,
-        })
+        .add_patch(
+            Patch {
+                title: "done".to_string(),
+                description: "done".to_string(),
+                diff: patch_diff(),
+                status: PatchStatus::Open,
+                is_automatic_backup: false,
+                created_by: Some(parent_job_id.clone()),
+                creator: None,
+                reviews: Vec::new(),
+                service_repo_name: service_repo_name(),
+                github: None,
+                deleted: false,
+                branch_name: None,
+                commit_range: None,
+            },
+            &ActorRef::test(),
+        )
         .await?;
     state
         .transition_task_to_completion(&parent_job_id, Ok(()), None)
@@ -1076,6 +1093,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 deleted: false,
             },
             Utc::now(),
+            &ActorRef::test(),
         )
         .await?;
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
@@ -1127,6 +1145,7 @@ async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
                 deleted: false,
             },
             Utc::now(),
+            &ActorRef::test(),
         )
         .await?;
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
@@ -1168,6 +1187,7 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
                 deleted: false,
             },
             Utc::now(),
+            &ActorRef::test(),
         )
         .await?;
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;

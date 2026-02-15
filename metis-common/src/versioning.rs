@@ -34,6 +34,10 @@ pub struct Versioned<T> {
     pub version: VersionNumber,
     /// Timestamp when this version was recorded.
     pub timestamp: DateTime<Utc>,
+    /// The actor who performed this mutation, stored as serialized JSON.
+    /// `None` for historical versions that predate actor tracking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<serde_json::Value>,
 }
 
 impl<T> Versioned<T> {
@@ -42,6 +46,21 @@ impl<T> Versioned<T> {
             item,
             version,
             timestamp,
+            actor: None,
+        }
+    }
+
+    pub fn with_actor(
+        item: T,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        actor: serde_json::Value,
+    ) -> Self {
+        Self {
+            item,
+            version,
+            timestamp,
+            actor: Some(actor),
         }
     }
 }
