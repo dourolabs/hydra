@@ -232,7 +232,14 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
         // in the automation context, so we must go through AppState for writes).
         let request = metis_common::api::v1::patches::UpsertPatchRequest::new(patch.into());
         ctx.app_state
-            .upsert_patch(None, Some(patch_id.clone()), request)
+            .upsert_patch(
+                ActorRef::Automation {
+                    automation_name: "github_pr_sync".into(),
+                    triggered_by: Some(Box::new(ctx.actor().clone())),
+                },
+                Some(patch_id.clone()),
+                request,
+            )
             .await
             .map_err(|e| {
                 AutomationError::Other(anyhow::anyhow!(

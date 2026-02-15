@@ -1,4 +1,4 @@
-use crate::domain::actors::Actor;
+use crate::domain::actors::{Actor, ActorRef};
 use crate::{
     app::{AppState, SetJobStatusError},
     routes::jobs::{ApiError, JobIdPath},
@@ -17,7 +17,7 @@ pub async fn set_job_status(
     info!(job_id = %job_id, status = ?status, "set_job_status invoked");
 
     let response = state
-        .set_job_status(job_id, status, Some(actor.name()))
+        .set_job_status(job_id, status, ActorRef::from(&actor))
         .await
         .map_err(|err| match err {
             SetJobStatusError::NotFound { source, job_id } => {

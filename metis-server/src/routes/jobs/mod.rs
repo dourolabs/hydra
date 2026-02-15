@@ -1,4 +1,4 @@
-use crate::domain::actors::Actor;
+use crate::domain::actors::{Actor, ActorRef};
 use crate::{
     app::{AppState, BundleResolutionError, CreateJobError, TaskResolutionError},
     store::StoreError,
@@ -25,7 +25,7 @@ pub async fn create_job(
 ) -> Result<Json<v1::jobs::CreateJobResponse>, ApiError> {
     info!("create_job invoked");
     let job_id = state
-        .create_job(payload, Some(actor.name()))
+        .create_job(payload, ActorRef::from(&actor))
         .await
         .map_err(|err| match err {
             CreateJobError::TaskResolution(err) => ApiError::from(err),

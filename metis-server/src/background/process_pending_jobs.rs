@@ -75,7 +75,7 @@ impl ScheduledWorker for ProcessPendingJobsWorker {
 mod tests {
     use super::*;
     use crate::{
-        domain::jobs::BundleSpec,
+        domain::{actors::ActorRef, jobs::BundleSpec},
         store::{Status, Task},
         test_utils::{FailingStore, test_state, test_state_with_store},
     };
@@ -108,11 +108,11 @@ mod tests {
             None,
         );
         let first_id = state
-            .add_task(task.clone(), Utc::now())
+            .add_task(task.clone(), Utc::now(), ActorRef::test())
             .await
             .expect("first task should be added");
         let second_id = state
-            .add_task(task, Utc::now())
+            .add_task(task, Utc::now(), ActorRef::test())
             .await
             .expect("second task should be added");
 

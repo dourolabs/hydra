@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
+use crate::domain::actors::ActorRef;
 use crate::domain::issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType};
 use crate::domain::patches::{Patch, PatchStatus};
 use crate::domain::users::Username;
@@ -148,7 +149,10 @@ impl CreateMergeRequestIssueAutomation {
             .upsert_issue(
                 None,
                 metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
-                None,
+                ActorRef::Automation {
+                    automation_name: "create_merge_request_issue".into(),
+                    triggered_by: Some(Box::new(ctx.actor().clone())),
+                },
             )
             .await
             .map_err(|e| {
@@ -259,7 +263,10 @@ impl CreateMergeRequestIssueAutomation {
             .upsert_issue(
                 None,
                 metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
-                None,
+                ActorRef::Automation {
+                    automation_name: "create_merge_request_issue".into(),
+                    triggered_by: Some(Box::new(ctx.actor().clone())),
+                },
             )
             .await
             .map_err(|e| {

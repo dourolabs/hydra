@@ -1,4 +1,7 @@
-use crate::domain::{actors::Actor, patches::GithubPr};
+use crate::domain::{
+    actors::{Actor, ActorRef},
+    patches::GithubPr,
+};
 use crate::{
     app::{AppState, UpsertPatchError},
     store::StoreError,
@@ -70,7 +73,7 @@ pub async fn create_patch(
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!("create_patch invoked");
     let (patch_id, version) = state
-        .upsert_patch(Some(&actor), None, payload)
+        .upsert_patch(ActorRef::from(&actor), None, payload)
         .await
         .map_err(map_upsert_patch_error)?;
 
@@ -88,7 +91,7 @@ pub async fn update_patch(
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!(patch_id = %patch_id, "update_patch invoked");
     let (patch_id, version) = state
-        .upsert_patch(Some(&actor), Some(patch_id), payload)
+        .upsert_patch(ActorRef::from(&actor), Some(patch_id), payload)
         .await
         .map_err(map_upsert_patch_error)?;
 
@@ -524,7 +527,7 @@ pub async fn delete_patch(
 ) -> Result<Json<v1::patches::PatchVersionRecord>, ApiError> {
     info!(patch_id = %patch_id, "delete_patch invoked");
     state
-        .delete_patch(&patch_id, Some(actor.name()))
+        .delete_patch(&patch_id, ActorRef::from(&actor))
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
