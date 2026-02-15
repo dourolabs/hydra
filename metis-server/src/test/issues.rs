@@ -992,6 +992,61 @@ async fn delete_issue_get_deleted_by_id() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn delete_issue_idempotency() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create and delete an issue
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "idempotency test",
+                default_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // First delete
+    let first_delete = client
+        .delete(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?;
+
+    assert!(first_delete.status().is_success());
+
+    // Second delete - should return 200 (idempotent)
+    let second_delete = client
+        .delete(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?;
+
+    assert!(second_delete.status().is_success());
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn delete_issue_non_existent() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();

@@ -836,6 +836,59 @@ async fn delete_patch_get_deleted_by_id() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn delete_patch_idempotency() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create and delete a patch
+    let patch = Patch::new(
+        "idempotency patch".to_string(),
+        "patch description".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    let created: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(patch.into()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // First delete
+    let first_delete = client
+        .delete(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?;
+
+    assert!(first_delete.status().is_success());
+
+    // Second delete - should return 200 (idempotent)
+    let second_delete = client
+        .delete(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?;
+
+    assert!(second_delete.status().is_success());
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn delete_patch_non_existent() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
