@@ -244,6 +244,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             created_by: None,
+            creator: None,
             reviews: Vec::new(),
             service_repo_name: repo_name.clone(),
             github: None,

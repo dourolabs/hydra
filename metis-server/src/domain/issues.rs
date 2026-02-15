@@ -62,6 +62,8 @@ pub enum IssueType {
     Chore,
     #[serde(rename = "merge-request")]
     MergeRequest,
+    #[serde(rename = "review-request")]
+    ReviewRequest,
 }
 
 impl IssueType {
@@ -72,6 +74,7 @@ impl IssueType {
             IssueType::Task => "task",
             IssueType::Chore => "chore",
             IssueType::MergeRequest => "merge-request",
+            IssueType::ReviewRequest => "review-request",
         }
     }
 }
@@ -93,6 +96,7 @@ impl FromStr for IssueType {
             "task" => Ok(IssueType::Task),
             "chore" => Ok(IssueType::Chore),
             "merge-request" | "mergerequest" | "merge_request" => Ok(IssueType::MergeRequest),
+            "review-request" | "reviewrequest" | "review_request" => Ok(IssueType::ReviewRequest),
             other => Err(format!("unsupported issue type '{other}'")),
         }
     }
@@ -480,6 +484,7 @@ impl From<api::issues::IssueType> for IssueType {
             api::issues::IssueType::Task => IssueType::Task,
             api::issues::IssueType::Chore => IssueType::Chore,
             api::issues::IssueType::MergeRequest => IssueType::MergeRequest,
+            api::issues::IssueType::ReviewRequest => IssueType::ReviewRequest,
             _ => unreachable!("unsupported IssueType variant"),
         }
     }
@@ -493,6 +498,7 @@ impl From<IssueType> for api::issues::IssueType {
             IssueType::Task => api::issues::IssueType::Task,
             IssueType::Chore => api::issues::IssueType::Chore,
             IssueType::MergeRequest => api::issues::IssueType::MergeRequest,
+            IssueType::ReviewRequest => api::issues::IssueType::ReviewRequest,
         }
     }
 }

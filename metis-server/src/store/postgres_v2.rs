@@ -338,6 +338,7 @@ impl PostgresStoreV2 {
             status,
             is_automatic_backup: row.is_automatic_backup,
             created_by,
+            creator: None,
             reviews,
             service_repo_name,
             github,

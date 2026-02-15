@@ -67,6 +67,8 @@ pub enum IssueType {
     Chore,
     #[serde(rename = "merge-request")]
     MergeRequest,
+    #[serde(rename = "review-request")]
+    ReviewRequest,
     #[serde(other)]
     Unknown,
 }
@@ -79,6 +81,7 @@ impl IssueType {
             IssueType::Task => "task",
             IssueType::Chore => "chore",
             IssueType::MergeRequest => "merge-request",
+            IssueType::ReviewRequest => "review-request",
             IssueType::Unknown => "unknown",
         }
     }
@@ -101,6 +104,7 @@ impl FromStr for IssueType {
             "task" => Ok(IssueType::Task),
             "chore" => Ok(IssueType::Chore),
             "merge-request" | "mergerequest" | "merge_request" => Ok(IssueType::MergeRequest),
+            "review-request" | "reviewrequest" | "review_request" => Ok(IssueType::ReviewRequest),
             other => Err(format!("unsupported issue type '{other}'")),
         }
     }

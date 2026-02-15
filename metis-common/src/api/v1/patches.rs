@@ -1,3 +1,4 @@
+use super::users::Username;
 use crate::{PatchId, RepoName, TaskId, VersionNumber};
 use chrono::{DateTime, Utc};
 use git2::Oid;
@@ -206,6 +207,9 @@ pub struct Patch {
     pub is_automatic_backup: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<TaskId>,
+    /// The resolved username of the human/agent that authored the patch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<Username>,
     #[serde(default)]
     pub reviews: Vec<Review>,
     /// Name of the configured service repository this patch targets, when known.
@@ -243,6 +247,7 @@ impl Patch {
             status,
             is_automatic_backup,
             created_by,
+            creator: None,
             reviews,
             service_repo_name,
             github,
@@ -491,6 +496,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             created_by: None,
+            creator: None,
             reviews: vec![],
             service_repo_name: "org/repo".parse().unwrap(),
             github: None,
