@@ -290,6 +290,14 @@ pub enum IssueCommands {
         /// Emit the complete JSONL output instead of the summarized view.
         #[arg(long)]
         verbose: bool,
+
+        /// Include deleted issues in the result.
+        #[arg(long = "include-deleted")]
+        include_deleted: bool,
+
+        /// Retrieve a specific version of the issue (positive = exact version, negative = offset from latest).
+        #[arg(long)]
+        version: Option<i64>,
     },
     /// Delete an issue.
     Delete {
@@ -302,6 +310,14 @@ pub enum IssueCommands {
         /// Issue ID to get.
         #[arg(value_name = "ISSUE_ID")]
         id: IssueId,
+
+        /// Include deleted issues in the result.
+        #[arg(long = "include-deleted")]
+        include_deleted: bool,
+
+        /// Retrieve a specific version of the issue (positive = exact version, negative = offset from latest).
+        #[arg(long)]
+        version: Option<i64>,
     },
     /// Show activity log for an issue (most recent first).
     Activity {
@@ -451,8 +467,21 @@ pub async fn run(
             )
             .await
         }
-        IssueCommands::Describe { id, verbose } => {
-            describe_issue(client, id, context.output_format, verbose).await
+        IssueCommands::Describe {
+            id,
+            verbose,
+            include_deleted,
+            version,
+        } => {
+            describe_issue(
+                client,
+                id,
+                context.output_format,
+                verbose,
+                include_deleted,
+                version,
+            )
+            .await
         }
         IssueCommands::Delete { id } => {
             let deleted = client
@@ -462,10 +491,13 @@ pub async fn run(
             println!("Deleted issue '{}'", deleted.issue_id);
             Ok(())
         }
-        IssueCommands::Get { id } => {
-            let issues =
-                fetch_issues(client, Some(id), None, None, None, None, vec![], false).await?;
-            write_issue_records(context.output_format, &issues)?;
+        IssueCommands::Get {
+            id,
+            include_deleted,
+            version,
+        } => {
+            let issue = resolve_issue(client, &id, include_deleted, version).await?;
+            write_issue_records(context.output_format, &[issue])?;
             Ok(())
         }
         IssueCommands::Activity { id, limit } => {
@@ -565,8 +597,10 @@ async fn describe_issue(
     id: IssueId,
     output_format: ResolvedOutputFormat,
     verbose: bool,
+    include_deleted: bool,
+    version: Option<i64>,
 ) -> Result<()> {
-    let description = collect_issue_description(client, id).await?;
+    let description = collect_issue_description(client, id, include_deleted, version).await?;
     let summary = summarize_issue_description(&description)?;
 
     let mut buffer = Vec::new();
@@ -596,7 +630,7 @@ async fn activity_issue(
     output_format: ResolvedOutputFormat,
     limit: usize,
 ) -> Result<()> {
-    let description = collect_issue_description(client, id).await?;
+    let description = collect_issue_description(client, id, false, None).await?;
     let summary = summarize_issue_description(&description)?;
 
     let mut entries = summary.activity_log;
@@ -624,11 +658,10 @@ async fn activity_issue(
 async fn collect_issue_description(
     client: &dyn MetisClientInterface,
     issue_id: IssueId,
+    include_deleted: bool,
+    version: Option<i64>,
 ) -> Result<IssueDescription> {
-    let issue = client
-        .get_issue(&issue_id)
-        .await
-        .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
+    let issue = resolve_issue(client, &issue_id, include_deleted, version).await?;
 
     let parents = fetch_parent_issues(client, &issue).await?;
     let children = fetch_child_issues(client, &issue.issue_id).await?;
@@ -927,7 +960,7 @@ async fn fetch_parent_issues(
         }
 
         let parent = client
-            .get_issue(&dependency.issue_id)
+            .get_issue(&dependency.issue_id, false)
             .await
             .with_context(|| format!("failed to fetch parent issue '{}'", dependency.issue_id))?;
         parents.push(parent);
@@ -1156,6 +1189,56 @@ fn activity_kind_rank(kind: &ActivityObjectKind) -> u8 {
     }
 }
 
+/// Resolve a single issue, handling `--version` (positive, negative, or absent)
+/// and `--include-deleted`.
+async fn resolve_issue(
+    client: &dyn MetisClientInterface,
+    issue_id: &IssueId,
+    include_deleted: bool,
+    version: Option<i64>,
+) -> Result<IssueVersionRecord> {
+    match version {
+        Some(0) => {
+            bail!("--version 0 is not valid; use a positive version number or a negative offset")
+        }
+        Some(v) if v > 0 => {
+            let ver = v as VersionNumber;
+            client
+                .get_issue_version(issue_id, &ver)
+                .await
+                .with_context(|| format!("failed to fetch version {ver} of issue '{issue_id}'"))
+        }
+        Some(v) => {
+            // Negative offset: resolve via list_issue_versions
+            let versions_response = client
+                .list_issue_versions(issue_id)
+                .await
+                .with_context(|| format!("failed to list versions for issue '{issue_id}'"))?;
+            let latest = versions_response
+                .versions
+                .iter()
+                .map(|r| r.version)
+                .max()
+                .ok_or_else(|| anyhow!("no versions found for issue '{issue_id}'"))?;
+            let target = latest as i64 + v; // v is negative, e.g. latest=5, v=-1 -> target=4
+            if target < 1 {
+                bail!(
+                    "version offset {v} resolves to version {target}, which is before the first version of issue '{issue_id}'"
+                );
+            }
+            let ver = target as VersionNumber;
+            client
+                .get_issue_version(issue_id, &ver)
+                .await
+                .with_context(|| format!("failed to fetch version {ver} of issue '{issue_id}'"))
+        }
+        None => client
+            .get_issue(issue_id, include_deleted)
+            .await
+            .with_context(|| format!("failed to fetch issue '{issue_id}'")),
+    }
+}
+
 async fn fetch_issues(
     client: &dyn MetisClientInterface,
     id: Option<IssueId>,
@@ -1168,7 +1251,7 @@ async fn fetch_issues(
 ) -> Result<Vec<IssueVersionRecord>> {
     if let Some(issue_id) = id {
         let record = client
-            .get_issue(&issue_id)
+            .get_issue(&issue_id, include_deleted)
             .await
             .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
@@ -1365,7 +1448,7 @@ async fn resolve_inherited_job_settings(
     };
 
     let issue = client
-        .get_issue(&issue_id)
+        .get_issue(&issue_id, false)
         .await
         .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
@@ -1559,7 +1642,7 @@ async fn update_issue(
     }
 
     let current = client
-        .get_issue(&issue_id)
+        .get_issue(&issue_id, false)
         .await
         .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
@@ -1619,7 +1702,7 @@ async fn resolve_creator_username(
     let resolve_from_current_issue = || async {
         if let Some(issue_id) = current_issue_id {
             let issue = client
-                .get_issue(issue_id)
+                .get_issue(issue_id, false)
                 .await
                 .with_context(|| format!("failed to fetch current issue '{issue_id}'"))?;
             Ok(issue.issue.creator)
@@ -1635,7 +1718,7 @@ async fn resolve_creator_username(
             .map(|dependency| dependency.issue_id.clone())
         {
             let parent = client
-                .get_issue(&parent_id)
+                .get_issue(&parent_id, false)
                 .await
                 .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
             Ok(parent.issue.creator)
@@ -1731,7 +1814,7 @@ async fn resolve_todo_list(
     }
 
     let issue = client
-        .get_issue(issue_id)
+        .get_issue(issue_id, false)
         .await
         .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
     Ok(issue.issue.todo_list)
@@ -3030,7 +3113,7 @@ mod tests {
                 .json_body_obj(&ListJobsResponse::new(Vec::new()));
         });
 
-        let description = collect_issue_description(&client, root_id.clone())
+        let description = collect_issue_description(&client, root_id.clone(), false, None)
             .await
             .unwrap();
 

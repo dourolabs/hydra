@@ -469,7 +469,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let updated_issue = client.update_issue(&issue_id, &issue_request).await?;
     assert_eq!(updated_issue.issue_id, issue_id);
 
-    let fetched_issue = client.get_issue(&issue_id).await?;
+    let fetched_issue = client.get_issue(&issue_id, false).await?;
     assert!(matches!(fetched_issue.issue.status, IssueStatus::Unknown));
     assert!(matches!(fetched_issue.issue.issue_type, IssueType::Unknown));
     assert!(matches!(

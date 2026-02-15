@@ -737,11 +737,14 @@ pub async fn create_merge_request_issue(
     };
 
     let description = format!("Review patch {}: {title}", patch_id.as_ref());
-    let parent_issue = client.get_issue(&parent_issue_id).await.with_context(|| {
-        format!(
+    let parent_issue = client
+        .get_issue(&parent_issue_id, false)
+        .await
+        .with_context(|| {
+            format!(
             "failed to fetch parent issue '{parent_issue_id}' to determine merge-request creator"
         )
-    })?;
+        })?;
     let creator = parent_issue.issue.creator;
     let job_settings = parent_issue.issue.job_settings.clone();
     let issue = Issue::new(

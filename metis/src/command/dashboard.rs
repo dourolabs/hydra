@@ -838,7 +838,7 @@ async fn handle_sse_event(
                 Ok(id) => id,
                 Err(_) => return false,
             };
-            match client.get_issue(&issue_id).await {
+            match client.get_issue(&issue_id, false).await {
                 Ok(api_record) => {
                     if let Some(record) = issue_to_record(api_record) {
                         let mut record = record;
@@ -1642,7 +1642,7 @@ async fn update_issue_status(
     update: &IssueStatusUpdate,
 ) -> Result<IssueId> {
     let current = client
-        .get_issue(&update.issue_id)
+        .get_issue(&update.issue_id, false)
         .await
         .with_context(|| format!("failed to fetch issue '{}'", update.issue_id))?;
     let issue = current.issue;
