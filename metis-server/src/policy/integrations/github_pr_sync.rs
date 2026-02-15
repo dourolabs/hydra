@@ -88,7 +88,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
         };
 
         // Build a temporary Actor to fetch the GitHub token.
-        let user_or_worker = Actor::parse_name(&actor_name).map_err(|e| {
+        let actor_id = Actor::parse_name(&actor_name).map_err(|e| {
             AutomationError::Other(anyhow::anyhow!(
                 "github_pr_sync: failed to parse actor name '{actor_name}': {e}"
             ))
@@ -96,7 +96,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
         let actor = Actor {
             auth_token_hash: String::new(),
             auth_token_salt: String::new(),
-            user_or_worker,
+            actor_id,
         };
 
         let token = actor.get_github_token(ctx.app_state).await.map_err(|e| {

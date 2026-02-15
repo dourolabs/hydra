@@ -5,7 +5,7 @@
 
 use crate::{
     domain::{
-        actors::{Actor, UserOrWorker},
+        actors::{Actor, ActorId},
         documents::Document,
         issues::{
             Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
@@ -691,12 +691,11 @@ impl PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for actor '{id}'"))
         })?;
 
-        let user_or_worker_json = serde_json::to_value(&actor.user_or_worker).map_err(|e| {
-            StoreError::Internal(format!("failed to serialize user_or_worker: {e}"))
-        })?;
+        let actor_id_json = serde_json::to_value(&actor.actor_id)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize actor_id: {e}")))?;
 
         let query = format!(
-            "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, user_or_worker)
+            "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, actor_id)
              VALUES ($1, $2, $3, $4, $5)"
         );
         sqlx::query(&query)
@@ -704,7 +703,7 @@ impl PostgresStoreV2 {
             .bind(version_number)
             .bind(&actor.auth_token_hash)
             .bind(&actor.auth_token_salt)
-            .bind(&user_or_worker_json)
+            .bind(&actor_id_json)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -713,15 +712,13 @@ impl PostgresStoreV2 {
     }
 
     fn row_to_actor(&self, row: &ActorRow) -> Result<Actor, StoreError> {
-        let user_or_worker: UserOrWorker = serde_json::from_value(row.user_or_worker.clone())
-            .map_err(|e| {
-                StoreError::Internal(format!("failed to deserialize user_or_worker: {e}"))
-            })?;
+        let actor_id: ActorId = serde_json::from_value(row.actor_id.clone())
+            .map_err(|e| StoreError::Internal(format!("failed to deserialize actor_id: {e}")))?;
 
         Ok(Actor {
             auth_token_hash: row.auth_token_hash.clone(),
             auth_token_salt: row.auth_token_salt.clone(),
-            user_or_worker,
+            actor_id,
         })
     }
 }
@@ -839,7 +836,7 @@ struct ActorRow {
     version_number: i64,
     auth_token_hash: String,
     auth_token_salt: String,
-    user_or_worker: Value,
+    actor_id: Value,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -1756,7 +1753,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         let query = format!(
-            "SELECT id, version_number, auth_token_hash, auth_token_salt, user_or_worker, created_at, updated_at
+            "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1781,7 +1778,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         let query = format!(
-            "SELECT DISTINCT ON (id) id, version_number, auth_token_hash, auth_token_salt, user_or_worker, created_at, updated_at
+            "SELECT DISTINCT ON (id) id, version_number, auth_token_hash, auth_token_salt, actor_id, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
              ORDER BY id, version_number DESC"
         );

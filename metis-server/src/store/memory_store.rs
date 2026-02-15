@@ -1193,7 +1193,7 @@ mod tests {
     use super::*;
     use crate::{
         domain::{
-            actors::{Actor, UserOrWorker},
+            actors::{Actor, ActorId},
             issues::{
                 Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus,
                 IssueType,
@@ -2632,7 +2632,7 @@ mod tests {
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
-            user_or_worker: UserOrWorker::Username(Username::from("ada")),
+            actor_id: ActorId::Username(Username::from("ada")),
         };
 
         let name = actor.name();
@@ -2649,7 +2649,7 @@ mod tests {
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
-            user_or_worker: UserOrWorker::Task(TaskId::new()),
+            actor_id: ActorId::Task(TaskId::new()),
         };
         let name = actor.name();
 
@@ -2669,7 +2669,7 @@ mod tests {
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
-            user_or_worker: UserOrWorker::Task(task_id),
+            actor_id: ActorId::Task(task_id),
         };
         let mut updated = actor.clone();
         updated.auth_token_hash = "new-hash".to_string();
@@ -2688,7 +2688,7 @@ mod tests {
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
-            user_or_worker: UserOrWorker::Username(Username::from("ada")),
+            actor_id: ActorId::Username(Username::from("ada")),
         };
 
         let err = store.update_actor(actor).await.unwrap_err();

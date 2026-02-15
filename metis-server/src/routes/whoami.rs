@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        actors::{Actor, UserOrWorker},
+        actors::{Actor, ActorId},
         whoami::{ActorIdentity, WhoAmIResponse},
     },
     routes::jobs::ApiError,
@@ -14,9 +14,9 @@ pub async fn whoami(
 ) -> Result<Json<v1::whoami::WhoAmIResponse>, ApiError> {
     info!(actor = %actor.name(), "whoami invoked");
 
-    let identity = match actor.user_or_worker {
-        UserOrWorker::Username(username) => ActorIdentity::User { username },
-        UserOrWorker::Task(task_id) => ActorIdentity::Task { task_id },
+    let identity = match actor.actor_id {
+        ActorId::Username(username) => ActorIdentity::User { username },
+        ActorId::Task(task_id) => ActorIdentity::Task { task_id },
     };
 
     info!("whoami completed");
