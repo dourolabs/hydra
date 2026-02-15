@@ -1,13 +1,55 @@
 mod harness;
 
 use anyhow::{Context, Result};
-use metis::command::patches::create_merge_request_issue;
+use metis::client::MetisClientInterface;
 use metis_common::{
-    issues::{IssueStatus, IssueType, JobSettings},
+    issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
+        UpsertIssueRequest,
+    },
     patches::{GithubPr, PatchStatus},
+    IssueId, PatchId,
 };
 use metis_server::test_utils::{GitHubMockBuilder, MockPr, MockReview};
 use std::str::FromStr;
+
+/// Helper to create a merge-request tracking issue for a patch in tests.
+async fn create_merge_request_issue(
+    client: &dyn MetisClientInterface,
+    patch_id: PatchId,
+    assignee: String,
+    parent_issue_id: IssueId,
+    patch_title: String,
+) -> Result<IssueId> {
+    let parent_issue = client
+        .get_issue(&parent_issue_id, false)
+        .await
+        .context("failed to fetch parent issue")?;
+    let creator = parent_issue.issue.creator;
+    let job_settings = parent_issue.issue.job_settings.clone();
+    let description = format!("Review patch {}: {patch_title}", patch_id.as_ref());
+    let issue = Issue::new(
+        IssueType::MergeRequest,
+        description,
+        creator,
+        String::new(),
+        IssueStatus::Open,
+        Some(assignee),
+        Some(job_settings),
+        Vec::new(),
+        vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_issue_id,
+        )],
+        vec![patch_id],
+        false,
+    );
+    let response = client
+        .create_issue(&UpsertIssueRequest::new(issue, None))
+        .await
+        .context("failed to create merge-request issue")?;
+    Ok(response.issue_id)
+}
 
 #[tokio::test]
 async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> Result<()> {
@@ -83,10 +125,8 @@ async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> 
         "requester".to_string(),
         parent_issue_id.clone(),
         "Review patch".to_string(),
-        "Review description".to_string(),
     )
-    .await?
-    .issue_id;
+    .await?;
 
     // Run GitHub sync and verify outcomes.
     harness
@@ -190,10 +230,8 @@ async fn sync_open_patches_closes_merge_request_issue_on_merged_pr() -> Result<(
         "requester".to_string(),
         parent_issue_id.clone(),
         "Merge patch".to_string(),
-        "Merge description".to_string(),
     )
-    .await?
-    .issue_id;
+    .await?;
 
     // Run GitHub sync and verify outcomes.
     harness
@@ -286,10 +324,8 @@ async fn sync_open_patches_fails_merge_request_issue_on_closed_pr() -> Result<()
         "requester".to_string(),
         parent_issue_id.clone(),
         "Closed patch".to_string(),
-        "Closed description".to_string(),
     )
-    .await?
-    .issue_id;
+    .await?;
 
     // Run GitHub sync and verify outcomes.
     harness

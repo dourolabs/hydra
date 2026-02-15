@@ -1,11 +1,15 @@
 mod harness;
 
 use anyhow::{Context, Result};
-use metis::command::patches::create_merge_request_issue;
+use metis::client::MetisClientInterface;
 use metis_common::{
-    issues::{IssueStatus, IssueType, JobSettings},
+    issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
+        UpsertIssueRequest,
+    },
     jobs::SearchJobsQuery,
     patches::{GithubPr, PatchStatus},
+    IssueId, PatchId,
 };
 use metis_server::background::spawner::AgentQueue;
 use metis_server::config::{
@@ -14,6 +18,44 @@ use metis_server::config::{
 use metis_server::test_utils::{GitHubMockBuilder, MockPr, MockReview};
 use std::str::FromStr;
 use std::sync::Arc;
+
+/// Helper to create a merge-request tracking issue for a patch in tests.
+async fn create_merge_request_issue(
+    client: &dyn MetisClientInterface,
+    patch_id: PatchId,
+    assignee: String,
+    parent_issue_id: IssueId,
+    patch_title: String,
+) -> Result<IssueId> {
+    let parent_issue = client
+        .get_issue(&parent_issue_id, false)
+        .await
+        .context("failed to fetch parent issue")?;
+    let creator = parent_issue.issue.creator;
+    let job_settings = parent_issue.issue.job_settings.clone();
+    let description = format!("Review patch {}: {patch_title}", patch_id.as_ref());
+    let issue = Issue::new(
+        IssueType::MergeRequest,
+        description,
+        creator,
+        String::new(),
+        IssueStatus::Open,
+        Some(assignee),
+        Some(job_settings),
+        Vec::new(),
+        vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_issue_id,
+        )],
+        vec![patch_id],
+        false,
+    );
+    let response = client
+        .create_issue(&UpsertIssueRequest::new(issue, None))
+        .await
+        .context("failed to create merge-request issue")?;
+    Ok(response.issue_id)
+}
 
 #[tokio::test]
 async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
@@ -103,10 +145,8 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
         "reviewer".to_string(),
         parent_issue_id.clone(),
         "Code change summary".to_string(),
-        "Code change description".to_string(),
     )
-    .await?
-    .issue_id;
+    .await?;
 
     // Register an agent queue for the "reviewer" spawner.
     let queue_config = AgentQueueConfig {
@@ -154,10 +194,8 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
         "reviewer".to_string(),
         parent_issue_id.clone(),
         "Code change summary".to_string(),
-        "Code change description".to_string(),
     )
-    .await?
-    .issue_id;
+    .await?;
 
     harness.step_spawner().await?;
 
