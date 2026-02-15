@@ -695,9 +695,11 @@ impl PostgresStoreV2 {
         let actor_id_json = serde_json::to_value(&actor.actor_id)
             .map_err(|e| StoreError::Internal(format!("failed to serialize actor_id: {e}")))?;
 
+        let creator_str = actor.creator.as_ref().map(|u| u.to_string());
+
         let query = format!(
-            "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, actor_id)
-             VALUES ($1, $2, $3, $4, $5)"
+            "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator)
+             VALUES ($1, $2, $3, $4, $5, $6)"
         );
         sqlx::query(&query)
             .bind(id)
@@ -705,6 +707,7 @@ impl PostgresStoreV2 {
             .bind(&actor.auth_token_hash)
             .bind(&actor.auth_token_salt)
             .bind(&actor_id_json)
+            .bind(&creator_str)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -720,6 +723,7 @@ impl PostgresStoreV2 {
             auth_token_hash: row.auth_token_hash.clone(),
             auth_token_salt: row.auth_token_salt.clone(),
             actor_id,
+            creator: row.creator.as_deref().map(Username::from),
         })
     }
 }
@@ -838,6 +842,7 @@ struct ActorRow {
     auth_token_hash: String,
     auth_token_salt: String,
     actor_id: Value,
+    creator: Option<String>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -1754,7 +1759,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         let query = format!(
-            "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, created_at, updated_at
+            "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1779,7 +1784,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         let query = format!(
-            "SELECT DISTINCT ON (id) id, version_number, auth_token_hash, auth_token_salt, actor_id, created_at, updated_at
+            "SELECT DISTINCT ON (id) id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
              ORDER BY id, version_number DESC"
         );

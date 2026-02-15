@@ -132,7 +132,8 @@ impl AppState {
         &self,
         task_id: TaskId,
     ) -> Result<(Actor, String), StoreError> {
-        let (actor, auth_token) = Actor::new_for_task(task_id);
+        let task = self.get_task(&task_id).await?;
+        let (actor, auth_token) = Actor::new_for_task(task_id, task.creator);
         self.store.add_actor(actor.clone(), None).await?;
         Ok((actor, auth_token))
     }
