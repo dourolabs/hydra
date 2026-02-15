@@ -8,6 +8,8 @@ use crate::domain::users::Username;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 
+const AUTOMATION_NAME: &str = "create_merge_request_issue";
+
 /// Creates MergeRequest tracking issues for patches.
 ///
 /// Handles two scenarios:
@@ -42,7 +44,7 @@ impl CreateMergeRequestIssueAutomation {
 #[async_trait]
 impl Automation for CreateMergeRequestIssueAutomation {
     fn name(&self) -> &str {
-        "create_merge_request_issue"
+        AUTOMATION_NAME
     }
 
     fn event_filter(&self) -> EventFilter {
@@ -150,7 +152,7 @@ impl CreateMergeRequestIssueAutomation {
                 None,
                 metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
                 ActorRef::Automation {
-                    automation_name: "create_merge_request_issue".into(),
+                    automation_name: AUTOMATION_NAME.into(),
                     triggered_by: Some(Box::new(ctx.actor().clone())),
                 },
             )
@@ -264,7 +266,7 @@ impl CreateMergeRequestIssueAutomation {
                 None,
                 metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
                 ActorRef::Automation {
-                    automation_name: "create_merge_request_issue".into(),
+                    automation_name: AUTOMATION_NAME.into(),
                     triggered_by: Some(Box::new(ctx.actor().clone())),
                 },
             )

@@ -7,6 +7,8 @@ use async_trait::async_trait;
 use octocrab::Octocrab;
 use tracing::{info, warn};
 
+const AUTOMATION_NAME: &str = "github_pr_sync";
+
 /// Automation that creates or updates a GitHub pull request when a patch
 /// is created or updated with `branch_name` set.
 ///
@@ -31,7 +33,7 @@ impl GithubPrSyncAutomation {
 #[async_trait]
 impl crate::policy::Automation for GithubPrSyncAutomation {
     fn name(&self) -> &str {
-        "github_pr_sync"
+        AUTOMATION_NAME
     }
 
     fn event_filter(&self) -> EventFilter {
@@ -234,7 +236,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
         ctx.app_state
             .upsert_patch(
                 ActorRef::Automation {
-                    automation_name: "github_pr_sync".into(),
+                    automation_name: AUTOMATION_NAME.into(),
                     triggered_by: Some(Box::new(ctx.actor().clone())),
                 },
                 Some(patch_id.clone()),
