@@ -205,7 +205,7 @@ pub async fn get_job_version(
         version: raw_version,
     }: JobVersionPath,
 ) -> Result<Json<v1::jobs::JobVersionRecord>, ApiError> {
-    info!(job_id = %job_id, raw_version, "get_job_version invoked");
+    info!(job_id = %job_id, raw_version = raw_version.as_i64(), "get_job_version invoked");
     let versions = state
         .get_task_versions(&job_id)
         .await
@@ -284,7 +284,7 @@ where
 #[derive(Debug, Clone)]
 pub struct JobVersionPath {
     pub job_id: TaskId,
-    pub version: i64,
+    pub version: super::RelativeVersionNumber,
 }
 
 #[async_trait]
@@ -295,9 +295,10 @@ where
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path((job_id, version)) = Path::<(TaskId, i64)>::from_request_parts(parts, state)
-            .await
-            .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+        let Path((job_id, version)) =
+            Path::<(TaskId, super::RelativeVersionNumber)>::from_request_parts(parts, state)
+                .await
+                .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
         Ok(Self { job_id, version })
     }

@@ -1,4 +1,5 @@
 use metis_common::{VersionNumber, api::v1::ApiError};
+use serde::Deserialize;
 
 pub mod agents;
 pub mod auth;
@@ -14,6 +15,17 @@ pub mod repositories;
 pub mod users;
 pub mod whoami;
 
+/// A version number that can be positive (exact version) or negative (offset
+/// from the latest version).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct RelativeVersionNumber(i64);
+
+impl RelativeVersionNumber {
+    pub(crate) fn as_i64(self) -> i64 {
+        self.0
+    }
+}
+
 /// Resolve a version number that may be negative (offset from latest) into an
 /// absolute positive version number.
 ///
@@ -23,11 +35,13 @@ pub mod whoami;
 /// - Zero is rejected with 400 Bad Request.
 /// - Out-of-range negative offsets (resolving to < 1) are rejected with 400.
 pub(crate) fn resolve_version(
-    version: i64,
+    version: RelativeVersionNumber,
     max_version: VersionNumber,
     entity_label: &str,
     entity_id: &str,
 ) -> Result<VersionNumber, ApiError> {
+    let version = version.as_i64();
+
     if version == 0 {
         return Err(ApiError::bad_request(
             "version 0 is not valid; use a positive version number or a negative offset from the latest version",
