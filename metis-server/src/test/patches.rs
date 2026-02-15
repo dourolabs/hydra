@@ -18,7 +18,7 @@ use httpmock::{Method::GET, Method::POST, MockServer};
 use metis_common::{
     PatchId,
     api::v1::{
-        issues::{IssueVersionRecord, UpsertIssueRequest, UpsertIssueResponse},
+        issues::{IssueVersionRecord, UpsertIssueRequest},
         patches::{
             CreatePatchAssetResponse, ListPatchVersionsResponse, ListPatchesResponse,
             PatchVersionRecord, SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
@@ -268,7 +268,8 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
-    let server = spawn_test_server().await?;
+    let handles = test_state_handles();
+    let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
     let client = test_client();
 
     let base_patch = Patch::new(
@@ -291,26 +292,20 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    let merge_request_issue = Issue::new(
-        IssueType::MergeRequest,
-        "linked merge request".to_string(),
-        Username::from("creator"),
-        String::new(),
-        IssueStatus::Open,
-        None,
-        None,
-        Vec::new(),
-        vec![],
-        vec![created_patch.patch_id.clone()],
-    );
-
-    let created_issue: UpsertIssueResponse = client
-        .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest::new(merge_request_issue.into(), None))
-        .send()
-        .await?
-        .json()
+    // Verify the automation created a MergeRequest issue
+    let issue_ids = handles
+        .store
+        .get_issues_for_patch(&created_patch.patch_id)
         .await?;
+    let mut merge_request_issue_ids = Vec::new();
+    for issue_id in &issue_ids {
+        let issue = handles.store.get_issue(issue_id, false).await?;
+        if issue.item.issue_type == IssueType::MergeRequest {
+            assert_eq!(issue.item.status, IssueStatus::Open);
+            merge_request_issue_ids.push(issue_id.clone());
+        }
+    }
+    assert_eq!(merge_request_issue_ids.len(), 1);
 
     let mut merged_patch = base_patch.clone();
     merged_patch.status = PatchStatus::Merged;
@@ -329,7 +324,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
-            created_issue.issue_id
+            merge_request_issue_ids[0]
         ))
         .send()
         .await?
@@ -345,7 +340,8 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn closed_patch_fails_merge_request_issues() -> anyhow::Result<()> {
-    let server = spawn_test_server().await?;
+    let handles = test_state_handles();
+    let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
     let client = test_client();
 
     let base_patch = Patch::new(
@@ -368,26 +364,20 @@ async fn closed_patch_fails_merge_request_issues() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    let merge_request_issue = Issue::new(
-        IssueType::MergeRequest,
-        "linked merge request".to_string(),
-        Username::from("creator"),
-        String::new(),
-        IssueStatus::Open,
-        None,
-        None,
-        Vec::new(),
-        vec![],
-        vec![created_patch.patch_id.clone()],
-    );
-
-    let created_issue: UpsertIssueResponse = client
-        .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest::new(merge_request_issue.into(), None))
-        .send()
-        .await?
-        .json()
+    // Verify the automation created a MergeRequest issue
+    let issue_ids = handles
+        .store
+        .get_issues_for_patch(&created_patch.patch_id)
         .await?;
+    let mut merge_request_issue_ids = Vec::new();
+    for issue_id in &issue_ids {
+        let issue = handles.store.get_issue(issue_id, false).await?;
+        if issue.item.issue_type == IssueType::MergeRequest {
+            assert_eq!(issue.item.status, IssueStatus::Open);
+            merge_request_issue_ids.push(issue_id.clone());
+        }
+    }
+    assert_eq!(merge_request_issue_ids.len(), 1);
 
     let mut closed_patch = base_patch.clone();
     closed_patch.status = PatchStatus::Closed;
@@ -406,7 +396,7 @@ async fn closed_patch_fails_merge_request_issues() -> anyhow::Result<()> {
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
-            created_issue.issue_id
+            merge_request_issue_ids[0]
         ))
         .send()
         .await?
@@ -422,7 +412,8 @@ async fn closed_patch_fails_merge_request_issues() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn changes_requested_closes_merge_request_issues() -> anyhow::Result<()> {
-    let server = spawn_test_server().await?;
+    let handles = test_state_handles();
+    let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
     let client = test_client();
 
     let base_patch = Patch::new(
@@ -445,26 +436,20 @@ async fn changes_requested_closes_merge_request_issues() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    let merge_request_issue = Issue::new(
-        IssueType::MergeRequest,
-        "linked merge request".to_string(),
-        Username::from("creator"),
-        String::new(),
-        IssueStatus::Open,
-        None,
-        None,
-        Vec::new(),
-        vec![],
-        vec![created_patch.patch_id.clone()],
-    );
-
-    let created_issue: UpsertIssueResponse = client
-        .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest::new(merge_request_issue.into(), None))
-        .send()
-        .await?
-        .json()
+    // Verify the automation created a MergeRequest issue
+    let issue_ids = handles
+        .store
+        .get_issues_for_patch(&created_patch.patch_id)
         .await?;
+    let mut merge_request_issue_ids = Vec::new();
+    for issue_id in &issue_ids {
+        let issue = handles.store.get_issue(issue_id, false).await?;
+        if issue.item.issue_type == IssueType::MergeRequest {
+            assert_eq!(issue.item.status, IssueStatus::Open);
+            merge_request_issue_ids.push(issue_id.clone());
+        }
+    }
+    assert_eq!(merge_request_issue_ids.len(), 1);
 
     let mut changes_requested_patch = base_patch.clone();
     changes_requested_patch.status = PatchStatus::ChangesRequested;
@@ -483,7 +468,7 @@ async fn changes_requested_closes_merge_request_issues() -> anyhow::Result<()> {
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
-            created_issue.issue_id
+            merge_request_issue_ids[0]
         ))
         .send()
         .await?
@@ -612,26 +597,20 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
         .json()
         .await?;
 
-    let merge_request_issue = Issue::new(
-        IssueType::MergeRequest,
-        "linked merge request".to_string(),
-        Username::from("creator"),
-        String::new(),
-        IssueStatus::Open,
-        Some("agent-a".to_string()),
-        None,
-        Vec::new(),
-        vec![],
-        vec![created_patch.patch_id.clone()],
-    );
-
-    let created_issue: UpsertIssueResponse = client
-        .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest::new(merge_request_issue.into(), None))
-        .send()
-        .await?
-        .json()
+    // Verify the automation created a MergeRequest issue on PatchCreated
+    let issue_ids = handles
+        .store
+        .get_issues_for_patch(&created_patch.patch_id)
         .await?;
+    let mut initial_mr_ids = Vec::new();
+    for issue_id in &issue_ids {
+        let issue = handles.store.get_issue(issue_id, false).await?;
+        if issue.item.issue_type == IssueType::MergeRequest {
+            assert_eq!(issue.item.status, IssueStatus::Open);
+            initial_mr_ids.push(issue_id.clone());
+        }
+    }
+    assert_eq!(initial_mr_ids.len(), 1);
 
     let mut changes_requested_patch = base_patch.clone();
     changes_requested_patch.status = PatchStatus::ChangesRequested;
@@ -650,11 +629,12 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
 
     assert_eq!(changes_response.patch_id, created_patch.patch_id);
 
+    // Verify the auto-created MergeRequest issue was failed by the automation
     let fetched_issue: IssueVersionRecord = client
         .get(format!(
             "{}/v1/issues/{}",
             server.base_url(),
-            created_issue.issue_id
+            initial_mr_ids[0]
         ))
         .send()
         .await?
@@ -696,15 +676,14 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
         }
     }
 
-    // 3 MergeRequest issues: one auto-created on PatchCreated, one manually created
-    // ("linked merge request"), and one auto-created on reopen (ChangesRequested -> Open).
-    assert_eq!(merge_request_issues.len(), 3);
+    // 2 MergeRequest issues: one auto-created on PatchCreated (now Failed),
+    // and one auto-created on reopen (ChangesRequested -> Open, now Open).
+    assert_eq!(merge_request_issues.len(), 2);
     let open_issue = merge_request_issues
         .iter()
         .find(|issue| issue.item.status == IssueStatus::Open)
         .expect("expected an open merge-request issue");
     assert!(open_issue.item.description.contains("Review patch v2"));
-    assert_eq!(open_issue.item.assignee.as_deref(), Some("agent-a"));
 
     Ok(())
 }
@@ -735,25 +714,20 @@ async fn updating_open_patch_does_not_create_merge_request_issue() -> anyhow::Re
         .json()
         .await?;
 
-    let merge_request_issue = Issue::new(
-        IssueType::MergeRequest,
-        "previous merge request".to_string(),
-        Username::from("creator"),
-        String::new(),
-        IssueStatus::Closed,
-        Some("agent-a".to_string()),
-        None,
-        Vec::new(),
-        vec![],
-        vec![created_patch.patch_id.clone()],
-    );
-
-    client
-        .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest::new(merge_request_issue.into(), None))
-        .send()
-        .await?
-        .error_for_status()?;
+    // Verify the automation created a MergeRequest issue on PatchCreated
+    let issue_ids = handles
+        .store
+        .get_issues_for_patch(&created_patch.patch_id)
+        .await?;
+    let mut initial_mr_count = 0;
+    for issue_id in &issue_ids {
+        let issue = handles.store.get_issue(issue_id, false).await?;
+        if issue.item.issue_type == IssueType::MergeRequest {
+            assert_eq!(issue.item.status, IssueStatus::Open);
+            initial_mr_count += 1;
+        }
+    }
+    assert_eq!(initial_mr_count, 1);
 
     let mut updated_patch = base_patch.clone();
     updated_patch.title = "Updated patch".to_string();
@@ -781,21 +755,11 @@ async fn updating_open_patch_does_not_create_merge_request_issue() -> anyhow::Re
         }
     }
 
-    // There should be 2 MergeRequest issues: the one auto-created by the PatchCreated
-    // automation, and the manually-created "previous merge request". The patch update
-    // (Open -> Open title change) should NOT have created a third one.
-    assert_eq!(merge_request_issues.len(), 2);
-    let existing_issue = merge_request_issues
-        .iter()
-        .find(|issue| issue.item.status == IssueStatus::Closed)
-        .expect("expected a closed merge-request issue");
-    assert!(
-        existing_issue
-            .item
-            .description
-            .contains("previous merge request")
-    );
-    assert_eq!(existing_issue.item.assignee.as_deref(), Some("agent-a"));
+    // There should be only 1 MergeRequest issue: the one auto-created by the PatchCreated
+    // automation. The patch update (Open -> Open title change) should NOT have created
+    // another one.
+    assert_eq!(merge_request_issues.len(), 1);
+    assert_eq!(merge_request_issues[0].item.status, IssueStatus::Open);
 
     Ok(())
 }
