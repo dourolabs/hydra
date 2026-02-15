@@ -3,11 +3,14 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
+use crate::domain::actors::ActorRef;
 use crate::domain::issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType};
 use crate::domain::patches::{Patch, PatchStatus};
 use crate::domain::users::Username;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
+
+const AUTOMATION_NAME: &str = "patch_workflow";
 
 /// Configuration for a single review request entry.
 #[derive(Debug, Clone, Deserialize)]
@@ -18,7 +21,7 @@ pub struct ReviewRequestConfig {
 /// Configuration for the merge request issue.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MergeRequestConfig {
-    pub assignee: String,
+    pub assignee: Option<String>,
 }
 
 /// Per-repo workflow configuration override.
@@ -56,7 +59,12 @@ impl PatchWorkflowAutomation {
                 .try_into::<PatchWorkflowConfig>()
                 .map_err(|e| format!("invalid patch_workflow params: {e}"))?
         } else {
-            PatchWorkflowConfig::default()
+            // Default: create a MergeRequest issue with no assignee (backward-compatible)
+            PatchWorkflowConfig {
+                review_requests: Vec::new(),
+                merge_request: Some(MergeRequestConfig { assignee: None }),
+                repos: HashMap::new(),
+            }
         };
         Ok(Self { config })
     }
@@ -78,7 +86,7 @@ impl PatchWorkflowAutomation {
     }
 
     /// Resolve `$patch_creator` variable in an assignee string.
-    /// Falls back to the parent issue's resolve logic if patch.creator is None.
+    /// Returns None if the variable cannot be resolved (e.g. no patch creator).
     fn resolve_assignee(
         &self,
         assignee_template: &str,
@@ -92,12 +100,19 @@ impl PatchWorkflowAutomation {
             Some(assignee_template.to_string())
         }
     }
+
+    fn actor_ref(&self, ctx: &AutomationContext<'_>) -> ActorRef {
+        ActorRef::Automation {
+            automation_name: AUTOMATION_NAME.into(),
+            triggered_by: Some(Box::new(ctx.actor().clone())),
+        }
+    }
 }
 
 #[async_trait]
 impl Automation for PatchWorkflowAutomation {
     fn name(&self) -> &str {
-        "patch_workflow"
+        AUTOMATION_NAME
     }
 
     fn event_filter(&self) -> EventFilter {
@@ -166,7 +181,7 @@ impl PatchWorkflowAutomation {
         // Resolve the parent issue for this patch.
         let parent_issue = self.resolve_parent_issue(ctx, patch_id, new).await?;
 
-        self.create_workflow_issues(ctx, patch_id, new, parent_issue.as_ref(), None)
+        self.create_workflow_issues(ctx, patch_id, new, parent_issue.as_ref())
             .await
     }
 
@@ -192,85 +207,36 @@ impl PatchWorkflowAutomation {
 
         let store = ctx.store;
 
-        // Find existing merge request issues for this patch
+        // Check if there's already an open/in-progress merge request for this patch
         let issue_ids = store.get_issues_for_patch(patch_id).await.map_err(|e| {
             AutomationError::Other(anyhow::anyhow!(
                 "failed to get issues for patch {patch_id}: {e}"
             ))
         })?;
 
-        let mut merge_request_issues = Vec::new();
         for issue_id in &issue_ids {
             let issue = store.get_issue(issue_id, false).await.map_err(|e| {
                 AutomationError::Other(anyhow::anyhow!("failed to fetch issue {issue_id}: {e}"))
             })?;
-            let issue_timestamp = issue.timestamp;
-            let issue = issue.item;
-
-            if issue.issue_type != IssueType::MergeRequest {
-                continue;
+            if issue.item.issue_type == IssueType::MergeRequest
+                && matches!(
+                    issue.item.status,
+                    IssueStatus::Open | IssueStatus::InProgress
+                )
+            {
+                tracing::info!(
+                    patch_id = %patch_id,
+                    "merge-request issue already open for patch; skipping"
+                );
+                return Ok(());
             }
-
-            merge_request_issues.push((issue_timestamp, issue));
         }
 
-        // Skip if there's already an open/in-progress merge request
-        if merge_request_issues
-            .iter()
-            .any(|(_, issue)| matches!(issue.status, IssueStatus::Open | IssueStatus::InProgress))
-        {
-            tracing::info!(
-                patch_id = %patch_id,
-                "merge-request issue already open for patch; skipping"
-            );
-            return Ok(());
-        }
+        // Resolve parent issue from scratch
+        let parent_issue = self.resolve_parent_issue(ctx, patch_id, new).await?;
 
-        // Use the most recent merge request as a template for parent info,
-        // but create fresh workflow issues from config
-        merge_request_issues.sort_by_key(|(timestamp, _)| *timestamp);
-        let template_issue = merge_request_issues.pop().map(|(_, issue)| issue);
-
-        // Try to resolve parent issue from template or from scratch
-        let parent_issue = if let Some(ref template) = template_issue {
-            // Extract parent from template's dependencies
-            let parent_dep = template
-                .dependencies
-                .iter()
-                .find(|d| d.dependency_type == IssueDependencyType::ChildOf);
-            if let Some(dep) = parent_dep {
-                match store.get_issue(&dep.issue_id, false).await {
-                    Ok(parent) => Some(ParentIssueInfo {
-                        issue_id: dep.issue_id.clone(),
-                        issue: parent.item,
-                    }),
-                    Err(e) => {
-                        tracing::warn!(
-                            patch_id = %patch_id,
-                            issue_id = %dep.issue_id,
-                            error = %e,
-                            "failed to fetch parent issue from template"
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        } else {
-            // No template, resolve from scratch
-            self.resolve_parent_issue(ctx, patch_id, new).await?
-        };
-
-        let template_assignee = template_issue.and_then(|t| t.assignee.clone());
-        self.create_workflow_issues(
-            ctx,
-            patch_id,
-            new,
-            parent_issue.as_ref(),
-            template_assignee.as_deref(),
-        )
-        .await
+        self.create_workflow_issues(ctx, patch_id, new, parent_issue.as_ref())
+            .await
     }
 
     /// Create the workflow issues (ReviewRequests and optionally MergeRequest) for a patch.
@@ -280,7 +246,6 @@ impl PatchWorkflowAutomation {
         patch_id: &metis_common::PatchId,
         patch: &Patch,
         parent_issue: Option<&ParentIssueInfo>,
-        template_assignee: Option<&str>,
     ) -> Result<(), AutomationError> {
         let repo_name = patch.service_repo_name.to_string();
         let workflow = self.resolve_config(&repo_name);
@@ -299,56 +264,13 @@ impl PatchWorkflowAutomation {
         };
 
         let title = issue_title(patch);
-        let has_config = !workflow.review_requests.is_empty() || workflow.merge_request.is_some();
-
-        // If no config at all, create a default MergeRequest issue (backward-compatible)
-        if !has_config {
-            let description = format!("Review patch {}: {title}", patch_id.as_ref());
-            let assignee = template_assignee.map(String::from);
-            let issue = Issue::new(
-                IssueType::MergeRequest,
-                description,
-                creator,
-                String::new(),
-                IssueStatus::Open,
-                assignee,
-                job_settings,
-                Vec::new(),
-                parent_dependencies,
-                vec![patch_id.clone()],
-            );
-
-            let (issue_id, _version) = ctx
-                .app_state
-                .upsert_issue(
-                    None,
-                    metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
-                    None,
-                )
-                .await
-                .map_err(|e| {
-                    AutomationError::Other(anyhow::anyhow!(
-                        "failed to create merge-request issue for patch {patch_id}: {e}"
-                    ))
-                })?;
-
-            tracing::info!(
-                patch_id = %patch_id,
-                issue_id = %issue_id,
-                "created merge-request issue for patch (default config)"
-            );
-            return Ok(());
-        }
+        let actor = self.actor_ref(ctx);
 
         // Create ReviewRequest issues
         let mut review_request_issue_ids = Vec::new();
 
         for rr_config in workflow.review_requests {
             let assignee = self.resolve_assignee(&rr_config.assignee, patch.creator.as_ref());
-
-            // If assignee couldn't be resolved (e.g. $patch_creator with no creator),
-            // fall back to resolving from parent issue assignee
-            let assignee = assignee.or_else(|| parent_issue.and_then(|p| p.issue.assignee.clone()));
 
             let description = format!("Review request for patch {}: {title}", patch_id.as_ref());
             let issue = Issue::new(
@@ -369,7 +291,7 @@ impl PatchWorkflowAutomation {
                 .upsert_issue(
                     None,
                     metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
-                    None,
+                    actor.clone(),
                 )
                 .await
                 .map_err(|e| {
@@ -389,10 +311,10 @@ impl PatchWorkflowAutomation {
 
         // Create MergeRequest issue if configured
         if let Some(mr_config) = workflow.merge_request {
-            let assignee = self.resolve_assignee(&mr_config.assignee, patch.creator.as_ref());
-
-            // If assignee couldn't be resolved, fall back to parent issue assignee
-            let assignee = assignee.or_else(|| parent_issue.and_then(|p| p.issue.assignee.clone()));
+            let assignee = mr_config
+                .assignee
+                .as_ref()
+                .and_then(|tmpl| self.resolve_assignee(tmpl, patch.creator.as_ref()));
 
             let description = format!("Review patch {}: {title}", patch_id.as_ref());
 
@@ -423,7 +345,7 @@ impl PatchWorkflowAutomation {
                 .upsert_issue(
                     None,
                     metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
-                    None,
+                    actor,
                 )
                 .await
                 .map_err(|e| {
@@ -899,13 +821,16 @@ mod tests {
         assert!(config.review_requests.is_empty());
         assert_eq!(
             config.merge_request.as_ref().unwrap().assignee,
-            "$patch_creator"
+            Some("$patch_creator".to_string())
         );
         assert_eq!(config.repos.len(), 1);
         let repo_config = config.repos.get("dourolabs/metis").unwrap();
         assert_eq!(repo_config.review_requests.len(), 1);
         assert_eq!(repo_config.review_requests[0].assignee, "jayantk");
-        assert_eq!(repo_config.merge_request.as_ref().unwrap().assignee, "swe");
+        assert_eq!(
+            repo_config.merge_request.as_ref().unwrap().assignee,
+            Some("swe".to_string())
+        );
     }
 
     #[test]
@@ -918,6 +843,22 @@ mod tests {
     }
 
     #[test]
+    fn default_config_has_merge_request() {
+        let automation = PatchWorkflowAutomation::new(None).unwrap();
+        assert!(automation.config.merge_request.is_some());
+        assert!(
+            automation
+                .config
+                .merge_request
+                .as_ref()
+                .unwrap()
+                .assignee
+                .is_none()
+        );
+        assert!(automation.config.review_requests.is_empty());
+    }
+
+    #[test]
     fn per_repo_config_selected_when_present() {
         let mut repos = HashMap::new();
         repos.insert(
@@ -927,7 +868,7 @@ mod tests {
                     assignee: "repo-reviewer".to_string(),
                 }],
                 merge_request: Some(MergeRequestConfig {
-                    assignee: "repo-merger".to_string(),
+                    assignee: Some("repo-merger".to_string()),
                 }),
             },
         );
@@ -938,7 +879,7 @@ mod tests {
                     assignee: "global-reviewer".to_string(),
                 }],
                 merge_request: Some(MergeRequestConfig {
-                    assignee: "global-merger".to_string(),
+                    assignee: Some("global-merger".to_string()),
                 }),
                 repos,
             },
@@ -947,7 +888,10 @@ mod tests {
         let resolved = automation.resolve_config("test/repo");
         assert_eq!(resolved.review_requests.len(), 1);
         assert_eq!(resolved.review_requests[0].assignee, "repo-reviewer");
-        assert_eq!(resolved.merge_request.unwrap().assignee, "repo-merger");
+        assert_eq!(
+            resolved.merge_request.unwrap().assignee,
+            Some("repo-merger".to_string())
+        );
     }
 
     #[test]
@@ -958,7 +902,7 @@ mod tests {
                     assignee: "global-reviewer".to_string(),
                 }],
                 merge_request: Some(MergeRequestConfig {
-                    assignee: "global-merger".to_string(),
+                    assignee: Some("global-merger".to_string()),
                 }),
                 repos: HashMap::new(),
             },
@@ -967,7 +911,10 @@ mod tests {
         let resolved = automation.resolve_config("unknown/repo");
         assert_eq!(resolved.review_requests.len(), 1);
         assert_eq!(resolved.review_requests[0].assignee, "global-reviewer");
-        assert_eq!(resolved.merge_request.unwrap().assignee, "global-merger");
+        assert_eq!(
+            resolved.merge_request.unwrap().assignee,
+            Some("global-merger".to_string())
+        );
     }
 
     #[test]
