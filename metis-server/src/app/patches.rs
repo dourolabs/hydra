@@ -1,5 +1,8 @@
 use crate::{
-    domain::{actors::Actor, patches::Patch},
+    domain::{
+        actors::ActorRef,
+        patches::Patch,
+    },
     store::{ReadOnlyStore, Status, StoreError},
 };
 use metis_common::{
@@ -102,7 +105,7 @@ impl AppState {
     pub async fn delete_patch(
         &self,
         patch_id: &PatchId,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<(), StoreError> {
         self.store.delete_patch_with_actor(patch_id, actor).await?;
         Ok(())
@@ -110,13 +113,12 @@ impl AppState {
 
     pub async fn upsert_patch(
         &self,
-        actor: Option<&Actor>,
+        actor: ActorRef,
         patch_id: Option<PatchId>,
         request: api::patches::UpsertPatchRequest,
     ) -> Result<(PatchId, VersionNumber), UpsertPatchError> {
         let api::patches::UpsertPatchRequest { patch, .. } = request;
         let mut patch: Patch = patch.into();
-        let actor_name = actor.map(|a| a.name());
 
         let store = self.store.as_ref();
         let (patch_id, version) = match patch_id {
@@ -140,7 +142,7 @@ impl AppState {
 
                 let version = self
                     .store
-                    .update_patch_with_actor(&id, patch, actor_name)
+                    .update_patch_with_actor(&id, patch, actor.clone())
                     .await
                     .map_err(|source| match source {
                         StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
@@ -160,7 +162,7 @@ impl AppState {
 
                 let (id, version) = self
                     .store
-                    .add_patch_with_actor(patch, actor_name)
+                    .add_patch_with_actor(patch, actor)
                     .await
                     .map_err(|source| match source {
                         StoreError::PatchNotFound(id) => UpsertPatchError::PatchNotFound {
@@ -187,7 +189,7 @@ mod tests {
             github_pull_request_response, poll_until, sample_task, start_test_automation_runner,
         },
         domain::{
-            actors::Actor,
+            actors::{Actor, ActorRef},
             patches::{GithubPr, Patch, PatchStatus},
             users::{User, Username},
         },
@@ -276,7 +278,7 @@ mod tests {
 
         handles
             .state
-            .upsert_patch(Some(&actor), Some(patch_id.clone()), request)
+            .upsert_patch(ActorRef::from(&actor), Some(patch_id.clone()), request)
             .await?;
 
         // Poll until the automation updates the github metadata.
@@ -384,7 +386,7 @@ mod tests {
 
         let (patch_id, _) = handles
             .state
-            .upsert_patch(Some(&actor), None, request)
+            .upsert_patch(ActorRef::from(&actor), None, request)
             .await?;
 
         // Poll until the automation creates the github metadata.
@@ -431,7 +433,7 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let (patch1_id, _) = handles.state.upsert_patch(None, None, request1).await?;
+        let (patch1_id, _) = handles.state.upsert_patch(ActorRef::test(), None, request1).await?;
 
         let mut patch2 = Patch::new(
             "Second patch".to_string(),
@@ -448,7 +450,7 @@ mod tests {
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
         let err = handles
             .state
-            .upsert_patch(None, None, request2)
+            .upsert_patch(ActorRef::test(), None, request2)
             .await
             .unwrap_err();
 
@@ -489,7 +491,7 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let (patch1_id, _) = handles.state.upsert_patch(None, None, request1).await?;
+        let (patch1_id, _) = handles.state.upsert_patch(ActorRef::test(), None, request1).await?;
 
         // Close the first patch
         let mut closed_patch = handles.store.get_patch(&patch1_id, false).await?.item;
@@ -510,7 +512,7 @@ mod tests {
         );
         patch2.branch_name = Some("feature/foo".to_string());
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
-        handles.state.upsert_patch(None, None, request2).await?;
+        handles.state.upsert_patch(ActorRef::test(), None, request2).await?;
 
         Ok(())
     }
@@ -533,7 +535,7 @@ mod tests {
         );
         patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        let (patch1_id, _) = handles.state.upsert_patch(None, None, request1).await?;
+        let (patch1_id, _) = handles.state.upsert_patch(ActorRef::test(), None, request1).await?;
 
         // Updating the same patch should succeed (the uniqueness check is only
         // on creates, not updates).
@@ -552,7 +554,7 @@ mod tests {
         let request2 = api::patches::UpsertPatchRequest::new(update_patch.into());
         handles
             .state
-            .upsert_patch(None, Some(patch1_id), request2)
+            .upsert_patch(ActorRef::test(), Some(patch1_id), request2)
             .await?;
 
         Ok(())
@@ -576,7 +578,7 @@ mod tests {
             None,
         );
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
-        handles.state.upsert_patch(None, None, request1).await?;
+        handles.state.upsert_patch(ActorRef::test(), None, request1).await?;
 
         let patch2 = Patch::new(
             "Second patch".to_string(),
@@ -590,7 +592,7 @@ mod tests {
             None,
         );
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
-        handles.state.upsert_patch(None, None, request2).await?;
+        handles.state.upsert_patch(ActorRef::test(), None, request2).await?;
 
         Ok(())
     }

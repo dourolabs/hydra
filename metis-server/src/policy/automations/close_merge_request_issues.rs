@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
+use crate::domain::actors::ActorRef;
 use crate::domain::issues::{IssueStatus, IssueType};
 use crate::domain::patches::PatchStatus;
 use crate::policy::context::AutomationContext;
@@ -97,7 +98,10 @@ impl Automation for CloseMergeRequestIssuesAutomation {
                 .upsert_issue(
                     Some(issue_id.clone()),
                     metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
-                    Some(ctx.actor().display_name()),
+                    ActorRef::Automation {
+                        automation_name: "close_merge_request_issues".into(),
+                        triggered_by: Some(Box::new(ctx.actor().clone())),
+                    },
                 )
                 .await
                 .map_err(|e| {

@@ -425,7 +425,7 @@ impl Default for EventBus {
 
 /// A wrapper around a [`Store`] that automatically emits [`ServerEvent`]s on
 /// every successful mutation. All mutations require an explicit `actor`
-/// parameter (`Option<String>`) so that event payloads always carry actor
+/// parameter ([`ActorRef`]) so that event payloads always carry actor
 /// provenance. Read-only operations are forwarded unchanged via the
 /// [`ReadOnlyStore`] trait implementation.
 pub struct StoreWithEvents {
@@ -445,21 +445,20 @@ impl StoreWithEvents {
 
     // ---- Actor-aware mutation methods ----
     //
-    // These inherent methods accept an explicit `actor` parameter that is
-    // included in the emitted `MutationPayload`. The `Store` trait impl
-    // delegates to these with `None`.
+    // These inherent methods accept an explicit `actor: ActorRef` parameter
+    // that is included in the emitted `MutationPayload`.
 
     pub async fn add_issue_with_actor(
         &self,
         issue: Issue,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<(IssueId, VersionNumber), StoreError> {
         let new_issue = issue.clone();
         let (issue_id, version) = self.inner.add_issue(issue).await?;
         let payload = Arc::new(MutationPayload::Issue {
             old: None,
             new: new_issue,
-            actor: ActorRef::from(actor),
+            actor,
         });
         self.event_bus
             .emit_issue_created(issue_id.clone(), version, payload);
@@ -470,7 +469,7 @@ impl StoreWithEvents {
         &self,
         id: &IssueId,
         issue: Issue,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let old_issue = self.inner.get_issue(id, false).await.ok().map(|v| v.item);
         let new_issue = issue.clone();
@@ -478,7 +477,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Issue {
             old: old_issue,
             new: new_issue,
-            actor: ActorRef::from(actor),
+            actor,
         });
         self.event_bus
             .emit_issue_updated(id.clone(), version, payload);
@@ -488,7 +487,7 @@ impl StoreWithEvents {
     pub async fn delete_issue_with_actor(
         &self,
         id: &IssueId,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let old_issue = self.inner.get_issue(id, false).await.ok().map(|v| v.item);
         let version = self.inner.delete_issue(id).await?;
@@ -502,7 +501,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Issue {
             old: old_issue,
             new: new_issue.expect("entity must exist after successful delete"),
-            actor: ActorRef::from(actor),
+            actor,
         });
         self.event_bus
             .emit_issue_deleted(id.clone(), version, payload);
@@ -512,14 +511,14 @@ impl StoreWithEvents {
     pub async fn add_patch_with_actor(
         &self,
         patch: Patch,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
         let new_patch = patch.clone();
         let (patch_id, version) = self.inner.add_patch(patch).await?;
         let payload = Arc::new(MutationPayload::Patch {
             old: None,
             new: new_patch,
-            actor: ActorRef::from(actor),
+            actor,
         });
         self.event_bus
             .emit_patch_created(patch_id.clone(), version, payload);
@@ -530,7 +529,7 @@ impl StoreWithEvents {
         &self,
         id: &PatchId,
         patch: Patch,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let old_patch = self.inner.get_patch(id, false).await.ok().map(|v| v.item);
         let new_patch = patch.clone();
@@ -538,7 +537,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Patch {
             old: old_patch,
             new: new_patch,
-            actor: ActorRef::from(actor),
+            actor,
         });
         self.event_bus
             .emit_patch_updated(id.clone(), version, payload);
@@ -548,7 +547,7 @@ impl StoreWithEvents {
     pub async fn delete_patch_with_actor(
         &self,
         id: &PatchId,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let old_patch = self.inner.get_patch(id, false).await.ok().map(|v| v.item);
         let version = self.inner.delete_patch(id).await?;
@@ -562,7 +561,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Patch {
             old: old_patch,
             new: new_patch.expect("entity must exist after successful delete"),
-            actor: ActorRef::from(actor),
+            actor,
         });
         self.event_bus
             .emit_patch_deleted(id.clone(), version, payload);
@@ -572,14 +571,14 @@ impl StoreWithEvents {
     pub async fn add_document_with_actor(
         &self,
         document: Document,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let new_document = document.clone();
         let (document_id, version) = self.inner.add_document(document).await?;
         let payload = Arc::new(MutationPayload::Document {
             old: None,
             new: new_document,
-            actor: ActorRef::from(actor),
+            actor,
         });
         self.event_bus
             .emit_document_created(document_id.clone(), version, payload);
@@ -590,7 +589,7 @@ impl StoreWithEvents {
         &self,
         id: &DocumentId,
         document: Document,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let old_document = self
             .inner
@@ -603,7 +602,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Document {
             old: old_document,
             new: new_document,
-            actor: ActorRef::from(actor),
+            actor,
         });
         self.event_bus
             .emit_document_updated(id.clone(), version, payload);
@@ -613,7 +612,7 @@ impl StoreWithEvents {
     pub async fn delete_document_with_actor(
         &self,
         id: &DocumentId,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let old_document = self
             .inner
@@ -632,7 +631,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Document {
             old: old_document,
             new: new_document.expect("entity must exist after successful delete"),
-            actor: ActorRef::from(actor),
+            actor,
         });
         self.event_bus
             .emit_document_deleted(id.clone(), version, payload);
@@ -643,14 +642,14 @@ impl StoreWithEvents {
         &self,
         task: Task,
         creation_time: DateTime<Utc>,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let new_task = task.clone();
         let (task_id, version) = self.inner.add_task(task, creation_time).await?;
         let payload = Arc::new(MutationPayload::Job {
             old: None,
             new: new_task,
-            actor: ActorRef::from(actor),
+            actor,
         });
         self.event_bus
             .emit_job_created(task_id.clone(), version, payload);
@@ -661,7 +660,7 @@ impl StoreWithEvents {
         &self,
         metis_id: &TaskId,
         task: Task,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<Versioned<Task>, StoreError> {
         let old_task = self
             .inner
@@ -674,7 +673,7 @@ impl StoreWithEvents {
         let payload = Arc::new(MutationPayload::Job {
             old: old_task,
             new: new_task,
-            actor: ActorRef::from(actor),
+            actor,
         });
         self.event_bus
             .emit_job_updated(metis_id.clone(), result.version, payload);
@@ -684,7 +683,7 @@ impl StoreWithEvents {
     pub async fn delete_task_with_actor(
         &self,
         id: &TaskId,
-        _actor: Option<String>,
+        _actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         self.inner.delete_task(id).await
     }
@@ -695,7 +694,7 @@ impl StoreWithEvents {
         &self,
         name: RepoName,
         config: Repository,
-        _actor: Option<String>,
+        _actor: ActorRef,
     ) -> Result<(), StoreError> {
         self.inner.add_repository(name, config).await
     }
@@ -704,7 +703,7 @@ impl StoreWithEvents {
         &self,
         name: RepoName,
         config: Repository,
-        _actor: Option<String>,
+        _actor: ActorRef,
     ) -> Result<(), StoreError> {
         self.inner.update_repository(name, config).await
     }
@@ -712,7 +711,7 @@ impl StoreWithEvents {
     pub async fn delete_repository(
         &self,
         name: &RepoName,
-        _actor: Option<String>,
+        _actor: ActorRef,
     ) -> Result<(), StoreError> {
         self.inner.delete_repository(name).await
     }
@@ -722,7 +721,7 @@ impl StoreWithEvents {
     pub async fn add_actor(
         &self,
         actor: Actor,
-        _acting_as: Option<String>,
+        _acting_as: ActorRef,
     ) -> Result<(), StoreError> {
         self.inner.add_actor(actor).await
     }
@@ -730,21 +729,21 @@ impl StoreWithEvents {
     pub async fn update_actor(
         &self,
         actor: Actor,
-        _acting_as: Option<String>,
+        _acting_as: ActorRef,
     ) -> Result<(), StoreError> {
         self.inner.update_actor(actor).await
     }
 
     // ---- User mutations (inherent, with actor) ----
 
-    pub async fn add_user(&self, user: User, _actor: Option<String>) -> Result<(), StoreError> {
+    pub async fn add_user(&self, user: User, _actor: ActorRef) -> Result<(), StoreError> {
         self.inner.add_user(user).await
     }
 
     pub async fn update_user(
         &self,
         user: User,
-        _actor: Option<String>,
+        _actor: ActorRef,
     ) -> Result<Versioned<User>, StoreError> {
         self.inner.update_user(user).await
     }
@@ -752,7 +751,7 @@ impl StoreWithEvents {
     pub async fn delete_user(
         &self,
         username: &Username,
-        _actor: Option<String>,
+        _actor: ActorRef,
     ) -> Result<(), StoreError> {
         self.inner.delete_user(username).await
     }
@@ -1049,7 +1048,7 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue_with_actor(issue, None).await.unwrap();
+        let (issue_id, _) = store.add_issue_with_actor(issue, ActorRef::test()).await.unwrap();
 
         let event = rx.recv().await.expect("should receive IssueCreated");
         match &event {
@@ -1089,7 +1088,7 @@ mod tests {
         );
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue.clone(), None)
+            .add_issue_with_actor(issue.clone(), ActorRef::test())
             .await
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
@@ -1097,7 +1096,7 @@ mod tests {
         let mut updated = issue;
         updated.status = IssueStatus::InProgress;
         store
-            .update_issue_with_actor(&issue_id, updated, None)
+            .update_issue_with_actor(&issue_id, updated, ActorRef::test())
             .await
             .unwrap();
 
@@ -1138,11 +1137,11 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue_with_actor(issue, None).await.unwrap();
+        let (issue_id, _) = store.add_issue_with_actor(issue, ActorRef::test()).await.unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         store
-            .delete_issue_with_actor(&issue_id, None)
+            .delete_issue_with_actor(&issue_id, ActorRef::test())
             .await
             .unwrap();
 
@@ -1184,7 +1183,7 @@ mod tests {
         );
 
         store
-            .add_issue_with_actor(issue.clone(), None)
+            .add_issue_with_actor(issue.clone(), ActorRef::test())
             .await
             .unwrap();
 
@@ -1226,7 +1225,7 @@ mod tests {
         );
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue.clone(), None)
+            .add_issue_with_actor(issue.clone(), ActorRef::test())
             .await
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
@@ -1235,7 +1234,7 @@ mod tests {
         updated.status = IssueStatus::InProgress;
         updated.description = "after update".to_string();
         store
-            .update_issue_with_actor(&issue_id, updated, None)
+            .update_issue_with_actor(&issue_id, updated, ActorRef::test())
             .await
             .unwrap();
 
@@ -1278,11 +1277,11 @@ mod tests {
             Vec::new(),
         );
 
-        let (issue_id, _) = store.add_issue_with_actor(issue, None).await.unwrap();
+        let (issue_id, _) = store.add_issue_with_actor(issue, ActorRef::test()).await.unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         store
-            .delete_issue_with_actor(&issue_id, None)
+            .delete_issue_with_actor(&issue_id, ActorRef::test())
             .await
             .unwrap();
 
@@ -1328,7 +1327,7 @@ mod tests {
         };
 
         let (task_id, _) = store
-            .add_task_with_actor(task, chrono::Utc::now(), None)
+            .add_task_with_actor(task, chrono::Utc::now(), ActorRef::test())
             .await
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume JobCreated
@@ -1351,7 +1350,7 @@ mod tests {
         };
 
         store
-            .update_task_with_actor(&task_id, updated_task, None)
+            .update_task_with_actor(&task_id, updated_task, ActorRef::test())
             .await
             .unwrap();
 
@@ -1396,7 +1395,12 @@ mod tests {
         );
 
         store
-            .add_issue_with_actor(issue, Some("u-testuser".to_string()))
+            .add_issue_with_actor(
+                issue,
+                ActorRef::Authenticated {
+                    actor_id: ActorId::Username(Username::from("testuser")),
+                },
+            )
             .await
             .unwrap();
 
@@ -1416,7 +1420,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn actor_context_is_system_when_not_set() {
+    async fn actor_context_preserves_system_variant() {
         use crate::domain::issues::{Issue, IssueStatus, IssueType};
         use crate::domain::users::Username;
 
@@ -1427,7 +1431,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
-            "no actor test".to_string(),
+            "system actor test".to_string(),
             Username::from("creator"),
             String::new(),
             IssueStatus::Open,
@@ -1438,7 +1442,16 @@ mod tests {
             Vec::new(),
         );
 
-        store.add_issue_with_actor(issue, None).await.unwrap();
+        store
+            .add_issue_with_actor(
+                issue,
+                ActorRef::System {
+                    worker_name: "my_worker".into(),
+                    on_behalf_of: None,
+                },
+            )
+            .await
+            .unwrap();
 
         let event = rx.recv().await.expect("should receive IssueCreated");
         match &event {
@@ -1446,10 +1459,10 @@ mod tests {
                 assert_eq!(
                     *payload.actor(),
                     ActorRef::System {
-                        worker_name: "unknown".into(),
+                        worker_name: "my_worker".into(),
                         on_behalf_of: None,
                     },
-                    "actor should be System(unknown) when no context is set"
+                    "actor should be preserved as System variant"
                 );
             }
             other => panic!("expected IssueCreated, got {other:?}"),

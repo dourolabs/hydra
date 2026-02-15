@@ -1,4 +1,4 @@
-use crate::store::{ReadOnlyStore, StoreError};
+use crate::{domain::actors::ActorRef, store::{ReadOnlyStore, StoreError}};
 use metis_common::{RepoName, api::v1::repositories::SearchRepositoriesQuery};
 
 use super::app_state::AppState;
@@ -24,7 +24,7 @@ impl AppState {
     pub async fn delete_repository(
         &self,
         name: &RepoName,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<RepositoryRecord, RepositoryError> {
         // Get the repository before deleting to return it
         // Use include_deleted: true since we need to access the repository to mark it as deleted
@@ -56,7 +56,7 @@ impl AppState {
         &self,
         name: RepoName,
         config: Repository,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<RepositoryRecord, RepositoryError> {
         self.store
             .add_repository(name.clone(), config.clone(), actor)
@@ -73,7 +73,7 @@ impl AppState {
         &self,
         name: RepoName,
         config: Repository,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<RepositoryRecord, RepositoryError> {
         self.store
             .update_repository(name.clone(), config.clone(), actor)

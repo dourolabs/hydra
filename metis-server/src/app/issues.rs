@@ -1,4 +1,5 @@
 use crate::{
+    domain::actors::ActorRef,
     domain::issues::{Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, TodoItem},
     store::{ReadOnlyStore, Status, StoreError},
 };
@@ -134,7 +135,7 @@ impl AppState {
         &self,
         issue_id: Option<IssueId>,
         request: api::issues::UpsertIssueRequest,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<(IssueId, VersionNumber), UpsertIssueError> {
         let api::issues::UpsertIssueRequest { issue, job_id, .. } = request;
         let issue: Issue = issue.into();
@@ -241,7 +242,7 @@ impl AppState {
     pub async fn delete_issue(
         &self,
         issue_id: &IssueId,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<(), StoreError> {
         self.store.delete_issue_with_actor(issue_id, actor).await?;
         Ok(())
@@ -262,7 +263,7 @@ impl AppState {
         &self,
         issue_id: IssueId,
         item: TodoItem,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
         let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
@@ -289,7 +290,7 @@ impl AppState {
         &self,
         issue_id: IssueId,
         todo_list: Vec<TodoItem>,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
         let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
@@ -316,7 +317,7 @@ impl AppState {
         issue_id: IssueId,
         item_number: usize,
         is_done: bool,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
         let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
@@ -465,6 +466,7 @@ mod tests {
             ServerEvent,
             test_helpers::{issue_with_status, start_test_automation_runner, task_for_issue},
         },
+        domain::actors::ActorRef,
         domain::issues::{IssueDependency, IssueDependencyType, IssueStatus, TodoItem},
         domain::users::Username,
         job_engine::{JobEngine, JobStatus},
@@ -487,7 +489,7 @@ mod tests {
         let (issue_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_issue_with_actor(issue_with_status("open", IssueStatus::Open, vec![]), None)
+                .add_issue_with_actor(issue_with_status("open", IssueStatus::Open, vec![]), ActorRef::test())
                 .await
                 .unwrap()
         };
@@ -504,7 +506,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Open, vec![]),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();
@@ -518,7 +520,7 @@ mod tests {
                             blocker_id.clone(),
                         )],
                     ),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();
@@ -534,7 +536,7 @@ mod tests {
                 .update_issue_with_actor(
                     &blocker_id,
                     issue_with_status("blocker", IssueStatus::Closed, vec![]),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();
@@ -552,7 +554,7 @@ mod tests {
             let (parent_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("parent", IssueStatus::InProgress, vec![]),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();
@@ -563,7 +565,7 @@ mod tests {
             let (child_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("child", IssueStatus::Open, child_dependencies.clone()),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();
@@ -579,7 +581,7 @@ mod tests {
                 .update_issue_with_actor(
                     &child_id,
                     issue_with_status("child", IssueStatus::Closed, child_dependencies),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();
@@ -597,7 +599,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("dropped", IssueStatus::Dropped, vec![]),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap()
@@ -615,7 +617,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Dropped, vec![]),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();
@@ -629,7 +631,7 @@ mod tests {
                             blocker_id,
                         )],
                     ),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap()
@@ -647,7 +649,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("closed", IssueStatus::Closed, vec![]),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap()
@@ -667,7 +669,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -680,7 +682,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.clone().into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -696,7 +698,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(grandchild_issue.clone().into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -704,15 +706,15 @@ mod tests {
         let (parent_task_id, child_task_id, grandchild_task_id) = {
             let store = state.store.as_ref();
             let (parent_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&parent_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&parent_id), Utc::now(), ActorRef::test())
                 .await
                 .unwrap();
             let (child_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), ActorRef::test())
                 .await
                 .unwrap();
             let (grandchild_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&grandchild_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&grandchild_id), Utc::now(), ActorRef::test())
                 .await
                 .unwrap();
             (parent_task_id, child_task_id, grandchild_task_id)
@@ -734,7 +736,7 @@ mod tests {
             .upsert_issue(
                 Some(parent_id.clone()),
                 api::issues::UpsertIssueRequest::new(dropped_parent.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -779,7 +781,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(blocker_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -794,7 +796,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(blocked_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -807,7 +809,7 @@ mod tests {
                         .into(),
                     None,
                 ),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap_err();
@@ -830,7 +832,7 @@ mod tests {
                     issue_with_status("blocker", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -842,7 +844,7 @@ mod tests {
                     issue_with_status("blocked", IssueStatus::Closed, blocked_dependencies).into(),
                     None,
                 ),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -858,7 +860,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -871,7 +873,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -883,7 +885,7 @@ mod tests {
                     issue_with_status("parent", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap_err();
@@ -907,7 +909,7 @@ mod tests {
                         .into(),
                     None,
                 ),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -919,7 +921,7 @@ mod tests {
                     issue_with_status("parent", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -935,7 +937,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -948,7 +950,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -961,7 +963,7 @@ mod tests {
                     issue_with_status("parent", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -980,7 +982,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(issue.clone().into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -992,7 +994,7 @@ mod tests {
             .upsert_issue(
                 Some(issue_id.clone()),
                 api::issues::UpsertIssueRequest::new(closed_issue.clone().into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap_err();
@@ -1009,7 +1011,7 @@ mod tests {
         }
 
         state
-            .set_todo_item_status(issue_id.clone(), 1, true, None)
+            .set_todo_item_status(issue_id.clone(), 1, true, ActorRef::test())
             .await
             .unwrap();
 
@@ -1022,7 +1024,7 @@ mod tests {
             .upsert_issue(
                 Some(issue_id.clone()),
                 api::issues::UpsertIssueRequest::new(closed_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1039,7 +1041,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1052,7 +1054,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap_err();
@@ -1079,7 +1081,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1092,7 +1094,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1116,7 +1118,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap_err();
@@ -1140,7 +1142,7 @@ mod tests {
         let issue = issue_with_status("test issue", IssueStatus::Open, Vec::new());
         let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
         let (issue_id, _) = state
-            .upsert_issue(None, request, None)
+            .upsert_issue(None, request, ActorRef::test())
             .await
             .expect("create should succeed");
 
@@ -1154,7 +1156,7 @@ mod tests {
         let updated_issue = issue_with_status("updated issue", IssueStatus::InProgress, Vec::new());
         let update_request = api::issues::UpsertIssueRequest::new(updated_issue.into(), None);
         state
-            .upsert_issue(Some(issue_id.clone()), update_request, None)
+            .upsert_issue(Some(issue_id.clone()), update_request, ActorRef::test())
             .await
             .expect("update should succeed");
 
@@ -1172,14 +1174,14 @@ mod tests {
         let issue = issue_with_status("doomed issue", IssueStatus::Open, Vec::new());
         let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
         let (issue_id, _) = state
-            .upsert_issue(None, request, None)
+            .upsert_issue(None, request, ActorRef::test())
             .await
             .expect("create should succeed");
 
         let mut rx = state.subscribe();
 
         state
-            .delete_issue(&issue_id, None)
+            .delete_issue(&issue_id, ActorRef::test())
             .await
             .expect("delete should succeed");
 
@@ -1199,7 +1201,7 @@ mod tests {
             let issue = issue_with_status(&format!("issue {i}"), IssueStatus::Open, Vec::new());
             let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
             state
-                .upsert_issue(None, request, None)
+                .upsert_issue(None, request, ActorRef::test())
                 .await
                 .expect("create should succeed");
             let event = rx.recv().await.expect("should receive event");
@@ -1223,7 +1225,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("rejected", IssueStatus::Rejected, vec![]),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap()
@@ -1241,7 +1243,7 @@ mod tests {
             store
                 .add_issue_with_actor(
                     issue_with_status("failed", IssueStatus::Failed, vec![]),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap()
@@ -1256,11 +1258,11 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child = issue_with_status("child", IssueStatus::Rejected, vec![child_dep]);
-        store.add_issue_with_actor(child, None).await.unwrap();
+        store.add_issue_with_actor(child, ActorRef::test()).await.unwrap();
 
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
     }
@@ -1271,11 +1273,11 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child = issue_with_status("child", IssueStatus::Failed, vec![child_dep]);
-        store.add_issue_with_actor(child, None).await.unwrap();
+        store.add_issue_with_actor(child, ActorRef::test()).await.unwrap();
 
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
     }
@@ -1286,13 +1288,13 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
             .add_issue_with_actor(
                 issue_with_status("closed child", IssueStatus::Closed, vec![child_dep.clone()]),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1303,7 +1305,7 @@ mod tests {
                     IssueStatus::Dropped,
                     vec![child_dep.clone()],
                 ),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1314,14 +1316,14 @@ mod tests {
                     IssueStatus::Rejected,
                     vec![child_dep.clone()],
                 ),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
         store
             .add_issue_with_actor(
                 issue_with_status("failed child", IssueStatus::Failed, vec![child_dep]),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1335,7 +1337,7 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
 
@@ -1343,7 +1345,7 @@ mod tests {
         let (failed_child_id, _) = store
             .add_issue_with_actor(
                 issue_with_status("failed child", IssueStatus::Failed, vec![child_dep.clone()]),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1357,7 +1359,7 @@ mod tests {
                     IssueStatus::Open,
                     vec![child_dep, blocked_dep],
                 ),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1373,7 +1375,7 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
 
@@ -1381,7 +1383,7 @@ mod tests {
         store
             .add_issue_with_actor(
                 issue_with_status("closed child", IssueStatus::Closed, vec![child_dep.clone()]),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1390,7 +1392,7 @@ mod tests {
         store
             .add_issue_with_actor(
                 issue_with_status("open child", IssueStatus::Open, vec![child_dep]),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1405,7 +1407,7 @@ mod tests {
 
         let store = state.store.as_ref();
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
 
         // No children — trivially, no child is Ready
         assert!(state.is_issue_ready(&parent_id).await.unwrap());
@@ -1418,17 +1420,17 @@ mod tests {
         let store = state.store.as_ref();
         // Grandparent (InProgress) -> Parent (InProgress) -> Child (Failed)
         let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
-        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, None).await.unwrap();
+        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, ActorRef::test()).await.unwrap();
 
         let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
             .add_issue_with_actor(
                 issue_with_status("failed child", IssueStatus::Failed, vec![child_dep]),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1446,17 +1448,17 @@ mod tests {
         let store = state.store.as_ref();
         // Grandparent (InProgress) -> Parent (InProgress) -> Child (Open, unblocked)
         let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
-        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, None).await.unwrap();
+        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, ActorRef::test()).await.unwrap();
 
         let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
             .add_issue_with_actor(
                 issue_with_status("open child", IssueStatus::Open, vec![child_dep]),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1475,15 +1477,15 @@ mod tests {
         let store = state.store.as_ref();
         // Grandparent (InProgress) -> Parent (InProgress) -> Child (Open, blocked)
         let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
-        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, None).await.unwrap();
+        let (grandparent_id, _) = store.add_issue_with_actor(grandparent, ActorRef::test()).await.unwrap();
 
         let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
         let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
-        let (parent_id, _) = store.add_issue_with_actor(parent, None).await.unwrap();
+        let (parent_id, _) = store.add_issue_with_actor(parent, ActorRef::test()).await.unwrap();
 
         // Create a blocker issue that is still open (not closed)
         let blocker = issue_with_status("blocker", IssueStatus::Open, vec![]);
-        let (blocker_id, _) = store.add_issue_with_actor(blocker, None).await.unwrap();
+        let (blocker_id, _) = store.add_issue_with_actor(blocker, ActorRef::test()).await.unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let blocked_dep = IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id);
@@ -1494,7 +1496,7 @@ mod tests {
                     IssueStatus::Open,
                     vec![child_dep, blocked_dep],
                 ),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1515,7 +1517,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Rejected, vec![]),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();
@@ -1529,7 +1531,7 @@ mod tests {
                             blocker_id,
                         )],
                     ),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap()
@@ -1547,7 +1549,7 @@ mod tests {
             let (blocker_id, _) = store
                 .add_issue_with_actor(
                     issue_with_status("blocker", IssueStatus::Failed, vec![]),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();
@@ -1561,7 +1563,7 @@ mod tests {
                             blocker_id,
                         )],
                     ),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap()
@@ -1581,7 +1583,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1594,7 +1596,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1602,7 +1604,7 @@ mod tests {
         let (child_task_id,) = {
             let store = state.store.as_ref();
             let (child_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), None)
+                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), ActorRef::test())
                 .await
                 .unwrap();
             (child_task_id,)
@@ -1618,7 +1620,7 @@ mod tests {
             .upsert_issue(
                 Some(parent_id.clone()),
                 api::issues::UpsertIssueRequest::new(rejected_parent.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1653,7 +1655,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1666,7 +1668,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1677,7 +1679,7 @@ mod tests {
             .upsert_issue(
                 Some(parent_id.clone()),
                 api::issues::UpsertIssueRequest::new(failed_parent.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1706,7 +1708,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(blocker_issue.clone().into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1718,7 +1720,7 @@ mod tests {
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(dependent_issue.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1729,7 +1731,7 @@ mod tests {
             .upsert_issue(
                 Some(blocker_id.clone()),
                 api::issues::UpsertIssueRequest::new(rejected_blocker.into(), None),
-                None,
+                ActorRef::test(),
             )
             .await
             .unwrap();
@@ -1773,7 +1775,7 @@ mod tests {
                 .upsert_issue(
                     None,
                     api::issues::UpsertIssueRequest::new(blocker_issue.into(), None),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();
@@ -1786,7 +1788,7 @@ mod tests {
                 .upsert_issue(
                     None,
                     api::issues::UpsertIssueRequest::new(blocked_issue.into(), None),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();
@@ -1798,7 +1800,7 @@ mod tests {
                         issue_with_status("blocked", IssueStatus::Closed, vec![blocked_dep]).into(),
                         None,
                     ),
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap();

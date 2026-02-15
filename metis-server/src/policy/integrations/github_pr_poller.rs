@@ -1,6 +1,7 @@
 use crate::{
     AppState,
     background::scheduler::{ScheduledWorker, WorkerOutcome},
+    domain::actors::ActorRef,
     domain::patches::{
         GithubCiFailure, GithubCiState, GithubCiStatus, GithubPr, Patch, PatchStatus, Review,
     },
@@ -248,7 +249,10 @@ async fn sync_patch_from_github(
     if updated_patch != latest_patch {
         state
             .upsert_patch(
-                None,
+                ActorRef::System {
+                    worker_name: "github_pr_poller".into(),
+                    on_behalf_of: None,
+                },
                 Some(patch_id.clone()),
                 api::patches::UpsertPatchRequest::new(updated_patch.into()),
             )

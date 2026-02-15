@@ -150,7 +150,11 @@ pub async fn add_repository(
     config: Repository,
 ) -> anyhow::Result<()> {
     state
-        .create_repository(name, config, None)
+        .create_repository(
+            name,
+            config,
+            crate::domain::actors::ActorRef::test(),
+        )
         .await
         .context("failed to add repository to test state")?;
     Ok(())

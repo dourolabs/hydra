@@ -1,5 +1,5 @@
 use crate::{
-    domain::documents::Document,
+    domain::{actors::ActorRef, documents::Document},
     store::{ReadOnlyStore, Status, StoreError},
 };
 use metis_common::{
@@ -49,7 +49,7 @@ impl AppState {
         &self,
         document_id: Option<DocumentId>,
         document: Document,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<(DocumentId, VersionNumber), UpsertDocumentError> {
         let store = self.store.as_ref();
 
@@ -154,7 +154,7 @@ impl AppState {
     pub async fn delete_document(
         &self,
         document_id: &DocumentId,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<(), StoreError> {
         self.store
             .delete_document_with_actor(document_id, actor)
@@ -173,7 +173,7 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use crate::{domain::documents::Document, test_utils::test_state};
+    use crate::{domain::actors::ActorRef, domain::documents::Document, test_utils::test_state};
 
     #[tokio::test]
     async fn upsert_document_allows_normal_path() {
@@ -186,7 +186,7 @@ mod tests {
             deleted: false,
         };
 
-        let result = state.upsert_document(None, document, None).await;
+        let result = state.upsert_document(None, document, ActorRef::test()).await;
         assert!(result.is_ok());
     }
 
@@ -201,7 +201,7 @@ mod tests {
             deleted: false,
         };
 
-        let result = state.upsert_document(None, document, None).await;
+        let result = state.upsert_document(None, document, ActorRef::test()).await;
         assert!(result.is_ok());
     }
 }

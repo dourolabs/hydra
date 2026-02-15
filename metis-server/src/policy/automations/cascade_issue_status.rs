@@ -3,6 +3,7 @@ use std::collections::HashSet;
 
 use crate::app::AppState;
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
+use crate::domain::actors::ActorRef;
 use crate::domain::issues::IssueStatus;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
@@ -103,7 +104,10 @@ impl Automation for CascadeIssueStatusAutomation {
         }
 
         let store = ctx.store;
-        let actor = Some(ctx.actor().display_name());
+        let actor = ActorRef::Automation {
+            automation_name: "cascade_issue_status".into(),
+            triggered_by: Some(Box::new(ctx.actor().clone())),
+        };
 
         // Drop all children recursively
         drop_children_recursively(ctx.app_state, store, issue_id, actor).await?;
@@ -123,7 +127,7 @@ async fn upsert_issue(
     app_state: &AppState,
     issue_id: &IssueId,
     issue: crate::domain::issues::Issue,
-    actor: Option<String>,
+    actor: ActorRef,
 ) -> Result<(), AutomationError> {
     app_state
         .upsert_issue(
@@ -143,7 +147,7 @@ async fn drop_children_recursively(
     app_state: &AppState,
     store: &dyn crate::store::ReadOnlyStore,
     issue_id: &IssueId,
-    actor: Option<String>,
+    actor: ActorRef,
 ) -> Result<(), AutomationError> {
     let mut to_visit = store.get_issue_children(issue_id).await.map_err(|e| {
         AutomationError::Other(anyhow::anyhow!("failed to get children of {issue_id}: {e}"))

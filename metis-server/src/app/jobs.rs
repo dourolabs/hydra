@@ -1,7 +1,7 @@
 use crate::{
     config::non_empty,
     domain::{
-        actors::{Actor, ActorId},
+        actors::{ActorId, ActorRef},
         issues::{Issue, JobSettings},
         jobs::BundleSpec,
         users::Username,
@@ -66,10 +66,11 @@ impl AppState {
         &self,
         task: Task,
         created_at: DateTime<Utc>,
+        actor: ActorRef,
     ) -> Result<TaskId, StoreError> {
         let (task_id, _version) = self
             .store
-            .add_task_with_actor(task, created_at, None)
+            .add_task_with_actor(task, created_at, actor)
             .await?;
         Ok(task_id)
     }
@@ -77,7 +78,7 @@ impl AppState {
     pub async fn create_job(
         &self,
         request: api::jobs::CreateJobRequest,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<TaskId, CreateJobError> {
         let env_vars = request.variables;
 
@@ -143,7 +144,7 @@ impl AppState {
         }
 
         let creator = self
-            .resolve_creator_for_job(actor.as_deref(), issue.as_ref().map(|i| &i.item))
+            .resolve_creator_for_job(&actor, issue.as_ref().map(|i| &i.item))
             .await;
 
         let task = Task::new(
@@ -184,23 +185,35 @@ impl AppState {
 
     async fn resolve_creator_for_job(
         &self,
-        actor: Option<&str>,
+        actor: &ActorRef,
         issue: Option<&Issue>,
     ) -> Option<Username> {
         if let Some(issue) = issue {
             return Some(issue.creator.clone());
         }
 
-        let actor_name = actor?;
-        match Actor::parse_name(actor_name) {
-            Ok(ActorId::Username(username)) => Some(username),
-            Ok(ActorId::Task(task_id)) => {
-                let task = self.get_task(&task_id).await.ok()?;
-                let issue_id = task.spawned_from.as_ref()?;
-                let issue = self.get_issue(issue_id, false).await.ok()?;
-                Some(issue.item.creator.clone())
+        match actor {
+            ActorRef::Authenticated { actor_id } => match actor_id {
+                ActorId::Username(username) => Some(username.clone()),
+                ActorId::Task(task_id) => {
+                    let task = self.get_task(task_id).await.ok()?;
+                    let issue_id = task.spawned_from.as_ref()?;
+                    let issue = self.get_issue(issue_id, false).await.ok()?;
+                    Some(issue.item.creator.clone())
+                }
+            },
+            ActorRef::System { on_behalf_of, .. } => {
+                match on_behalf_of.as_ref()? {
+                    ActorId::Username(username) => Some(username.clone()),
+                    ActorId::Task(task_id) => {
+                        let task = self.get_task(task_id).await.ok()?;
+                        let issue_id = task.spawned_from.as_ref()?;
+                        let issue = self.get_issue(issue_id, false).await.ok()?;
+                        Some(issue.item.creator.clone())
+                    }
+                }
             }
-            Err(_) => None,
+            ActorRef::Automation { .. } => None,
         }
     }
 
@@ -208,7 +221,7 @@ impl AppState {
         &self,
         job_id: TaskId,
         status: JobStatusUpdate,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<SetJobStatusResponse, SetJobStatusError> {
         {
             let store = self.store.as_ref();
@@ -502,7 +515,17 @@ impl AppState {
                 "soft-deleting orphaned task whose spawned_from issue was deleted"
             );
 
-            if let Err(err) = self.store.delete_task_with_actor(&task_id, None).await {
+            if let Err(err) = self
+                .store
+                .delete_task_with_actor(
+                    &task_id,
+                    ActorRef::System {
+                        worker_name: "cleanup_orphaned_tasks".into(),
+                        on_behalf_of: None,
+                    },
+                )
+                .await
+            {
                 warn!(
                     metis_id = %task_id,
                     error = %err,
@@ -667,7 +690,14 @@ impl AppState {
         updated.error = None;
 
         self.store
-            .update_task_with_actor(task_id, updated, None)
+            .update_task_with_actor(
+                task_id,
+                updated,
+                ActorRef::System {
+                    worker_name: "task_lifecycle".into(),
+                    on_behalf_of: None,
+                },
+            )
             .await
     }
 
@@ -686,7 +716,14 @@ impl AppState {
         updated.error = None;
 
         self.store
-            .update_task_with_actor(task_id, updated, None)
+            .update_task_with_actor(
+                task_id,
+                updated,
+                ActorRef::System {
+                    worker_name: "task_lifecycle".into(),
+                    on_behalf_of: None,
+                },
+            )
             .await
     }
 
@@ -696,8 +733,16 @@ impl AppState {
         result: Result<(), TaskError>,
         last_message: Option<String>,
     ) -> Result<Versioned<Task>, StoreError> {
-        self.transition_task_to_completion_with_actor(task_id, result, last_message, None)
-            .await
+        self.transition_task_to_completion_with_actor(
+            task_id,
+            result,
+            last_message,
+            ActorRef::System {
+                worker_name: "task_lifecycle".into(),
+                on_behalf_of: None,
+            },
+        )
+        .await
     }
 
     async fn transition_task_to_completion_with_actor(
@@ -705,7 +750,7 @@ impl AppState {
         task_id: &TaskId,
         result: Result<(), TaskError>,
         last_message: Option<String>,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<Versioned<Task>, StoreError> {
         let store = self.store.as_ref();
         let latest = store.get_task(task_id, false).await?;
@@ -798,6 +843,7 @@ mod tests {
         app::test_helpers::{
             issue_with_status, sample_task, state_with_default_model, task_for_issue,
         },
+        domain::actors::ActorRef,
         domain::issues::{Issue, IssueStatus, IssueType, JobSettings},
         domain::users::Username,
         job_engine::{JobEngine, JobStatus},
@@ -818,7 +864,7 @@ mod tests {
         let (task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), ActorRef::test())
                 .await
                 .unwrap()
         };
@@ -871,7 +917,7 @@ mod tests {
                         patches: Vec::new(),
                         deleted: false,
                     },
-                    None,
+                    ActorRef::test(),
                 )
                 .await
                 .unwrap()
@@ -883,7 +929,7 @@ mod tests {
             task.cpu_limit = job_settings.cpu_limit.clone();
             task.memory_limit = job_settings.memory_limit.clone();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), ActorRef::test())
                 .await
                 .unwrap()
         };
@@ -905,7 +951,7 @@ mod tests {
         let (task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), ActorRef::test())
                 .await
                 .unwrap()
         };
@@ -932,7 +978,7 @@ mod tests {
         let (task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), None)
+                .add_task_with_actor(task, Utc::now(), ActorRef::test())
                 .await
                 .unwrap()
         };
@@ -978,7 +1024,7 @@ mod tests {
         let (tracked_task_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .add_task_with_actor(sample_task(), Utc::now(), ActorRef::test())
                 .await
                 .unwrap()
         };
@@ -1015,7 +1061,7 @@ mod tests {
         let task_id = {
             let store = state.store.as_ref();
             let (task_id, _) = store
-                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .add_task_with_actor(sample_task(), Utc::now(), ActorRef::test())
                 .await
                 .unwrap();
             state
@@ -1051,7 +1097,7 @@ mod tests {
         let task_id = {
             let store = state.store.as_ref();
             let (task_id, _) = store
-                .add_task_with_actor(sample_task(), Utc::now(), None)
+                .add_task_with_actor(sample_task(), Utc::now(), ActorRef::test())
                 .await
                 .unwrap();
             state
@@ -1091,16 +1137,16 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), ActorRef::test())
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), ActorRef::test())
             .await
             .unwrap();
 
         store
-            .delete_issue_with_actor(&issue_id, None)
+            .delete_issue_with_actor(&issue_id, ActorRef::test())
             .await
             .unwrap();
 
@@ -1123,11 +1169,11 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), ActorRef::test())
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), ActorRef::test())
             .await
             .unwrap();
 
@@ -1147,7 +1193,7 @@ mod tests {
         let store = state.store.as_ref();
 
         let (task_id, _) = store
-            .add_task_with_actor(sample_task(), Utc::now(), None)
+            .add_task_with_actor(sample_task(), Utc::now(), ActorRef::test())
             .await
             .unwrap();
 
@@ -1167,11 +1213,11 @@ mod tests {
         let store = state.store.as_ref();
 
         let (issue_id, _) = store
-            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), None)
+            .add_issue_with_actor(issue_with_status("parent", IssueStatus::Open, vec![]), ActorRef::test())
             .await
             .unwrap();
         let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), None)
+            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), ActorRef::test())
             .await
             .unwrap();
         state
@@ -1182,7 +1228,7 @@ mod tests {
         job_engine.insert_job(&task_id, JobStatus::Running).await;
 
         store
-            .delete_issue_with_actor(&issue_id, None)
+            .delete_issue_with_actor(&issue_id, ActorRef::test())
             .await
             .unwrap();
 

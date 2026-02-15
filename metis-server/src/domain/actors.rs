@@ -180,7 +180,9 @@ impl Actor {
                     refreshed.access_token.clone(),
                     user.github_user_id,
                     refreshed.refresh_token.clone(),
-                    Some(self.name()),
+                    ActorRef::Authenticated {
+                        actor_id: self.actor_id.clone(),
+                    },
                 )
                 .await
                 .map_err(|err| match err {
@@ -367,6 +369,14 @@ impl ActorRef {
         ActorRef::System {
             worker_name: "test".into(),
             on_behalf_of: None,
+        }
+    }
+}
+
+impl From<&Actor> for ActorRef {
+    fn from(actor: &Actor) -> Self {
+        ActorRef::Authenticated {
+            actor_id: actor.actor_id.clone(),
         }
     }
 }

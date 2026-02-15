@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        actors::Actor,
+        actors::{Actor, ActorRef},
         users::{User, UserSummary, Username},
     },
     store::{ReadOnlyStore, StoreError},
@@ -96,7 +96,12 @@ impl AppState {
 
         let (actor, auth_token) = Actor::new_for_user(username);
 
-        if let Err(err) = self.store.add_user(user.clone(), None).await {
+        let login_actor = ActorRef::System {
+            worker_name: "login".into(),
+            on_behalf_of: None,
+        };
+
+        if let Err(err) = self.store.add_user(user.clone(), login_actor.clone()).await {
             match err {
                 StoreError::UserAlreadyExists(_) => {
                     self.set_user_github_token(
@@ -104,7 +109,7 @@ impl AppState {
                         user.github_token.clone(),
                         user.github_user_id,
                         user.github_refresh_token.clone(),
-                        None,
+                        login_actor.clone(),
                     )
                     .await
                     .map_err(|source| LoginError::Store { source })?;
@@ -113,11 +118,15 @@ impl AppState {
             }
         }
 
-        if let Err(err) = self.store.add_actor(actor.clone(), None).await {
+        if let Err(err) = self
+            .store
+            .add_actor(actor.clone(), login_actor.clone())
+            .await
+        {
             match err {
                 StoreError::ActorAlreadyExists(_) => {
                     self.store
-                        .update_actor(actor.clone(), None)
+                        .update_actor(actor.clone(), login_actor)
                         .await
                         .map_err(|source| LoginError::Store { source })?;
                 }
@@ -134,7 +143,15 @@ impl AppState {
     ) -> Result<(Actor, String), StoreError> {
         let task = self.get_task(&task_id).await?;
         let (actor, auth_token) = Actor::new_for_task(task_id, task.creator);
-        self.store.add_actor(actor.clone(), None).await?;
+        self.store
+            .add_actor(
+                actor.clone(),
+                ActorRef::System {
+                    worker_name: "task_lifecycle".into(),
+                    on_behalf_of: None,
+                },
+            )
+            .await?;
         Ok((actor, auth_token))
     }
 
@@ -154,7 +171,7 @@ impl AppState {
         github_token: String,
         github_user_id: u64,
         github_refresh_token: String,
-        actor: Option<String>,
+        actor: ActorRef,
     ) -> Result<User, StoreError> {
         let mut user = self.store.get_user(username, false).await?.item;
         user.github_token = github_token;
