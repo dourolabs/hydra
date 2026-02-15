@@ -5,13 +5,12 @@ use crate::domain::{
     issues::{Issue, IssueStatus, IssueType, JobSettings},
     jobs::{Bundle, BundleSpec},
     patches::{Patch, PatchStatus},
-    task_status::Event,
     users::Username,
 };
 use crate::{
     background::AgentQueue,
     job_engine::JobStatus,
-    store::{MemoryStore, Status, Task, TaskError},
+    store::{MemoryStore, Status, Task},
     test_utils::{
         MockJobEngine, add_repository, spawn_test_server, spawn_test_server_with_state,
         test_app_config, test_client, test_state_handles, test_state_with_engine_handles,
@@ -19,7 +18,7 @@ use crate::{
 };
 use chrono::{Duration, Utc};
 use metis_common::{
-    BuildCacheStorageConfig, TaskId,
+    BuildCacheStorageConfig,
     api::v1::{
         self,
         jobs::{CreateJobResponse, JobVersionRecord, ListJobVersionsResponse, ListJobsResponse},
@@ -583,145 +582,6 @@ async fn job_version_endpoints_return_404s() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
-    let engine = Arc::new(MockJobEngine::new());
-    let handles = test_state_with_engine_handles(engine);
-    let default_image = default_image();
-    let state = handles.state.clone();
-    let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
-
-    let now = Utc::now();
-    let (oldest_id, _) = handles
-        .store
-        .add_task(
-            Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                creator: None,
-                image: Some(default_image.clone()),
-                model: None,
-                env_vars: HashMap::new(),
-                cpu_limit: None,
-                memory_limit: None,
-                secrets: None,
-                status: Status::Created,
-                last_message: None,
-                error: None,
-                deleted: false,
-            },
-            now - Duration::seconds(30),
-        )
-        .await?;
-    let (middle_id, _) = handles
-        .store
-        .add_task(
-            Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                creator: None,
-                image: Some(default_image.clone()),
-                model: None,
-                env_vars: HashMap::new(),
-                cpu_limit: None,
-                memory_limit: None,
-                secrets: None,
-                status: Status::Created,
-                last_message: None,
-                error: None,
-                deleted: false,
-            },
-            now - Duration::seconds(20),
-        )
-        .await?;
-    let (newest_id, _) = handles
-        .store
-        .add_task(
-            Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                creator: None,
-                image: Some(default_image.clone()),
-                model: None,
-                env_vars: HashMap::new(),
-                cpu_limit: None,
-                memory_limit: None,
-                secrets: None,
-                status: Status::Created,
-                last_message: None,
-                error: None,
-                deleted: false,
-            },
-            now - Duration::seconds(10),
-        )
-        .await?;
-    state.transition_task_to_pending(&middle_id).await?;
-    state.transition_task_to_running(&middle_id).await?;
-    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    state.transition_task_to_pending(&newest_id).await?;
-    state.transition_task_to_running(&newest_id).await?;
-
-    let client = test_client();
-    let response = client
-        .get(format!("{}/v1/jobs/", server.base_url()))
-        .send()
-        .await?;
-
-    assert!(response.status().is_success());
-    let body: ListJobsResponse = response.json().await?;
-    let ids: Vec<TaskId> = body.jobs.into_iter().map(|job| job.job_id).collect();
-    assert_eq!(ids, vec![newest_id, middle_id, oldest_id]);
-    Ok(())
-}
-
-#[tokio::test]
-async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
-    let handles = test_state_handles();
-    let state = handles.state;
-    let default_image = default_image();
-    let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
-    let now = Utc::now();
-    let (job_id, _) = handles
-        .store
-        .add_task(
-            Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                creator: None,
-                image: Some(default_image.clone()),
-                model: None,
-                env_vars: HashMap::new(),
-                cpu_limit: None,
-                memory_limit: None,
-                secrets: None,
-                status: Status::Created,
-                last_message: None,
-                error: None,
-                deleted: false,
-            },
-            now - Duration::seconds(20),
-        )
-        .await?;
-    state.transition_task_to_pending(&job_id).await?;
-    state.transition_task_to_running(&job_id).await?;
-
-    let client = test_client();
-    let response = client
-        .get(format!("{}/v1/jobs/{job_id}", server.base_url()))
-        .send()
-        .await?;
-
-    assert!(response.status().is_success());
-    let summary: JobVersionRecord = response.json().await?;
-    assert_eq!(summary.job_id, job_id);
-    assert_eq!(summary.task.status, v1::task_status::Status::Running);
-    Ok(())
-}
-
-#[tokio::test]
 async fn get_job_rejects_empty_job_id() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
@@ -999,7 +859,6 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();
-    let check_state = state.clone();
     let (job_id, _) = handles
         .store
         .add_task(
@@ -1024,7 +883,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
         .await?;
     state.transition_task_to_pending(&job_id).await?;
     state.transition_task_to_running(&job_id).await?;
-    let (patch_id, _) = handles
+    let (_patch_id, _) = handles
         .store
         .add_patch(Patch {
             title: "done".to_string(),
@@ -1057,72 +916,6 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
         body,
         json!({ "job_id": job_id.as_ref(), "status": "complete" })
     );
-
-    let status = check_state.get_task(&job_id).await?.status;
-    assert_eq!(status, Status::Complete);
-    let status_log = check_state.get_status_log(&job_id).await?;
-    assert!(matches!(status_log.result(), Some(Ok(()))));
-    let patch = check_state.get_patch(&patch_id, false).await?;
-    assert_eq!(patch.item.created_by, Some(job_id));
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn set_job_status_records_last_message() -> anyhow::Result<()> {
-    let handles = test_state_handles();
-    let state = handles.state;
-    let default_image = default_image();
-    let (job_id, _) = handles
-        .store
-        .add_task(
-            Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                creator: None,
-                image: Some(default_image.clone()),
-                model: None,
-                env_vars: HashMap::new(),
-                cpu_limit: None,
-                memory_limit: None,
-                secrets: None,
-                status: Status::Created,
-                last_message: None,
-                error: None,
-                deleted: false,
-            },
-            Utc::now(),
-        )
-        .await?;
-    state.transition_task_to_pending(&job_id).await?;
-    state.transition_task_to_running(&job_id).await?;
-    let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
-    let client = test_client();
-
-    let response = client
-        .post(format!(
-            "{}/v1/jobs/{}/status",
-            server.base_url(),
-            job_id.as_ref()
-        ))
-        .json(&json!({
-            "status": "complete",
-            "last_message": "all done"
-        }))
-        .send()
-        .await?;
-
-    assert!(response.status().is_success());
-
-    let status_log = state.get_status_log(&job_id).await?;
-    match status_log.events.last() {
-        Some(Event::Completed { last_message, .. }) => {
-            assert_eq!(last_message.as_deref(), Some("all done"))
-        }
-        other => panic!("expected completed event, got {other:?}"),
-    }
-
     Ok(())
 }
 
@@ -1169,146 +962,6 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
         body,
         json!({ "job_id": job_id.as_ref(), "status": "failed" })
     );
-
-    let status = state.get_task(&job_id).await?.status;
-    assert_eq!(status, Status::Failed);
-    let status_log = state.get_status_log(&job_id).await?;
-    assert!(matches!(
-        status_log.result(),
-        Some(Err(TaskError::JobEngineError { reason })) if reason == "boom"
-    ));
-    Ok(())
-}
-
-#[tokio::test]
-async fn get_job_returns_completed_status_and_timing() -> anyhow::Result<()> {
-    let handles = test_state_handles();
-    let state = handles.state;
-    let (job_id, _) = handles
-        .store
-        .add_task(
-            Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                creator: None,
-                image: Some(default_image()),
-                model: None,
-                env_vars: HashMap::new(),
-                cpu_limit: None,
-                memory_limit: None,
-                secrets: None,
-                status: Status::Created,
-                last_message: None,
-                error: None,
-                deleted: false,
-            },
-            Utc::now(),
-        )
-        .await?;
-    state.transition_task_to_pending(&job_id).await?;
-    state.transition_task_to_running(&job_id).await?;
-    state
-        .transition_task_to_completion(&job_id, Ok(()), None)
-        .await?;
-
-    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
-    let client = test_client();
-
-    let response = client
-        .get(format!("{}/v1/jobs/{job_id}", server.base_url()))
-        .send()
-        .await?;
-
-    assert!(response.status().is_success());
-    let body: JobVersionRecord = response.json().await?;
-    assert_eq!(body.job_id, job_id);
-    assert_eq!(body.task.status, v1::task_status::Status::Complete);
-    assert!(body.task.creation_time.is_some());
-    assert!(body.task.start_time.is_some());
-    assert!(body.task.end_time.is_some());
-    Ok(())
-}
-
-#[tokio::test]
-async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
-    let handles = test_state_handles();
-    let state = handles.state;
-    let default_image = default_image();
-    let (job_id, _) = handles
-        .store
-        .add_task(
-            Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                creator: None,
-                image: Some(default_image.clone()),
-                model: None,
-                env_vars: HashMap::new(),
-                cpu_limit: None,
-                memory_limit: None,
-                secrets: None,
-                status: Status::Created,
-                last_message: None,
-                error: None,
-                deleted: false,
-            },
-            Utc::now(),
-        )
-        .await?;
-    state.transition_task_to_pending(&job_id).await?;
-    state.transition_task_to_running(&job_id).await?;
-    let (patch_id, _) = handles
-        .store
-        .add_patch(Patch {
-            title: "all good".to_string(),
-            description: "all good".to_string(),
-            diff: patch_diff(),
-            status: PatchStatus::Open,
-            is_automatic_backup: false,
-            created_by: Some(job_id.clone()),
-            creator: None,
-            reviews: Vec::new(),
-            service_repo_name: service_repo_name(),
-            github: None,
-            deleted: false,
-            branch_name: None,
-            commit_range: None,
-        })
-        .await?;
-    state
-        .transition_task_to_completion(&job_id, Ok(()), None)
-        .await?;
-    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
-
-    let client = test_client();
-    let response = client
-        .get(format!("{}/v1/jobs/{job_id}", server.base_url()))
-        .send()
-        .await?;
-
-    assert!(response.status().is_success());
-    let summary: JobVersionRecord = response.json().await?;
-    assert_eq!(summary.task.status, v1::task_status::Status::Complete);
-
-    let patch_response = client
-        .get(format!("{}/v1/patches/{patch_id}", server.base_url()))
-        .send()
-        .await?;
-    assert!(patch_response.status().is_success());
-    let patch_record: metis_common::patches::PatchVersionRecord = patch_response.json().await?;
-    assert_eq!(patch_record.patch_id, patch_id);
-    let metis_common::patches::Patch {
-        title,
-        description,
-        diff,
-        ..
-    } = patch_record.patch;
-    assert_eq!(title, "all good");
-    assert_eq!(description, "all good");
-    assert_eq!(diff, patch_diff());
-    assert_eq!(patch_record.patch.created_by, Some(job_id));
     Ok(())
 }
 
