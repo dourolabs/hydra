@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 
 /// A single policy entry in the config, consisting of a name and optional
 /// parameters (as raw TOML values for the policy constructor to interpret).
@@ -44,4 +45,46 @@ pub struct PolicyList {
 pub struct PolicyConfig {
     #[serde(flatten)]
     pub global: PolicyList,
+    /// Per-repo policy overrides. Keys are repo names (e.g. "owner/repo").
+    /// When a repo has an entry here, its policy list is used instead of
+    /// the global defaults for that repo.
+    pub repos: HashMap<String, PolicyList>,
+}
+
+/// Configuration for a review request issue created when a patch is opened.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReviewRequestConfig {
+    /// Assignee for the review request issue. Supports variable substitution:
+    /// `$patch_creator` resolves to the username of the patch creator at
+    /// automation runtime.
+    pub assignee: String,
+}
+
+/// Configuration for the merge request issue created when a patch is opened.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MergeRequestConfig {
+    /// Assignee for the merge request issue. Supports variable substitution:
+    /// `$patch_creator` resolves to the username of the patch creator at
+    /// automation runtime.
+    pub assignee: String,
+}
+
+/// Configurable parameters for the `patch_workflow` automation.
+///
+/// Controls which issues are created when a patch is opened:
+/// - `review_requests`: zero or more review request issues, each with a
+///   configurable assignee.
+/// - `merge_request`: an optional merge request issue whose assignee is also
+///   configurable. When present alongside review requests, the merge request
+///   issue is blocked-on all review request issues.
+///
+/// Assignee strings support the `$patch_creator` variable, which is resolved
+/// to the username of the patch creator at automation time.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct PatchWorkflowConfig {
+    /// Review request issues to create for each new patch.
+    pub review_requests: Vec<ReviewRequestConfig>,
+    /// Optional merge request issue to create for each new patch.
+    pub merge_request: Option<MergeRequestConfig>,
 }

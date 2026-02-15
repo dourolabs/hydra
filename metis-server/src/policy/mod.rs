@@ -81,39 +81,84 @@ pub trait Automation: Send + Sync {
     async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError>;
 }
 
+/// A single-scope engine holding restrictions and automations for one scope
+/// (global or a specific repo).
+pub(crate) struct ScopedEngine {
+    pub(crate) restrictions: Vec<Box<dyn Restriction>>,
+    pub(crate) automations: Vec<Box<dyn Automation>>,
+}
+
 /// The core policy engine that holds all active restrictions and automations.
+///
+/// Supports per-repo overrides: when a repo name matches a per-repo entry,
+/// that repo's restrictions and automations are used instead of the global
+/// defaults. If no per-repo entry exists, the global engine is used.
 pub struct PolicyEngine {
-    restrictions: Vec<Box<dyn Restriction>>,
-    automations: Vec<Box<dyn Automation>>,
+    global: ScopedEngine,
+    repo_engines: std::collections::HashMap<String, ScopedEngine>,
 }
 
 impl PolicyEngine {
-    /// Create a new policy engine with the given restrictions and automations.
+    /// Create a new policy engine with the given restrictions and automations
+    /// (global scope only, no per-repo overrides).
     pub fn new(
         restrictions: Vec<Box<dyn Restriction>>,
         automations: Vec<Box<dyn Automation>>,
     ) -> Self {
         Self {
-            restrictions,
-            automations,
+            global: ScopedEngine {
+                restrictions,
+                automations,
+            },
+            repo_engines: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a policy engine with global restrictions/automations and
+    /// per-repo override engines.
+    pub(crate) fn with_repo_engines(
+        restrictions: Vec<Box<dyn Restriction>>,
+        automations: Vec<Box<dyn Automation>>,
+        repo_engines: std::collections::HashMap<String, PolicyEngine>,
+    ) -> Self {
+        let converted = repo_engines
+            .into_iter()
+            .map(|(name, engine)| (name, engine.global))
+            .collect();
+        Self {
+            global: ScopedEngine {
+                restrictions,
+                automations,
+            },
+            repo_engines: converted,
         }
     }
 
     /// Create an empty policy engine with no restrictions or automations.
     pub fn empty() -> Self {
         Self {
-            restrictions: Vec::new(),
-            automations: Vec::new(),
+            global: ScopedEngine {
+                restrictions: Vec::new(),
+                automations: Vec::new(),
+            },
+            repo_engines: std::collections::HashMap::new(),
         }
     }
 
-    /// Evaluate all restrictions for a proposed operation.
+    /// Returns the scoped engine for a given repo name, falling back to
+    /// the global engine if no per-repo override exists.
+    #[allow(dead_code)]
+    pub(crate) fn engine_for_repo(&self, repo_name: &str) -> &ScopedEngine {
+        self.repo_engines.get(repo_name).unwrap_or(&self.global)
+    }
+
+    /// Evaluate all restrictions for a proposed operation (global scope).
     /// Returns the first violation encountered, if any.
     pub async fn check_restrictions(
         &self,
         ctx: &RestrictionContext<'_>,
     ) -> Result<(), PolicyViolation> {
-        for restriction in &self.restrictions {
+        for restriction in &self.global.restrictions {
             restriction.evaluate(ctx).await?;
         }
         Ok(())
@@ -125,7 +170,7 @@ impl PolicyEngine {
         // Automations always run from the global engine (not per-repo)
         // because automations react to events and the event bus doesn't
         // have a per-repo scope.
-        for automation in &self.automations {
+        for automation in &self.global.automations {
             if automation.event_filter().matches(ctx.event) {
                 if let Err(e) = automation.execute(ctx).await {
                     tracing::error!(
@@ -138,14 +183,19 @@ impl PolicyEngine {
         }
     }
 
-    /// Returns the number of registered restrictions.
+    /// Returns the number of registered restrictions (global scope).
     pub fn restriction_count(&self) -> usize {
-        self.restrictions.len()
+        self.global.restrictions.len()
     }
 
-    /// Returns the number of registered automations.
+    /// Returns the number of registered automations (global scope).
     pub fn automation_count(&self) -> usize {
-        self.automations.len()
+        self.global.automations.len()
+    }
+
+    /// Returns the number of per-repo engine overrides.
+    pub fn repo_engine_count(&self) -> usize {
+        self.repo_engines.len()
     }
 
     // ----- Shortcut methods for each mutation type -----

@@ -426,6 +426,7 @@ fn registry_build_with_valid_config() {
             restrictions: vec![PolicyEntry::Name("test_restriction".to_string())],
             automations: vec![PolicyEntry::Name("test_automation".to_string())],
         },
+        ..Default::default()
     };
 
     let engine = registry.build(&config);
@@ -444,6 +445,7 @@ fn registry_build_with_unknown_restriction_fails() {
             restrictions: vec![PolicyEntry::Name("nonexistent_policy".to_string())],
             automations: Vec::new(),
         },
+        ..Default::default()
     };
 
     let result = registry.build(&config);
@@ -463,6 +465,7 @@ fn registry_build_with_unknown_automation_fails() {
             restrictions: Vec::new(),
             automations: vec![PolicyEntry::Name("nonexistent_automation".to_string())],
         },
+        ..Default::default()
     };
 
     let result = registry.build(&config);
@@ -508,6 +511,7 @@ fn registry_build_with_params() {
             }],
             automations: Vec::new(),
         },
+        ..Default::default()
     };
 
     let result = registry.build(&config);
@@ -757,6 +761,7 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("github_pr_sync".to_string()),
             ],
         },
+        ..Default::default()
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 5);
@@ -814,6 +819,7 @@ async fn disabling_restriction_allows_blocked_operation() {
                 PolicyEntry::Name("github_pr_sync".to_string()),
             ],
         },
+        ..Default::default()
     };
 
     let partial_engine = crate::app::AppState::build_policy_engine(Some(&partial_config));
@@ -853,6 +859,7 @@ fn parameterized_policy_builds_with_custom_params() {
                 },
             }],
         },
+        ..Default::default()
     };
 
     let engine = registry.build(&config);
@@ -875,6 +882,7 @@ fn unknown_policy_name_in_config_errors() {
             restrictions: vec![PolicyEntry::Name("nonexistent_restriction".to_string())],
             automations: vec![],
         },
+        ..Default::default()
     };
 
     // Validation should error on unknown names
@@ -911,6 +919,7 @@ fn invalid_params_produce_error_during_validation() {
                 params: toml::Value::String("invalid".to_string()),
             }],
         },
+        ..Default::default()
     };
 
     let result = registry.validate_config(&config);
@@ -998,4 +1007,314 @@ fn config_without_policies_deserializes_as_none() {
         config.policies.is_none(),
         "absent [policies] section should deserialize as None"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Per-repo policy config tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn policy_config_deserializes_per_repo_overrides() {
+    let toml_str = r#"
+        restrictions = ["issue_lifecycle_validation"]
+        automations = ["cascade_issue_status"]
+
+        [repos."owner/repo"]
+        restrictions = ["task_state_machine"]
+        automations = ["kill_tasks_on_issue_failure"]
+    "#;
+
+    let config: PolicyConfig = toml::from_str(toml_str).expect("should deserialize");
+    assert_eq!(config.global.restrictions.len(), 1);
+    assert_eq!(
+        config.global.restrictions[0].name(),
+        "issue_lifecycle_validation"
+    );
+    assert_eq!(config.repos.len(), 1);
+    let repo_list = config.repos.get("owner/repo").expect("repo should exist");
+    assert_eq!(repo_list.restrictions.len(), 1);
+    assert_eq!(repo_list.restrictions[0].name(), "task_state_machine");
+    assert_eq!(repo_list.automations.len(), 1);
+    assert_eq!(
+        repo_list.automations[0].name(),
+        "kill_tasks_on_issue_failure"
+    );
+}
+
+#[test]
+fn policy_config_per_repo_defaults_to_empty() {
+    let toml_str = r#"
+        restrictions = ["issue_lifecycle_validation"]
+        automations = []
+    "#;
+
+    let config: PolicyConfig = toml::from_str(toml_str).expect("should deserialize");
+    assert!(config.repos.is_empty());
+}
+
+#[test]
+fn policy_config_multiple_repos() {
+    let toml_str = r#"
+        restrictions = []
+        automations = []
+
+        [repos."org/repo-a"]
+        restrictions = ["task_state_machine"]
+        automations = []
+
+        [repos."org/repo-b"]
+        restrictions = []
+        automations = ["cascade_issue_status"]
+    "#;
+
+    let config: PolicyConfig = toml::from_str(toml_str).expect("should deserialize");
+    assert_eq!(config.repos.len(), 2);
+    assert_eq!(
+        config.repos.get("org/repo-a").unwrap().restrictions.len(),
+        1
+    );
+    assert_eq!(config.repos.get("org/repo-b").unwrap().automations.len(), 1);
+}
+
+#[test]
+fn registry_builds_per_repo_engines() {
+    let registry = registry::build_default_registry();
+
+    let config = PolicyConfig {
+        global: PolicyList {
+            restrictions: vec![PolicyEntry::Name("issue_lifecycle_validation".to_string())],
+            automations: vec![PolicyEntry::Name("cascade_issue_status".to_string())],
+        },
+        repos: {
+            let mut m = std::collections::HashMap::new();
+            m.insert(
+                "owner/repo".to_string(),
+                PolicyList {
+                    restrictions: vec![
+                        PolicyEntry::Name("task_state_machine".to_string()),
+                        PolicyEntry::Name("require_creator".to_string()),
+                    ],
+                    automations: vec![],
+                },
+            );
+            m
+        },
+    };
+
+    let engine = registry.build(&config).expect("should build");
+    // Global engine
+    assert_eq!(engine.restriction_count(), 1);
+    assert_eq!(engine.automation_count(), 1);
+    // Per-repo engine count
+    assert_eq!(engine.repo_engine_count(), 1);
+}
+
+#[test]
+fn engine_for_repo_falls_back_to_global() {
+    let registry = registry::build_default_registry();
+
+    let config = PolicyConfig {
+        global: PolicyList {
+            restrictions: vec![PolicyEntry::Name("issue_lifecycle_validation".to_string())],
+            automations: vec![PolicyEntry::Name("cascade_issue_status".to_string())],
+        },
+        repos: {
+            let mut m = std::collections::HashMap::new();
+            m.insert(
+                "owner/repo".to_string(),
+                PolicyList {
+                    restrictions: vec![PolicyEntry::Name("task_state_machine".to_string())],
+                    automations: vec![],
+                },
+            );
+            m
+        },
+    };
+
+    let engine = registry.build(&config).expect("should build");
+
+    // Known repo uses per-repo engine
+    let repo_engine = engine.engine_for_repo("owner/repo");
+    assert_eq!(repo_engine.restrictions.len(), 1);
+    assert_eq!(repo_engine.automations.len(), 0);
+
+    // Unknown repo falls back to global
+    let fallback = engine.engine_for_repo("other/repo");
+    assert_eq!(fallback.restrictions.len(), 1);
+    assert_eq!(fallback.automations.len(), 1);
+}
+
+#[test]
+fn validate_config_catches_unknown_per_repo_policy() {
+    let registry = registry::build_default_registry();
+
+    let config = PolicyConfig {
+        global: PolicyList {
+            restrictions: vec![],
+            automations: vec![],
+        },
+        repos: {
+            let mut m = std::collections::HashMap::new();
+            m.insert(
+                "owner/repo".to_string(),
+                PolicyList {
+                    restrictions: vec![PolicyEntry::Name("nonexistent_restriction".to_string())],
+                    automations: vec![],
+                },
+            );
+            m
+        },
+    };
+
+    let result = registry.validate_config(&config);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("unknown restriction policy 'nonexistent_restriction'"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        err.contains("repos.owner/repo"),
+        "error should mention repo scope: {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// PatchWorkflowConfig tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn patch_workflow_config_deserializes_from_toml() {
+    use crate::policy::config::PatchWorkflowConfig;
+
+    let toml_str = r#"
+        merge_request = { assignee = "$patch_creator" }
+    "#;
+
+    let config: PatchWorkflowConfig = toml::from_str(toml_str).expect("should deserialize");
+    assert!(config.review_requests.is_empty());
+    let mr = config
+        .merge_request
+        .expect("merge_request should be present");
+    assert_eq!(mr.assignee, "$patch_creator");
+}
+
+#[test]
+fn patch_workflow_config_with_review_requests() {
+    use crate::policy::config::PatchWorkflowConfig;
+
+    let toml_str = r#"
+        review_requests = [
+            { assignee = "reviewer1" },
+            { assignee = "$patch_creator" },
+        ]
+        merge_request = { assignee = "swe" }
+    "#;
+
+    let config: PatchWorkflowConfig = toml::from_str(toml_str).expect("should deserialize");
+    assert_eq!(config.review_requests.len(), 2);
+    assert_eq!(config.review_requests[0].assignee, "reviewer1");
+    assert_eq!(config.review_requests[1].assignee, "$patch_creator");
+    let mr = config
+        .merge_request
+        .expect("merge_request should be present");
+    assert_eq!(mr.assignee, "swe");
+}
+
+#[test]
+fn patch_workflow_config_defaults_to_empty() {
+    use crate::policy::config::PatchWorkflowConfig;
+
+    let config = PatchWorkflowConfig::default();
+    assert!(config.review_requests.is_empty());
+    assert!(config.merge_request.is_none());
+}
+
+#[test]
+fn patch_workflow_config_from_toml_params() {
+    use crate::policy::config::PatchWorkflowConfig;
+
+    // Simulate what happens when a TOML automation param is deserialized
+    let toml_str = r#"
+        review_requests = [
+            { assignee = "jayantk" },
+            { assignee = "$patch_creator" },
+        ]
+        merge_request = { assignee = "swe" }
+    "#;
+
+    let value: toml::Value = toml::from_str(toml_str).expect("should parse as TOML");
+    let config: PatchWorkflowConfig = value
+        .try_into()
+        .expect("should deserialize into PatchWorkflowConfig");
+    assert_eq!(config.review_requests.len(), 2);
+    assert_eq!(config.review_requests[0].assignee, "jayantk");
+    assert_eq!(config.review_requests[1].assignee, "$patch_creator");
+    assert_eq!(config.merge_request.unwrap().assignee, "swe");
+}
+
+#[test]
+fn patch_workflow_config_no_merge_request() {
+    use crate::policy::config::PatchWorkflowConfig;
+
+    let toml_str = r#"
+        review_requests = [
+            { assignee = "reviewer1" },
+        ]
+    "#;
+
+    let config: PatchWorkflowConfig = toml::from_str(toml_str).expect("should deserialize");
+    assert_eq!(config.review_requests.len(), 1);
+    assert!(config.merge_request.is_none());
+}
+
+/// Full TOML config with per-repo policy overrides deserializes correctly.
+#[test]
+fn full_toml_config_with_per_repo_policies_deserializes() {
+    let toml_str = r#"
+        [metis]
+        namespace = "default"
+        allowed_orgs = []
+
+        [job]
+        default_image = "metis-worker:latest"
+
+        [database]
+        url = "postgres://localhost/test"
+
+        [github_app]
+        app_id = 1
+        client_id = "test"
+        client_secret = "test"
+        private_key = "test"
+
+        [background]
+        assignment_agent = "swe"
+
+        [[background.agent_queues]]
+        name = "swe"
+        prompt = "test"
+
+        [policies]
+        restrictions = ["issue_lifecycle_validation"]
+        automations = ["cascade_issue_status"]
+
+        [policies.repos."dourolabs/metis"]
+        restrictions = ["task_state_machine", "require_creator"]
+        automations = ["kill_tasks_on_issue_failure"]
+    "#;
+
+    let config: crate::config::AppConfig =
+        toml::from_str(toml_str).expect("should deserialize full config with per-repo policies");
+
+    let policies = config.policies.expect("policies should be present");
+    assert_eq!(policies.global.restrictions.len(), 1);
+    assert_eq!(policies.global.automations.len(), 1);
+    assert_eq!(policies.repos.len(), 1);
+    let repo = policies
+        .repos
+        .get("dourolabs/metis")
+        .expect("repo should exist");
+    assert_eq!(repo.restrictions.len(), 2);
+    assert_eq!(repo.automations.len(), 1);
 }

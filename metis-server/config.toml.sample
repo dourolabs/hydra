@@ -168,6 +168,43 @@ max_backoff_secs = 30
 # # name = "cascade_issue_status"
 # # [automations.params]
 # # trigger_statuses = ["dropped", "failed"]
+#
+# ## Per-repo policy overrides
+# ## When a repo has an entry here, its policy list replaces the global
+# ## defaults for that repo. Repos without an override use the global config.
+#
+# # [policies.repos."owner/repo"]
+# # restrictions = ["issue_lifecycle_validation"]
+# # automations = ["cascade_issue_status"]
+#
+# ## Patch workflow automation (configurable per-repo)
+# ## Controls which issues are created when a patch is opened.
+# ## - review_requests: zero or more review request issues with configurable assignees
+# ## - merge_request: optional merge request issue with configurable assignee
+# ## Assignee strings support variable substitution:
+# ##   $patch_creator — resolves to the username of the patch creator at runtime
+# ##
+# ## Default behavior (no patch_workflow config): creates a single merge-request
+# ## issue assigned to $patch_creator with no review request issues.
+#
+# ## Global default patch workflow:
+# # automations = [
+# #   { name = "patch_workflow", params = {
+# #     merge_request = { assignee = "$patch_creator" }
+# #   }},
+# # ]
+#
+# ## Per-repo patch workflow with review requests:
+# # [policies.repos."owner/repo"]
+# # automations = [
+# #   { name = "patch_workflow", params = {
+# #     review_requests = [
+# #       { assignee = "reviewer1" },
+# #       { assignee = "$patch_creator" },
+# #     ]
+# #     merge_request = { assignee = "swe" }
+# #   }},
+# # ]
 
 [kubernetes]
 # Set to true when the server runs inside a Kubernetes cluster and should use

@@ -73,10 +73,21 @@ impl PolicyRegistry {
 
     /// Build a `PolicyEngine` from a `PolicyConfig`.
     ///
+    /// Builds the global engine plus per-repo engines for any repo overrides.
     /// Returns an error if any referenced policy name is not registered or
     /// if any policy parameters are invalid.
     pub fn build(&self, config: &PolicyConfig) -> Result<PolicyEngine, String> {
-        self.build_engine_from_list(&config.global)
+        let global = self.build_engine_from_list(&config.global)?;
+        let mut repo_engines = HashMap::new();
+        for (repo_name, repo_list) in &config.repos {
+            let engine = self.build_engine_from_list(repo_list)?;
+            repo_engines.insert(repo_name.clone(), engine);
+        }
+        Ok(PolicyEngine::with_repo_engines(
+            global.global.restrictions,
+            global.global.automations,
+            repo_engines,
+        ))
     }
 
     /// Validate a `PolicyConfig` without building a full engine.
@@ -84,6 +95,9 @@ impl PolicyRegistry {
     /// Returns an error on unknown policy names or invalid params.
     pub fn validate_config(&self, config: &PolicyConfig) -> Result<(), anyhow::Error> {
         self.validate_list(&config.global, "global")?;
+        for (repo_name, repo_list) in &config.repos {
+            self.validate_list(repo_list, &format!("repos.{repo_name}"))?;
+        }
         Ok(())
     }
 

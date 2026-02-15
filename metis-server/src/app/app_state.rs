@@ -72,6 +72,7 @@ impl AppState {
                     PolicyEntry::Name("github_pr_sync".to_string()),
                 ],
             },
+            repos: std::collections::HashMap::new(),
         };
 
         let config = policy_config.unwrap_or(&default_config);
