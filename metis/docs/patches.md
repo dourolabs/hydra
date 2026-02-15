@@ -9,7 +9,7 @@ All subcommands honor global CLI flags such as `--server-url`, `--token`, and `-
 ## How patches relate to jobs and issues
 
 - Each patch stores the git diff, status, and `service_repo_name` pulled from the owning job (`--job` or `METIS_ID`). This lets automation trace changes back to the bundle that spawned them.
-- Patches are always tied to an issue id (`--issue-id`, defaults to `METIS_ISSUE_ID`). When `--assignee` is provided, the CLI automatically files a merge-request issue that depends on the source task and references the new patch id.
+- Patches are always tied to an issue id (`--issue-id`, defaults to `METIS_ISSUE_ID`). Merge-request tracking issues are created automatically by a server-side automation when a patch is created.
 - Status updates (e.g., `Open`, `ChangesRequested`) flow through `metis patches update` and power dashboards, merge queues, and reminder jobs.
 
 ## Git workflow expectations
@@ -38,14 +38,12 @@ metis patches create \
   --description "Explain the schema drift" \
   --issue-id i-123 \
   [--job t-456] \
-  [--assignee reviewer] \
   [--range base..HEAD] \
   [--allow-uncommitted]
 ```
 
 - `--title`/`--description` are required and trimmed server-side.
 - `--job` (or `METIS_ID`) provides the service repo name; omit only for purely local diffs.
-- `--assignee` files a merge-request issue assigned to that username and linked to the parent issue.
 - `--issue-id` (default `METIS_ISSUE_ID`) determines which task the patch belongs to and drives default commit range selection.
 - `--range` overrides the diff base; otherwise Metis uses `metis/<issue>/base..HEAD`.
 - `--allow-uncommitted` bypasses the clean-tree check when you intentionally want to snapshot staged work-in-progress.
@@ -105,12 +103,11 @@ Uploads arbitrary files (logs, screenshots, binaries) and returns the hosted URL
 ## Examples
 
 ```bash
-# Create and assign a review issue, push a branch, and attach to the current job
+# Create a patch, push a branch, and attach to the current job
 env METIS_ID=t-wwkhrw METIS_ISSUE_ID=i-zmgovr \
   metis patches create \
     --title "Patches docs" \
-    --description "Add reference guide" \
-    --assignee jayantk
+    --description "Add reference guide"
 
 # Review a teammate's patch with approval
 metis patches review p-123 --author "teammate" --contents "Ship it" --approve

@@ -5,10 +5,7 @@ use chrono::Utc;
 use clap::{Args, Subcommand};
 use metis_common::{
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
-    issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
-        IssueVersionRecord, UpsertIssueRequest,
-    },
+    issues::IssueId,
     jobs::BundleSpec,
     merge_queues::MergeQueue,
     patches::{
@@ -27,9 +24,7 @@ use crate::git::{
 };
 use crate::{
     client::MetisClientInterface,
-    command::output::{
-        render_issue_records, render_patch_records, CommandContext, ResolvedOutputFormat,
-    },
+    command::output::{render_patch_records, CommandContext, ResolvedOutputFormat},
 };
 #[derive(Subcommand, Debug)]
 pub enum PatchesCommand {
@@ -61,10 +56,6 @@ pub enum PatchesCommand {
         /// Associate the patch with a Metis job.
         #[arg(long = "job", value_name = "METIS_ID", env = ENV_METIS_ID)]
         job: Option<TaskId>,
-
-        /// Assign the merge-request issue to a user and automatically create it.
-        #[arg(long = "assignee", value_name = "ASSIGNEE")]
-        assignee: Option<String>,
 
         /// Associate the merge-request issue with an existing issue id.
         #[arg(
@@ -207,18 +198,16 @@ pub async fn run(
             title,
             description,
             job,
-            assignee,
             issue_id,
             allow_uncommitted,
             force,
             base_ref,
         } => {
-            let created = create_patch(
+            let patch = create_patch(
                 client,
                 title,
                 description,
                 job,
-                assignee,
                 issue_id,
                 allow_uncommitted,
                 force,
@@ -226,11 +215,7 @@ pub async fn run(
                 None,
             )
             .await?;
-            write_patch_output(
-                context.output_format,
-                &created.patch,
-                created.merge_request_issue,
-            )?;
+            write_patch_output(context.output_format, &patch)?;
             Ok(())
         }
         PatchesCommand::Apply { id } => apply_patch_record(client, id).await,
@@ -250,7 +235,7 @@ pub async fn run(
         } => {
             let patch =
                 update_patch(client, id, title, description, status, force, &base_ref).await?;
-            write_patch_output(context.output_format, &patch, None)?;
+            write_patch_output(context.output_format, &patch)?;
             Ok(())
         }
         PatchesCommand::Merge {
@@ -424,24 +409,17 @@ async fn fetch_patches(
     Ok(response.patches)
 }
 
-#[derive(Debug)]
-struct CreatedPatch {
-    patch: PatchVersionRecord,
-    merge_request_issue: Option<IssueVersionRecord>,
-}
-
 async fn create_patch(
     client: &dyn MetisClientInterface,
     title: String,
     description: String,
     job_id: Option<TaskId>,
-    assignee: Option<String>,
-    issue_id: IssueId,
+    _issue_id: IssueId,
     allow_uncommitted: bool,
     force: bool,
     base_ref: &str,
     repo_root: Option<&Path>,
-) -> Result<CreatedPatch> {
+) -> Result<PatchVersionRecord> {
     let repo_root = match repo_root {
         Some(path) => path.to_path_buf(),
         None => git_repository_root()?,
@@ -473,8 +451,8 @@ async fn create_patch(
         client,
         &repo_root,
         diff,
-        title.clone(),
-        description.clone(),
+        title,
+        description,
         job_id.clone(),
         is_automatic_backup,
         force,
@@ -488,38 +466,15 @@ async fn create_patch(
         .await
         .with_context(|| format!("failed to fetch patch '{}'", response.patch_id))?;
 
-    let merge_request_issue = if let Some(assignee) = assignee {
-        Some(
-            create_merge_request_issue(
-                client,
-                response.patch_id.clone(),
-                assignee,
-                issue_id,
-                title,
-                description,
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
-
-    Ok(CreatedPatch {
-        patch,
-        merge_request_issue,
-    })
+    Ok(patch)
 }
 
 fn write_patch_output(
     output_format: ResolvedOutputFormat,
     patch: &PatchVersionRecord,
-    merge_request_issue: Option<IssueVersionRecord>,
 ) -> Result<()> {
     let mut buffer = Vec::new();
     render_patch_records(output_format, std::slice::from_ref(patch), &mut buffer)?;
-    if let Some(issue) = merge_request_issue {
-        render_issue_records(output_format, std::slice::from_ref(&issue), &mut buffer)?;
-    }
     std::io::stdout().write_all(&buffer)?;
     std::io::stdout().flush()?;
     Ok(())
@@ -704,76 +659,6 @@ fn print_merge_queue_pretty(
     Ok(())
 }
 
-#[doc(hidden)]
-pub async fn create_merge_request_issue(
-    client: &dyn MetisClientInterface,
-    patch_id: PatchId,
-    assignee: String,
-    parent_issue_id: IssueId,
-    patch_title: String,
-    patch_description: String,
-) -> Result<IssueVersionRecord> {
-    let assignee = assignee.trim().to_string();
-    if assignee.is_empty() {
-        bail!("Assignee must not be empty.");
-    }
-
-    let dependencies = vec![IssueDependency::new(
-        IssueDependencyType::ChildOf,
-        parent_issue_id.clone(),
-    )];
-
-    let summary = patch_title.trim();
-    let title = if summary.is_empty() {
-        patch_description
-            .lines()
-            .next()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .unwrap_or("Patch review")
-            .to_string()
-    } else {
-        summary.to_string()
-    };
-
-    let description = format!("Review patch {}: {title}", patch_id.as_ref());
-    let parent_issue = client
-        .get_issue(&parent_issue_id, false)
-        .await
-        .with_context(|| {
-            format!(
-            "failed to fetch parent issue '{parent_issue_id}' to determine merge-request creator"
-        )
-        })?;
-    let creator = parent_issue.issue.creator;
-    let job_settings = parent_issue.issue.job_settings.clone();
-    let issue = Issue::new(
-        IssueType::MergeRequest,
-        description,
-        creator,
-        String::new(),
-        IssueStatus::Open,
-        Some(assignee),
-        Some(job_settings),
-        Vec::new(),
-        dependencies,
-        vec![patch_id],
-        false,
-    );
-
-    let response = client
-        .create_issue(&UpsertIssueRequest::new(issue.clone(), None))
-        .await
-        .context("failed to create merge-request issue")?;
-
-    Ok(IssueVersionRecord::new(
-        response.issue_id,
-        response.version,
-        Utc::now(),
-        issue,
-    ))
-}
-
 pub async fn resolve_service_repo_name(
     client: &dyn MetisClientInterface,
     job_id: Option<&TaskId>,
@@ -930,17 +815,12 @@ mod tests {
     use git2::Repository;
     use httpmock::{prelude::*, Mock};
     use metis_common::{
-        issues::{
-            Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
-            IssueVersionRecord, UpsertIssueRequest, UpsertIssueResponse,
-        },
         jobs::{BundleSpec, JobVersionRecord, Task},
         merge_queues::{EnqueueMergePatchRequest, MergeQueue},
         patches::{
             CommitRange, CreatePatchAssetResponse, GitOid, ListPatchesResponse, Patch,
             PatchVersionRecord, Review, UpsertPatchResponse,
         },
-        users::Username,
         RepoName,
     };
     use reqwest::Client as HttpClient;
@@ -987,14 +867,6 @@ mod tests {
                 .path("/v1/patches")
                 .json_body_obj(&expected_request);
             then.status(200).json_body_obj(&response);
-        })
-    }
-
-    fn mock_get_issue(server: &MockServer, issue_record: IssueVersionRecord) -> Mock {
-        server.mock(move |when, then| {
-            when.method(GET)
-                .path(format!("/v1/issues/{}", issue_record.issue_id.as_ref()));
-            then.status(200).json_body_obj(&issue_record);
         })
     }
 
@@ -1223,7 +1095,6 @@ mod tests {
             patch_title.clone(),
             patch_description.clone(),
             Some(job_id),
-            None,
             issue_id.clone(),
             false,
             false,
@@ -1305,7 +1176,6 @@ mod tests {
             title.clone(),
             description.clone(),
             job_id_opt.clone(),
-            None,
             issue_id.clone(),
             false,
             false,
@@ -1332,7 +1202,6 @@ mod tests {
             "missing job".to_string(),
             "patch without job id".to_string(),
             None,
-            None,
             issue_id,
             false,
             false,
@@ -1346,134 +1215,6 @@ mod tests {
             error.contains("provide --job or set METIS_ID"),
             "error should mention missing job id: {error}"
         );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn create_patch_creates_merge_request_issue_when_assignee_provided() -> Result<()> {
-        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        let job_id = task_id("t-job-merge");
-        let parent_issue = issue_id("i-parent");
-        let branch_name = current_branch(&repo_path)?;
-        let job_record = JobVersionRecord::new(
-            job_id.clone(),
-            0,
-            Utc::now(),
-            Task::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
-                    name: sample_repo_name(),
-                    rev: None,
-                },
-                None,
-                None,
-                None,
-                None,
-                Default::default(),
-                None,
-                None,
-                None,
-                false,
-            ),
-        );
-        let created_patch_id = patch_id("p-merge");
-        let expected_diff =
-            git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
-        let patch = with_git_identity(
-            Patch::new(
-                "custom patch title".to_string(),
-                "custom patch description".to_string(),
-                expected_diff,
-                PatchStatus::Open,
-                false,
-                Some(job_id.clone()),
-                Vec::new(),
-                sample_repo_name(),
-                None,
-                false,
-            ),
-            &branch_name,
-            base_commit,
-            head_commit,
-        );
-        let expected_patch_request = UpsertPatchRequest::new(patch.clone());
-        let parent_issue_record = IssueVersionRecord::new(
-            parent_issue.clone(),
-            0,
-            Utc::now(),
-            Issue::new(
-                IssueType::Task,
-                "parent issue".to_string(),
-                Username::from("creator-a"),
-                String::new(),
-                IssueStatus::Open,
-                Some("owner-a".to_string()),
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                false,
-            ),
-        );
-        let issue_request = UpsertIssueRequest::new(
-            Issue::new(
-                IssueType::MergeRequest,
-                format!(
-                    "Review patch {}: custom patch title",
-                    created_patch_id.as_ref()
-                ),
-                Username::from("creator-a"),
-                String::new(),
-                IssueStatus::Open,
-                Some("owner-a".to_string()),
-                None,
-                Vec::new(),
-                vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent_issue.clone(),
-                )],
-                vec![created_patch_id.clone()],
-                false,
-            ),
-            None,
-        );
-        let patch_response = UpsertPatchResponse::new(created_patch_id.clone(), 0);
-        let patch_record = PatchVersionRecord::new(created_patch_id.clone(), 0, Utc::now(), patch);
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let job_mock = mock_get_job(&server, job_record.clone());
-        let patch_mock = mock_create_patch(&server, expected_patch_request, patch_response.clone());
-        let get_patch_mock = mock_get_patch(&server, patch_record);
-        let parent_issue_mock = mock_get_issue(&server, parent_issue_record);
-        mock_get_github_token_failure(&server);
-        let issue_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/issues")
-                .json_body_obj(&issue_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-merge"), 0));
-        });
-
-        create_patch(
-            &client,
-            "custom patch title".to_string(),
-            "custom patch description".to_string(),
-            Some(job_id),
-            Some("owner-a".to_string()),
-            parent_issue.clone(),
-            false,
-            false,
-            "origin/main",
-            Some(&repo_path),
-        )
-        .await?;
-
-        job_mock.assert();
-        patch_mock.assert();
-        get_patch_mock.assert();
-        parent_issue_mock.assert_hits(1);
-        issue_mock.assert();
 
         Ok(())
     }
@@ -1584,7 +1325,6 @@ mod tests {
             "backup patch".to_string(),
             "backup description".to_string(),
             Some(job_id.clone()),
-            None,
             issue_id.clone(),
             false,
             false,
