@@ -329,8 +329,8 @@ impl ActorRef {
     pub fn display_name(&self) -> String {
         match self {
             ActorRef::Authenticated { actor_id } => match actor_id {
-                ActorId::Username(username) => format!("u-{username}"),
-                ActorId::Task(task_id) => format!("w-{task_id}"),
+                ActorId::Username(username) => username.to_string(),
+                ActorId::Task(task_id) => task_id.to_string(),
             },
             ActorRef::System {
                 worker_name,
@@ -338,8 +338,8 @@ impl ActorRef {
             } => {
                 if let Some(behalf) = on_behalf_of {
                     let behalf_name = match behalf {
-                        ActorId::Username(username) => format!("u-{username}"),
-                        ActorId::Task(task_id) => format!("w-{task_id}"),
+                        ActorId::Username(username) => username.to_string(),
+                        ActorId::Task(task_id) => task_id.to_string(),
                     };
                     format!("{worker_name} (on behalf of {behalf_name})")
                 } else {
@@ -529,7 +529,7 @@ mod tests {
         let actor_ref = ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("alice")),
         };
-        assert_eq!(actor_ref.display_name(), "u-alice");
+        assert_eq!(actor_ref.display_name(), "alice");
     }
 
     #[test]
@@ -538,10 +538,7 @@ mod tests {
             worker_name: "task-spawner".into(),
             on_behalf_of: Some(ActorId::Username(Username::from("bob"))),
         };
-        assert_eq!(
-            actor_ref.display_name(),
-            "task-spawner (on behalf of u-bob)"
-        );
+        assert_eq!(actor_ref.display_name(), "task-spawner (on behalf of bob)");
     }
 
     #[test]
@@ -561,7 +558,7 @@ mod tests {
                 actor_id: ActorId::Username(Username::from("eve")),
             })),
         };
-        assert_eq!(actor_ref.display_name(), "cascade (triggered by u-eve)");
+        assert_eq!(actor_ref.display_name(), "cascade (triggered by eve)");
     }
 
     #[test]
