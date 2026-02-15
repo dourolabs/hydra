@@ -137,7 +137,7 @@ impl AppState {
         actor: Option<String>,
     ) -> Result<(IssueId, VersionNumber), UpsertIssueError> {
         let api::issues::UpsertIssueRequest { issue, job_id, .. } = request;
-        let mut issue: Issue = issue.into();
+        let issue: Issue = issue.into();
 
         let store = self.store.as_ref();
 
@@ -208,33 +208,6 @@ impl AppState {
                     }
                 }
 
-                // Inherit creator from parent is now handled by the
-                // inherit_creator_from_parent automation, but we still do it
-                // inline for create to ensure the restriction check sees the
-                // correct creator before persisting.
-                if issue.creator.as_ref().trim().is_empty() {
-                    if let Some(parent_dependency) = issue.dependencies.iter().find(|dependency| {
-                        dependency.dependency_type == IssueDependencyType::ChildOf
-                    }) {
-                        match store.get_issue(&parent_dependency.issue_id, false).await {
-                            Ok(parent_issue) => {
-                                issue.creator = parent_issue.item.creator;
-                            }
-                            Err(source @ StoreError::IssueNotFound(_)) => {
-                                return Err(UpsertIssueError::MissingDependency {
-                                    dependency_id: parent_dependency.issue_id.clone(),
-                                    source,
-                                });
-                            }
-                            Err(source) => {
-                                return Err(UpsertIssueError::Store {
-                                    source,
-                                    issue_id: None,
-                                });
-                            }
-                        }
-                    }
-                }
                 // Run restriction policies (require_creator, issue_lifecycle_validation)
                 {
                     self.policy_engine.check_create_issue(&issue, store).await?;
@@ -1056,7 +1029,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_issue_inherits_creator_from_parent_when_empty() {
+    async fn create_issue_with_empty_creator_and_parent_rejects() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine);
 
@@ -1075,18 +1048,24 @@ mod tests {
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
         child_issue.creator = Username::from("");
-        let (child_id, _) = state
+        let err = state
             .upsert_issue(
                 None,
                 api::issues::UpsertIssueRequest::new(child_issue.into(), None),
                 None,
             )
             .await
-            .unwrap();
-
-        let store = state.store.as_ref();
-        let stored_child = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(stored_child.item.creator, Username::from("parent-creator"));
+            .unwrap_err();
+        match &err {
+            UpsertIssueError::PolicyViolation(violation) => {
+                assert!(
+                    violation.message.contains("creator"),
+                    "expected violation about missing creator, got: {}",
+                    violation.message
+                );
+            }
+            other => panic!("expected PolicyViolation, got: {other:?}"),
+        }
     }
 
     #[tokio::test]

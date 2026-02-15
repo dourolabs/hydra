@@ -156,9 +156,6 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_automation("create_merge_request_issue", |params| {
         Ok(Box::new(CreateMergeRequestIssueAutomation::new(params)?))
     });
-    registry.register_automation("inherit_creator_from_parent", |params| {
-        Ok(Box::new(InheritCreatorAutomation::new(params)?))
-    });
     registry.register_automation("github_pr_sync", |params| {
         Ok(Box::new(
             super::integrations::github_pr_sync::GithubPrSyncAutomation::new(params)?,

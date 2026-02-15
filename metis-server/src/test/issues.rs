@@ -299,7 +299,7 @@ async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Result<()> {
+async fn create_issue_rejects_missing_creator_with_parent() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
@@ -330,7 +330,9 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
         IssueDependencyType::ChildOf,
         parent.issue_id.clone(),
     )];
-    let child: UpsertIssueResponse = client
+
+    // Creating a child with a missing creator should be rejected
+    let response = client
         .post(format!("{}/v1/issues", server.base_url()))
         .json(&UpsertIssueRequest::new(
             issue(
@@ -348,26 +350,11 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
             None,
         ))
         .send()
-        .await?
-        .json()
         .await?;
 
-    let fetched: IssueVersionRecord = client
-        .get(format!(
-            "{}/v1/issues/{}",
-            server.base_url(),
-            child.issue_id
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
 
-    assert_eq!(
-        fetched.issue.creator,
-        metis_common::api::v1::users::Username::from(parent_creator)
-    );
-
+    // Creating a child with an explicit creator should still succeed
     let explicit_creator = user("explicit-creator");
     let explicit_child: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
