@@ -2263,10 +2263,6 @@ impl Store for PostgresStoreV2 {
         actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
-        let mut task = task;
-        task.status = Status::Created;
-        task.last_message = None;
-        task.error = None;
 
         if let Some(issue_id) = task.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
