@@ -61,7 +61,10 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(fetched.patch_id, created.patch_id);
-    let expected_patch: metis_common::api::v1::patches::Patch = patch.into();
+    let mut expected_patch: metis_common::api::v1::patches::Patch = patch.into();
+    // The test actor is a task worker whose creator is "test-creator", so the
+    // route handler populates patch.creator from Actor.creator.
+    expected_patch.creator = Some("test-creator".into());
     assert_eq!(fetched.patch, expected_patch);
     Ok(())
 }
@@ -246,7 +249,10 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(patch_results.patches.len(), 1);
-    let expected_patch: metis_common::api::v1::patches::Patch = filtered_patch.into();
+    let mut expected_patch: metis_common::api::v1::patches::Patch = filtered_patch.into();
+    // The test actor is a task worker whose creator is "test-creator", so the
+    // route handler populates patch.creator from Actor.creator.
+    expected_patch.creator = Some("test-creator".into());
     assert_eq!(patch_results.patches[0].patch, expected_patch);
     Ok(())
 }

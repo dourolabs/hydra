@@ -115,7 +115,15 @@ impl AppState {
     /// Resolve the patch creator from the actor when the request did not set one.
     /// Used so that patch_workflow automation can assign MergeRequest issues to the patch creator
     /// when config uses `assignee = "$patch_creator"`.
-    fn set_patch_creator_from_actor_if_unset(patch: &mut Patch, actor: &ActorRef) {
+    ///
+    /// When the actor is a direct user (`ActorId::Username`), the creator is set from that
+    /// username. When the actor is a task worker (`ActorId::Task`), the `actor_creator` fallback
+    /// (populated from `Actor.creator`) is used instead.
+    fn set_patch_creator_from_actor_if_unset(
+        patch: &mut Patch,
+        actor: &ActorRef,
+        actor_creator: Option<&Username>,
+    ) {
         if patch.creator.is_some() {
             return;
         }
@@ -124,6 +132,8 @@ impl AppState {
         } = actor
         {
             patch.creator = Some(Username::from(api_username.clone()));
+        } else if let Some(creator) = actor_creator {
+            patch.creator = Some(creator.clone());
         }
     }
 
@@ -132,10 +142,11 @@ impl AppState {
         actor: ActorRef,
         patch_id: Option<PatchId>,
         request: api::patches::UpsertPatchRequest,
+        actor_creator: Option<&Username>,
     ) -> Result<(PatchId, VersionNumber), UpsertPatchError> {
         let api::patches::UpsertPatchRequest { patch, .. } = request;
         let mut patch: Patch = patch.into();
-        Self::set_patch_creator_from_actor_if_unset(&mut patch, &actor);
+        Self::set_patch_creator_from_actor_if_unset(&mut patch, &actor, actor_creator);
 
         let store = self.store.as_ref();
         let (patch_id, version) = match patch_id {
@@ -308,7 +319,12 @@ mod tests {
 
         handles
             .state
-            .upsert_patch(ActorRef::from(&actor), Some(patch_id.clone()), request)
+            .upsert_patch(
+                ActorRef::from(&actor),
+                Some(patch_id.clone()),
+                request,
+                actor.creator.as_ref(),
+            )
             .await?;
 
         // Poll until the automation updates the github metadata.
@@ -428,7 +444,12 @@ mod tests {
 
         let (patch_id, _) = handles
             .state
-            .upsert_patch(ActorRef::from(&actor), None, request)
+            .upsert_patch(
+                ActorRef::from(&actor),
+                None,
+                request,
+                actor.creator.as_ref(),
+            )
             .await?;
 
         // Poll until the automation creates the github metadata.
@@ -477,7 +498,7 @@ mod tests {
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
         let (patch1_id, _) = handles
             .state
-            .upsert_patch(ActorRef::test(), None, request1)
+            .upsert_patch(ActorRef::test(), None, request1, None)
             .await?;
 
         // Close the first patch
@@ -504,7 +525,7 @@ mod tests {
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
         handles
             .state
-            .upsert_patch(ActorRef::test(), None, request2)
+            .upsert_patch(ActorRef::test(), None, request2, None)
             .await?;
 
         Ok(())
@@ -530,7 +551,7 @@ mod tests {
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
         let (patch1_id, _) = handles
             .state
-            .upsert_patch(ActorRef::test(), None, request1)
+            .upsert_patch(ActorRef::test(), None, request1, None)
             .await?;
 
         // Updating the same patch should succeed (the uniqueness check is only
@@ -550,8 +571,56 @@ mod tests {
         let request2 = api::patches::UpsertPatchRequest::new(update_patch.into());
         handles
             .state
-            .upsert_patch(ActorRef::test(), Some(patch1_id), request2)
+            .upsert_patch(ActorRef::test(), Some(patch1_id), request2, None)
             .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_sets_creator_from_actor_creator_for_task_actor() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::new("octo", "repo")?;
+
+        let creator_username = Username::from("the-human");
+        let task_id = TaskId::new();
+        let (actor, _auth_token) =
+            Actor::new_for_task(task_id.clone(), Some(creator_username.clone()));
+        handles
+            .store
+            .as_ref()
+            .add_actor(actor.clone(), &ActorRef::test())
+            .await?;
+
+        let patch = Patch::new(
+            "Agent patch".to_string(),
+            "Created by an agent".to_string(),
+            "diff content".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let request = api::patches::UpsertPatchRequest::new(patch.into());
+
+        let (patch_id, _) = handles
+            .state
+            .upsert_patch(
+                ActorRef::from(&actor),
+                None,
+                request,
+                actor.creator.as_ref(),
+            )
+            .await?;
+
+        let stored = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        assert_eq!(
+            stored.item.creator,
+            Some(creator_username),
+            "patch.creator should be set to the human who created the agent"
+        );
 
         Ok(())
     }
