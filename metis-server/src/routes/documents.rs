@@ -118,6 +118,7 @@ pub async fn get_document(
         document.version,
         document.timestamp,
         document.item.into(),
+        document.actor,
     );
     info!(document_id = %document_id, "get_document completed");
     Ok(Json(response))
@@ -141,6 +142,7 @@ pub async fn list_documents(
                 versioned.version,
                 versioned.timestamp,
                 versioned.item.into(),
+                versioned.actor,
             )
         })
         .collect();
@@ -171,6 +173,7 @@ pub async fn list_document_versions(
                 version.version,
                 version.timestamp,
                 version.item.into(),
+                version.actor,
             )
         })
         .collect();
@@ -211,6 +214,7 @@ pub async fn get_document_version(
         entry.version,
         entry.timestamp,
         entry.item.into(),
+        entry.actor,
     );
     info!(document_id = %document_id, version, "get_document_version completed");
     Ok(Json(response))
@@ -283,6 +287,7 @@ pub async fn delete_document(
         document.version,
         document.timestamp,
         document.item.into(),
+        document.actor,
     );
     Ok(Json(response))
 }

@@ -1,5 +1,6 @@
 use crate::{
     BuildCacheContext, IssueId, RepoName, TaskId, VersionNumber,
+    actor_ref::ActorRef,
     task_status::{Status, TaskError},
     users::Username,
 };
@@ -350,6 +351,8 @@ pub struct JobVersionRecord {
     pub version: VersionNumber,
     pub timestamp: DateTime<Utc>,
     pub task: Task,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<ActorRef>,
 }
 
 impl JobVersionRecord {
@@ -358,12 +361,14 @@ impl JobVersionRecord {
         version: VersionNumber,
         timestamp: DateTime<Utc>,
         task: Task,
+        actor: Option<ActorRef>,
     ) -> Self {
         Self {
             job_id,
             version,
             timestamp,
             task,
+            actor,
         }
     }
 
@@ -503,7 +508,7 @@ mod tests {
         );
 
         let task_id = crate::TaskId::new();
-        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task);
+        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task, None);
 
         record.strip_large_fields();
 
@@ -536,7 +541,7 @@ mod tests {
         );
 
         let task_id = crate::TaskId::new();
-        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task);
+        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task, None);
 
         record.strip_large_fields();
 

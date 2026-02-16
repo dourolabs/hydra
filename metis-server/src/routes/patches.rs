@@ -117,6 +117,7 @@ pub async fn get_patch(
         patch.version,
         patch.timestamp,
         patch.item.into(),
+        patch.actor,
     );
     Ok(Json(response))
 }
@@ -139,6 +140,7 @@ pub async fn list_patch_versions(
                 version.version,
                 version.timestamp,
                 version.item.into(),
+                version.actor,
             )
         })
         .collect();
@@ -180,6 +182,7 @@ pub async fn get_patch_version(
         entry.version,
         entry.timestamp,
         entry.item.into(),
+        entry.actor,
     );
     info!(patch_id = %patch_id, version, "get_patch_version completed");
     Ok(Json(response))
@@ -204,6 +207,7 @@ pub async fn list_patches(
                 versioned.version,
                 versioned.timestamp,
                 versioned.item.into(),
+                versioned.actor,
             )
         })
         .collect();
@@ -542,6 +546,7 @@ pub async fn delete_patch(
         patch.version,
         patch.timestamp,
         patch.item.into(),
+        patch.actor,
     );
     Ok(Json(response))
 }

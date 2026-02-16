@@ -4096,6 +4096,7 @@ mod tests {
                 error,
                 false,
             ),
+            None,
         )
     }
 

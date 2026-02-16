@@ -948,7 +948,7 @@ mod tests {
             .with_path("docs/runbook.md")
             .unwrap()
             .with_created_by(TaskId::new());
-        DocumentVersionRecord::new(id.clone(), 0, Utc::now(), document)
+        DocumentVersionRecord::new(id.clone(), 0, Utc::now(), document, None)
     }
 
     #[tokio::test]
@@ -1335,7 +1335,7 @@ mod tests {
         )
         .with_path("guides/deploy.md")
         .unwrap();
-        let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document);
+        let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
         let response = ListDocumentsResponse::new(vec![record]);
 
         let server = MockServer::start();
@@ -1384,12 +1384,14 @@ mod tests {
             DocumentPayload::new("Pathed".to_string(), "body".to_string(), false)
                 .with_path("docs/pathed.md")
                 .unwrap(),
+            None,
         );
         let unpathed = DocumentVersionRecord::new(
             unpathed_id,
             0,
             Utc::now(),
             DocumentPayload::new("Unpathed".to_string(), "body".to_string(), false),
+            None,
         );
         let response = ListDocumentsResponse::new(vec![pathed, unpathed]);
 
@@ -1424,7 +1426,7 @@ mod tests {
         let document = DocumentPayload::new("Guide".to_string(), body.to_string(), false)
             .with_path("guides/steps.md")
             .unwrap();
-        let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document);
+        let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
         let response = ListDocumentsResponse::new(vec![record]);
 
         let server = MockServer::start();
@@ -1474,7 +1476,7 @@ mod tests {
         let document = DocumentPayload::new("Keep".to_string(), "keep body".to_string(), false)
             .with_path("docs/keep.md")
             .unwrap();
-        let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document);
+        let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
 
         let removed_id = DocumentId::new();
         let removed_doc =
@@ -1482,7 +1484,7 @@ mod tests {
                 .with_path("docs/remove.md")
                 .unwrap();
         let removed_record =
-            DocumentVersionRecord::new(removed_id.clone(), 0, Utc::now(), removed_doc);
+            DocumentVersionRecord::new(removed_id.clone(), 0, Utc::now(), removed_doc, None);
 
         // First sync with both documents
         let response = ListDocumentsResponse::new(vec![record.clone(), removed_record]);
@@ -1539,7 +1541,7 @@ mod tests {
         let document = DocumentPayload::new("Guide".to_string(), "body".to_string(), false)
             .with_path("playbooks/guide.md")
             .unwrap();
-        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document);
+        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None);
         let response = ListDocumentsResponse::new(vec![record]);
 
         let server = MockServer::start();
@@ -1575,7 +1577,7 @@ mod tests {
         let document = DocumentPayload::new("Guide".to_string(), "body".to_string(), false)
             .with_path("/playbooks/guide.md")
             .unwrap();
-        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document);
+        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None);
         let response = ListDocumentsResponse::new(vec![record]);
 
         let server = MockServer::start();
@@ -1673,6 +1675,7 @@ mod tests {
             DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
                 .with_path("/docs/guide.md")
                 .unwrap(),
+            None,
         );
         let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
         server.mock(|when, then| {
@@ -1752,6 +1755,7 @@ mod tests {
             DocumentPayload::new("Stable".to_string(), body.to_string(), false)
                 .with_path("/docs/stable.md")
                 .unwrap(),
+            None,
         );
         let list_response = ListDocumentsResponse::new(vec![list_record]);
         server.mock(|when, then| {
@@ -1876,6 +1880,7 @@ mod tests {
             DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
                 .with_path("/docs/guide.md")
                 .unwrap(),
+            None,
         );
         let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
         server.mock(|when, then| {
@@ -1947,6 +1952,7 @@ mod tests {
             DocumentPayload::new("Guide".to_string(), server_body.to_string(), false)
                 .with_path("/docs/guide.md")
                 .unwrap(),
+            None,
         );
         let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
         server.mock(|when, then| {
@@ -2029,6 +2035,7 @@ mod tests {
             )
             .with_path("/docs/guide.md")
             .unwrap(),
+            None,
         );
         let list_response = ListDocumentsResponse::new(vec![server_record]);
         server.mock(|when, then| {
@@ -2087,7 +2094,7 @@ mod tests {
         let document = DocumentPayload::new("Guide".to_string(), "# Content".to_string(), false)
             .with_path("docs/guide.md")
             .unwrap();
-        let record = DocumentVersionRecord::new(doc_id.clone(), 5, Utc::now(), document);
+        let record = DocumentVersionRecord::new(doc_id.clone(), 5, Utc::now(), document, None);
         let response = ListDocumentsResponse::new(vec![record]);
 
         let server = MockServer::start();
@@ -2258,6 +2265,7 @@ mod tests {
                 1,
                 Utc::now(),
                 DocumentPayload::new("Old".to_string(), body.to_string(), true),
+                None,
             );
             then.status(200).json_body_obj(&record);
         });
@@ -2383,6 +2391,7 @@ mod tests {
                 1,
                 Utc::now(),
                 DocumentPayload::new("Old".to_string(), "# Old playbook".to_string(), true),
+                None,
             );
             then.status(200).json_body_obj(&record);
         });

@@ -97,6 +97,7 @@ pub async fn list_jobs(
                 versioned_task.version,
                 versioned_task.timestamp,
                 api_task,
+                versioned_task.actor,
             )
         })
         .collect();
@@ -152,8 +153,13 @@ pub async fn get_job(
     } else {
         api_task
     };
-    let record =
-        v1::jobs::JobVersionRecord::new(job_id.clone(), latest.version, latest.timestamp, api_task);
+    let record = v1::jobs::JobVersionRecord::new(
+        job_id.clone(),
+        latest.version,
+        latest.timestamp,
+        api_task,
+        latest.actor.clone(),
+    );
     info!(job_id = %record.job_id, "get_job completed successfully");
     Ok(Json(record))
 }
@@ -185,6 +191,7 @@ pub async fn list_job_versions(
                 version.version,
                 version.timestamp,
                 version.item.into(),
+                version.actor,
             )
         })
         .collect();
@@ -235,6 +242,7 @@ pub async fn get_job_version(
         entry.version,
         entry.timestamp,
         entry.item.into(),
+        entry.actor,
     );
     info!(job_id = %job_id, version, "get_job_version completed");
     Ok(Json(response))

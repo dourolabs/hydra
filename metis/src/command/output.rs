@@ -797,7 +797,7 @@ mod tests {
             .with_path("docs/runbook.md")
             .unwrap()
             .with_created_by(TaskId::new());
-        let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document);
+        let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document, None);
         let mut output = Vec::new();
         render_document_records(ResolvedOutputFormat::Pretty, &[record], false, &mut output)
             .unwrap();
@@ -818,7 +818,7 @@ mod tests {
             .with_path("docs/runbook.md")
             .unwrap()
             .with_created_by(TaskId::new());
-        let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document);
+        let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document, None);
         let mut output = Vec::new();
         render_document_records(ResolvedOutputFormat::Pretty, &[record], true, &mut output)
             .unwrap();

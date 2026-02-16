@@ -1,4 +1,4 @@
-use crate::{DocumentId, DocumentPath, TaskId, VersionNumber};
+use crate::{DocumentId, DocumentPath, TaskId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +46,8 @@ pub struct DocumentVersionRecord {
     pub version: VersionNumber,
     pub timestamp: DateTime<Utc>,
     pub document: Document,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<ActorRef>,
 }
 
 impl DocumentVersionRecord {
@@ -54,12 +56,14 @@ impl DocumentVersionRecord {
         version: VersionNumber,
         timestamp: DateTime<Utc>,
         document: Document,
+        actor: Option<ActorRef>,
     ) -> Self {
         Self {
             document_id,
             version,
             timestamp,
             document,
+            actor,
         }
     }
 }

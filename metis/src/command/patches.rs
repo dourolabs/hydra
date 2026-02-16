@@ -634,6 +634,7 @@ async fn update_patch_inner(
         response.version,
         Utc::now(),
         updated_patch,
+        None,
     ))
 }
 
@@ -1108,6 +1109,7 @@ mod tests {
                 None,
                 false,
             ),
+            None,
         );
         let patch_title = "custom patch title".to_string();
         let patch_description = "custom patch description".to_string();
@@ -1133,7 +1135,7 @@ mod tests {
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-1"), 0);
-        let patch_record = PatchVersionRecord::new(patch_id("p-1"), 0, Utc::now(), patch);
+        let patch_record = PatchVersionRecord::new(patch_id("p-1"), 0, Utc::now(), patch, None);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1186,6 +1188,7 @@ mod tests {
                 None,
                 false,
             ),
+            None,
         );
 
         let title = "patch with job title".to_string();
@@ -1213,7 +1216,7 @@ mod tests {
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-2"), 0);
-        let patch_record = PatchVersionRecord::new(patch_id("p-2"), 0, Utc::now(), patch);
+        let patch_record = PatchVersionRecord::new(patch_id("p-2"), 0, Utc::now(), patch, None);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1340,6 +1343,7 @@ mod tests {
                 None,
                 false,
             ),
+            None,
         );
         let issue_id = issue_id("i-service");
         let expected_diff =
@@ -1363,7 +1367,8 @@ mod tests {
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-service"), 0);
-        let patch_record = PatchVersionRecord::new(patch_id("p-service"), 0, Utc::now(), patch);
+        let patch_record =
+            PatchVersionRecord::new(patch_id("p-service"), 0, Utc::now(), patch, None);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1431,6 +1436,7 @@ mod tests {
                 None,
                 false,
             ),
+            None,
         );
         let job_mock = mock_get_job(&server, job_record.clone());
 
@@ -1469,6 +1475,7 @@ mod tests {
                 None,
                 false,
             ),
+            None,
         );
         let server = MockServer::start();
         let client = metis_client(&server);
@@ -1534,6 +1541,7 @@ mod tests {
                 None,
                 false,
             ),
+            None,
         );
         let expected_request = UpsertPatchRequest::new(Patch::new(
             "Updated title".to_string(),

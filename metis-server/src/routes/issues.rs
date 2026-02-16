@@ -144,6 +144,7 @@ pub async fn get_issue(
         issue.version,
         issue.timestamp,
         issue.item.into(),
+        issue.actor,
     );
     Ok(Json(response))
 }
@@ -166,6 +167,7 @@ pub async fn list_issue_versions(
                 version.version,
                 version.timestamp,
                 version.item.into(),
+                version.actor,
             )
         })
         .collect();
@@ -207,6 +209,7 @@ pub async fn get_issue_version(
         entry.version,
         entry.timestamp,
         entry.item.into(),
+        entry.actor,
     );
     info!(issue_id = %issue_id, version, "get_issue_version completed");
     Ok(Json(response))
@@ -264,6 +267,7 @@ pub async fn list_issues(
                 versioned.version,
                 versioned.timestamp,
                 versioned.item.into(),
+                versioned.actor,
             )
         })
         .collect();
@@ -502,6 +506,7 @@ pub async fn delete_issue(
         issue.version,
         issue.timestamp,
         issue.item.into(),
+        issue.actor,
     );
     Ok(Json(response))
 }
