@@ -85,16 +85,12 @@ impl MemoryStore {
             .unwrap_or(1)
     }
 
-    fn actor_to_json(actor: &ActorRef) -> serde_json::Value {
-        serde_json::to_value(actor).expect("ActorRef serialization should not fail")
-    }
-
     fn versioned_now_with_actor<T>(
         item: T,
         version: VersionNumber,
         actor: &ActorRef,
     ) -> Versioned<T> {
-        Versioned::with_actor(item, version, Utc::now(), Self::actor_to_json(actor))
+        Versioned::with_actor(item, version, Utc::now(), actor.clone())
     }
 
     fn versioned_at_with_actor<T>(
@@ -103,7 +99,7 @@ impl MemoryStore {
         timestamp: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Versioned<T> {
-        Versioned::with_actor(item, version, timestamp, Self::actor_to_json(actor))
+        Versioned::with_actor(item, version, timestamp, actor.clone())
     }
 
     /// Returns true if the patch matches the search term.
@@ -1733,19 +1729,14 @@ mod tests {
         assert_eq!(versions.len(), 2);
 
         // Version 1 should have the user actor
-        let v1_actor: ActorRef =
-            serde_json::from_value(versions[0].actor.clone().unwrap()).unwrap();
-        assert_eq!(v1_actor, user_actor);
+        assert_eq!(versions[0].actor.as_ref().unwrap(), &user_actor);
 
         // Version 2 should have the system actor
-        let v2_actor: ActorRef =
-            serde_json::from_value(versions[1].actor.clone().unwrap()).unwrap();
-        assert_eq!(v2_actor, system_actor);
+        assert_eq!(versions[1].actor.as_ref().unwrap(), &system_actor);
 
         // Latest version should also have actor set
         let latest = store.get_issue(&issue_id, false).await.unwrap();
-        let latest_actor: ActorRef = serde_json::from_value(latest.actor.clone().unwrap()).unwrap();
-        assert_eq!(latest_actor, system_actor);
+        assert_eq!(latest.actor.as_ref().unwrap(), &system_actor);
     }
 
     #[tokio::test]
