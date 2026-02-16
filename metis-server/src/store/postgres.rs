@@ -1452,6 +1452,44 @@ impl ReadOnlyStore for PostgresStore {
         Ok(result)
     }
 
+    async fn count_distinct_issues(&self) -> Result<u64, StoreError> {
+        let count =
+            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(DISTINCT id) FROM {TABLE_ISSUES}"))
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+        Ok(count as u64)
+    }
+
+    async fn count_distinct_patches(&self) -> Result<u64, StoreError> {
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_PATCHES}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(count as u64)
+    }
+
+    async fn count_distinct_documents(&self) -> Result<u64, StoreError> {
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_DOCUMENTS}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(count as u64)
+    }
+
+    async fn count_distinct_tasks(&self) -> Result<u64, StoreError> {
+        let count =
+            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(DISTINCT id) FROM {TABLE_TASKS}"))
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+        Ok(count as u64)
+    }
+
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         self.fetch_versioned_payload(TABLE_ACTORS, "actor", name, ACTOR_SCHEMA_VERSION)
@@ -1580,7 +1618,8 @@ impl Store for PostgresStore {
     ) -> Result<(IssueId, VersionNumber), StoreError> {
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
-        let id = IssueId::new();
+        let count = self.count_distinct_issues().await?;
+        let id = IssueId::new_for_count(count);
 
         self.insert_payload(
             TABLE_ISSUES,
@@ -1633,7 +1672,8 @@ impl Store for PostgresStore {
         patch: Patch,
         actor: &ActorRef,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
-        let id = PatchId::new();
+        let count = self.count_distinct_patches().await?;
+        let id = PatchId::new_for_count(count);
         self.insert_payload(
             TABLE_PATCHES,
             "patch",
@@ -1682,7 +1722,8 @@ impl Store for PostgresStore {
         document: Document,
         actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        let id = DocumentId::new();
+        let count = self.count_distinct_documents().await?;
+        let id = DocumentId::new_for_count(count);
         self.insert_payload(
             TABLE_DOCUMENTS,
             "document",
@@ -1731,7 +1772,8 @@ impl Store for PostgresStore {
         _creation_time: chrono::DateTime<Utc>,
         actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let id = TaskId::new();
+        let count = self.count_distinct_tasks().await?;
+        let id = TaskId::new_for_count(count);
 
         if let Some(issue_id) = task.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
