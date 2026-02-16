@@ -275,8 +275,8 @@ impl PostgresStoreV2 {
             .transpose()?;
 
         let query = format!(
-            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
+            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -293,6 +293,8 @@ impl PostgresStoreV2 {
             .bind(patch.deleted)
             .bind(&patch.branch_name)
             .bind(&commit_range_json)
+            .bind(patch.creator.as_ref().map(|u| u.as_str()))
+            .bind(patch.base_branch.as_deref())
             .bind(actor)
             .execute(&self.pool)
             .await
@@ -335,6 +337,8 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
+        let creator = row.creator.as_deref().map(Username::from);
+
         Ok(Patch {
             title: row.title.clone(),
             description: row.description.clone(),
@@ -342,14 +346,14 @@ impl PostgresStoreV2 {
             status,
             is_automatic_backup: row.is_automatic_backup,
             created_by,
-            creator: None,
+            creator,
             reviews,
             service_repo_name,
             github,
             deleted: row.deleted,
             branch_name: row.branch_name.clone(),
             commit_range,
-            base_branch: None,
+            base_branch: row.base_branch.clone(),
         })
     }
 
@@ -382,6 +386,16 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
+        let secrets_json = task
+            .secrets
+            .as_ref()
+            .map(|s| {
+                serde_json::to_value(s).map_err(|err| {
+                    StoreError::Internal(format!("failed to serialize secrets: {err}"))
+                })
+            })
+            .transpose()?;
+
         let status_str = match task.status {
             Status::Created => "created",
             Status::Pending => "pending",
@@ -391,8 +405,8 @@ impl PostgresStoreV2 {
         };
 
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -411,6 +425,7 @@ impl PostgresStoreV2 {
             .bind(&error_json)
             .bind(task.deleted)
             .bind(actor)
+            .bind(&secrets_json)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -429,6 +444,15 @@ impl PostgresStoreV2 {
             .map(|e| {
                 serde_json::from_value(e.clone()).map_err(|err| {
                     StoreError::Internal(format!("failed to deserialize error: {err}"))
+                })
+            })
+            .transpose()?;
+        let secrets: Option<Vec<String>> = row
+            .secrets
+            .as_ref()
+            .map(|s| {
+                serde_json::from_value(s.clone()).map_err(|err| {
+                    StoreError::Internal(format!("failed to deserialize secrets: {err}"))
                 })
             })
             .transpose()?;
@@ -465,7 +489,7 @@ impl PostgresStoreV2 {
             env_vars,
             cpu_limit: row.cpu_limit.clone(),
             memory_limit: row.memory_limit.clone(),
-            secrets: None,
+            secrets,
             status,
             last_message: row.last_message.clone(),
             error,
@@ -794,6 +818,8 @@ struct PatchRow {
     deleted: bool,
     branch_name: Option<String>,
     commit_range: Option<Value>,
+    creator: Option<String>,
+    base_branch: Option<String>,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -821,6 +847,7 @@ struct TaskRow {
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
     creator: Option<String>,
+    secrets: Option<Value>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1255,7 +1282,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Patch>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, actor, created_at, updated_at
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1288,7 +1315,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, actor, created_at, updated_at
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -1331,7 +1358,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each patch, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, actor, created_at, updated_at \
+            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at \
              FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -1662,7 +1689,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Task>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1695,7 +1722,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -1738,7 +1765,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each task, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator \
+            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets \
              FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -1841,7 +1868,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"
@@ -2468,18 +2495,20 @@ mod tests {
     use super::*;
     use crate::{
         domain::{
+            actors::Actor,
             documents::Document,
             issues::{
-                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem,
+                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
+                TodoItem,
             },
             jobs::BundleSpec,
-            patches::{Patch, PatchStatus},
+            patches::{CommitRange, GitOid, GithubPr, Patch, PatchStatus, Review},
             users::{User, Username},
         },
         test_utils::test_state_with_store,
     };
     use metis_common::{
-        RepoName, TaskId, VersionNumber, Versioned,
+        PatchId, RepoName, TaskId, VersionNumber, Versioned,
         repositories::{Repository, SearchRepositoriesQuery},
     };
     use std::{collections::HashSet, str::FromStr, sync::Arc};
@@ -2568,6 +2597,88 @@ mod tests {
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             Some("image:latest".to_string()),
+        )
+    }
+
+    /// Task with every optional field set so serialization round-trip can assert full equality.
+    fn sample_task_all_fields() -> Task {
+        let mut task = Task::new(
+            "full prompt".to_string(),
+            BundleSpec::None,
+            None,
+            Some(Username::from("bob")),
+            Some("img:tag".to_string()),
+            Some("model-x".to_string()),
+            [("K".to_string(), "V".to_string())].into_iter().collect(),
+            Some("1000m".to_string()),
+            Some("512Mi".to_string()),
+            Some(vec!["secret-a".to_string(), "secret-b".to_string()]),
+        );
+        task.last_message = Some("last message".to_string());
+        task
+    }
+
+    /// Patch with every optional field set so serialization round-trip can assert full equality.
+    fn sample_patch_all_fields(created_by: Option<TaskId>) -> Patch {
+        let base_oid = GitOid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
+        let head_oid = GitOid::from_str("fedcba9876543210fedcba9876543210fedcba98").unwrap();
+        let mut patch = Patch::new(
+            "full title".to_string(),
+            "full desc".to_string(),
+            "full diff".to_string(),
+            PatchStatus::Open,
+            true,
+            created_by,
+            vec![Review::new(
+                "looks good".to_string(),
+                true,
+                "alice".to_string(),
+                None,
+            )],
+            RepoName::from_str("org/repo").unwrap(),
+            Some(GithubPr::new(
+                "owner".to_string(),
+                "repo".to_string(),
+                42,
+                Some("feature".to_string()),
+                Some("main".to_string()),
+                Some("https://github.com/owner/repo/pull/42".to_string()),
+                None,
+            )),
+        );
+        patch.creator = Some(Username::from("patch-creator"));
+        patch.branch_name = Some("feature/xyz".to_string());
+        patch.commit_range = Some(CommitRange::new(base_oid, head_oid));
+        patch.base_branch = Some("main".to_string());
+        patch
+    }
+
+    /// Issue with every optional field set so serialization round-trip can assert full equality.
+    fn sample_issue_all_fields(dependencies: Vec<IssueDependency>, patches: Vec<PatchId>) -> Issue {
+        Issue::new(
+            IssueType::Task,
+            "full description".to_string(),
+            Username::from("issue-creator"),
+            "50%".to_string(),
+            IssueStatus::Open,
+            Some("assignee".to_string()),
+            Some(JobSettings {
+                repo_name: Some(RepoName::from_str("org/proj").unwrap()),
+                remote_url: Some("https://git.example.com/org/proj.git".to_string()),
+                image: Some("img:v1".to_string()),
+                model: Some("claude-3".to_string()),
+                branch: Some("main".to_string()),
+                max_retries: Some(3),
+                cpu_limit: Some("2".to_string()),
+                memory_limit: Some("4Gi".to_string()),
+                secrets: Some(vec!["job-secret".to_string()]),
+            }),
+            vec![
+                TodoItem::new("todo one".to_string(), false),
+                TodoItem::new("todo two".to_string(), true),
+            ],
+            dependencies,
+            patches,
         )
     }
 
@@ -2888,6 +2999,166 @@ mod tests {
         assert_eq!(updated.item.github_token, "new-token");
         assert_eq!(updated.item.github_user_id, 202);
         assert_eq!(updated.version, 2);
+    }
+
+    /// Round-trip serialization: add then get; fetched entity must equal original.
+    /// Catches missing persistence/read of any field.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn repository_serialization_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let name = RepoName::from_str("roundtrip/repo").unwrap();
+        let repo = sample_repository_config();
+
+        store
+            .add_repository(name.clone(), repo.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_repository(&name, false).await.unwrap();
+        assert_eq!(fetched.item, repo, "Repository must round-trip all fields");
+    }
+
+    /// Round-trip serialization: add then get; fetched entity must equal original.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn task_serialization_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let task = sample_task_all_fields();
+
+        let (task_id, _) = store
+            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_task(&task_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item, task,
+            "Task must round-trip all fields (creator, secrets, image, model, etc.)"
+        );
+    }
+
+    /// Round-trip serialization: add then get; fetched entity must equal original.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn patch_serialization_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (task_id, _) = store
+            .add_task(sample_task_all_fields(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let patch = sample_patch_all_fields(Some(task_id));
+
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_patch(&patch_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item, patch,
+            "Patch must round-trip all fields (creator, base_branch, branch_name, commit_range, github, etc.)"
+        );
+    }
+
+    /// Round-trip serialization: add then get; fetched entity must equal original.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn issue_serialization_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (parent_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (patch_id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        let issue = sample_issue_all_fields(
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id,
+            )],
+            vec![patch_id],
+        );
+
+        let (issue_id, _) = store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item, issue,
+            "Issue must round-trip all fields (assignee, job_settings, todo_list, dependencies, patches)"
+        );
+    }
+
+    /// Round-trip serialization: add then get; fetched entity must equal original.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn document_serialization_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (task_id, _) = store
+            .add_task(sample_task_all_fields(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let doc = sample_document("docs/roundtrip.md", Some(task_id));
+
+        let (doc_id, _) = store
+            .add_document(doc.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_document(&doc_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item, doc,
+            "Document must round-trip all fields (path, created_by)"
+        );
+    }
+
+    /// Round-trip serialization: add then get; fetched entity must equal original.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn user_serialization_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let user = User {
+            username: Username::from("roundtrip_user"),
+            github_user_id: 999,
+            github_token: "tok".to_string(),
+            github_refresh_token: "ref".to_string(),
+            deleted: false,
+        };
+
+        store
+            .add_user(user.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_user(&Username::from("roundtrip_user"), false)
+            .await
+            .unwrap();
+        assert_eq!(fetched.item, user, "User must round-trip all fields");
+    }
+
+    /// Round-trip serialization: add then get; fetched entity must equal original.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn actor_serialization_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (actor, _token) = Actor::new_for_user(Username::from("actor_creator"));
+
+        store
+            .add_actor(actor.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_actor(&actor.name()).await.unwrap();
+        assert_eq!(
+            fetched.item, actor,
+            "Actor must round-trip all fields (creator, actor_id, etc.)"
+        );
     }
 
     #[sqlx::test(migrations = "./migrations")]

@@ -570,6 +570,71 @@ fn policy_config_default_is_empty() {
     assert!(config.global.automations.is_empty());
 }
 
+/// Exact structure from service3.yaml: [policies] with [[policies.automations]] and
+/// [policies.automations.params] for patch_workflow. Ensures merge_request.assignee
+/// is deserialized and passed through to the automation.
+#[test]
+fn policy_config_deserializes_patch_workflow_params_under_policies_section() {
+    let toml_str = r#"
+        [metis]
+        namespace = "default"
+        [job]
+        default_image = "x"
+        [database]
+        url = "postgres://localhost/db"
+        [github_app]
+        app_id = 1
+        client_id = "c"
+        client_secret = "s"
+        private_key = "k"
+        [background]
+        assignment_agent = "swe"
+        [[background.agent_queues]]
+        name = "swe"
+        prompt = "p"
+
+        [policies]
+        restrictions = ["issue_lifecycle_validation"]
+        [[policies.automations]]
+        name = "cascade_issue_status"
+        params = {}
+        [[policies.automations]]
+        name = "patch_workflow"
+        [policies.automations.params]
+        merge_request = { assignee = "$patch_creator" }
+        [[policies.automations]]
+        name = "github_pr_sync"
+        params = {}
+    "#;
+
+    let config: crate::config::AppConfig =
+        toml::from_str(toml_str).expect("full config with [policies] should deserialize");
+    let policies = config.policies.expect("policies should be present");
+    let patch_workflow_entry = policies
+        .global
+        .automations
+        .iter()
+        .find(|e| e.name() == "patch_workflow")
+        .expect("patch_workflow automation should be present");
+    let params = patch_workflow_entry
+        .params()
+        .expect("patch_workflow should have params");
+    let table = params.as_table().expect("params should be a table");
+    let merge_request = table
+        .get("merge_request")
+        .and_then(|v| v.as_table())
+        .expect("params.merge_request should be a table");
+    let assignee = merge_request
+        .get("assignee")
+        .and_then(|v| v.as_str())
+        .expect("merge_request.assignee should be present");
+    assert_eq!(assignee, "$patch_creator");
+
+    // Build engine and ensure patch_workflow is constructed with params (no panic)
+    let engine = crate::app::AppState::build_policy_engine(Some(&policies));
+    assert!(engine.automation_count() >= 3);
+}
+
 // ---------------------------------------------------------------------------
 // Shortcut method tests
 // ---------------------------------------------------------------------------
