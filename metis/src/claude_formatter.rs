@@ -25,13 +25,21 @@ impl PendingToolCall {
 
 pub struct StreamFormatter {
     pending_tools: HashMap<String, PendingToolCall>,
+    last_assistant_text: Option<String>,
+    current_assistant_text: String,
 }
 
 impl StreamFormatter {
     pub fn new() -> Self {
         Self {
             pending_tools: HashMap::new(),
+            last_assistant_text: None,
+            current_assistant_text: String::new(),
         }
+    }
+
+    pub fn last_assistant_text(&self) -> Option<&str> {
+        self.last_assistant_text.as_deref()
     }
 
     pub fn handle_line(&mut self, raw_line: &str) -> Vec<String> {
@@ -61,6 +69,8 @@ impl StreamFormatter {
             return renders;
         };
 
+        self.current_assistant_text.clear();
+
         for chunk in content {
             let Some(chunk_type) = chunk.get("type").and_then(Value::as_str) else {
                 continue;
@@ -68,6 +78,10 @@ impl StreamFormatter {
             match chunk_type {
                 "text" => {
                     if let Some(text) = chunk.get("text").and_then(Value::as_str) {
+                        if !self.current_assistant_text.is_empty() {
+                            self.current_assistant_text.push('\n');
+                        }
+                        self.current_assistant_text.push_str(text);
                         renders.push(format_block("assistant>", text));
                     }
                 }
@@ -83,6 +97,10 @@ impl StreamFormatter {
                 }
                 _ => {}
             }
+        }
+
+        if !self.current_assistant_text.is_empty() {
+            self.last_assistant_text = Some(self.current_assistant_text.clone());
         }
 
         renders
@@ -462,5 +480,125 @@ mod tests {
         // Long duration should use minutes and seconds
         let long = format_tool_result("Bash", "sleep 90", Duration::from_secs(90), "", false);
         assert!(long.contains("(1m 30s)"));
+    }
+
+    #[test]
+    fn last_assistant_text_returns_only_last_message() {
+        let mut formatter = StreamFormatter::new();
+
+        let first = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "First assistant message"}
+                ]
+            }
+        });
+        formatter.handle_line(&first.to_string());
+        assert_eq!(
+            formatter.last_assistant_text(),
+            Some("First assistant message")
+        );
+
+        let second = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "Second assistant message"}
+                ]
+            }
+        });
+        formatter.handle_line(&second.to_string());
+        assert_eq!(
+            formatter.last_assistant_text(),
+            Some("Second assistant message")
+        );
+    }
+
+    #[test]
+    fn last_assistant_text_excludes_tool_use_and_reasoning() {
+        let mut formatter = StreamFormatter::new();
+
+        let msg = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "thinking", "text": "Let me think about this..."},
+                    {"type": "text", "text": "Here is my answer"},
+                    {"type": "tool_use", "id": "tool_1", "name": "Bash", "input": {"command": "ls"}}
+                ]
+            }
+        });
+        formatter.handle_line(&msg.to_string());
+        assert_eq!(formatter.last_assistant_text(), Some("Here is my answer"));
+    }
+
+    #[test]
+    fn last_assistant_text_returns_none_when_no_assistant_message() {
+        let formatter = StreamFormatter::new();
+        assert_eq!(formatter.last_assistant_text(), None);
+    }
+
+    #[test]
+    fn last_assistant_text_returns_none_for_tool_only_assistant_message() {
+        let mut formatter = StreamFormatter::new();
+
+        // An assistant message with only tool_use blocks and no text
+        let msg = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "id": "tool_1", "name": "Read", "input": {"file_path": "/tmp/test"}}
+                ]
+            }
+        });
+        formatter.handle_line(&msg.to_string());
+        assert_eq!(formatter.last_assistant_text(), None);
+    }
+
+    #[test]
+    fn last_assistant_text_concatenates_multiple_text_blocks() {
+        let mut formatter = StreamFormatter::new();
+
+        let msg = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "Part one"},
+                    {"type": "text", "text": "Part two"}
+                ]
+            }
+        });
+        formatter.handle_line(&msg.to_string());
+        assert_eq!(formatter.last_assistant_text(), Some("Part one\nPart two"));
+    }
+
+    #[test]
+    fn last_assistant_text_not_updated_by_user_messages() {
+        let mut formatter = StreamFormatter::new();
+
+        let assistant_msg = serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "My response"},
+                    {"type": "tool_use", "id": "tool_1", "name": "Bash", "input": {"command": "echo hi"}}
+                ]
+            }
+        });
+        formatter.handle_line(&assistant_msg.to_string());
+
+        let user_msg = serde_json::json!({
+            "type": "user",
+            "message": {
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "tool_1", "content": "hi"}
+                ]
+            }
+        });
+        formatter.handle_line(&user_msg.to_string());
+
+        // last_assistant_text should still be from the assistant message
+        assert_eq!(formatter.last_assistant_text(), Some("My response"));
     }
 }
