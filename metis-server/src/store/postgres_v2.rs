@@ -391,8 +391,8 @@ impl PostgresStoreV2 {
         };
 
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -400,6 +400,7 @@ impl PostgresStoreV2 {
             .bind(&task.prompt)
             .bind(&context_json)
             .bind(task.spawned_from.as_ref().map(|i| i.as_ref()))
+            .bind(task.creator.as_ref().map(|u| u.as_str()))
             .bind(task.image.as_deref())
             .bind(task.model.as_deref())
             .bind(&env_vars_json)
@@ -458,7 +459,7 @@ impl PostgresStoreV2 {
             prompt: row.prompt.clone(),
             context,
             spawned_from,
-            creator: None,
+            creator: row.creator.as_deref().map(Username::from),
             image: row.image.clone(),
             model: row.model.clone(),
             env_vars,
@@ -819,6 +820,7 @@ struct TaskRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
+    creator: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1660,7 +1662,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Task>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1693,7 +1695,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -1736,7 +1738,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each task, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at \
+            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator \
              FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -1839,7 +1841,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"
@@ -2545,6 +2547,22 @@ mod tests {
         )
     }
 
+    /// Task with creator and other fields set for round-trip tests.
+    fn task_with_creator_for_round_trip() -> Task {
+        Task::new(
+            "round-trip prompt".to_string(),
+            BundleSpec::None,
+            None,
+            Some(Username::from("alice")),
+            Some("metis-worker:latest".to_string()),
+            Some("model-v1".to_string()),
+            Default::default(),
+            None,
+            None,
+            None,
+        )
+    }
+
     fn sample_repository_config() -> Repository {
         Repository::new(
             "https://example.com/repo.git".to_string(),
@@ -2588,6 +2606,44 @@ mod tests {
         assert_eq!(fetched_again.item, updated);
         assert_eq!(fetched_again.version, 2);
         assert!(fetched_again.timestamp >= fetched.timestamp);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn task_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let task = task_with_creator_for_round_trip();
+
+        let (task_id, version) = store
+            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let fetched = store.get_task(&task_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item.creator, task.creator,
+            "creator must round-trip"
+        );
+        assert_eq!(fetched.item.prompt, task.prompt);
+        assert_eq!(fetched.item.image, task.image);
+        assert_eq!(fetched.item.model, task.model);
+        assert_eq!(fetched.version, 1);
+
+        let mut updated = fetched.item.clone();
+        updated.prompt = "updated prompt".to_string();
+        store
+            .update_task(&task_id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched2 = store.get_task(&task_id, false).await.unwrap();
+        assert_eq!(
+            fetched2.item.creator, task.creator,
+            "creator must persist across updates"
+        );
+        assert_eq!(fetched2.item.prompt, "updated prompt");
+        assert_eq!(fetched2.version, 2);
     }
 
     #[sqlx::test(migrations = "./migrations")]

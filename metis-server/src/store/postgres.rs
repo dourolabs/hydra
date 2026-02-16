@@ -2018,6 +2018,22 @@ mod tests {
         )
     }
 
+    /// Task with creator and other fields set for round-trip tests.
+    fn task_with_creator_for_round_trip() -> Task {
+        Task::new(
+            "round-trip prompt".to_string(),
+            BundleSpec::None,
+            None,
+            Some(Username::from("alice")),
+            Some("metis-worker:latest".to_string()),
+            Some("model-v1".to_string()),
+            Default::default(),
+            None,
+            None,
+            None,
+        )
+    }
+
     fn sample_repository_config() -> Repository {
         Repository::new(
             "https://example.com/repo.git".to_string(),
@@ -2138,6 +2154,44 @@ mod tests {
                 "drop should precede create for {trigger}"
             );
         }
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn task_round_trip(pool: PgStorePool) {
+        let store = PostgresStore::new(pool);
+        let task = task_with_creator_for_round_trip();
+
+        let (task_id, version) = store
+            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let fetched = store.get_task(&task_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item.creator, task.creator,
+            "creator must round-trip"
+        );
+        assert_eq!(fetched.item.prompt, task.prompt);
+        assert_eq!(fetched.item.image, task.image);
+        assert_eq!(fetched.item.model, task.model);
+        assert_eq!(fetched.version, 1);
+
+        let mut updated = fetched.item.clone();
+        updated.prompt = "updated prompt".to_string();
+        store
+            .update_task(&task_id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched2 = store.get_task(&task_id, false).await.unwrap();
+        assert_eq!(
+            fetched2.item.creator, task.creator,
+            "creator must persist across updates"
+        );
+        assert_eq!(fetched2.item.prompt, "updated prompt");
+        assert_eq!(fetched2.version, 2);
     }
 
     #[sqlx::test(migrations = "./migrations")]
