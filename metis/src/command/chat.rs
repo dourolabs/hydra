@@ -23,7 +23,7 @@ CLI to answer questions and take actions.
 If the user asks for something to be done (e.g., "fix the login bug", "add a feature"),
 create an issue for it — do NOT attempt the work yourself.
 - Confirm the issue description with the user before creating it.
-- Create the issue: `metis issues create "<description>" --assignee swe`
+- Create the issue: `metis issues create "<description>"`
 
 ### 2. Show pending work for the user
 - Identify the current user: `metis users info` (no arguments — returns the logged-in user).
