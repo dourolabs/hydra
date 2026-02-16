@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod activity_log;
+pub mod actor_ref;
 pub mod api;
 pub mod build_cache;
 pub mod constants;
@@ -17,6 +18,7 @@ pub use activity_log::{
     activity_log_for_document_versions, activity_log_for_issue_versions,
     activity_log_for_job_versions, activity_log_for_patch_versions, activity_log_from_versions,
 };
+pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
     agents, documents, events, issues, job_status, jobs, login, logs, merge_queues, patches,
     repositories, task_status, users, whoami,

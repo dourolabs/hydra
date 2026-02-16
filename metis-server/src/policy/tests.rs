@@ -1020,7 +1020,7 @@ async fn restriction_can_read_actor_from_context() {
 
     // Authenticated actor should be allowed
     let auth_actor = ActorRef::Authenticated {
-        actor_id: crate::domain::actors::ActorId::Username(Username::from("alice")),
+        actor_id: crate::domain::actors::ActorId::Username(Username::from("alice").into()),
     };
     let result = engine.check_create_issue(&issue, &store, &auth_actor).await;
     assert!(result.is_ok(), "authenticated actor should be allowed");

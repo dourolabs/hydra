@@ -1399,7 +1399,7 @@ mod tests {
             .add_issue_with_actor(
                 issue,
                 ActorRef::Authenticated {
-                    actor_id: ActorId::Username(Username::from("testuser")),
+                    actor_id: ActorId::Username(Username::from("testuser").into()),
                 },
             )
             .await
@@ -1411,7 +1411,7 @@ mod tests {
                 assert_eq!(
                     *payload.actor(),
                     ActorRef::Authenticated {
-                        actor_id: ActorId::Username(Username::from("testuser"))
+                        actor_id: ActorId::Username(Username::from("testuser").into())
                     },
                     "actor should be carried through the event payload"
                 );

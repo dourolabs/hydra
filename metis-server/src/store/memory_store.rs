@@ -1711,7 +1711,7 @@ mod tests {
         let store = MemoryStore::new();
 
         let user_actor = ActorRef::Authenticated {
-            actor_id: ActorId::Username(Username::from("alice")),
+            actor_id: ActorId::Username(Username::from("alice").into()),
         };
         let system_actor = ActorRef::System {
             worker_name: "scheduler".into(),
@@ -3069,7 +3069,7 @@ mod tests {
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
-            actor_id: ActorId::Username(Username::from("ada")),
+            actor_id: ActorId::Username(Username::from("ada").into()),
             creator: Some(Username::from("ada")),
         };
 
@@ -3140,7 +3140,7 @@ mod tests {
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
-            actor_id: ActorId::Username(Username::from("ada")),
+            actor_id: ActorId::Username(Username::from("ada").into()),
             creator: Some(Username::from("ada")),
         };
 
