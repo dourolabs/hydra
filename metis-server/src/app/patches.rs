@@ -1,5 +1,9 @@
 use crate::{
-    domain::{actors::ActorRef, patches::Patch},
+    domain::{
+        actors::{ActorId, ActorRef},
+        patches::Patch,
+        users::Username,
+    },
     store::{ReadOnlyStore, Status, StoreError},
 };
 use metis_common::{
@@ -108,6 +112,21 @@ impl AppState {
         Ok(())
     }
 
+    /// Resolve the patch creator from the actor when the request did not set one.
+    /// Used so that patch_workflow automation can assign MergeRequest issues to the patch creator
+    /// when config uses `assignee = "$patch_creator"`.
+    fn set_patch_creator_from_actor_if_unset(patch: &mut Patch, actor: &ActorRef) {
+        if patch.creator.is_some() {
+            return;
+        }
+        if let ActorRef::Authenticated {
+            actor_id: ActorId::Username(api_username),
+        } = actor
+        {
+            patch.creator = Some(Username::from(api_username.clone()));
+        }
+    }
+
     pub async fn upsert_patch(
         &self,
         actor: ActorRef,
@@ -116,6 +135,7 @@ impl AppState {
     ) -> Result<(PatchId, VersionNumber), UpsertPatchError> {
         let api::patches::UpsertPatchRequest { patch, .. } = request;
         let mut patch: Patch = patch.into();
+        Self::set_patch_creator_from_actor_if_unset(&mut patch, &actor);
 
         let store = self.store.as_ref();
         let (patch_id, version) = match patch_id {
