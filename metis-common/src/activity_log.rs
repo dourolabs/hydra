@@ -251,6 +251,7 @@ mod tests {
             deleted: false,
             branch_name: None,
             commit_range: None,
+            base_branch: None,
         };
         let patch_v2 = Patch {
             title: "v2".to_string(),

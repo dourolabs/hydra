@@ -598,10 +598,16 @@ async fn update_patch_inner(
     }
 
     // Always re-read git state when inside a git repo: diff, branch name,
-    // commit range SHAs, and push the branch.
+    // base branch, commit range SHAs, and push the branch.
     if let Some(repo_root) = in_git_repo {
         let branch_name = current_branch(&repo_root)?;
         updated_patch.branch_name = Some(branch_name.clone());
+        updated_patch.base_branch = Some(
+            base_ref
+                .strip_prefix("origin/")
+                .unwrap_or(base_ref)
+                .to_string(),
+        );
 
         // Derive commit range from the merge-base of HEAD with the provided base ref.
         let (base_oid, head_oid) = git_resolve_commit_range_from_merge_base(&repo_root, base_ref)?;
@@ -752,9 +758,15 @@ pub async fn create_patch_artifact_from_repo(
         false,
     );
 
-    // Resolve branch name and commit range SHAs.
+    // Resolve branch name, base branch, and commit range SHAs.
     let branch_name = current_branch(repo_root)?;
     patch_payload.branch_name = Some(branch_name.clone());
+    patch_payload.base_branch = Some(
+        base_ref
+            .strip_prefix("origin/")
+            .unwrap_or(base_ref)
+            .to_string(),
+    );
 
     // Derive commit range from merge-base with the provided base ref.
     if let Ok((base_oid, head_oid)) = git_resolve_commit_range_from_merge_base(repo_root, base_ref)
@@ -874,6 +886,7 @@ mod tests {
     fn with_git_identity(mut patch: Patch, branch_name: &str, base: GitOid, head: GitOid) -> Patch {
         patch.branch_name = Some(branch_name.to_string());
         patch.commit_range = Some(CommitRange::new(base, head));
+        patch.base_branch = Some("main".to_string());
         patch
     }
 
@@ -1276,6 +1289,7 @@ mod tests {
         );
         expected_patch.branch_name = Some(branch_name);
         expected_patch.commit_range = Some(CommitRange::new(base_commit, head_commit));
+        expected_patch.base_branch = Some("main".to_string());
         let expected_request = UpsertPatchRequest::new(expected_patch);
         let patch_response = UpsertPatchResponse::new(patch_id("p-automatic"), 0);
         let server = MockServer::start();
