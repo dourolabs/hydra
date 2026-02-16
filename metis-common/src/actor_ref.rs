@@ -12,8 +12,6 @@ pub enum ActorId {
 /// A typed reference to who performed an operation.
 ///
 /// Used in event payloads (`MutationPayload`) to attribute mutations.
-/// During the migration period, `From<Option<String>>` provides backward
-/// compatibility with callers that still pass `Option<String>`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActorRef {
     Authenticated {
@@ -99,74 +97,9 @@ pub fn parse_actor_name(name: &str) -> Option<ActorId> {
     None
 }
 
-impl From<Option<String>> for ActorRef {
-    fn from(value: Option<String>) -> Self {
-        match value {
-            None => ActorRef::System {
-                worker_name: "unknown".into(),
-                on_behalf_of: None,
-            },
-            Some(name) => match parse_actor_name(&name) {
-                Some(actor_id) => ActorRef::Authenticated { actor_id },
-                None => ActorRef::System {
-                    worker_name: name,
-                    on_behalf_of: None,
-                },
-            },
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn actor_ref_from_none_produces_system_unknown() {
-        let actor_ref = ActorRef::from(None);
-        assert_eq!(
-            actor_ref,
-            ActorRef::System {
-                worker_name: "unknown".into(),
-                on_behalf_of: None,
-            }
-        );
-    }
-
-    #[test]
-    fn actor_ref_from_some_user_name() {
-        let actor_ref = ActorRef::from(Some("u-alice".to_string()));
-        assert_eq!(
-            actor_ref,
-            ActorRef::Authenticated {
-                actor_id: ActorId::Username(Username::from("alice")),
-            }
-        );
-    }
-
-    #[test]
-    fn actor_ref_from_some_task_name() {
-        let task_id = TaskId::from_str("t-abcdef").unwrap();
-        let actor_ref = ActorRef::from(Some("w-t-abcdef".to_string()));
-        assert_eq!(
-            actor_ref,
-            ActorRef::Authenticated {
-                actor_id: ActorId::Task(task_id),
-            }
-        );
-    }
-
-    #[test]
-    fn actor_ref_from_some_unparseable_falls_back_to_system() {
-        let actor_ref = ActorRef::from(Some("invalid-name".to_string()));
-        assert_eq!(
-            actor_ref,
-            ActorRef::System {
-                worker_name: "invalid-name".into(),
-                on_behalf_of: None,
-            }
-        );
-    }
 
     #[test]
     fn actor_ref_serialization_round_trip_authenticated() {
