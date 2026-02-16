@@ -1,5 +1,5 @@
 use super::users::Username;
-use crate::{PatchId, RepoName, TaskId, VersionNumber};
+use crate::{PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -266,7 +266,7 @@ pub struct PatchVersionRecord {
     pub timestamp: DateTime<Utc>,
     pub patch: Patch,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor: Option<serde_json::Value>,
+    pub actor: Option<ActorRef>,
 }
 
 impl PatchVersionRecord {
@@ -290,7 +290,7 @@ impl PatchVersionRecord {
         version: VersionNumber,
         timestamp: DateTime<Utc>,
         patch: Patch,
-        actor: Option<serde_json::Value>,
+        actor: Option<ActorRef>,
     ) -> Self {
         Self {
             patch_id,

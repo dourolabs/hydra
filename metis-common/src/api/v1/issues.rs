@@ -1,6 +1,6 @@
 use super::users::Username;
 pub use crate::IssueId;
-use crate::{PatchId, RepoName, TaskId, VersionNumber};
+use crate::{PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
@@ -534,7 +534,7 @@ pub struct IssueVersionRecord {
     pub timestamp: DateTime<Utc>,
     pub issue: Issue,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor: Option<serde_json::Value>,
+    pub actor: Option<ActorRef>,
 }
 
 impl IssueVersionRecord {
@@ -558,7 +558,7 @@ impl IssueVersionRecord {
         version: VersionNumber,
         timestamp: DateTime<Utc>,
         issue: Issue,
-        actor: Option<serde_json::Value>,
+        actor: Option<ActorRef>,
     ) -> Self {
         Self {
             issue_id,
@@ -856,6 +856,8 @@ mod tests {
 
     #[test]
     fn issue_version_record_serializes_actor_when_present() {
+        use crate::actor_ref::{ActorId, ActorRef};
+
         let issue_id: IssueId = "i-test".parse().unwrap();
         let issue = Issue {
             issue_type: IssueType::Task,
@@ -871,8 +873,9 @@ mod tests {
             deleted: false,
         };
 
-        let actor =
-            json!({"type": "authenticated", "actor_id": {"type": "username", "id": "alice"}});
+        let actor = ActorRef::Authenticated {
+            actor_id: ActorId::Username(Username::from("alice")),
+        };
         let record = IssueVersionRecord::with_actor(
             issue_id,
             1,
@@ -882,7 +885,8 @@ mod tests {
         );
 
         let value = serde_json::to_value(&record).expect("should serialize");
-        assert_eq!(value["actor"], actor);
+        let expected_actor = json!({"Authenticated": {"actor_id": {"Username": "alice"}}});
+        assert_eq!(value["actor"], expected_actor);
     }
 
     #[test]

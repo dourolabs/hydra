@@ -537,7 +537,7 @@ struct ActivityLogEntrySummary {
     event: ActivityEventSummary,
     object: ActivityObjectSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
-    actor: Option<Value>,
+    actor: Option<metis_common::actor_ref::ActorRef>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2107,27 +2107,8 @@ fn write_activity_log_entry_pretty(
     Ok(())
 }
 
-fn format_actor_label(actor: &Value) -> Option<String> {
-    let obj = actor.as_object()?;
-    match obj.get("type")?.as_str()? {
-        "authenticated" => {
-            let actor_id = obj.get("actor_id")?.as_object()?;
-            match actor_id.get("type")?.as_str()? {
-                "username" => Some(actor_id.get("id")?.as_str()?.to_string()),
-                "task" => Some(format!("task:{}", actor_id.get("id")?.as_str()?)),
-                _ => None,
-            }
-        }
-        "system" => {
-            let name = obj.get("worker_name")?.as_str()?;
-            Some(format!("system:{name}"))
-        }
-        "automation" => {
-            let name = obj.get("automation_name")?.as_str()?;
-            Some(format!("automation:{name}"))
-        }
-        _ => None,
-    }
+fn format_actor_label(actor: &metis_common::actor_ref::ActorRef) -> Option<String> {
+    Some(actor.display_name())
 }
 
 fn write_activity_object_summary(

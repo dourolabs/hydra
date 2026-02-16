@@ -1,4 +1,6 @@
-use crate::{DocumentId, IssueId, MetisId, PatchId, TaskId, VersionNumber, Versioned};
+use crate::{
+    DocumentId, IssueId, MetisId, PatchId, TaskId, VersionNumber, Versioned, actor_ref::ActorRef,
+};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde::{Deserialize, Serialize as SerdeSerialize};
@@ -41,7 +43,7 @@ pub struct ActivityLogEntry {
     pub event: ActivityEvent,
     pub object: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor: Option<Value>,
+    pub actor: Option<ActorRef>,
 }
 
 pub fn activity_log_for_issue_versions(
@@ -282,6 +284,9 @@ mod tests {
 
     #[test]
     fn activity_log_includes_actor_from_versioned() {
+        use crate::actor_ref::{ActorId, ActorRef};
+        use crate::api::v1::users::Username;
+
         let issue_id = IssueId::new();
         let base_issue = Issue {
             issue_type: IssueType::Task,
@@ -297,10 +302,9 @@ mod tests {
             deleted: false,
         };
 
-        let actor_json = serde_json::json!({
-            "type": "authenticated",
-            "actor_id": {"type": "username", "id": "alice"}
-        });
+        let actor = ActorRef::Authenticated {
+            actor_id: ActorId::Username(Username::from("alice")),
+        };
 
         let versions = vec![
             Versioned::new(
@@ -315,7 +319,7 @@ mod tests {
                 },
                 2,
                 Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
-                actor_json.clone(),
+                actor.clone(),
             ),
         ];
 
@@ -325,11 +329,7 @@ mod tests {
             log[0].actor, None,
             "historical version should have no actor"
         );
-        assert_eq!(
-            log[1].actor,
-            Some(actor_json),
-            "new version should carry actor"
-        );
+        assert_eq!(log[1].actor, Some(actor), "new version should carry actor");
     }
 
     #[test]
