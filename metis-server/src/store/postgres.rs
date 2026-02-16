@@ -305,7 +305,7 @@ impl PostgresStore {
             item,
             version,
             row.created_at,
-            row.actor,
+            parse_actor_json(row.actor)?,
         )))
     }
 
@@ -347,7 +347,7 @@ impl PostgresStore {
                 item,
                 version,
                 row.created_at,
-                row.actor,
+                parse_actor_json(row.actor)?,
             ));
         }
 
@@ -391,7 +391,12 @@ impl PostgresStore {
                 serde_json::from_value(row.payload).map_err(map_serde_error(object_type))?;
             results.push((
                 row.id,
-                Versioned::with_optional_actor(value, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    value,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -500,7 +505,12 @@ impl PostgresStore {
             })?;
             documents.push((
                 document_id,
-                Versioned::with_optional_actor(document, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    document,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -605,7 +615,12 @@ impl PostgresStore {
             })?;
             tasks.push((
                 task_id,
-                Versioned::with_optional_actor(task, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    task,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -732,7 +747,12 @@ impl PostgresStore {
             })?;
             issues.push((
                 issue_id,
-                Versioned::with_optional_actor(issue, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    issue,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -869,7 +889,12 @@ impl PostgresStore {
             })?;
             patches.push((
                 patch_id,
-                Versioned::with_optional_actor(patch, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    patch,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -954,7 +979,12 @@ impl PostgresStore {
             let username = Username::from(row.id);
             users.push((
                 username,
-                Versioned::with_optional_actor(user, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    user,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -1408,7 +1438,7 @@ impl ReadOnlyStore for PostgresStore {
                     item,
                     version,
                     row.created_at,
-                    row.actor,
+                    parse_actor_json(row.actor)?,
                 ));
         }
 
@@ -1462,6 +1492,15 @@ impl ReadOnlyStore for PostgresStore {
 
 fn actor_to_json(actor: &ActorRef) -> Value {
     serde_json::to_value(actor).expect("ActorRef serialization should not fail")
+}
+
+fn parse_actor_json(value: Option<Value>) -> Result<Option<ActorRef>, StoreError> {
+    match value {
+        None => Ok(None),
+        Some(v) => serde_json::from_value(v).map(Some).map_err(|e| {
+            StoreError::Internal(format!("failed to parse actor JSON into ActorRef: {e}"))
+        }),
+    }
 }
 
 #[async_trait]

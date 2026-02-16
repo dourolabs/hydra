@@ -687,7 +687,12 @@ impl PostgresStoreV2 {
             let username = Username::from(row.id);
             users.push((
                 username,
-                Versioned::with_optional_actor(user, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    user,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -881,6 +886,15 @@ fn actor_to_json(actor: &ActorRef) -> Value {
     serde_json::to_value(actor).expect("ActorRef serialization should not fail")
 }
 
+fn parse_actor_json(value: Option<Value>) -> Result<Option<ActorRef>, StoreError> {
+    match value {
+        None => Ok(None),
+        Some(v) => serde_json::from_value(v).map(Some).map_err(|e| {
+            StoreError::Internal(format!("failed to parse actor JSON into ActorRef: {e}"))
+        }),
+    }
+}
+
 #[async_trait]
 impl ReadOnlyStore for PostgresStoreV2 {
     // -------------------------------------------------------------------------
@@ -921,7 +935,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             repo,
             version,
             row.created_at,
-            row.actor,
+            parse_actor_json(row.actor)?,
         ))
     }
 
@@ -959,7 +973,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let repo = self.row_to_repository(&row);
             results.push((
                 name,
-                Versioned::with_optional_actor(repo, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    repo,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -1006,7 +1025,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             issue,
             version,
             row.created_at,
-            row.actor,
+            parse_actor_json(row.actor)?,
         ))
     }
 
@@ -1040,7 +1059,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 issue,
                 version,
                 row.created_at,
-                row.actor,
+                parse_actor_json(row.actor)?,
             ));
         }
 
@@ -1152,7 +1171,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             })?;
             issues.push((
                 issue_id,
-                Versioned::with_optional_actor(issue, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    issue,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -1255,7 +1279,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             patch,
             version,
             row.created_at,
-            row.actor,
+            parse_actor_json(row.actor)?,
         ))
     }
 
@@ -1289,7 +1313,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 patch,
                 version,
                 row.created_at,
-                row.actor,
+                parse_actor_json(row.actor)?,
             ));
         }
 
@@ -1411,7 +1435,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             })?;
             patches.push((
                 patch_id,
-                Versioned::with_optional_actor(patch, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    patch,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -1466,7 +1495,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             document,
             version,
             row.created_at,
-            row.actor,
+            parse_actor_json(row.actor)?,
         ))
     }
 
@@ -1503,7 +1532,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 document,
                 version,
                 row.created_at,
-                row.actor,
+                parse_actor_json(row.actor)?,
             ));
         }
 
@@ -1594,7 +1623,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             })?;
             documents.push((
                 document_id,
-                Versioned::with_optional_actor(document, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    document,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -1652,7 +1686,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             task,
             version,
             row.created_at,
-            row.actor,
+            parse_actor_json(row.actor)?,
         ))
     }
 
@@ -1686,7 +1720,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 task,
                 version,
                 row.created_at,
-                row.actor,
+                parse_actor_json(row.actor)?,
             ));
         }
 
@@ -1776,7 +1810,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             })?;
             tasks.push((
                 task_id,
-                Versioned::with_optional_actor(task, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    task,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -1829,7 +1868,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                     task,
                     version,
                     row.created_at,
-                    row.actor,
+                    parse_actor_json(row.actor)?,
                 ));
         }
 
@@ -1874,7 +1913,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             actor,
             version,
             row.created_at,
-            row.actor,
+            parse_actor_json(row.actor)?,
         ))
     }
 
@@ -1900,7 +1939,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let actor = self.row_to_actor(&row)?;
             actors.push((
                 row.id,
-                Versioned::with_optional_actor(actor, version, row.created_at, row.actor),
+                Versioned::with_optional_actor(
+                    actor,
+                    version,
+                    row.created_at,
+                    parse_actor_json(row.actor)?,
+                ),
             ));
         }
 
@@ -1945,7 +1989,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             user,
             version,
             row.created_at,
-            row.actor,
+            parse_actor_json(row.actor)?,
         ))
     }
 
@@ -2403,7 +2447,7 @@ impl Store for PostgresStoreV2 {
             user,
             version,
             row.created_at,
-            row.actor,
+            parse_actor_json(row.actor)?,
         ))
     }
 

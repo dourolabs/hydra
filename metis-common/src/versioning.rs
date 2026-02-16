@@ -3,6 +3,8 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::actor_ref::ActorRef;
+
 /// Monotonic version number associated with stored objects.
 pub type VersionNumber = u64;
 
@@ -34,10 +36,10 @@ pub struct Versioned<T> {
     pub version: VersionNumber,
     /// Timestamp when this version was recorded.
     pub timestamp: DateTime<Utc>,
-    /// The actor who performed this mutation, stored as serialized JSON.
+    /// The actor who performed this mutation.
     /// `None` for historical versions that predate actor tracking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor: Option<serde_json::Value>,
+    pub actor: Option<ActorRef>,
 }
 
 impl<T> Versioned<T> {
@@ -54,7 +56,7 @@ impl<T> Versioned<T> {
         item: T,
         version: VersionNumber,
         timestamp: DateTime<Utc>,
-        actor: serde_json::Value,
+        actor: ActorRef,
     ) -> Self {
         Self {
             item,
@@ -68,7 +70,7 @@ impl<T> Versioned<T> {
         item: T,
         version: VersionNumber,
         timestamp: DateTime<Utc>,
-        actor: Option<serde_json::Value>,
+        actor: Option<ActorRef>,
     ) -> Self {
         Self {
             item,
