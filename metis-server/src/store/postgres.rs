@@ -2169,7 +2169,10 @@ mod tests {
         assert_eq!(version, 1);
 
         let fetched = store.get_task(&task_id, false).await.unwrap();
-        assert_eq!(fetched.item.creator, task.creator, "creator must round-trip");
+        assert_eq!(
+            fetched.item.creator, task.creator,
+            "creator must round-trip"
+        );
         assert_eq!(fetched.item.prompt, task.prompt);
         assert_eq!(fetched.item.image, task.image);
         assert_eq!(fetched.item.model, task.model);
@@ -2183,7 +2186,10 @@ mod tests {
             .unwrap();
 
         let fetched2 = store.get_task(&task_id, false).await.unwrap();
-        assert_eq!(fetched2.item.creator, task.creator, "creator must persist across updates");
+        assert_eq!(
+            fetched2.item.creator, task.creator,
+            "creator must persist across updates"
+        );
         assert_eq!(fetched2.item.prompt, "updated prompt");
         assert_eq!(fetched2.version, 2);
     }
