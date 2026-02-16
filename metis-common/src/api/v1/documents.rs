@@ -56,21 +56,6 @@ impl DocumentVersionRecord {
         version: VersionNumber,
         timestamp: DateTime<Utc>,
         document: Document,
-    ) -> Self {
-        Self {
-            document_id,
-            version,
-            timestamp,
-            document,
-            actor: None,
-        }
-    }
-
-    pub fn with_actor(
-        document_id: DocumentId,
-        version: VersionNumber,
-        timestamp: DateTime<Utc>,
-        document: Document,
         actor: Option<ActorRef>,
     ) -> Self {
         Self {

@@ -119,6 +119,7 @@ mod tests {
                 None,
                 false,
             ),
+            None,
         )
     }
 

@@ -113,7 +113,7 @@ pub async fn get_document(
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
-    let response = v1::documents::DocumentVersionRecord::with_actor(
+    let response = v1::documents::DocumentVersionRecord::new(
         document_id.clone(),
         document.version,
         document.timestamp,
@@ -137,7 +137,7 @@ pub async fn list_documents(
     let records = documents
         .into_iter()
         .map(|(id, versioned)| {
-            v1::documents::DocumentVersionRecord::with_actor(
+            v1::documents::DocumentVersionRecord::new(
                 id,
                 versioned.version,
                 versioned.timestamp,
@@ -168,7 +168,7 @@ pub async fn list_document_versions(
     let records = versions
         .into_iter()
         .map(|version| {
-            v1::documents::DocumentVersionRecord::with_actor(
+            v1::documents::DocumentVersionRecord::new(
                 document_id.clone(),
                 version.version,
                 version.timestamp,
@@ -209,7 +209,7 @@ pub async fn get_document_version(
             ))
         })?;
 
-    let response = v1::documents::DocumentVersionRecord::with_actor(
+    let response = v1::documents::DocumentVersionRecord::new(
         document_id.clone(),
         entry.version,
         entry.timestamp,
@@ -282,7 +282,7 @@ pub async fn delete_document(
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
     info!(document_id = %document_id, "delete_document completed");
-    let response = v1::documents::DocumentVersionRecord::with_actor(
+    let response = v1::documents::DocumentVersionRecord::new(
         document_id,
         document.version,
         document.timestamp,

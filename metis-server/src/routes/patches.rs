@@ -112,7 +112,7 @@ pub async fn get_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     info!(patch_id = %patch_id, "get_patch completed");
-    let response = v1::patches::PatchVersionRecord::with_actor(
+    let response = v1::patches::PatchVersionRecord::new(
         patch_id,
         patch.version,
         patch.timestamp,
@@ -135,7 +135,7 @@ pub async fn list_patch_versions(
     let records = versions
         .into_iter()
         .map(|version| {
-            v1::patches::PatchVersionRecord::with_actor(
+            v1::patches::PatchVersionRecord::new(
                 patch_id.clone(),
                 version.version,
                 version.timestamp,
@@ -177,7 +177,7 @@ pub async fn get_patch_version(
             ApiError::not_found(format!("patch '{patch_id}' version {version} not found"))
         })?;
 
-    let response = v1::patches::PatchVersionRecord::with_actor(
+    let response = v1::patches::PatchVersionRecord::new(
         patch_id.clone(),
         entry.version,
         entry.timestamp,
@@ -202,7 +202,7 @@ pub async fn list_patches(
     let records: Vec<v1::patches::PatchVersionRecord> = patches
         .into_iter()
         .map(|(id, versioned)| {
-            v1::patches::PatchVersionRecord::with_actor(
+            v1::patches::PatchVersionRecord::new(
                 id,
                 versioned.version,
                 versioned.timestamp,
@@ -541,7 +541,7 @@ pub async fn delete_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     info!(patch_id = %patch_id, "delete_patch completed");
-    let response = v1::patches::PatchVersionRecord::with_actor(
+    let response = v1::patches::PatchVersionRecord::new(
         patch_id,
         patch.version,
         patch.timestamp,

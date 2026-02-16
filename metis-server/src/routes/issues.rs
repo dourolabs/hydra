@@ -139,7 +139,7 @@ pub async fn get_issue(
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
     info!(issue_id = %issue_id, "get_issue completed");
-    let response = api_issues::IssueVersionRecord::with_actor(
+    let response = api_issues::IssueVersionRecord::new(
         issue_id,
         issue.version,
         issue.timestamp,
@@ -162,7 +162,7 @@ pub async fn list_issue_versions(
     let records = versions
         .into_iter()
         .map(|version| {
-            api_issues::IssueVersionRecord::with_actor(
+            api_issues::IssueVersionRecord::new(
                 issue_id.clone(),
                 version.version,
                 version.timestamp,
@@ -204,7 +204,7 @@ pub async fn get_issue_version(
             ApiError::not_found(format!("issue '{issue_id}' version {version} not found"))
         })?;
 
-    let response = api_issues::IssueVersionRecord::with_actor(
+    let response = api_issues::IssueVersionRecord::new(
         issue_id.clone(),
         entry.version,
         entry.timestamp,
@@ -262,7 +262,7 @@ pub async fn list_issues(
                 .is_none_or(|allowed| allowed.contains(id))
         })
         .map(|(id, versioned)| {
-            api_issues::IssueVersionRecord::with_actor(
+            api_issues::IssueVersionRecord::new(
                 id,
                 versioned.version,
                 versioned.timestamp,
@@ -501,7 +501,7 @@ pub async fn delete_issue(
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
     info!(issue_id = %issue_id, "delete_issue completed");
-    let response = api_issues::IssueVersionRecord::with_actor(
+    let response = api_issues::IssueVersionRecord::new(
         issue_id,
         issue.version,
         issue.timestamp,

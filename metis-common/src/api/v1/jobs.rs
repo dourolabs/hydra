@@ -361,21 +361,6 @@ impl JobVersionRecord {
         version: VersionNumber,
         timestamp: DateTime<Utc>,
         task: Task,
-    ) -> Self {
-        Self {
-            job_id,
-            version,
-            timestamp,
-            task,
-            actor: None,
-        }
-    }
-
-    pub fn with_actor(
-        job_id: TaskId,
-        version: VersionNumber,
-        timestamp: DateTime<Utc>,
-        task: Task,
         actor: Option<ActorRef>,
     ) -> Self {
         Self {
@@ -523,7 +508,7 @@ mod tests {
         );
 
         let task_id = crate::TaskId::new();
-        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task);
+        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task, None);
 
         record.strip_large_fields();
 
@@ -556,7 +541,7 @@ mod tests {
         );
 
         let task_id = crate::TaskId::new();
-        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task);
+        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task, None);
 
         record.strip_large_fields();
 

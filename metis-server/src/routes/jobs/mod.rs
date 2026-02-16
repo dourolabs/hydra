@@ -92,7 +92,7 @@ pub async fn list_jobs(
             } else {
                 api_task
             };
-            v1::jobs::JobVersionRecord::with_actor(
+            v1::jobs::JobVersionRecord::new(
                 task_id,
                 versioned_task.version,
                 versioned_task.timestamp,
@@ -153,7 +153,7 @@ pub async fn get_job(
     } else {
         api_task
     };
-    let record = v1::jobs::JobVersionRecord::with_actor(
+    let record = v1::jobs::JobVersionRecord::new(
         job_id.clone(),
         latest.version,
         latest.timestamp,
@@ -186,7 +186,7 @@ pub async fn list_job_versions(
     let records = versions
         .into_iter()
         .map(|version| {
-            v1::jobs::JobVersionRecord::with_actor(
+            v1::jobs::JobVersionRecord::new(
                 job_id.clone(),
                 version.version,
                 version.timestamp,
@@ -237,7 +237,7 @@ pub async fn get_job_version(
             ApiError::not_found(format!("job '{job_id}' version {version} not found"))
         })?;
 
-    let response = v1::jobs::JobVersionRecord::with_actor(
+    let response = v1::jobs::JobVersionRecord::new(
         job_id.clone(),
         entry.version,
         entry.timestamp,

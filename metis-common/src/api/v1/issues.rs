@@ -543,21 +543,6 @@ impl IssueVersionRecord {
         version: VersionNumber,
         timestamp: DateTime<Utc>,
         issue: Issue,
-    ) -> Self {
-        Self {
-            issue_id,
-            version,
-            timestamp,
-            issue,
-            actor: None,
-        }
-    }
-
-    pub fn with_actor(
-        issue_id: IssueId,
-        version: VersionNumber,
-        timestamp: DateTime<Utc>,
-        issue: Issue,
         actor: Option<ActorRef>,
     ) -> Self {
         Self {
@@ -876,13 +861,8 @@ mod tests {
         let actor = ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("alice")),
         };
-        let record = IssueVersionRecord::with_actor(
-            issue_id,
-            1,
-            chrono::Utc::now(),
-            issue,
-            Some(actor.clone()),
-        );
+        let record =
+            IssueVersionRecord::new(issue_id, 1, chrono::Utc::now(), issue, Some(actor.clone()));
 
         let value = serde_json::to_value(&record).expect("should serialize");
         let expected_actor = json!({"Authenticated": {"actor_id": {"Username": "alice"}}});
@@ -906,7 +886,7 @@ mod tests {
             deleted: false,
         };
 
-        let record = IssueVersionRecord::new(issue_id, 1, chrono::Utc::now(), issue);
+        let record = IssueVersionRecord::new(issue_id, 1, chrono::Utc::now(), issue, None);
 
         let value = serde_json::to_value(&record).expect("should serialize");
         assert!(

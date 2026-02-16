@@ -275,21 +275,6 @@ impl PatchVersionRecord {
         version: VersionNumber,
         timestamp: DateTime<Utc>,
         patch: Patch,
-    ) -> Self {
-        Self {
-            patch_id,
-            version,
-            timestamp,
-            patch,
-            actor: None,
-        }
-    }
-
-    pub fn with_actor(
-        patch_id: PatchId,
-        version: VersionNumber,
-        timestamp: DateTime<Utc>,
-        patch: Patch,
         actor: Option<ActorRef>,
     ) -> Self {
         Self {
