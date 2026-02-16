@@ -2503,7 +2503,6 @@ mod tests {
             },
             jobs::BundleSpec,
             patches::{CommitRange, GitOid, GithubPr, Patch, PatchStatus, Review},
-            task_status::{Status, TaskError},
             users::{User, Username},
         },
         test_utils::test_state_with_store,
@@ -2656,7 +2655,7 @@ mod tests {
 
     /// Issue with every optional field set so serialization round-trip can assert full equality.
     fn sample_issue_all_fields(dependencies: Vec<IssueDependency>, patches: Vec<PatchId>) -> Issue {
-        let mut issue = Issue::new(
+        Issue::new(
             IssueType::Task,
             "full description".to_string(),
             Username::from("issue-creator"),
@@ -2680,8 +2679,7 @@ mod tests {
             ],
             dependencies,
             patches,
-        );
-        issue
+        )
     }
 
     #[sqlx::test(migrations = "./migrations")]
