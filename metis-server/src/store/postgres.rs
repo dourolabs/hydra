@@ -305,7 +305,7 @@ impl PostgresStore {
             item,
             version,
             row.created_at,
-            parse_actor_json(row.actor),
+            parse_actor_json(row.actor)?,
         )))
     }
 
@@ -347,7 +347,7 @@ impl PostgresStore {
                 item,
                 version,
                 row.created_at,
-                parse_actor_json(row.actor),
+                parse_actor_json(row.actor)?,
             ));
         }
 
@@ -395,7 +395,7 @@ impl PostgresStore {
                     value,
                     version,
                     row.created_at,
-                    parse_actor_json(row.actor),
+                    parse_actor_json(row.actor)?,
                 ),
             ));
         }
@@ -509,7 +509,7 @@ impl PostgresStore {
                     document,
                     version,
                     row.created_at,
-                    parse_actor_json(row.actor),
+                    parse_actor_json(row.actor)?,
                 ),
             ));
         }
@@ -619,7 +619,7 @@ impl PostgresStore {
                     task,
                     version,
                     row.created_at,
-                    parse_actor_json(row.actor),
+                    parse_actor_json(row.actor)?,
                 ),
             ));
         }
@@ -751,7 +751,7 @@ impl PostgresStore {
                     issue,
                     version,
                     row.created_at,
-                    parse_actor_json(row.actor),
+                    parse_actor_json(row.actor)?,
                 ),
             ));
         }
@@ -893,7 +893,7 @@ impl PostgresStore {
                     patch,
                     version,
                     row.created_at,
-                    parse_actor_json(row.actor),
+                    parse_actor_json(row.actor)?,
                 ),
             ));
         }
@@ -983,7 +983,7 @@ impl PostgresStore {
                     user,
                     version,
                     row.created_at,
-                    parse_actor_json(row.actor),
+                    parse_actor_json(row.actor)?,
                 ),
             ));
         }
@@ -1438,7 +1438,7 @@ impl ReadOnlyStore for PostgresStore {
                     item,
                     version,
                     row.created_at,
-                    parse_actor_json(row.actor),
+                    parse_actor_json(row.actor)?,
                 ));
         }
 
@@ -1494,15 +1494,13 @@ fn actor_to_json(actor: &ActorRef) -> Value {
     serde_json::to_value(actor).expect("ActorRef serialization should not fail")
 }
 
-fn parse_actor_json(value: Option<Value>) -> Option<ActorRef> {
-    value.and_then(|v| {
-        serde_json::from_value(v)
-            .map_err(|e| {
-                tracing::warn!("failed to parse actor JSON into ActorRef: {e}");
-                e
-            })
-            .ok()
-    })
+fn parse_actor_json(value: Option<Value>) -> Result<Option<ActorRef>, StoreError> {
+    match value {
+        None => Ok(None),
+        Some(v) => serde_json::from_value(v).map(Some).map_err(|e| {
+            StoreError::Internal(format!("failed to parse actor JSON into ActorRef: {e}"))
+        }),
+    }
 }
 
 #[async_trait]
