@@ -1075,10 +1075,6 @@ impl Store for MemoryStore {
         actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
-        let mut task = task;
-        task.status = Status::Created;
-        task.last_message = None;
-        task.error = None;
         let spawned_from = task.spawned_from.clone();
 
         self.tasks.insert(

@@ -158,7 +158,7 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
 
     // Non-running job also returns 400
     let handles = test_state_handles();
-    let task = sample_task(Status::Complete);
+    let task = sample_task(Status::Created);
     let (non_running, _) = handles
         .store
         .add_task(task, Utc::now(), &ActorRef::test())
