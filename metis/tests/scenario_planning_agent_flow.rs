@@ -522,14 +522,9 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     child1_failed.assert_status(IssueStatus::Failed);
 
     // ── Step 4: Verify child 2 state ─────────────────────────────────
-    // Child 2 is blocked-on the failed child 1. It should not be ready.
+    // Child 2 is blocked-on the failed child 1. It should remain open (not dropped).
     let child2_check = user.get_issue(&child2_id).await?;
-    assert!(
-        child2_check.issue.status == IssueStatus::Open
-            || child2_check.issue.status == IssueStatus::Dropped,
-        "child 2 should be open or dropped (blocked on failed child 1), got {:?}",
-        child2_check.issue.status
-    );
+    child2_check.assert_status(IssueStatus::Open);
 
     // ── Step 5: Parent becomes ready for re-spawning ─────────────────
     // Parent is in-progress with no ready descendants (child 1 is failed,
@@ -648,17 +643,19 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
 ///
 /// Flow:
 /// 1. User creates parent issue
-/// 2. PM creates child assigned to SWE, sets parent to in-progress
-/// 3. SWE picks up the child (job starts running)
-/// 4. User rejects the child issue (sets status to rejected)
-/// 5. Parent becomes ready for re-spawning
-/// 6. PM creates replacement child
-/// 7. SWE succeeds on replacement child and closes it
-/// 8. PM closes parent
+/// 2. PM creates two children: child 1 assigned to SWE, child 2 blocked-on child 1
+/// 3. SWE picks up child 1 (job starts running)
+/// 4. User rejects child 1 (sets status to rejected)
+/// 5. Child 2 remains open but blocked (not ready)
+/// 6. Parent becomes ready for re-spawning (no ready descendants)
+/// 7. PM drops child 2 and creates replacement child
+/// 8. SWE succeeds on replacement child and closes it
+/// 9. PM closes parent
 ///
 /// Verifies:
 /// - User can reject an issue to trigger re-planning
 /// - Rejected issue is terminal and does not block parent
+/// - Blocked sibling (not explicitly rejected) does not prevent PM from re-spawning
 /// - PM re-spawns after rejection
 /// - Replacement child completes the work
 #[tokio::test]
@@ -687,7 +684,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         )
         .await?;
 
-    // ── Step 2: PM picks up parent and creates child ─────────────────
+    // ── Step 2: PM picks up parent and creates two children ──────────
     let pm_tasks = harness.step_schedule().await?;
     assert_eq!(pm_tasks.len(), 1);
 
@@ -706,7 +703,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         )
         .await?;
 
-    // Find the child issue.
+    // Find child 1's ID.
     let all_issues = user.list_issues().await?;
     let child1 = all_issues
         .issues
@@ -715,16 +712,42 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         .context("child 1 should exist")?;
     let child1_id = child1.issue_id.clone();
 
+    // Create child 2 blocked-on child 1 to verify it doesn't prevent re-planning.
+    let child2_id = user
+        .create_issue_full(
+            IssueType::Task,
+            "Add search result ranking",
+            IssueStatus::Open,
+            Some("swe"),
+            Some(job_settings),
+            vec![
+                metis_common::issues::IssueDependency::new(
+                    metis_common::issues::IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                ),
+                metis_common::issues::IssueDependency::new(
+                    metis_common::issues::IssueDependencyType::BlockedOn,
+                    child1_id.clone(),
+                ),
+            ],
+            Vec::new(),
+        )
+        .await?;
+
     // Verify parent is in-progress.
     let parent = user.get_issue(&parent_id).await?;
     parent.assert_status(IssueStatus::InProgress);
 
-    // ── Step 3: SWE picks up child (job starts) ──────────────────────
+    // ── Step 3: SWE picks up child 1 (job starts) ───────────────────
     let swe_tasks = harness.step_schedule().await?;
-    assert_eq!(swe_tasks.len(), 1, "child should be spawned for SWE");
+    assert_eq!(
+        swe_tasks.len(),
+        1,
+        "only child 1 should be spawned (child 2 is blocked)"
+    );
 
-    // ── Step 4: User rejects the child issue ─────────────────────────
-    // User decides they don't like the plan and sets the issue to rejected.
+    // ── Step 4: User rejects child 1 ────────────────────────────────
+    // User decides they don't like the plan and sets child 1 to rejected.
     user.update_issue_status(&child1_id, IssueStatus::Rejected)
         .await?;
 
@@ -736,8 +759,14 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     // Running. step_monitor_jobs reconciles the store with the engine.
     harness.step_monitor_jobs().await?;
 
-    // ── Step 5: Parent becomes ready for re-spawning ─────────────────
-    // Parent is in-progress with no ready descendants (child is rejected).
+    // ── Step 5: Verify child 2 state ────────────────────────────────
+    // Child 2 is blocked-on the rejected child 1. It should remain open.
+    let child2_check = user.get_issue(&child2_id).await?;
+    child2_check.assert_status(IssueStatus::Open);
+
+    // ── Step 6: Parent becomes ready for re-spawning ─────────────────
+    // Parent is in-progress with no ready descendants (child 1 is rejected,
+    // child 2 is blocked). The spawner should create a new task for the parent.
     let pm_tasks_round2 = harness.step_schedule().await?;
     assert_eq!(
         pm_tasks_round2.len(),
@@ -745,37 +774,44 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         "parent should be re-spawned after child is rejected"
     );
 
-    // ── Step 6: PM creates replacement child ─────────────────────────
+    // ── Step 7: PM drops child 2 and creates replacement ─────────────
     harness
         .run_worker(
             &pm_tasks_round2[0],
-            vec![&format!(
-                "metis issues create 'Build search with SQLite FTS5' \
-                 --type task --assignee swe \
-                 --deps child-of:{parent_id} \
-                 --repo-name {repo_str}"
-            )],
+            vec![
+                &format!("metis issues update {child2_id} --status dropped"),
+                &format!(
+                    "metis issues create 'Build search with SQLite FTS5' \
+                     --type task --assignee swe \
+                     --deps child-of:{parent_id} \
+                     --repo-name {repo_str}"
+                ),
+            ],
         )
         .await?;
 
-    // Find the new child issue.
+    // Verify child 2 is dropped.
+    let child2_dropped = user.get_issue(&child2_id).await?;
+    child2_dropped.assert_status(IssueStatus::Dropped);
+
+    // Find the replacement child issue.
     let all_issues = user.list_issues().await?;
-    let child2 = all_issues
+    let child3 = all_issues
         .issues
         .iter()
         .find(|i| i.issue.description.contains("SQLite FTS5"))
         .context("replacement child should exist")?;
-    let child2_id = child2.issue_id.clone();
+    let child3_id = child3.issue_id.clone();
 
     // Verify original child is still rejected.
     let child1_still_rejected = user.get_issue(&child1_id).await?;
     child1_still_rejected.assert_status(IssueStatus::Rejected);
 
     // Verify new child is open.
-    let child2_check = user.get_issue(&child2_id).await?;
-    child2_check.assert_status(IssueStatus::Open);
+    let child3_check = user.get_issue(&child3_id).await?;
+    child3_check.assert_status(IssueStatus::Open);
 
-    // ── Step 7: SWE succeeds on replacement child and closes it ──────
+    // ── Step 8: SWE succeeds on replacement child and closes it ──────
     let swe_tasks_round2 = harness.step_schedule().await?;
     assert_eq!(
         swe_tasks_round2.len(),
@@ -790,15 +826,15 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
                 "echo 'search implementation' >> README.md",
                 "git add README.md",
                 "git commit -m 'Build search with SQLite FTS5'",
-                &format!("metis issues update {child2_id} --status closed"),
+                &format!("metis issues update {child3_id} --status closed"),
             ],
         )
         .await?;
 
-    let child2_closed = user.get_issue(&child2_id).await?;
-    child2_closed.assert_status(IssueStatus::Closed);
+    let child3_closed = user.get_issue(&child3_id).await?;
+    child3_closed.assert_status(IssueStatus::Closed);
 
-    // ── Step 8: PM re-spawns and closes parent ──────────────────────
+    // ── Step 9: PM re-spawns and closes parent ──────────────────────
     let pm_close_tasks = harness.step_schedule().await?;
     assert_eq!(
         pm_close_tasks.len(),
@@ -821,7 +857,10 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     child1_final.assert_status(IssueStatus::Rejected);
 
     let child2_final = user.get_issue(&child2_id).await?;
-    child2_final.assert_status(IssueStatus::Closed);
+    child2_final.assert_status(IssueStatus::Dropped);
+
+    let child3_final = user.get_issue(&child3_id).await?;
+    child3_final.assert_status(IssueStatus::Closed);
 
     // Verify children structure.
     let all_issues = user.list_issues().await?;
@@ -829,6 +868,11 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         &all_issues.issues,
         "Elasticsearch",
         IssueStatus::Rejected,
+    );
+    parent_final.assert_has_child_with_status(
+        &all_issues.issues,
+        "search result ranking",
+        IssueStatus::Dropped,
     );
     parent_final.assert_has_child_with_status(
         &all_issues.issues,
