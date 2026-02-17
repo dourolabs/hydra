@@ -268,7 +268,7 @@ mod tests {
         let metis_id = TaskId::new();
         let (actor, _) = crate::domain::actors::Actor::new_for_task(
             TaskId::new(),
-            Some(crate::domain::users::Username::from("creator")),
+            crate::domain::users::Username::from("creator"),
         );
 
         engine
@@ -311,7 +311,7 @@ mod tests {
         let metis_id = TaskId::new();
         let (actor, _) = crate::domain::actors::Actor::new_for_task(
             TaskId::new(),
-            Some(crate::domain::users::Username::from("creator")),
+            crate::domain::users::Username::from("creator"),
         );
 
         engine
@@ -343,7 +343,7 @@ mod tests {
         let metis_id = TaskId::new();
         let (actor, _) = crate::domain::actors::Actor::new_for_task(
             TaskId::new(),
-            Some(crate::domain::users::Username::from("creator")),
+            crate::domain::users::Username::from("creator"),
         );
 
         engine

@@ -1,6 +1,7 @@
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
-use crate::domain::actors::{Actor, ActorId, ActorRef};
+use crate::domain::actors::{Actor, ActorId, ActorRef, UNKNOWN_CREATOR};
 use crate::domain::patches::GithubPr;
+use crate::domain::users::Username;
 use crate::policy::context::AutomationContext;
 use crate::policy::{AutomationError, EventFilter};
 use async_trait::async_trait;
@@ -104,7 +105,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
         // Build a temporary Actor to fetch the GitHub token.
         let creator = match &actor_id {
-            ActorId::Username(username) => Some(username.clone().into()),
+            ActorId::Username(username) => username.clone().into(),
             ActorId::Task(task_id) => {
                 let task = ctx.app_state.get_task(task_id).await.map_err(|e| {
                     AutomationError::Other(anyhow::anyhow!(
@@ -112,6 +113,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                     ))
                 })?;
                 task.creator
+                    .unwrap_or_else(|| Username::from(UNKNOWN_CREATOR))
             }
         };
         let actor = Actor {
