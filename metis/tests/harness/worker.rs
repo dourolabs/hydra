@@ -237,19 +237,23 @@ async fn get_job_status(harness: &TestHarness, job_id: &TaskId) -> Result<Status
     Ok(job.task.status)
 }
 
-/// Wait for a job to reach Running status, polling until the timeout.
+/// Drive the job through to Running status deterministically.
+///
+/// Uses the harness stepping methods instead of polling with timeouts,
+/// since the test server no longer runs background workers.
 async fn wait_for_running(harness: &TestHarness, job_id: &TaskId) -> Result<()> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        if std::time::Instant::now() > deadline {
-            bail!("timed out waiting for job '{job_id}' to reach Running status");
-        }
-        let status = get_job_status(harness, job_id).await?;
-        if status == Status::Running {
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // Step 1: Process pending jobs (Created -> Pending + engine create_job).
+    harness.step_pending_jobs().await?;
+
+    // Step 2: Monitor running jobs to reconcile store status with engine status.
+    harness.step_monitor_jobs().await?;
+
+    let status = get_job_status(harness, job_id).await?;
+    if status != Status::Running {
+        bail!("expected job '{job_id}' to be Running after stepping, but got {status:?}");
     }
+
+    Ok(())
 }
 
 pub(super) async fn run_worker_impl(

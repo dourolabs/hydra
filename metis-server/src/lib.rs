@@ -42,18 +42,11 @@ use std::{env, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::info;
 
-pub async fn run_with_state(
-    state: AppState,
-    listener: tokio::net::TcpListener,
-) -> anyhow::Result<()> {
-    // Run scheduler-backed workers for background processing (jobs, agents, GitHub poller)
-    let scheduler = start_background_scheduler(state.clone());
-
-    // Start automation runner (event-driven side effects from the policy engine)
-    let (automation_shutdown_tx, automation_shutdown_rx) = tokio::sync::watch::channel(false);
-    let automation_handle =
-        crate::policy::runner::spawn_automation_runner(state.clone(), automation_shutdown_rx);
-
+/// Build the application router from the given state.
+///
+/// This is the shared router construction used by both `run_with_state` (full
+/// production mode) and `run_http_only` (test mode without background workers).
+fn build_app_router(state: AppState) -> Router {
     let public_routes = Router::new()
         .route("/health", get(health_check))
         .route("/v1/login", post(routes::login::login))
@@ -192,10 +185,25 @@ pub async fn run_with_state(
             routes::auth::require_auth,
         ));
 
-    let app = Router::new()
+    Router::new()
         .merge(public_routes)
         .merge(protected_routes)
-        .with_state(state);
+        .with_state(state)
+}
+
+pub async fn run_with_state(
+    state: AppState,
+    listener: tokio::net::TcpListener,
+) -> anyhow::Result<()> {
+    // Run scheduler-backed workers for background processing (jobs, agents, GitHub poller)
+    let scheduler = start_background_scheduler(state.clone());
+
+    // Start automation runner (event-driven side effects from the policy engine)
+    let (automation_shutdown_tx, automation_shutdown_rx) = tokio::sync::watch::channel(false);
+    let automation_handle =
+        crate::policy::runner::spawn_automation_runner(state.clone(), automation_shutdown_rx);
+
+    let app = build_app_router(state);
 
     let addr = listener.local_addr()?;
 
@@ -207,6 +215,25 @@ pub async fn run_with_state(
     let _ = automation_shutdown_tx.send(true);
     let _ = automation_handle.await;
     serve_result?;
+
+    Ok(())
+}
+
+/// Start only the HTTP server, without background scheduler or automation runner.
+///
+/// This is intended for integration tests where background workers and
+/// automations are stepped deterministically by the test harness.
+pub async fn run_http_only(
+    state: AppState,
+    listener: tokio::net::TcpListener,
+) -> anyhow::Result<()> {
+    let app = build_app_router(state);
+
+    let addr = listener.local_addr()?;
+
+    info!("metis-server (http-only) listening on http://{}", addr);
+
+    axum::serve(listener, app).await?;
 
     Ok(())
 }

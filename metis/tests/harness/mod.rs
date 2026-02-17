@@ -15,7 +15,7 @@ use metis_common::{
     RepoName, TaskId,
 };
 use metis_server::{
-    app::{AppState, ServiceState},
+    app::{AppState, ServerEvent, ServiceState},
     background::{
         monitor_running_jobs::MonitorRunningJobsWorker,
         process_pending_jobs::ProcessPendingJobsWorker,
@@ -33,13 +33,13 @@ use metis_server::{
     },
     store::{MemoryStore, Store},
     test_utils::{
-        spawn_test_server_with_state, test_app_config, GitHubMockBuilder, GitRemote, MockJobEngine,
-        TestServer,
+        spawn_test_server_without_background, test_app_config, GitHubMockBuilder, GitRemote,
+        MockJobEngine, TestServer,
     },
 };
 use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc};
 use tempfile::TempDir;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
 pub use assertions::{wait_until, IssueAssertions, JobAssertions, PatchAssertions};
 pub use concurrency::{concurrent, test_all_orderings, Step};
@@ -81,6 +81,7 @@ pub struct TestHarness {
     users: HashMap<String, UserHandle>,
     remotes: HashMap<RepoName, GitRemote>,
     github: Option<GitHubMock>,
+    event_rx: broadcast::Receiver<ServerEvent>,
 }
 
 impl TestHarness {
@@ -335,6 +336,63 @@ impl TestHarness {
         self.step_pending_jobs().await?;
         Ok(created)
     }
+
+    // ── Automation flushing ────────────────────────────────────────
+
+    /// Synchronously drain all pending events from the event bus and run
+    /// automations for each one through the policy engine.
+    ///
+    /// This replaces the async background automation runner for tests,
+    /// giving deterministic control over when automations execute.
+    ///
+    /// Handles recursive automation events: automations may trigger further
+    /// events (e.g., closing an issue triggers cascade), so this method
+    /// loops until the event bus is fully drained.
+    pub async fn flush_automations(&mut self) -> Result<()> {
+        use metis_server::policy::context::AutomationContext;
+
+        const MAX_ROUNDS: usize = 20;
+        let mut round = 0;
+
+        loop {
+            // Collect all currently buffered events.
+            let mut events = Vec::new();
+            loop {
+                match self.event_rx.try_recv() {
+                    Ok(event) => events.push(event),
+                    Err(broadcast::error::TryRecvError::Empty) => break,
+                    Err(broadcast::error::TryRecvError::Lagged(_n)) => {
+                        // Some events were skipped because the receiver fell
+                        // behind. Continue draining remaining events.
+                    }
+                    Err(broadcast::error::TryRecvError::Closed) => break,
+                }
+            }
+
+            if events.is_empty() {
+                break;
+            }
+
+            round += 1;
+            if round > MAX_ROUNDS {
+                anyhow::bail!(
+                    "flush_automations: exceeded {MAX_ROUNDS} rounds; \
+                     possible infinite automation loop"
+                );
+            }
+
+            for event in events {
+                let ctx = AutomationContext {
+                    event: &event,
+                    app_state: &self.state,
+                    store: self.state.store(),
+                };
+                self.state.policy_engine().run_automations(&ctx).await;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Builder for constructing a [`TestHarness`] with custom configuration.
@@ -573,8 +631,13 @@ impl TestHarnessBuilder {
             user_credentials.push((user_name.clone(), token));
         }
 
-        // Spawn the test server.
-        let server = spawn_test_server_with_state(state.clone(), store.clone())
+        // Subscribe to the event bus before spawning the server so we
+        // capture all events from the start.
+        let event_rx = state.subscribe();
+
+        // Spawn the test server without background workers or automation
+        // runner — the harness drives both deterministically.
+        let server = spawn_test_server_without_background(state.clone(), store.clone())
             .await
             .context("failed to spawn test server for TestHarness")?;
 
@@ -597,6 +660,7 @@ impl TestHarnessBuilder {
             users,
             remotes,
             github: github_mock,
+            event_rx,
         })
     }
 }

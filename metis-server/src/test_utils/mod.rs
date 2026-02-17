@@ -8,7 +8,7 @@ use crate::{
     },
     domain::actors::{Actor, ActorRef},
     job_engine::JobEngine,
-    run_with_state,
+    run_http_only, run_with_state,
     store::{MemoryStore, Store, StoreError},
 };
 use anyhow::Context;
@@ -219,6 +219,29 @@ pub async fn spawn_test_server_with_state(
     let addr = listener.local_addr()?;
     let server_state = state.clone();
     let handle = tokio::spawn(async move { run_with_state(server_state, listener).await });
+    let server = TestServer {
+        address: addr.to_string(),
+        handle,
+    };
+
+    wait_for_server_ready(&server.base_url()).await?;
+    Ok(server)
+}
+
+/// Spawn a test server that runs only the HTTP layer, without background
+/// scheduler or automation runner.
+///
+/// Use this for integration tests that step background workers and automations
+/// deterministically via `TestHarness::step_*()` and `flush_automations()`.
+pub async fn spawn_test_server_without_background(
+    state: AppState,
+    store: Arc<dyn Store>,
+) -> anyhow::Result<TestServer> {
+    seed_test_actor(store.as_ref()).await?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let server_state = state.clone();
+    let handle = tokio::spawn(async move { run_http_only(server_state, listener).await });
     let server = TestServer {
         address: addr.to_string(),
         handle,
