@@ -11,6 +11,11 @@ use std::fmt::Write;
 use tracing::{error, info};
 use uuid::Uuid;
 
+/// Placeholder value used when backfilling NULL creator columns during migration.
+/// Every use of this constant represents a location that should eventually be
+/// removed once all creators are guaranteed non-NULL in the database.
+pub const UNKNOWN_CREATOR: &str = "unknown";
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ActorError {
     #[error("Invalid actor name: {0}")]

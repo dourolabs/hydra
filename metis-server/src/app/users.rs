@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        actors::{Actor, ActorRef},
+        actors::{Actor, ActorRef, UNKNOWN_CREATOR},
         users::{User, UserSummary, Username},
     },
     store::{ReadOnlyStore, StoreError},
@@ -142,7 +142,9 @@ impl AppState {
         lifecycle_actor: ActorRef,
     ) -> Result<(Actor, String), StoreError> {
         let task = self.get_task(&task_id).await?;
-        let creator = task.creator.unwrap_or_else(|| Username::from("unknown"));
+        let creator = task
+            .creator
+            .unwrap_or_else(|| Username::from(UNKNOWN_CREATOR));
         let (actor, auth_token) = Actor::new_for_task(task_id, creator);
         self.store.add_actor(actor.clone(), lifecycle_actor).await?;
         Ok((actor, auth_token))

@@ -5,7 +5,7 @@
 
 use crate::{
     domain::{
-        actors::{Actor, ActorId, ActorRef},
+        actors::{Actor, ActorId, ActorRef, UNKNOWN_CREATOR},
         documents::Document,
         issues::{
             Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
@@ -772,7 +772,7 @@ impl PostgresStoreV2 {
             auth_token_hash: row.auth_token_hash.clone(),
             auth_token_salt: row.auth_token_salt.clone(),
             actor_id,
-            creator: Username::from(row.creator.as_deref().unwrap_or("unknown")),
+            creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
         })
     }
 }

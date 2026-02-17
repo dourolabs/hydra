@@ -1,5 +1,5 @@
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
-use crate::domain::actors::{Actor, ActorId, ActorRef};
+use crate::domain::actors::{Actor, ActorId, ActorRef, UNKNOWN_CREATOR};
 use crate::domain::patches::GithubPr;
 use crate::domain::users::Username;
 use crate::policy::context::AutomationContext;
@@ -112,7 +112,8 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                         "github_pr_sync: failed to load task '{task_id}': {e}"
                     ))
                 })?;
-                task.creator.unwrap_or_else(|| Username::from("unknown"))
+                task.creator
+                    .unwrap_or_else(|| Username::from(UNKNOWN_CREATOR))
             }
         };
         let actor = Actor {
