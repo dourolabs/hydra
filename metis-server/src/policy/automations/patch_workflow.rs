@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
@@ -13,19 +13,19 @@ use crate::policy::{Automation, AutomationError, EventFilter};
 const AUTOMATION_NAME: &str = "patch_workflow";
 
 /// Configuration for a single review request entry.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewRequestConfig {
     pub assignee: String,
 }
 
 /// Configuration for the merge request issue.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeRequestConfig {
     pub assignee: Option<String>,
 }
 
 /// Per-repo workflow configuration override.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RepoWorkflowConfig {
     pub review_requests: Vec<ReviewRequestConfig>,
@@ -33,7 +33,7 @@ pub struct RepoWorkflowConfig {
 }
 
 /// Top-level configuration for the patch_workflow automation.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PatchWorkflowConfig {
     pub review_requests: Vec<ReviewRequestConfig>,

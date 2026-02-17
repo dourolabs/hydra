@@ -23,8 +23,14 @@ use metis_server::{
         scheduler::{ScheduledWorker, WorkerOutcome},
         spawner::AgentQueue,
     },
+    config::AgentQueueConfig,
     domain::actors::{Actor, ActorRef},
-    policy::integrations::github_pr_poller::GithubPollerWorker,
+    policy::{
+        automations::patch_workflow::PatchWorkflowConfig,
+        config::{PolicyConfig, PolicyEntry, PolicyList},
+        integrations::github_pr_poller::GithubPollerWorker,
+        registry::build_default_registry,
+    },
     store::{MemoryStore, Store},
     test_utils::{
         spawn_test_server_with_state, test_app_config, GitHubMockBuilder, GitRemote, MockJobEngine,
@@ -336,6 +342,8 @@ pub struct TestHarnessBuilder {
     repos: Vec<String>,
     users: Vec<String>,
     enable_github: bool,
+    patch_workflow_config: Option<PatchWorkflowConfig>,
+    agent_configs: Vec<(String, String)>,
 }
 
 impl TestHarnessBuilder {
@@ -344,6 +352,8 @@ impl TestHarnessBuilder {
             repos: Vec::new(),
             users: Vec::new(),
             enable_github: false,
+            patch_workflow_config: None,
+            agent_configs: Vec::new(),
         }
     }
 
@@ -376,6 +386,28 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Configure the patch_workflow automation with custom parameters.
+    ///
+    /// Overrides the default patch_workflow config (which creates a
+    /// MergeRequest issue with no assignee). Use this to set custom
+    /// reviewer assignments, `$patch_creator` support, or per-repo
+    /// overrides.
+    pub fn with_patch_workflow_config(mut self, config: PatchWorkflowConfig) -> Self {
+        self.patch_workflow_config = Some(config);
+        self
+    }
+
+    /// Register an agent queue with the given name and prompt.
+    ///
+    /// Agent queues registered here are available immediately when the
+    /// harness is built, removing the need to manually call
+    /// `harness.agents().write().await`.
+    pub fn with_agent(mut self, name: &str, prompt: &str) -> Self {
+        self.agent_configs
+            .push((name.to_string(), prompt.to_string()));
+        self
+    }
+
     /// Build the harness, creating all infrastructure.
     pub async fn build(self) -> Result<TestHarness> {
         let tempdir = TempDir::new().context("failed to create tempdir for TestHarness")?;
@@ -383,7 +415,21 @@ impl TestHarnessBuilder {
         // Create the in-memory store and mock job engine.
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let engine = Arc::new(MockJobEngine::new());
-        let agents = Arc::new(RwLock::new(Vec::new()));
+
+        // Pre-populate agent queues from builder config.
+        let initial_agents: Vec<Arc<AgentQueue>> = self
+            .agent_configs
+            .iter()
+            .map(|(name, prompt)| {
+                Arc::new(AgentQueue::from_config(&AgentQueueConfig {
+                    name: name.clone(),
+                    prompt: prompt.clone(),
+                    max_tries: 3,
+                    max_simultaneous: 10,
+                }))
+            })
+            .collect();
+        let agents = Arc::new(RwLock::new(initial_agents));
 
         // Create git remotes and register repositories in the store.
         let mut remotes = HashMap::new();
@@ -431,7 +477,7 @@ impl TestHarnessBuilder {
 
         // Build AppState.
         let server_config = Arc::new(test_app_config());
-        let state = AppState::new(
+        let mut state = AppState::new(
             server_config,
             octocrab_client,
             Arc::new(ServiceState::default()),
@@ -439,6 +485,39 @@ impl TestHarnessBuilder {
             engine.clone(),
             agents.clone(),
         );
+
+        // Override the policy engine if a custom patch_workflow config was provided.
+        if let Some(pwc) = self.patch_workflow_config {
+            let params = toml::Value::try_from(&pwc)
+                .context("failed to serialize PatchWorkflowConfig to TOML")?;
+            let policy_config = PolicyConfig {
+                global: PolicyList {
+                    restrictions: vec![
+                        PolicyEntry::Name("issue_lifecycle_validation".to_string()),
+                        PolicyEntry::Name("task_state_machine".to_string()),
+                        PolicyEntry::Name("duplicate_branch_name".to_string()),
+                        PolicyEntry::Name("running_job_validation".to_string()),
+                        PolicyEntry::Name("require_creator".to_string()),
+                    ],
+                    automations: vec![
+                        PolicyEntry::Name("cascade_issue_status".to_string()),
+                        PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
+                        PolicyEntry::Name("close_merge_request_issues".to_string()),
+                        PolicyEntry::Name("sync_review_request_issues".to_string()),
+                        PolicyEntry::WithParams {
+                            name: "patch_workflow".to_string(),
+                            params,
+                        },
+                        PolicyEntry::Name("github_pr_sync".to_string()),
+                    ],
+                },
+            };
+            let registry = build_default_registry();
+            let engine = registry
+                .build(&policy_config)
+                .map_err(|e| anyhow::anyhow!("failed to build policy engine: {e}"))?;
+            state = state.with_policy_engine(engine);
+        }
 
         // Collect user credentials. We need to create actors and users in the
         // store before spawning the server, but UserHandle construction needs
