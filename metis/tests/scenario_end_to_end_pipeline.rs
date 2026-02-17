@@ -1,7 +1,7 @@
 mod harness;
 
 use anyhow::{Context, Result};
-use harness::{test_patch_workflow_config, IssueAssertions};
+use harness::{merge_patch, test_patch_workflow_config, IssueAssertions};
 use metis_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
     patches::PatchStatus,
@@ -190,14 +190,7 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     // close_merge_request_issues automation which closes MergeRequest issues.
     {
         let client = harness.client()?;
-        let mut patch_record = client.get_patch(&patch_id).await?;
-        patch_record.patch.status = PatchStatus::Merged;
-        client
-            .update_patch(
-                &patch_id,
-                &metis_common::patches::UpsertPatchRequest::new(patch_record.patch),
-            )
-            .await?;
+        merge_patch(&client, &patch_id).await?;
     }
 
     // ── Step 8: Verify workflow completion ───────────────────────────
