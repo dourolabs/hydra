@@ -344,6 +344,7 @@ pub struct TestHarnessBuilder {
     enable_github: bool,
     patch_workflow_config: Option<PatchWorkflowConfig>,
     agent_configs: Vec<(String, String)>,
+    assignment_agent: Option<String>,
 }
 
 impl TestHarnessBuilder {
@@ -354,6 +355,7 @@ impl TestHarnessBuilder {
             enable_github: false,
             patch_workflow_config: None,
             agent_configs: Vec::new(),
+            assignment_agent: None,
         }
     }
 
@@ -405,6 +407,16 @@ impl TestHarnessBuilder {
     pub fn with_agent(mut self, name: &str, prompt: &str) -> Self {
         self.agent_configs
             .push((name.to_string(), prompt.to_string()));
+        self
+    }
+
+    /// Set which agent queue acts as the assignment agent.
+    ///
+    /// The assignment agent automatically picks up unassigned issues (those
+    /// with no `assignee` field). Other agents only pick up issues assigned
+    /// to them by name.
+    pub fn with_assignment_agent(mut self, name: &str) -> Self {
+        self.assignment_agent = Some(name.to_string());
         self
     }
 
@@ -475,8 +487,12 @@ impl TestHarnessBuilder {
             None => (None, None),
         };
 
-        // Build AppState.
-        let server_config = Arc::new(test_app_config());
+        // Build AppState, optionally overriding the assignment agent.
+        let mut server_config = test_app_config();
+        if let Some(ref agent_name) = self.assignment_agent {
+            server_config.background.assignment_agent = agent_name.clone();
+        }
+        let server_config = Arc::new(server_config);
         let mut state = AppState::new(
             server_config,
             octocrab_client,
