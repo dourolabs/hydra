@@ -9,17 +9,12 @@ fn default_task_status() -> Status {
     Status::Complete
 }
 
-fn default_task_creator() -> Username {
-    Username::from("unknown")
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
     pub prompt: String,
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
-    #[serde(default = "default_task_creator")]
     pub creator: Username,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,

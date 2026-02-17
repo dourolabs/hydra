@@ -16,7 +16,6 @@ pub struct Task {
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
-    #[serde(default = "default_creator")]
     pub creator: Username,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
@@ -136,10 +135,6 @@ impl Task {
 
 fn default_status() -> Status {
     Status::Created
-}
-
-fn default_creator() -> Username {
-    Username::from("unknown")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
