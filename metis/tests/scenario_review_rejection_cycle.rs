@@ -43,9 +43,10 @@ async fn find_children_by_type(
         if record.issue.issue_type != issue_type {
             continue;
         }
-        let is_child = record.issue.dependencies.iter().any(|d| {
-            d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
-        });
+        let is_child =
+            record.issue.dependencies.iter().any(|d| {
+                d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
+            });
         if is_child {
             matches.push((record.issue_id.clone(), record));
         }
@@ -228,8 +229,12 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
             repo_owner,
             repo_name,
             MockPr::new(pr_number, &patch_branch, &head_sha).with_review(
-                MockReview::new("reviewer", "CHANGES_REQUESTED", "Please fix the implementation")
-                    .with_author_id(1001),
+                MockReview::new(
+                    "reviewer",
+                    "CHANGES_REQUESTED",
+                    "Please fix the implementation",
+                )
+                .with_author_id(1001),
             ),
         )
         .build()?;
@@ -265,13 +270,32 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         "old ReviewRequest should be Failed after non-approving review"
     );
 
-    // ── Step 9: Re-open the patch (ChangesRequested → Open) ──────
+    // ── Step 9: Re-open the patch via a worker (ChangesRequested → Open) ──
+    // Use run_worker() + CLI to simulate a real SWE worker making fixes and
+    // re-opening the patch, rather than directly calling client.update_patch().
     {
-        let patch_record = client.get_patch(&patch_id).await?;
-        let mut patch = patch_record.patch;
-        patch.status = PatchStatus::Open;
-        let request = UpsertPatchRequest::new(patch);
-        client.update_patch(&patch_id, &request).await?;
+        let swe_task_id_2 = harness
+            .default_user()
+            .create_job_for_issue(
+                &repo,
+                "Re-open patch after changes requested",
+                &swe_issue_id,
+            )
+            .await?;
+        harness.step_pending_jobs().await?;
+
+        let patch_id_str = patch_id.as_ref();
+        harness
+            .run_worker(
+                &swe_task_id_2,
+                vec![
+                    "echo 'fn main() { /* v2 - fixed */ }' > feature.rs",
+                    "git add feature.rs",
+                    "git commit -m 'address review feedback'",
+                    &format!("metis patches update {patch_id_str} --status Open"),
+                ],
+            )
+            .await?;
     }
 
     // ── Step 10: Verify patch_workflow re-fires → new workflow issues ──
@@ -336,8 +360,7 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
             MockPr::new(pr_number, &patch_branch, &head_sha)
                 .merged()
                 .with_review(
-                    MockReview::new("reviewer", "APPROVED", "LGTM, approved")
-                        .with_author_id(1001),
+                    MockReview::new("reviewer", "APPROVED", "LGTM, approved").with_author_id(1001),
                 ),
         )
         .build()?;
@@ -377,10 +400,8 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     );
 
     // ── Step 17: Verify coexistence of old and new workflow issues ─
-    let all_rr =
-        find_children_by_type(&client, &swe_issue_id, IssueType::ReviewRequest).await?;
-    let all_mr =
-        find_children_by_type(&client, &swe_issue_id, IssueType::MergeRequest).await?;
+    let all_rr = find_children_by_type(&client, &swe_issue_id, IssueType::ReviewRequest).await?;
+    let all_mr = find_children_by_type(&client, &swe_issue_id, IssueType::MergeRequest).await?;
 
     assert_eq!(
         all_rr.len(),
