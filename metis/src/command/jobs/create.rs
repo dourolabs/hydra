@@ -250,6 +250,7 @@ mod tests {
     use metis_common::{
         jobs::{BundleSpec, CreateJobResponse, JobVersionRecord, ListJobsResponse, Task},
         task_status::{Status, TaskError},
+        users::Username,
     };
     use reqwest::Client as HttpClient;
     use std::collections::HashMap;
@@ -277,7 +278,7 @@ mod tests {
                 "0".to_string(),
                 BundleSpec::None,
                 None,
-                None,
+                Username::from("test-creator"),
                 None,
                 None,
                 HashMap::new(),

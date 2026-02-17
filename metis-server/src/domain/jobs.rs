@@ -9,14 +9,18 @@ fn default_task_status() -> Status {
     Status::Complete
 }
 
+fn default_task_creator() -> Username {
+    Username::from("unknown")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
     pub prompt: String,
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub creator: Option<Username>,
+    #[serde(default = "default_task_creator")]
+    pub creator: Username,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,7 +49,7 @@ impl Task {
         prompt: String,
         context: BundleSpec,
         spawned_from: Option<IssueId>,
-        creator: Option<Username>,
+        creator: Username,
         image: Option<String>,
         model: Option<String>,
         env_vars: HashMap<String, String>,
@@ -174,7 +178,7 @@ impl From<api::jobs::Task> for Task {
             prompt: value.prompt,
             context: value.context.into(),
             spawned_from: value.spawned_from,
-            creator: value.creator.map(Into::into),
+            creator: value.creator.into(),
             image: value.image,
             model: value.model,
             env_vars: value.env_vars,
@@ -195,7 +199,7 @@ impl From<Task> for api::jobs::Task {
             value.prompt,
             value.context.into(),
             value.spawned_from,
-            value.creator.map(Into::into),
+            value.creator.into(),
             value.image,
             value.model,
             value.env_vars,
@@ -213,6 +217,7 @@ impl From<Task> for api::jobs::Task {
 #[cfg(test)]
 mod tests {
     use super::{BundleSpec, Task};
+    use crate::domain::users::Username;
     use metis_common::RepoName;
     use metis_common::api::v1 as api;
     use std::collections::HashMap;
@@ -239,7 +244,7 @@ mod tests {
             "test prompt".to_string(),
             BundleSpec::None,
             None,
-            None,
+            Username::from("test-creator"),
             Some("worker:latest".to_string()),
             Some("gpt-4o".to_string()),
             HashMap::new(),
@@ -263,7 +268,7 @@ mod tests {
             "test prompt".to_string(),
             BundleSpec::None,
             None,
-            None,
+            Username::from("test-creator"),
             None,
             None,
             HashMap::new(),

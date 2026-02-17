@@ -80,6 +80,7 @@ mod tests {
     use crate::domain::actors::ActorRef;
     use crate::domain::documents::Document;
     use crate::domain::jobs::{BundleSpec, Task};
+    use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, ReadOnlyStore, Store};
     use chrono::Utc;
@@ -90,7 +91,7 @@ mod tests {
             "test".to_string(),
             BundleSpec::None,
             None,
-            None,
+            Username::from("test-creator"),
             None,
             None,
             HashMap::new(),

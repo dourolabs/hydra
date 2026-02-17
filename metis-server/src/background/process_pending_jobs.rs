@@ -82,7 +82,7 @@ impl ScheduledWorker for ProcessPendingJobsWorker {
 mod tests {
     use super::*;
     use crate::{
-        domain::{actors::ActorRef, jobs::BundleSpec},
+        domain::{actors::ActorRef, jobs::BundleSpec, users::Username},
         store::{Status, Task},
         test_utils::{FailingStore, test_state, test_state_with_store},
     };
@@ -106,7 +106,7 @@ mod tests {
             "do work".to_string(),
             BundleSpec::None,
             None,
-            None,
+            Username::from("test-creator"),
             None,
             None,
             HashMap::new(),

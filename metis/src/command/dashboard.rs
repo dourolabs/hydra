@@ -4084,7 +4084,7 @@ mod tests {
                 "0".into(),
                 BundleSpec::None,
                 None,
-                None,
+                Username::from("test-creator"),
                 None,
                 None,
                 HashMap::new(),
