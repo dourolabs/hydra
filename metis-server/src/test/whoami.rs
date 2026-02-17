@@ -86,8 +86,13 @@ async fn whoami_returns_task_identity() -> anyhow::Result<()> {
 
     let body: WhoAmIResponse = response.json().await?;
     match body.actor {
-        ActorIdentity::Task { task_id } => {
+        ActorIdentity::Task { task_id, creator } => {
             assert_eq!(task_id.as_ref(), expected_task_id);
+            assert_eq!(
+                creator.as_str(),
+                "test-creator",
+                "creator should match the task's creator"
+            );
         }
         other => {
             panic!("expected task identity, got {other:?}");

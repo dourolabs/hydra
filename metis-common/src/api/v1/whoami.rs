@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[non_exhaustive]
 pub enum ActorIdentity {
     User { username: Username },
-    Task { task_id: TaskId },
+    Task { task_id: TaskId, creator: Username },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
