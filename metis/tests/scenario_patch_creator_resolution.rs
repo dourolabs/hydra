@@ -2,7 +2,8 @@ mod harness;
 
 use anyhow::Result;
 use harness::{
-    test_job_settings, MergeRequestConfig, PatchWorkflowConfig, ReviewRequestConfig, TestHarness,
+    find_children_by_type, test_job_settings, MergeRequestConfig, PatchWorkflowConfig,
+    ReviewRequestConfig, TestHarness,
 };
 use metis_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
@@ -50,6 +51,9 @@ async fn patch_creator_resolves_to_user_for_direct_patch() -> Result<()> {
 
     // Verify patch_workflow automation created ReviewRequest and MergeRequest
     // issues with $patch_creator resolved to "alice".
+    //
+    // In the direct-patch case there is no parent issue, so we find all
+    // issues of each workflow type.  There should be exactly one of each.
     let all_issues = alice.list_issues().await?;
 
     let review_requests: Vec<_> = all_issues
@@ -165,16 +169,8 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
     // child issues of the SWE's issue, with $patch_creator resolved to "default".
     let all_issues = user.list_issues().await?;
 
-    let review_requests: Vec<_> = all_issues
-        .issues
-        .iter()
-        .filter(|i| {
-            i.issue.issue_type == IssueType::ReviewRequest
-                && i.issue.dependencies.iter().any(|d| {
-                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == issue_id
-                })
-        })
-        .collect();
+    let review_requests =
+        find_children_by_type(&all_issues.issues, &issue_id, IssueType::ReviewRequest);
     assert_eq!(
         review_requests.len(),
         1,
@@ -186,16 +182,8 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
         "ReviewRequest should be assigned to 'default' (issue creator) via $patch_creator"
     );
 
-    let merge_requests: Vec<_> = all_issues
-        .issues
-        .iter()
-        .filter(|i| {
-            i.issue.issue_type == IssueType::MergeRequest
-                && i.issue.dependencies.iter().any(|d| {
-                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == issue_id
-                })
-        })
-        .collect();
+    let merge_requests =
+        find_children_by_type(&all_issues.issues, &issue_id, IssueType::MergeRequest);
     assert_eq!(
         merge_requests.len(),
         1,

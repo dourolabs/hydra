@@ -1,7 +1,7 @@
 mod harness;
 
 use anyhow::Result;
-use harness::{test_job_settings, TestHarness};
+use harness::{find_children_of, test_job_settings, TestHarness};
 use metis_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
     task_status::Status,
@@ -70,29 +70,20 @@ async fn multi_repo_workflow() -> Result<()> {
 
     // Find the child issues created by PM.
     let all_issues = user.list_issues().await?;
-    let child1 = all_issues
-        .issues
+    let children = find_children_of(&all_issues.issues, &parent_id);
+    let child1 = children
         .iter()
         .find(|i| {
             i.issue
                 .description
                 .contains("Add agent queue to service.sh")
-                && i.issue.dependencies.iter().any(|d| {
-                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == parent_id
-                })
         })
         .expect("PM should have created child 1");
     let child1_id = child1.issue_id.clone();
 
-    let child2 = all_issues
-        .issues
+    let child2 = children
         .iter()
-        .find(|i| {
-            i.issue.description.contains("Add agent queue to configmap")
-                && i.issue.dependencies.iter().any(|d| {
-                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == parent_id
-                })
-        })
+        .find(|i| i.issue.description.contains("Add agent queue to configmap"))
         .expect("PM should have created child 2");
 
     // Verify child 2 is blocked-on child 1.
@@ -138,12 +129,8 @@ async fn multi_repo_workflow() -> Result<()> {
     // The patch_workflow automation may have created child issues (e.g. MergeRequest)
     // on child 1 when the patch was created. Close them before closing child 1.
     let all_issues = user.list_issues().await?;
-    for issue in &all_issues.issues {
-        let is_child_of_child1 =
-            issue.issue.dependencies.iter().any(|d| {
-                d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == child1_id
-            });
-        if is_child_of_child1 && issue.issue.status == IssueStatus::Open {
+    for issue in find_children_of(&all_issues.issues, &child1_id) {
+        if issue.issue.status == IssueStatus::Open {
             user.update_issue_status(&issue.issue_id, IssueStatus::Closed)
                 .await?;
         }

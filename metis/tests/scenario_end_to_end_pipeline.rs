@@ -1,7 +1,10 @@
 mod harness;
 
 use anyhow::{Context, Result};
-use harness::{merge_patch, test_patch_workflow_config, IssueAssertions};
+use harness::{
+    find_children_of, find_issue_by_description, merge_patch, test_patch_workflow_config,
+    IssueAssertions,
+};
 use metis_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
     patches::PatchStatus,
@@ -55,12 +58,7 @@ async fn full_end_to_end_pipeline() -> Result<()> {
 
     // Find the child issue created by PM.
     let all_issues = user.list_issues().await?;
-    let swe_issue = all_issues
-        .issues
-        .iter()
-        .find(|i| {
-            i.issue.description.contains("Implement settings UI") && i.issue_id != parent_issue_id
-        })
+    let swe_issue = find_issue_by_description(&all_issues.issues, "Implement settings UI")
         .context("expected PM to create a child issue for SWE")?;
     let swe_issue_id = swe_issue.issue_id.clone();
 
@@ -127,18 +125,17 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     assert_eq!(merge_request.issue.assignee.as_deref(), Some("merger"));
 
     // Verify the workflow issues are children of SWE's issue, NOT the parent.
-    let rr_is_child_of_swe = review_request.issue.dependencies.iter().any(|dep| {
-        dep.dependency_type == IssueDependencyType::ChildOf && dep.issue_id == swe_issue_id
-    });
+    let swe_children = find_children_of(&all_issues.issues, &swe_issue_id);
     assert!(
-        rr_is_child_of_swe,
+        swe_children
+            .iter()
+            .any(|c| c.issue_id == review_request.issue_id),
         "ReviewRequest should be a child of SWE's issue, not the parent"
     );
-    let mr_is_child_of_swe = merge_request.issue.dependencies.iter().any(|dep| {
-        dep.dependency_type == IssueDependencyType::ChildOf && dep.issue_id == swe_issue_id
-    });
     assert!(
-        mr_is_child_of_swe,
+        swe_children
+            .iter()
+            .any(|c| c.issue_id == merge_request.issue_id),
         "MergeRequest should be a child of SWE's issue, not the parent"
     );
 

@@ -45,7 +45,10 @@ use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 
-pub use assertions::{wait_until, IssueAssertions, JobAssertions, PatchAssertions};
+pub use assertions::{
+    find_children_by_type, find_children_by_type_and_status, find_children_of,
+    find_issue_by_description, wait_until, IssueAssertions, JobAssertions, PatchAssertions,
+};
 pub use concurrency::{concurrent, test_all_orderings, Step};
 // Re-export patch workflow config types for test files that construct configs directly.
 pub use metis_server::policy::automations::patch_workflow::{

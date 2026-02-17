@@ -5,10 +5,11 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use metis_common::{
-    issues::{IssueDependencyType, IssueStatus, IssueVersionRecord},
+    issues::{IssueDependencyType, IssueStatus, IssueType, IssueVersionRecord},
     jobs::JobVersionRecord,
     patches::{PatchStatus, PatchVersionRecord},
     task_status::Status,
+    IssueId,
 };
 
 // ── IssueAssertions ─────────────────────────────────────────────────
@@ -225,6 +226,74 @@ impl JobAssertions for JobVersionRecord {
             }
         }
     }
+}
+
+// ── Issue query helpers ─────────────────────────────────────────────
+
+/// Find the first issue whose description contains `desc_contains`.
+///
+/// Replaces the repeated pattern:
+/// ```ignore
+/// issues.iter().find(|i| i.issue.description.contains("..."))
+/// ```
+pub fn find_issue_by_description<'a>(
+    issues: &'a [IssueVersionRecord],
+    desc_contains: &str,
+) -> Option<&'a IssueVersionRecord> {
+    issues
+        .iter()
+        .find(|i| i.issue.description.contains(desc_contains))
+}
+
+/// Find all issues that are children of `parent_id` (via a `ChildOf` dependency).
+pub fn find_children_of<'a>(
+    issues: &'a [IssueVersionRecord],
+    parent_id: &IssueId,
+) -> Vec<&'a IssueVersionRecord> {
+    issues
+        .iter()
+        .filter(|i| {
+            i.issue.dependencies.iter().any(|d| {
+                d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
+            })
+        })
+        .collect()
+}
+
+/// Find all child issues of `parent_id` that match the given `issue_type`.
+pub fn find_children_by_type<'a>(
+    issues: &'a [IssueVersionRecord],
+    parent_id: &IssueId,
+    issue_type: IssueType,
+) -> Vec<&'a IssueVersionRecord> {
+    issues
+        .iter()
+        .filter(|i| {
+            i.issue.issue_type == issue_type
+                && i.issue.dependencies.iter().any(|d| {
+                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
+                })
+        })
+        .collect()
+}
+
+/// Find all child issues of `parent_id` matching `issue_type` and `status`.
+pub fn find_children_by_type_and_status<'a>(
+    issues: &'a [IssueVersionRecord],
+    parent_id: &IssueId,
+    issue_type: IssueType,
+    status: IssueStatus,
+) -> Vec<&'a IssueVersionRecord> {
+    issues
+        .iter()
+        .filter(|i| {
+            i.issue.issue_type == issue_type
+                && i.issue.status == status
+                && i.issue.dependencies.iter().any(|d| {
+                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
+                })
+        })
+        .collect()
 }
 
 // ── wait_until ──────────────────────────────────────────────────────

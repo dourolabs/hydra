@@ -13,56 +13,17 @@
 mod harness;
 
 use anyhow::{Context, Result};
-use harness::{test_job_settings_full, test_patch_workflow_config};
-use metis::client::MetisClientInterface;
+use harness::{
+    find_children_by_type, find_children_by_type_and_status, test_job_settings_full,
+    test_patch_workflow_config,
+};
 use metis_common::{
-    issues::{IssueDependencyType, IssueStatus, IssueType, SearchIssuesQuery},
+    issues::{IssueDependencyType, IssueStatus, IssueType},
     patches::{GithubPr, PatchStatus, UpsertPatchRequest},
-    IssueId, RepoName,
+    RepoName,
 };
 use metis_server::test_utils::{GitHubMockBuilder, MockPr, MockReview};
 use std::str::FromStr;
-
-/// Find all child issues of a given parent that match a specific type.
-async fn find_children_by_type(
-    client: &dyn MetisClientInterface,
-    parent_id: &IssueId,
-    issue_type: IssueType,
-) -> Result<Vec<(IssueId, metis_common::issues::IssueVersionRecord)>> {
-    let all_issues = client
-        .list_issues(&SearchIssuesQuery::default())
-        .await
-        .context("failed to list issues")?;
-
-    let mut matches = Vec::new();
-    for record in all_issues.issues {
-        if record.issue.issue_type != issue_type {
-            continue;
-        }
-        let is_child =
-            record.issue.dependencies.iter().any(|d| {
-                d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
-            });
-        if is_child {
-            matches.push((record.issue_id.clone(), record));
-        }
-    }
-    Ok(matches)
-}
-
-/// Find child issues matching a type and status.
-async fn find_children_by_type_and_status(
-    client: &dyn MetisClientInterface,
-    parent_id: &IssueId,
-    issue_type: IssueType,
-    status: IssueStatus,
-) -> Result<Vec<(IssueId, metis_common::issues::IssueVersionRecord)>> {
-    let children = find_children_by_type(client, parent_id, issue_type).await?;
-    Ok(children
-        .into_iter()
-        .filter(|(_, r)| r.issue.status == status)
-        .collect())
-}
 
 #[tokio::test]
 async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
@@ -129,10 +90,11 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     let patch_id = result.patches_created[0].clone();
 
     // ── Step 3: Verify patch_workflow created ReviewRequest + MergeRequest ──
+    let all_issues = harness.default_user().list_issues().await?;
     let rr_children =
-        find_children_by_type(&client, &swe_issue_id, IssueType::ReviewRequest).await?;
+        find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::ReviewRequest);
     let mr_children =
-        find_children_by_type(&client, &swe_issue_id, IssueType::MergeRequest).await?;
+        find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::MergeRequest);
 
     assert_eq!(
         rr_children.len(),
@@ -145,8 +107,10 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         "patch_workflow should create 1 MergeRequest issue"
     );
 
-    let (old_rr_id, old_rr) = &rr_children[0];
-    let (old_mr_id, old_mr) = &mr_children[0];
+    let old_rr = rr_children[0];
+    let old_mr = mr_children[0];
+    let old_rr_id = &old_rr.issue_id;
+    let old_mr_id = &old_mr.issue_id;
 
     assert_eq!(old_rr.issue.status, IssueStatus::Open);
     assert_eq!(old_mr.issue.status, IssueStatus::Open);
@@ -280,20 +244,19 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     }
 
     // ── Step 10: Verify patch_workflow re-fires → new workflow issues ──
+    let all_issues = harness.default_user().list_issues().await?;
     let new_rr_children = find_children_by_type_and_status(
-        &client,
+        &all_issues.issues,
         &swe_issue_id,
         IssueType::ReviewRequest,
         IssueStatus::Open,
-    )
-    .await?;
+    );
     let new_mr_children = find_children_by_type_and_status(
-        &client,
+        &all_issues.issues,
         &swe_issue_id,
         IssueType::MergeRequest,
         IssueStatus::Open,
-    )
-    .await?;
+    );
 
     assert_eq!(
         new_rr_children.len(),
@@ -306,8 +269,8 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         "patch_workflow should create 1 new MergeRequest issue after re-open"
     );
 
-    let (new_rr_id, _) = &new_rr_children[0];
-    let (new_mr_id, _) = &new_mr_children[0];
+    let new_rr_id = &new_rr_children[0].issue_id;
+    let new_mr_id = &new_mr_children[0].issue_id;
 
     assert_ne!(
         new_rr_id, old_rr_id,
@@ -381,8 +344,9 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     );
 
     // ── Step 17: Verify coexistence of old and new workflow issues ─
-    let all_rr = find_children_by_type(&client, &swe_issue_id, IssueType::ReviewRequest).await?;
-    let all_mr = find_children_by_type(&client, &swe_issue_id, IssueType::MergeRequest).await?;
+    let all_issues = harness.default_user().list_issues().await?;
+    let all_rr = find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::ReviewRequest);
+    let all_mr = find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::MergeRequest);
 
     assert_eq!(
         all_rr.len(),
@@ -402,13 +366,14 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     assert_eq!(old_mr_check.issue.status, IssueStatus::Failed);
 
     // All workflow children should be in terminal states
-    for (id, record) in all_rr.iter().chain(all_mr.iter()) {
+    for record in all_rr.iter().chain(all_mr.iter()) {
         assert!(
             matches!(
                 record.issue.status,
                 IssueStatus::Closed | IssueStatus::Failed | IssueStatus::Dropped
             ),
-            "workflow issue {id} should be terminal, got {:?}",
+            "workflow issue {} should be terminal, got {:?}",
+            record.issue_id,
             record.issue.status
         );
     }
