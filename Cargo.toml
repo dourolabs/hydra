@@ -8,6 +8,13 @@ members = [
     "metis-component-library",
     "metis-ui",
 ]
+default-members = [
+    "metis",
+    "metis-server",
+    "metis-common",
+    "metis-build-cache",
+    "metis-s3",
+]
 resolver = "2"
 
 [workspace.dependencies]
