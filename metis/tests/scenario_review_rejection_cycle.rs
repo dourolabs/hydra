@@ -13,18 +13,14 @@
 mod harness;
 
 use anyhow::{Context, Result};
+use harness::{test_job_settings_full, test_patch_workflow_config};
 use metis::client::MetisClientInterface;
 use metis_common::{
-    issues::{IssueDependencyType, IssueStatus, IssueType, JobSettings, SearchIssuesQuery},
+    issues::{IssueDependencyType, IssueStatus, IssueType, SearchIssuesQuery},
     patches::{GithubPr, PatchStatus, UpsertPatchRequest},
     IssueId, RepoName,
 };
-use metis_server::{
-    policy::automations::patch_workflow::{
-        MergeRequestConfig, PatchWorkflowConfig, ReviewRequestConfig,
-    },
-    test_utils::{GitHubMockBuilder, MockPr, MockReview},
-};
+use metis_server::test_utils::{GitHubMockBuilder, MockPr, MockReview};
 use std::str::FromStr;
 
 /// Find all child issues of a given parent that match a specific type.
@@ -76,23 +72,12 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     let head_ref = "feature/swe-work";
     let repo = RepoName::from_str("test-org/review-repo")?;
 
-    // Configure patch_workflow with a reviewer and a merge-request assignee
-    let patch_workflow_config = PatchWorkflowConfig {
-        review_requests: vec![ReviewRequestConfig {
-            assignee: "reviewer".to_string(),
-        }],
-        merge_request: Some(MergeRequestConfig {
-            assignee: Some("swe".to_string()),
-        }),
-        repos: Default::default(),
-    };
-
     let mut harness = harness::TestHarness::builder()
         .with_repo("test-org/review-repo")
         .with_github()
         .with_user("reviewer")
         .with_agent("swe", "You are a software engineer")
-        .with_patch_workflow_config(patch_workflow_config)
+        .with_patch_workflow_config(test_patch_workflow_config("reviewer", Some("swe")))
         .build()
         .await?;
 
@@ -100,10 +85,7 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     let client = harness.client()?;
 
     // ── Step 1: Create SWE's issue with job settings ──────────────
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
-    job_settings.image = Some("worker:latest".to_string());
-    job_settings.branch = Some("main".to_string());
+    let job_settings = test_job_settings_full(&repo, "worker:latest", "main");
 
     let swe_issue_id = harness
         .default_user()

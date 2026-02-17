@@ -1,16 +1,11 @@
 mod harness;
 
 use anyhow::{Context, Result};
-use harness::IssueAssertions;
+use harness::{test_patch_workflow_config, IssueAssertions};
 use metis_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
     patches::PatchStatus,
-    RepoName,
 };
-use metis_server::policy::automations::patch_workflow::{
-    MergeRequestConfig, PatchWorkflowConfig, ReviewRequestConfig,
-};
-use std::str::FromStr;
 
 /// Scenario 14: Full end-to-end pipeline.
 ///
@@ -20,24 +15,13 @@ use std::str::FromStr;
 /// → SWE closes → PM closes parent.
 #[tokio::test]
 async fn full_end_to_end_pipeline() -> Result<()> {
-    let _repo = RepoName::from_str("acme/app")?;
-    let pwc = PatchWorkflowConfig {
-        review_requests: vec![ReviewRequestConfig {
-            assignee: "reviewer".to_string(),
-        }],
-        merge_request: Some(MergeRequestConfig {
-            assignee: Some("merger".to_string()),
-        }),
-        repos: Default::default(),
-    };
-
     let harness = harness::TestHarness::builder()
         .with_repo("acme/app")
         .with_user("reviewer")
         .with_agent("pm", "Plan and delegate tasks")
         .with_agent("swe", "Implement changes")
         .with_assignment_agent("pm")
-        .with_patch_workflow_config(pwc)
+        .with_patch_workflow_config(test_patch_workflow_config("reviewer", Some("merger")))
         .build()
         .await?;
     let user = harness.default_user();

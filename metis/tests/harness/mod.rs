@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{
+    issues::JobSettings,
     jobs::SearchJobsQuery,
     repositories::Repository,
     users::{User, Username},
@@ -26,7 +27,6 @@ use metis_server::{
     config::AgentQueueConfig,
     domain::actors::{Actor, ActorRef},
     policy::{
-        automations::patch_workflow::PatchWorkflowConfig,
         config::{PolicyConfig, PolicyEntry, PolicyList},
         integrations::github_pr_poller::GithubPollerWorker,
         registry::build_default_registry,
@@ -43,8 +43,49 @@ use tokio::sync::RwLock;
 
 pub use assertions::{wait_until, IssueAssertions, JobAssertions, PatchAssertions};
 pub use concurrency::{concurrent, test_all_orderings, Step};
+// Re-export patch workflow config types for test files that construct configs directly.
+pub use metis_server::policy::automations::patch_workflow::{
+    MergeRequestConfig, PatchWorkflowConfig, ReviewRequestConfig,
+};
 pub use user_handle::UserHandle;
 pub use worker::{CommandOutput, WorkerFailure, WorkerResult};
+
+/// Build a `PatchWorkflowConfig` with a single reviewer and an optional
+/// merge-request assignee.
+///
+/// This covers the common test pattern where a patch creates one
+/// `ReviewRequest` and one `MergeRequest` issue. For configs that use
+/// `$patch_creator` or per-repo overrides, construct the struct directly.
+pub fn test_patch_workflow_config(
+    reviewer: &str,
+    merge_assignee: Option<&str>,
+) -> PatchWorkflowConfig {
+    PatchWorkflowConfig {
+        review_requests: vec![ReviewRequestConfig {
+            assignee: reviewer.to_string(),
+        }],
+        merge_request: Some(MergeRequestConfig {
+            assignee: merge_assignee.map(|s| s.to_string()),
+        }),
+        repos: Default::default(),
+    }
+}
+
+/// Build a `JobSettings` with only `repo_name` set.
+pub fn test_job_settings(repo: &RepoName) -> JobSettings {
+    let mut settings = JobSettings::default();
+    settings.repo_name = Some(repo.clone());
+    settings
+}
+
+/// Build a `JobSettings` with `repo_name`, `image`, and `branch` set.
+pub fn test_job_settings_full(repo: &RepoName, image: &str, branch: &str) -> JobSettings {
+    let mut settings = JobSettings::default();
+    settings.repo_name = Some(repo.clone());
+    settings.image = Some(image.to_string());
+    settings.branch = Some(branch.to_string());
+    settings
+}
 
 /// Holds the GitHub mock server and the Octocrab client configured to use it.
 pub struct GitHubMock {

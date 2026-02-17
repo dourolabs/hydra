@@ -1,9 +1,9 @@
 mod harness;
 
 use anyhow::Result;
-use harness::TestHarness;
+use harness::{test_job_settings, TestHarness};
 use metis_common::{
-    issues::{IssueDependencyType, IssueStatus, IssueType, JobSettings},
+    issues::{IssueDependencyType, IssueStatus, IssueType},
     task_status::Status,
 };
 use std::str::FromStr;
@@ -30,16 +30,13 @@ async fn multi_repo_workflow() -> Result<()> {
     let repo_cluster = metis_common::RepoName::from_str("org/cluster")?;
 
     // User creates parent issue assigned to PM.
-    let mut pm_settings = JobSettings::default();
-    pm_settings.repo_name = Some(repo_app.clone());
-
     let parent_id = user
         .create_issue_with_settings(
             "Add new agent queue",
             IssueType::Task,
             IssueStatus::Open,
             Some("pm"),
-            Some(pm_settings),
+            Some(test_job_settings(&repo_app)),
         )
         .await?;
 

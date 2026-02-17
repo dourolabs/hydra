@@ -1,14 +1,11 @@
 mod harness;
 
 use anyhow::Result;
-use harness::IssueAssertions;
+use harness::{test_job_settings_full, test_patch_workflow_config, IssueAssertions};
 use metis_common::{
-    issues::{IssueStatus, IssueType, JobSettings},
+    issues::{IssueStatus, IssueType},
     patches::{PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
     RepoName,
-};
-use metis_server::policy::automations::patch_workflow::{
-    MergeRequestConfig, PatchWorkflowConfig, ReviewRequestConfig,
 };
 use std::str::FromStr;
 
@@ -24,35 +21,23 @@ use std::str::FromStr;
 #[tokio::test]
 async fn backup_patches_do_not_trigger_patch_workflow() -> Result<()> {
     let repo = RepoName::from_str("acme/app")?;
-    let pwc = PatchWorkflowConfig {
-        review_requests: vec![ReviewRequestConfig {
-            assignee: "reviewer".to_string(),
-        }],
-        merge_request: Some(MergeRequestConfig { assignee: None }),
-        repos: Default::default(),
-    };
 
     let harness = harness::TestHarness::builder()
         .with_repo("acme/app")
         .with_agent("swe", "Implement changes")
-        .with_patch_workflow_config(pwc)
+        .with_patch_workflow_config(test_patch_workflow_config("reviewer", None))
         .build()
         .await?;
     let user = harness.default_user();
 
     // Create an issue and spawn a task.
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
-    job_settings.image = Some("worker:latest".to_string());
-    job_settings.branch = Some("main".to_string());
-
     let _swe_issue_id = user
         .create_issue_with_settings(
             "Backup patch test",
             IssueType::Task,
             IssueStatus::Open,
             Some("swe"),
-            Some(job_settings),
+            Some(test_job_settings_full(&repo, "worker:latest", "main")),
         )
         .await?;
 
@@ -130,35 +115,23 @@ async fn backup_patches_do_not_trigger_patch_workflow() -> Result<()> {
 #[tokio::test]
 async fn closing_patch_drops_review_workflow_issues() -> Result<()> {
     let repo = RepoName::from_str("acme/app")?;
-    let pwc = PatchWorkflowConfig {
-        review_requests: vec![ReviewRequestConfig {
-            assignee: "reviewer".to_string(),
-        }],
-        merge_request: Some(MergeRequestConfig { assignee: None }),
-        repos: Default::default(),
-    };
 
     let harness = harness::TestHarness::builder()
         .with_repo("acme/app")
         .with_agent("swe", "Implement changes")
-        .with_patch_workflow_config(pwc)
+        .with_patch_workflow_config(test_patch_workflow_config("reviewer", None))
         .build()
         .await?;
     let user = harness.default_user();
 
     // Create an issue and spawn a task.
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
-    job_settings.image = Some("worker:latest".to_string());
-    job_settings.branch = Some("main".to_string());
-
     let _swe_issue_id = user
         .create_issue_with_settings(
             "Patch closure test",
             IssueType::Task,
             IssueStatus::Open,
             Some("swe"),
-            Some(job_settings),
+            Some(test_job_settings_full(&repo, "worker:latest", "main")),
         )
         .await?;
 

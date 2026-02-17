@@ -1,8 +1,8 @@
 mod harness;
 
 use anyhow::Result;
-use harness::{PatchAssertions, TestHarness};
-use metis_common::{issues::JobSettings, task_status::Status};
+use harness::{test_job_settings, PatchAssertions, TestHarness};
+use metis_common::task_status::Status;
 use std::str::FromStr;
 
 /// Scenario 11: Worker Git Operations and Patch Creation
@@ -22,16 +22,13 @@ async fn worker_git_operations_and_patch_creation() -> Result<()> {
     let repo = metis_common::RepoName::from_str("acme/swe-repo")?;
 
     // Create an issue with repo job settings and assign to swe agent.
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
-
     let _issue_id = user
         .create_issue_with_settings(
             "Add greeting module",
             metis_common::issues::IssueType::Task,
             metis_common::issues::IssueStatus::Open,
             Some("swe"),
-            Some(job_settings),
+            Some(test_job_settings(&repo)),
         )
         .await?;
 

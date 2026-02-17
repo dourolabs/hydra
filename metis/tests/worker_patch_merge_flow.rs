@@ -1,11 +1,11 @@
 mod harness;
 
 use anyhow::{Context, Result};
+use harness::test_job_settings_full;
 use metis::client::MetisClientInterface;
 use metis_common::{
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
-        UpsertIssueRequest,
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueRequest,
     },
     jobs::SearchJobsQuery,
     patches::{GithubPr, PatchStatus},
@@ -98,11 +98,6 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
     // since UserHandle borrows the harness and prevents mutable borrows.
     let client = harness.client()?;
 
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
-    job_settings.image = Some("worker:latest".to_string());
-    job_settings.branch = Some("main".to_string());
-
     let parent_issue_id = harness
         .default_user()
         .create_issue_with_settings(
@@ -110,7 +105,7 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
             IssueType::Task,
             IssueStatus::Open,
             Some("requester"),
-            Some(job_settings),
+            Some(test_job_settings_full(&repo, "worker:latest", "main")),
         )
         .await?;
 

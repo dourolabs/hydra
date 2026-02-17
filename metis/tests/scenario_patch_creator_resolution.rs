@@ -1,14 +1,13 @@
 mod harness;
 
 use anyhow::Result;
-use harness::TestHarness;
+use harness::{
+    test_job_settings, MergeRequestConfig, PatchWorkflowConfig, ReviewRequestConfig, TestHarness,
+};
 use metis_common::{
-    issues::{IssueDependencyType, IssueStatus, IssueType, JobSettings},
+    issues::{IssueDependencyType, IssueStatus, IssueType},
     task_status::Status,
     users::Username,
-};
-use metis_server::policy::automations::patch_workflow::{
-    MergeRequestConfig, PatchWorkflowConfig, ReviewRequestConfig,
 };
 use std::str::FromStr;
 
@@ -115,16 +114,13 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
     let repo = metis_common::RepoName::from_str("acme/agent-creator-test")?;
 
     // User creates an issue assigned to SWE agent.
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
-
     let issue_id = user
         .create_issue_with_settings(
             "Fix authentication bug",
             IssueType::Task,
             IssueStatus::Open,
             Some("swe"),
-            Some(job_settings),
+            Some(test_job_settings(&repo)),
         )
         .await?;
 
