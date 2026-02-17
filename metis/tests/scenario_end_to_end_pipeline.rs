@@ -3,7 +3,7 @@ mod harness;
 use anyhow::{Context, Result};
 use harness::IssueAssertions;
 use metis_common::{
-    issues::{IssueDependencyType, IssueStatus, IssueType, JobSettings},
+    issues::{IssueDependencyType, IssueStatus, IssueType},
     patches::PatchStatus,
     RepoName,
 };
@@ -20,7 +20,7 @@ use std::str::FromStr;
 /// → SWE closes → PM closes parent.
 #[tokio::test]
 async fn full_end_to_end_pipeline() -> Result<()> {
-    let repo = RepoName::from_str("acme/app")?;
+    let _repo = RepoName::from_str("acme/app")?;
     let pwc = PatchWorkflowConfig {
         review_requests: vec![ReviewRequestConfig {
             assignee: "reviewer".to_string(),
@@ -36,33 +36,15 @@ async fn full_end_to_end_pipeline() -> Result<()> {
         .with_user("reviewer")
         .with_agent("pm", "Plan and delegate tasks")
         .with_agent("swe", "Implement changes")
+        .with_assignment_agent("pm")
         .with_patch_workflow_config(pwc)
         .build()
         .await?;
     let user = harness.default_user();
 
-    // ── Step 1: User creates issue ──────────────────────────────────
+    // ── Step 1: User creates issue (unassigned) ─────────────────────
+    // The assignment agent (pm) will automatically pick up unassigned issues.
     let parent_issue_id = user.create_issue("Implement user settings page").await?;
-
-    // Assign to PM so the spawner picks it up.
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
-    job_settings.image = Some("worker:latest".to_string());
-    job_settings.branch = Some("main".to_string());
-
-    user.update_issue_status(&parent_issue_id, IssueStatus::Open)
-        .await?;
-
-    // Update the parent issue to assign to PM with job settings.
-    {
-        let mut parent = user.get_issue(&parent_issue_id).await?;
-        parent.issue.assignee = Some("pm".to_string());
-        parent.issue.job_settings = job_settings.clone();
-        let request = metis_common::issues::UpsertIssueRequest::new(parent.issue, None);
-        user.client()
-            .update_issue(&parent_issue_id, &request)
-            .await?;
-    }
 
     // ── Step 2: PM agent picks up the parent issue ──────────────────
     let pm_tasks = harness.step_schedule().await?;
@@ -278,15 +260,41 @@ async fn full_end_to_end_pipeline() -> Result<()> {
         merge_request_final.issue.status
     );
 
-    // ── Step 9: SWE closes child issue ──────────────────────────────
-    user.update_issue_status(&swe_issue_id, IssueStatus::Closed)
-        .await
-        .context("SWE's issue should now be closable")?;
+    // ── Step 9: SWE closes child issue (via worker) ─────────────────
+    // Spawn a job on the SWE issue and have the worker close it via CLI.
+    let swe_close_tasks = harness.step_schedule().await?;
+    assert_eq!(
+        swe_close_tasks.len(),
+        1,
+        "expected one task for SWE to close child issue"
+    );
+    harness
+        .run_worker(
+            &swe_close_tasks[0],
+            vec![&format!(
+                "metis issues update {} --status closed",
+                swe_issue_id.as_ref()
+            )],
+        )
+        .await?;
 
-    // ── Step 10: PM closes parent issue ─────────────────────────────
-    user.update_issue_status(&parent_issue_id, IssueStatus::Closed)
-        .await
-        .context("Parent issue should now be closable")?;
+    // ── Step 10: PM closes parent issue (via worker) ────────────────
+    // Spawn a job on the parent issue and have the worker close it via CLI.
+    let pm_close_tasks = harness.step_schedule().await?;
+    assert_eq!(
+        pm_close_tasks.len(),
+        1,
+        "expected one task for PM to close parent issue"
+    );
+    harness
+        .run_worker(
+            &pm_close_tasks[0],
+            vec![&format!(
+                "metis issues update {} --status closed",
+                parent_issue_id.as_ref()
+            )],
+        )
+        .await?;
 
     // ── Step 11: Verify final state ─────────────────────────────────
     let parent_final = user.get_issue(&parent_issue_id).await?;
@@ -296,13 +304,10 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     swe_final.assert_status(IssueStatus::Closed);
 
     let patch_final = user.get_patch(&patch_id).await?;
-    // Patch should be in merge queue or merged.
-    assert!(
-        matches!(
-            patch_final.patch.status,
-            PatchStatus::Merged | PatchStatus::Open
-        ),
-        "patch should be merged or in merge queue, got {:?}",
+    assert_eq!(
+        patch_final.patch.status,
+        PatchStatus::Merged,
+        "patch should be merged, got {:?}",
         patch_final.patch.status
     );
 
