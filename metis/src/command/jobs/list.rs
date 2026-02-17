@@ -57,6 +57,7 @@ mod tests {
     use chrono::Utc;
     use httpmock::prelude::*;
     use metis_common::jobs::{BundleSpec, ListJobsResponse, Task};
+    use metis_common::users::Username;
     use std::collections::HashMap;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
@@ -77,7 +78,7 @@ mod tests {
                 "0".to_string(),
                 BundleSpec::None,
                 None,
-                None,
+                Username::from("test-creator"),
                 None,
                 None,
                 HashMap::new(),

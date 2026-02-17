@@ -4644,7 +4644,7 @@ mod tests {
             "run build".into(),
             BundleSpec::None,
             Some(main_issue_id.clone()),
-            None,
+            Username::from("test-creator"),
             None,
             None,
             HashMap::new(),

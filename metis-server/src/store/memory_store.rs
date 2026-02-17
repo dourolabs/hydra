@@ -1351,7 +1351,7 @@ mod tests {
             "0".to_string(),
             BundleSpec::None,
             None,
-            None,
+            Username::from("test-creator"),
             Some("metis-worker:latest".to_string()),
             None,
             HashMap::new(),

@@ -87,6 +87,7 @@ mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
     use crate::domain::jobs::{BundleSpec, Task};
+    use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::MemoryStore;
     use std::collections::HashMap;
@@ -96,7 +97,7 @@ mod tests {
             "test".to_string(),
             BundleSpec::None,
             None,
-            None,
+            Username::from("test-creator"),
             None,
             None,
             HashMap::new(),

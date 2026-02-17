@@ -88,6 +88,7 @@ mod tests {
     use chrono::Utc;
     use httpmock::prelude::*;
     use metis_common::jobs::{JobVersionRecord, ListJobsResponse, Task};
+    use metis_common::users::Username;
     use reqwest::Client as HttpClient;
     use std::{collections::HashMap, str::FromStr};
 
@@ -110,7 +111,7 @@ mod tests {
                 "demo".to_string(),
                 metis_common::jobs::BundleSpec::None,
                 None,
-                None,
+                Username::from("test-creator"),
                 None,
                 None,
                 HashMap::new(),

@@ -655,6 +655,7 @@ fn forward_job_json(job_id: &TaskId, status_log: Value) -> Value {
                 "rev": "v2",
                 "experimental": true
             },
+            "creator": "future-creator",
             "env_vars": { "DEBUG": "true" },
             "extra": "task"
         },

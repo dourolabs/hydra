@@ -1,7 +1,7 @@
 use crate::{
     config::non_empty,
     domain::{
-        actors::{ActorId, ActorRef},
+        actors::{ActorId, ActorRef, UNKNOWN_CREATOR},
         issues::{Issue, JobSettings},
         jobs::BundleSpec,
         users::Username,
@@ -186,7 +186,13 @@ impl AppState {
         settings
     }
 
-    async fn resolve_creator_for_job(
+    async fn resolve_creator_for_job(&self, actor: &ActorRef, issue: Option<&Issue>) -> Username {
+        self.try_resolve_creator_for_job(actor, issue)
+            .await
+            .unwrap_or_else(|| Username::from(UNKNOWN_CREATOR))
+    }
+
+    async fn try_resolve_creator_for_job(
         &self,
         actor: &ActorRef,
         issue: Option<&Issue>,

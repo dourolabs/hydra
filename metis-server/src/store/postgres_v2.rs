@@ -414,7 +414,7 @@ impl PostgresStoreV2 {
             .bind(&task.prompt)
             .bind(&context_json)
             .bind(task.spawned_from.as_ref().map(|i| i.as_ref()))
-            .bind(task.creator.as_ref().map(|u| u.as_str()))
+            .bind(task.creator.as_str())
             .bind(task.image.as_deref())
             .bind(task.model.as_deref())
             .bind(&env_vars_json)
@@ -483,7 +483,7 @@ impl PostgresStoreV2 {
             prompt: row.prompt.clone(),
             context,
             spawned_from,
-            creator: row.creator.as_deref().map(Username::from),
+            creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
             image: row.image.clone(),
             model: row.model.clone(),
             env_vars,
@@ -2610,7 +2610,7 @@ mod tests {
             "prompt".to_string(),
             BundleSpec::None,
             None,
-            None,
+            Username::from("test-creator"),
             Some("metis-worker:latest".to_string()),
             None,
             Default::default(),
@@ -2626,7 +2626,7 @@ mod tests {
             "round-trip prompt".to_string(),
             BundleSpec::None,
             None,
-            Some(Username::from("alice")),
+            Username::from("alice"),
             Some("metis-worker:latest".to_string()),
             Some("model-v1".to_string()),
             Default::default(),
@@ -2650,7 +2650,7 @@ mod tests {
             "full prompt".to_string(),
             BundleSpec::None,
             None,
-            Some(Username::from("bob")),
+            Username::from("bob"),
             Some("img:tag".to_string()),
             Some("model-x".to_string()),
             [("K".to_string(), "V".to_string())].into_iter().collect(),

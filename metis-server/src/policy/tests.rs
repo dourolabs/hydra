@@ -668,7 +668,7 @@ fn make_dummy_task() -> crate::store::Task {
         "test prompt".to_string(),
         crate::domain::jobs::BundleSpec::None,
         None,
-        None,
+        Username::from("test-creator"),
         None,
         None,
         Default::default(),

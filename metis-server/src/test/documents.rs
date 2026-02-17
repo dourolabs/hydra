@@ -2,6 +2,7 @@ use crate::{
     domain::{
         actors::ActorRef,
         jobs::{BundleSpec, Task},
+        users::Username,
     },
     store::Status,
     test_utils::{
@@ -24,7 +25,7 @@ fn sample_task(status: Status) -> Task {
         "prompt".to_string(),
         BundleSpec::None,
         None,
-        None,
+        Username::from("test-creator"),
         None,
         None,
         HashMap::new(),

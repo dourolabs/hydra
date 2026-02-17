@@ -16,8 +16,7 @@ pub struct Task {
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub creator: Option<Username>,
+    pub creator: Username,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -52,7 +51,7 @@ impl Task {
         prompt: String,
         context: BundleSpec,
         spawned_from: Option<IssueId>,
-        creator: Option<Username>,
+        creator: Username,
         image: Option<String>,
         model: Option<String>,
         env_vars: HashMap<String, String>,
@@ -87,7 +86,7 @@ impl Task {
         prompt: String,
         context: BundleSpec,
         spawned_from: Option<IssueId>,
-        creator: Option<Username>,
+        creator: Username,
         image: Option<String>,
         model: Option<String>,
         env_vars: HashMap<String, String>,
@@ -494,7 +493,7 @@ mod tests {
             long_prompt,
             BundleSpec::None,
             None,
-            None,
+            Username::from("test-creator"),
             None,
             None,
             HashMap::new(),
@@ -527,7 +526,7 @@ mod tests {
             short_prompt.clone(),
             BundleSpec::None,
             None,
-            None,
+            Username::from("test-creator"),
             None,
             None,
             HashMap::new(),

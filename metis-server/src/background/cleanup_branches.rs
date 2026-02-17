@@ -354,6 +354,7 @@ async fn delete_ref(
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
+    use crate::domain::users::Username;
 
     #[test]
     fn parse_github_owner_repo_https_with_git_suffix() {
@@ -559,7 +560,7 @@ mod tests {
             "test task".to_string(),
             crate::domain::jobs::BundleSpec::None,
             None,
-            None,
+            Username::from("test-creator"),
             None,
             None,
             std::collections::HashMap::new(),
@@ -626,7 +627,7 @@ mod tests {
             "deleted task".to_string(),
             crate::domain::jobs::BundleSpec::None,
             None,
-            None,
+            Username::from("test-creator"),
             None,
             None,
             std::collections::HashMap::new(),
