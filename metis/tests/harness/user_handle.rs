@@ -297,6 +297,44 @@ impl UserHandle {
         Ok(response.issue_id)
     }
 
+    /// Create an issue with full control over all fields.
+    ///
+    /// This is the most flexible variant, exposing every field of the
+    /// `Issue` type for tests that need complete control (e.g. setting
+    /// dependencies, patches, or todo items at creation time).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_issue_full(
+        &self,
+        issue_type: IssueType,
+        description: &str,
+        status: IssueStatus,
+        assignee: Option<&str>,
+        job_settings: Option<JobSettings>,
+        dependencies: Vec<IssueDependency>,
+        patches: Vec<PatchId>,
+    ) -> Result<IssueId> {
+        let issue = Issue::new(
+            issue_type,
+            description.to_string(),
+            Username::from(self.name.as_str()),
+            String::new(),
+            status,
+            assignee.map(|s| s.to_string()),
+            job_settings,
+            Vec::new(),
+            dependencies,
+            patches,
+            false,
+        );
+        let request = UpsertIssueRequest::new(issue, None);
+        let response = self
+            .client
+            .create_issue(&request)
+            .await
+            .context("UserHandle::create_issue_full failed")?;
+        Ok(response.issue_id)
+    }
+
     // ── Job operations ───────────────────────────────────────────────
 
     /// Create a job for the given repo with the given prompt.
