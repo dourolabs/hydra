@@ -129,7 +129,7 @@ mod tests {
         let task_id = metis_common::TaskId::new();
         let whoami_response = WhoAmIResponse::new(ActorIdentity::Task {
             task_id: task_id.clone(),
-            creator: Some(Username::from("test-creator")),
+            creator: Username::from("test-creator"),
         });
 
         let whoami_mock = server.mock(move |when, then| {

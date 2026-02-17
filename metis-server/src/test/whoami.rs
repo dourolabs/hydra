@@ -89,8 +89,8 @@ async fn whoami_returns_task_identity() -> anyhow::Result<()> {
         ActorIdentity::Task { task_id, creator } => {
             assert_eq!(task_id.as_ref(), expected_task_id);
             assert_eq!(
-                creator.as_ref().map(|c| c.as_str()),
-                Some("test-creator"),
+                creator.as_str(),
+                "test-creator",
                 "creator should match the task's creator"
             );
         }

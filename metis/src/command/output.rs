@@ -708,7 +708,7 @@ mod tests {
         let client = MetisClient::new(server.base_url(), TEST_METIS_TOKEN).expect("client");
         let whoami = WhoAmIResponse::new(ActorIdentity::Task {
             task_id: TaskId::from_str("t-task").expect("task id"),
-            creator: Some("test-creator".into()),
+            creator: "test-creator".into(),
         });
 
         let mock = server.mock(|when, then| {

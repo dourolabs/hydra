@@ -6,14 +6,8 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ActorIdentity {
-    User {
-        username: Username,
-    },
-    Task {
-        task_id: TaskId,
-        #[serde(default)]
-        creator: Option<Username>,
-    },
+    User { username: Username },
+    Task { task_id: TaskId, creator: Username },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

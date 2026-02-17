@@ -1719,11 +1719,7 @@ async fn resolve_creator_username(
     {
         Ok(response) => match response.actor {
             ActorIdentity::User { username } => Ok(username),
-            ActorIdentity::Task {
-                creator: Some(creator),
-                ..
-            } => Ok(creator),
-            ActorIdentity::Task { creator: None, .. } => resolve_for_task().await,
+            ActorIdentity::Task { creator, .. } => Ok(creator),
             _ => resolve_for_task().await,
         },
         Err(_) => resolve_for_task().await,
@@ -3711,13 +3707,9 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let parent_id = issue_id("i-parent");
-        let whoami_response = WhoAmIResponse::new(ActorIdentity::Task {
-            task_id: TaskId::from_str("t-abcd").unwrap(),
-            creator: None,
-        });
         let whoami_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/whoami");
-            then.status(200).json_body_obj(&whoami_response);
+            then.status(500);
         });
         let parent_issue = IssueVersionRecord::new(
             parent_id.clone(),
@@ -3764,13 +3756,9 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let current_id = issue_id("i-current");
-        let whoami_response = WhoAmIResponse::new(ActorIdentity::Task {
-            task_id: TaskId::from_str("t-abcd").unwrap(),
-            creator: None,
-        });
         let whoami_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/whoami");
-            then.status(200).json_body_obj(&whoami_response);
+            then.status(500);
         });
         let current_issue = IssueVersionRecord::new(
             current_id.clone(),
@@ -3814,7 +3802,7 @@ mod tests {
         let client = metis_client(&server);
         let whoami_response = WhoAmIResponse::new(ActorIdentity::Task {
             task_id: TaskId::from_str("t-abcd").unwrap(),
-            creator: Some(Username::from("whoami-creator")),
+            creator: Username::from("whoami-creator"),
         });
         let whoami_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/whoami");

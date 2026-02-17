@@ -29,7 +29,7 @@ impl From<ActorIdentity> for api::whoami::ActorIdentity {
             },
             ActorIdentity::Task { task_id, creator } => api::whoami::ActorIdentity::Task {
                 task_id,
-                creator: Some(creator.into()),
+                creator: creator.into(),
             },
         }
     }
