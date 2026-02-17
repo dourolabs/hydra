@@ -271,6 +271,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 mod tests {
     use super::*;
     use crate::domain::patches::{Patch, PatchStatus};
+    use crate::domain::users::Username;
     use crate::policy::Automation;
     use metis_common::RepoName;
 
@@ -293,6 +294,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             vec![],
             RepoName::new("org", "repo").unwrap(),
             None,
@@ -309,6 +311,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             vec![],
             RepoName::new("org", "repo").unwrap(),
             None,
@@ -326,6 +329,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             vec![],
             RepoName::new("org", "repo").unwrap(),
             None,
@@ -361,6 +365,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             vec![],
             RepoName::new("org", "repo").unwrap(),
             None,

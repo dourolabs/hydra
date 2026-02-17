@@ -270,7 +270,7 @@ impl PatchWorkflowAutomation {
         let mut review_request_issue_ids = Vec::new();
 
         for rr_config in workflow.review_requests {
-            let assignee = self.resolve_assignee(&rr_config.assignee, patch.creator.as_ref());
+            let assignee = self.resolve_assignee(&rr_config.assignee, Some(&patch.creator));
 
             let description = format!("Review request for patch {}: {title}", patch_id.as_ref());
             let issue = Issue::new(
@@ -314,7 +314,7 @@ impl PatchWorkflowAutomation {
             let assignee = mr_config
                 .assignee
                 .as_ref()
-                .and_then(|tmpl| self.resolve_assignee(tmpl, patch.creator.as_ref()));
+                .and_then(|tmpl| self.resolve_assignee(tmpl, Some(&patch.creator)));
 
             let description = format!("Review patch {}: {title}", patch_id.as_ref());
 
@@ -479,6 +479,7 @@ mod tests {
             status,
             false,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             RepoName::new("test", "repo").unwrap(),
             None,
@@ -487,7 +488,7 @@ mod tests {
 
     fn make_patch_with_creator(status: PatchStatus, creator: &str) -> Patch {
         let mut patch = make_patch(status);
-        patch.creator = Some(Username::from(creator));
+        patch.creator = Username::from(creator);
         patch
     }
 
@@ -499,6 +500,7 @@ mod tests {
             status,
             true,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             RepoName::new("test", "repo").unwrap(),
             None,

@@ -769,6 +769,7 @@ mod tests {
     use git2::{build::CheckoutBuilder, Oid, Repository};
     use httpmock::prelude::*;
     use metis_common::patches::{Patch, PatchStatus, UpsertPatchRequest, UpsertPatchResponse};
+    use metis_common::users::Username;
     use reqwest::Client as HttpClient;
     use std::{collections::HashMap, path::Path, str::FromStr};
 
@@ -908,6 +909,7 @@ mod tests {
             PatchStatus::Open,
             true,
             Some(job_id.clone()),
+            Username::from("unknown"),
             Vec::new(),
             repo_name.clone(),
             None,

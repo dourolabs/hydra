@@ -618,6 +618,7 @@ mod tests {
     use serde_json::json;
     use std::{str::FromStr, sync::Arc};
 
+    use crate::domain::users::Username;
     use crate::test_utils::{FailingStore, test_state, test_state_handles, test_state_with_store};
 
     fn sample_diff() -> String {
@@ -645,6 +646,7 @@ mod tests {
                     PatchStatus::Open,
                     false,
                     None,
+                    Username::from("test-creator"),
                     Vec::new(),
                     RepoName::from_str("dourolabs/api")?,
                     Some(GithubPr::new(
@@ -809,6 +811,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             RepoName::from_str("dourolabs/api").unwrap(),
             Some(github.clone()),
@@ -877,6 +880,7 @@ mod tests {
             PatchStatus::ChangesRequested,
             false,
             None,
+            Username::from("test-creator"),
             existing_reviews.clone(),
             RepoName::from_str("dourolabs/api").unwrap(),
             Some(github.clone()),

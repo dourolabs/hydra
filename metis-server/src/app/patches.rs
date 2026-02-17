@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        actors::{ActorId, ActorRef},
+        actors::{ActorId, ActorRef, UNKNOWN_CREATOR},
         patches::Patch,
         users::Username,
     },
@@ -112,28 +112,30 @@ impl AppState {
         Ok(())
     }
 
-    /// Resolve the patch creator from the actor when the request did not set one.
+    /// Resolve the patch creator from the actor when the request did not explicitly set one
+    /// (i.e., the creator is "unknown").
+    ///
     /// Used so that patch_workflow automation can assign MergeRequest issues to the patch creator
     /// when config uses `assignee = "$patch_creator"`.
     ///
     /// When the actor is a direct user (`ActorId::Username`), the creator is set from that
     /// username. When the actor is a task worker (`ActorId::Task`), the `actor_creator` fallback
     /// (populated from `Actor.creator`) is used instead.
-    fn set_patch_creator_from_actor_if_unset(
+    fn resolve_patch_creator(
         patch: &mut Patch,
         actor: &ActorRef,
         actor_creator: Option<&Username>,
     ) {
-        if patch.creator.is_some() {
+        if patch.creator.as_str() != UNKNOWN_CREATOR {
             return;
         }
         if let ActorRef::Authenticated {
             actor_id: ActorId::Username(api_username),
         } = actor
         {
-            patch.creator = Some(Username::from(api_username.clone()));
+            patch.creator = Username::from(api_username.clone());
         } else if let Some(creator) = actor_creator {
-            patch.creator = Some(creator.clone());
+            patch.creator = creator.clone();
         }
     }
 
@@ -146,7 +148,7 @@ impl AppState {
     ) -> Result<(PatchId, VersionNumber), UpsertPatchError> {
         let api::patches::UpsertPatchRequest { patch, .. } = request;
         let mut patch: Patch = patch.into();
-        Self::set_patch_creator_from_actor_if_unset(&mut patch, &actor, actor_creator);
+        Self::resolve_patch_creator(&mut patch, &actor, actor_creator);
 
         let store = self.store.as_ref();
         let (patch_id, version) = match patch_id {
@@ -284,6 +286,7 @@ mod tests {
             PatchStatus::Open,
             false,
             Some(TaskId::new()),
+            Username::from("test-creator"),
             Vec::new(),
             repo_name.clone(),
             Some(GithubPr::new(
@@ -310,6 +313,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             repo_name,
             None,
@@ -435,6 +439,7 @@ mod tests {
             PatchStatus::Open,
             false,
             Some(task_id),
+            Username::from("test-creator"),
             Vec::new(),
             repo_name,
             None,
@@ -485,6 +490,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             repo_name.clone(),
             None,
@@ -512,6 +518,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             repo_name,
             None,
@@ -538,6 +545,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             repo_name.clone(),
             None,
@@ -558,6 +566,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             repo_name,
             None,
@@ -593,6 +602,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("unknown"),
             Vec::new(),
             repo_name,
             None,
@@ -606,8 +616,7 @@ mod tests {
 
         let stored = handles.store.as_ref().get_patch(&patch_id, false).await?;
         assert_eq!(
-            stored.item.creator,
-            Some(creator_username),
+            stored.item.creator, creator_username,
             "patch.creator should be set to the human who created the agent"
         );
 

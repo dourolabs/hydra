@@ -220,6 +220,7 @@ mod tests {
             status,
             false,
             None,
+            Username::from("test-creator"),
             reviews,
             RepoName::new("test", "repo").unwrap(),
             None,
