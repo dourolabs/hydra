@@ -1,28 +1,14 @@
 mod harness;
 
 use anyhow::{Context, Result};
-use harness::{IssueAssertions, PatchAssertions};
+use harness::{test_job_settings, test_patch_workflow_config, IssueAssertions, PatchAssertions};
 use metis::client::MetisClientInterface;
 use metis_common::{
-    issues::{IssueStatus, IssueType, JobSettings},
+    issues::{IssueStatus, IssueType},
     patches::{PatchStatus, UpsertPatchRequest},
     task_status::Status,
 };
-use metis_server::policy::automations::patch_workflow::PatchWorkflowConfig;
 use std::str::FromStr;
-
-/// Helper to build a PatchWorkflowConfig with a reviewer and merge request.
-fn test_patch_workflow_config(reviewer: &str) -> PatchWorkflowConfig {
-    toml::from_str(&format!(
-        r#"
-[[review_requests]]
-assignee = "{reviewer}"
-
-[merge_request]
-"#,
-    ))
-    .expect("valid PatchWorkflowConfig TOML")
-}
 
 /// Helper: set a patch status to Merged via the API, triggering
 /// close_merge_request_issues automation.
@@ -64,7 +50,7 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
         .with_user("reviewer")
         .with_agent("pm", "Break down tasks for SWE agents")
         .with_agent("swe", "Implement code changes")
-        .with_patch_workflow_config(test_patch_workflow_config("reviewer"))
+        .with_patch_workflow_config(test_patch_workflow_config("reviewer", None))
         .build()
         .await?;
 
@@ -72,15 +58,13 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     let client = harness.client()?;
 
     // ── Step 1: User creates parent issue ────────────────────────────
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
     let parent_id = user
         .create_issue_with_settings(
             "Add dark mode support",
             IssueType::Task,
             IssueStatus::Open,
             Some("pm"),
-            Some(job_settings),
+            Some(test_job_settings(&repo)),
         )
         .await?;
 
@@ -124,11 +108,7 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
             "Update CSS variables for dark theme",
             IssueStatus::Open,
             Some("swe"),
-            Some({
-                let mut js = JobSettings::default();
-                js.repo_name = Some(repo.clone());
-                js
-            }),
+            Some(test_job_settings(&repo)),
             vec![
                 metis_common::issues::IssueDependency::new(
                     metis_common::issues::IssueDependencyType::ChildOf,
@@ -437,15 +417,14 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     let user = harness.default_user();
 
     // ── Step 1: User creates parent issue ────────────────────────────
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(metis_common::RepoName::from_str(repo_str)?);
+    let repo = metis_common::RepoName::from_str(repo_str)?;
     let parent_id = user
         .create_issue_with_settings(
             "Implement caching layer",
             IssueType::Task,
             IssueStatus::Open,
             Some("pm"),
-            Some(job_settings.clone()),
+            Some(test_job_settings(&repo)),
         )
         .await?;
 
@@ -485,7 +464,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
             "Add cache invalidation logic",
             IssueStatus::Open,
             Some("swe"),
-            Some(job_settings),
+            Some(test_job_settings(&repo)),
             vec![
                 metis_common::issues::IssueDependency::new(
                     metis_common::issues::IssueDependencyType::ChildOf,
@@ -675,15 +654,14 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     let user = harness.default_user();
 
     // ── Step 1: User creates parent issue ────────────────────────────
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(metis_common::RepoName::from_str(repo_str)?);
+    let repo = metis_common::RepoName::from_str(repo_str)?;
     let parent_id = user
         .create_issue_with_settings(
             "Implement search feature",
             IssueType::Task,
             IssueStatus::Open,
             Some("pm"),
-            Some(job_settings.clone()),
+            Some(test_job_settings(&repo)),
         )
         .await?;
 

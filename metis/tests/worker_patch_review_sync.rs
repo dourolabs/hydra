@@ -1,11 +1,11 @@
 mod harness;
 
 use anyhow::{Context, Result};
+use harness::test_job_settings_full;
 use metis::client::MetisClientInterface;
 use metis_common::{
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
-        UpsertIssueRequest,
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueRequest,
     },
     patches::{GithubPr, PatchStatus},
     IssueId, PatchId,
@@ -87,18 +87,13 @@ async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> 
     // Create parent issue with job settings, patch with GitHub PR, and merge request issue.
     let user = harness.default_user();
 
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
-    job_settings.image = Some("worker:latest".to_string());
-    job_settings.branch = Some("main".to_string());
-
     let parent_issue_id = user
         .create_issue_with_settings(
             "parent task",
             IssueType::Task,
             IssueStatus::Open,
             Some("requester"),
-            Some(job_settings),
+            Some(test_job_settings_full(&repo, "worker:latest", "main")),
         )
         .await?;
 
@@ -192,18 +187,13 @@ async fn sync_open_patches_closes_merge_request_issue_on_merged_pr() -> Result<(
 
     let user = harness.default_user();
 
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
-    job_settings.image = Some("worker:latest".to_string());
-    job_settings.branch = Some("main".to_string());
-
     let parent_issue_id = user
         .create_issue_with_settings(
             "parent task for merge",
             IssueType::Task,
             IssueStatus::Open,
             Some("requester"),
-            Some(job_settings),
+            Some(test_job_settings_full(&repo, "worker:latest", "main")),
         )
         .await?;
 
@@ -286,18 +276,13 @@ async fn sync_open_patches_fails_merge_request_issue_on_closed_pr() -> Result<()
 
     let user = harness.default_user();
 
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
-    job_settings.image = Some("worker:latest".to_string());
-    job_settings.branch = Some("main".to_string());
-
     let parent_issue_id = user
         .create_issue_with_settings(
             "parent task for closed pr",
             IssueType::Task,
             IssueStatus::Open,
             Some("requester"),
-            Some(job_settings),
+            Some(test_job_settings_full(&repo, "worker:latest", "main")),
         )
         .await?;
 

@@ -1,7 +1,7 @@
 mod harness;
 
 use anyhow::Result;
-use harness::{JobAssertions, TestHarness};
+use harness::{test_job_settings, JobAssertions, TestHarness};
 use metis_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType, JobSettings},
     jobs::BundleSpec,
@@ -113,16 +113,13 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
     let repo = metis_common::RepoName::from_str("acme/child-test")?;
 
     // Create parent issue with repo job settings (assigned to PM).
-    let mut parent_settings = JobSettings::default();
-    parent_settings.repo_name = Some(repo.clone());
-
     let parent_id = user
         .create_issue_with_settings(
             "Parent issue for child test",
             IssueType::Task,
             IssueStatus::Open,
             Some("pm"),
-            Some(parent_settings),
+            Some(test_job_settings(&repo)),
         )
         .await?;
 
