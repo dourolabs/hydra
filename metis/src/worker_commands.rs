@@ -272,7 +272,11 @@ impl ClaudeCommands {
             .await
             .with_context(|| format!("failed to write claude output to {output_path:?}"))?;
 
-        Ok(stdout_buf)
+        let last_message = formatter
+            .last_assistant_text()
+            .map(str::to_owned)
+            .unwrap_or(stdout_buf);
+        Ok(last_message)
     }
 }
 
