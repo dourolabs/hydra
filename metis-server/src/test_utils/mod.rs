@@ -176,7 +176,7 @@ fn test_auth() -> (Actor, String) {
         .get_or_init(|| {
             Actor::new_for_task(
                 TaskId::new(),
-                Some(crate::domain::users::Username::from("test-creator")),
+                crate::domain::users::Username::from("test-creator"),
             )
         })
         .clone()

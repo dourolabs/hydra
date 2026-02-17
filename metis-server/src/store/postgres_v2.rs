@@ -743,7 +743,7 @@ impl PostgresStoreV2 {
         let actor_id_json = serde_json::to_value(&actor.actor_id)
             .map_err(|e| StoreError::Internal(format!("failed to serialize actor_id: {e}")))?;
 
-        let creator_str = actor.creator.as_ref().map(|u| u.to_string());
+        let creator_str = actor.creator.to_string();
 
         let query = format!(
             "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor)
@@ -772,7 +772,7 @@ impl PostgresStoreV2 {
             auth_token_hash: row.auth_token_hash.clone(),
             auth_token_salt: row.auth_token_salt.clone(),
             actor_id,
-            creator: row.creator.as_deref().map(Username::from),
+            creator: Username::from(row.creator.as_deref().unwrap_or("unknown")),
         })
     }
 }

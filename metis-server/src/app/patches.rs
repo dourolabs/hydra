@@ -323,7 +323,7 @@ mod tests {
                 ActorRef::from(&actor),
                 Some(patch_id.clone()),
                 request,
-                actor.creator.as_ref(),
+                Some(&actor.creator),
             )
             .await?;
 
@@ -444,12 +444,7 @@ mod tests {
 
         let (patch_id, _) = handles
             .state
-            .upsert_patch(
-                ActorRef::from(&actor),
-                None,
-                request,
-                actor.creator.as_ref(),
-            )
+            .upsert_patch(ActorRef::from(&actor), None, request, Some(&actor.creator))
             .await?;
 
         // Poll until the automation creates the github metadata.
@@ -584,8 +579,7 @@ mod tests {
 
         let creator_username = Username::from("the-human");
         let task_id = TaskId::new();
-        let (actor, _auth_token) =
-            Actor::new_for_task(task_id.clone(), Some(creator_username.clone()));
+        let (actor, _auth_token) = Actor::new_for_task(task_id.clone(), creator_username.clone());
         handles
             .store
             .as_ref()
@@ -607,12 +601,7 @@ mod tests {
 
         let (patch_id, _) = handles
             .state
-            .upsert_patch(
-                ActorRef::from(&actor),
-                None,
-                request,
-                actor.creator.as_ref(),
-            )
+            .upsert_patch(ActorRef::from(&actor), None, request, Some(&actor.creator))
             .await?;
 
         let stored = handles.store.as_ref().get_patch(&patch_id, false).await?;

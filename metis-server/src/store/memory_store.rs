@@ -3109,7 +3109,7 @@ mod tests {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Username(Username::from("ada").into()),
-            creator: Some(Username::from("ada")),
+            creator: Username::from("ada"),
         };
 
         let name = actor.name();
@@ -3130,7 +3130,7 @@ mod tests {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Task(TaskId::new()),
-            creator: Some(Username::from("creator")),
+            creator: Username::from("creator"),
         };
         let name = actor.name();
 
@@ -3154,7 +3154,7 @@ mod tests {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Task(task_id),
-            creator: Some(Username::from("creator")),
+            creator: Username::from("creator"),
         };
         let mut updated = actor.clone();
         updated.auth_token_hash = "new-hash".to_string();
@@ -3180,7 +3180,7 @@ mod tests {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
             actor_id: ActorId::Username(Username::from("ada").into()),
-            creator: Some(Username::from("ada")),
+            creator: Username::from("ada"),
         };
 
         let err = store

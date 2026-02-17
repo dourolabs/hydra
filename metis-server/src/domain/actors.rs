@@ -61,14 +61,13 @@ pub struct Actor {
     pub auth_token_hash: String,
     pub auth_token_salt: String,
     pub actor_id: ActorId,
-    #[serde(default)]
-    pub creator: Option<Username>,
+    pub creator: Username,
 }
 
 impl Actor {
     pub fn new_for_user(username: Username) -> (Actor, String) {
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
-        let creator = Some(username.clone());
+        let creator = username.clone();
         let actor_id = ActorId::Username(username.into());
         let actor = Actor {
             auth_token_hash,
@@ -94,7 +93,7 @@ impl Actor {
         self.auth_token_hash == Self::hash_auth_token(token.raw_token())
     }
 
-    pub fn new_for_task(task_id: TaskId, creator: Option<Username>) -> (Actor, String) {
+    pub fn new_for_task(task_id: TaskId, creator: Username) -> (Actor, String) {
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
         let actor_id = ActorId::Task(task_id);
         let actor = Actor {
@@ -138,10 +137,7 @@ impl Actor {
         state: &AppState,
     ) -> Result<GithubTokenResponse, ApiError> {
         info!(actor = %self.name(), "get_github_token invoked");
-        let username = self.creator.clone().ok_or_else(|| {
-            error!(actor = %self.name(), "actor missing creator");
-            ApiError::not_found(format!("actor '{}' has no creator", self.name()))
-        })?;
+        let username = self.creator.clone();
 
         let user = state.get_user(&username).await.map_err(|err| match err {
             StoreError::UserNotFound(missing) => {
@@ -338,7 +334,7 @@ mod tests {
     #[test]
     fn verify_auth_token_requires_matching_actor_name() {
         let task_id = TaskId::new();
-        let (actor, auth_token) = Actor::new_for_task(task_id, Some(Username::from("creator")));
+        let (actor, auth_token) = Actor::new_for_task(task_id, Username::from("creator"));
         let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
 
         assert!(actor.verify_auth_token(&parsed));
