@@ -271,23 +271,22 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     );
 
     // ── Step 9: Re-open the patch via a worker (ChangesRequested → Open) ──
-    // Use run_worker() + CLI to simulate a real SWE worker making fixes and
-    // re-opening the patch, rather than directly calling client.update_patch().
+    // The background spawner automatically creates a new task for the SWE issue
+    // since the previous task completed. The worker then makes fixes and re-opens
+    // the patch via CLI.
     {
-        let swe_task_id_2 = harness
-            .default_user()
-            .create_job_for_issue(
-                &repo,
-                "Re-open patch after changes requested",
-                &swe_issue_id,
-            )
-            .await?;
-        harness.step_pending_jobs().await?;
+        let task_ids = harness.step_schedule().await?;
+        assert_eq!(
+            task_ids.len(),
+            1,
+            "should spawn exactly one new task for the SWE issue"
+        );
+        let swe_task_id_2 = &task_ids[0];
 
         let patch_id_str = patch_id.as_ref();
         harness
             .run_worker(
-                &swe_task_id_2,
+                swe_task_id_2,
                 vec![
                     "echo 'fn main() { /* v2 - fixed */ }' > feature.rs",
                     "git add feature.rs",
