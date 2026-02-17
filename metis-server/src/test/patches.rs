@@ -309,7 +309,7 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
         PatchStatus::Open,
         false,
         None,
-        Username::from("test-creator"),
+        Username::from("octo"),
         Vec::new(),
         service_repo_name(),
         Some(GithubPr::new(
@@ -395,7 +395,7 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
         PatchStatus::Open,
         false,
         None,
-        Username::from("test-creator"),
+        Username::from("octo"),
         Vec::new(),
         service_repo_name(),
         Some(GithubPr::new(
@@ -507,7 +507,7 @@ async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Re
         PatchStatus::Open,
         false,
         None,
-        Username::from("test-creator"),
+        Username::from("octo"),
         Vec::new(),
         service_repo_name(),
         Some(GithubPr::new(
@@ -591,7 +591,7 @@ async fn create_patch_asset_surfaces_github_bad_size() -> anyhow::Result<()> {
         PatchStatus::Open,
         false,
         None,
-        Username::from("test-creator"),
+        Username::from("octo"),
         Vec::new(),
         service_repo_name(),
         Some(GithubPr::new(

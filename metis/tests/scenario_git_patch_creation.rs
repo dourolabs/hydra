@@ -85,12 +85,8 @@ async fn worker_git_operations_and_patch_creation() -> Result<()> {
     );
 
     // Verify patch.creator is set (resolved from actor chain to the issue creator).
-    assert!(
-        patch.patch.creator.is_some(),
-        "patch.creator should be set (resolved from actor chain)"
-    );
     assert_eq!(
-        patch.patch.creator.as_ref().unwrap().as_ref(),
+        patch.patch.creator.as_str(),
         "default",
         "patch.creator should resolve to the issue creator"
     );

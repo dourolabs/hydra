@@ -770,6 +770,7 @@ mod tests {
     use httpmock::prelude::*;
     use metis_common::patches::{Patch, PatchStatus, UpsertPatchRequest, UpsertPatchResponse};
     use metis_common::users::Username;
+    use metis_common::whoami::{ActorIdentity, WhoAmIResponse};
     use reqwest::Client as HttpClient;
     use std::{collections::HashMap, path::Path, str::FromStr};
 
@@ -935,6 +936,13 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET).path("/v1/github/token");
             then.status(401);
+        });
+        let whoami_response = WhoAmIResponse::new(ActorIdentity::User {
+            username: Username::from("test-user"),
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/whoami");
+            then.status(200).json_body_obj(&whoami_response);
         });
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;

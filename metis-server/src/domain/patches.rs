@@ -1,10 +1,16 @@
 use super::users::Username;
+use crate::domain::actors::UNKNOWN_CREATOR;
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use metis_common::api::v1 as api;
 use metis_common::{RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
+
+/// Serde default for backward compatibility with v1 JSONB payloads that lack the creator field.
+fn default_patch_creator() -> Username {
+    Username::from(UNKNOWN_CREATOR)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PatchStatus {
@@ -200,7 +206,8 @@ pub struct Patch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<TaskId>,
     /// The resolved username of the human/agent that authored the patch.
-    #[serde(default)]
+    /// Uses a serde default for backward compatibility with v1 JSONB payloads that lack the field.
+    #[serde(default = "default_patch_creator")]
     pub creator: Username,
     #[serde(default)]
     pub reviews: Vec<Review>,

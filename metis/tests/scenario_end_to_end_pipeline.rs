@@ -315,8 +315,8 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     // The patch was created by the SWE worker, whose task was spawned from
     // the SWE issue, which was created as a child of the parent issue.
     assert!(
-        patch_final.patch.creator.is_some(),
-        "patch should have a creator"
+        !patch_final.patch.creator.as_str().is_empty(),
+        "patch should have a non-empty creator"
     );
 
     Ok(())
