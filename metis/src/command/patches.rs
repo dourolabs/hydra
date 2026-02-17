@@ -12,7 +12,6 @@ use metis_common::{
         Patch, PatchStatus, PatchVersionRecord, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
-    users::Username,
     PatchId, RelativeVersionNumber, RepoName, TaskId,
 };
 use serde::Serialize;
@@ -754,7 +753,7 @@ pub async fn create_patch_artifact_from_repo(
         PatchStatus::Open,
         is_automatic_backup,
         job_id.clone(),
-        Username::from("unknown"),
+        client.creator_username(),
         Vec::new(),
         service_repo_name.clone(),
         None,
@@ -879,7 +878,7 @@ mod tests {
     use reqwest::Client as HttpClient;
     use std::{fs, str::FromStr};
 
-    const TEST_METIS_TOKEN: &str = "test-metis-token";
+    const TEST_METIS_TOKEN: &str = "u-test-user:test-metis-token";
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -1127,7 +1126,7 @@ mod tests {
                 PatchStatus::Open,
                 false,
                 Some(job_id_clone.clone()),
-                Username::from("unknown"),
+                Username::from("test-user"),
                 Vec::new(),
                 sample_repo_name(),
                 None,
@@ -1209,7 +1208,7 @@ mod tests {
                 PatchStatus::Open,
                 false,
                 job_id_opt.clone(),
-                Username::from("unknown"),
+                Username::from("test-user"),
                 Vec::new(),
                 sample_repo_name(),
                 None,
@@ -1290,7 +1289,7 @@ mod tests {
             PatchStatus::Open,
             true,
             Some(job_id.clone()),
-            Username::from("unknown"),
+            Username::from("test-user"),
             Vec::new(),
             sample_repo_name(),
             None,
@@ -1362,7 +1361,7 @@ mod tests {
                 PatchStatus::Open,
                 false,
                 Some(job_id.clone()),
-                Username::from("unknown"),
+                Username::from("test-user"),
                 Vec::new(),
                 RepoName::from_str("dourolabs/api")?,
                 None,

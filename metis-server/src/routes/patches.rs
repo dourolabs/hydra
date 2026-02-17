@@ -69,11 +69,13 @@ where
 pub async fn create_patch(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
-    Json(payload): Json<v1::patches::UpsertPatchRequest>,
+    Json(mut payload): Json<v1::patches::UpsertPatchRequest>,
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!("create_patch invoked");
+    // Set the creator from the authenticated actor so it is always correct.
+    payload.patch.creator = actor.creator.clone().into();
     let (patch_id, version) = state
-        .upsert_patch(ActorRef::from(&actor), None, payload, Some(&actor.creator))
+        .upsert_patch(ActorRef::from(&actor), None, payload)
         .await
         .map_err(map_upsert_patch_error)?;
 
@@ -91,12 +93,7 @@ pub async fn update_patch(
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!(patch_id = %patch_id, "update_patch invoked");
     let (patch_id, version) = state
-        .upsert_patch(
-            ActorRef::from(&actor),
-            Some(patch_id),
-            payload,
-            Some(&actor.creator),
-        )
+        .upsert_patch(ActorRef::from(&actor), Some(patch_id), payload)
         .await
         .map_err(map_upsert_patch_error)?;
 

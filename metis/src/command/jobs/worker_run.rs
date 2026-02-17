@@ -773,7 +773,7 @@ mod tests {
     use reqwest::Client as HttpClient;
     use std::{collections::HashMap, path::Path, str::FromStr};
 
-    const TEST_METIS_TOKEN: &str = "test-metis-token";
+    const TEST_METIS_TOKEN: &str = "u-test-user:test-metis-token";
 
     fn init_git_repo(repo_path: &Path) -> Result<String> {
         Repository::init(repo_path).context("failed to init git repo for test")?;
@@ -909,7 +909,7 @@ mod tests {
             PatchStatus::Open,
             true,
             Some(job_id.clone()),
-            Username::from("unknown"),
+            Username::from("test-user"),
             Vec::new(),
             repo_name.clone(),
             None,

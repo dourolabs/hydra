@@ -26,6 +26,7 @@ use metis_common::{
     },
     logs::LogsQuery,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
+    parse_actor_name,
     patches::{
         CreatePatchAssetQuery, CreatePatchAssetResponse, ListPatchVersionsResponse,
         ListPatchesResponse, PatchVersionRecord, SearchPatchesQuery, UpsertPatchRequest,
@@ -36,9 +37,9 @@ use metis_common::{
         RepositoryRecord, SearchRepositoriesQuery, UpdateRepositoryRequest,
         UpsertRepositoryResponse,
     },
-    users::UserSummary,
+    users::{UserSummary, Username},
     whoami::WhoAmIResponse,
-    DocumentId, IssueId, PatchId, RelativeVersionNumber, RepoName, TaskId,
+    ActorId, DocumentId, IssueId, PatchId, RelativeVersionNumber, RepoName, TaskId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
 use sse::SseEventStream;
@@ -227,6 +228,12 @@ pub trait MetisClientInterface: Send + Sync {
     async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord>;
     async fn get_github_token(&self) -> Result<String>;
     async fn whoami(&self) -> Result<WhoAmIResponse>;
+
+    /// Resolve the creator username for the current actor.
+    ///
+    /// For user actors, this returns the username directly. For task workers,
+    /// the server resolves the actual creator from the actor's stored metadata.
+    fn creator_username(&self) -> Username;
     async fn get_user_info(&self, username: &str) -> Result<UserSummary>;
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue>;
     async fn enqueue_merge_patch(
@@ -374,6 +381,25 @@ impl MetisClient {
     /// Expose the resolved base URL used for requests.
     pub fn base_url(&self) -> &Url {
         &self.base_url
+    }
+
+    /// Derive the creator username from the auth token.
+    ///
+    /// The token format is `actor_name:raw_token`. For user actors (`u-{username}`),
+    /// the username is extracted directly. For task actors (`w-{task_id}`), the
+    /// task id is used as the creator; the server will resolve the actual human
+    /// creator from the actor's stored metadata.
+    pub fn creator_username(&self) -> Username {
+        let actor_name = self.auth_token.split_once(':').map(|(name, _)| name);
+        if let Some(name) = actor_name {
+            if let Some(actor_id) = parse_actor_name(name) {
+                return match actor_id {
+                    ActorId::Username(u) => u,
+                    ActorId::Task(t) => Username::from(t.to_string()),
+                };
+            }
+        }
+        Username::from("cli")
     }
 
     fn authed(&self, builder: RequestBuilder) -> RequestBuilder {
@@ -1811,6 +1837,10 @@ impl MetisClientInterface for MetisClient {
 
     async fn whoami(&self) -> Result<WhoAmIResponse> {
         MetisClient::whoami(self).await
+    }
+
+    fn creator_username(&self) -> Username {
+        MetisClient::creator_username(self)
     }
 
     async fn get_user_info(&self, username: &str) -> Result<UserSummary> {

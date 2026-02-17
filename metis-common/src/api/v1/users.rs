@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 #[non_exhaustive]
 pub struct Username(String);

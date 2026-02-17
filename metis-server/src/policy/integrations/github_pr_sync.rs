@@ -249,7 +249,6 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 },
                 Some(patch_id.clone()),
                 request,
-                None,
             )
             .await
             .map_err(|e| {

@@ -200,6 +200,7 @@ pub struct Patch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<TaskId>,
     /// The resolved username of the human/agent that authored the patch.
+    #[serde(default)]
     pub creator: Username,
     #[serde(default)]
     pub reviews: Vec<Review>,

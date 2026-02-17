@@ -255,7 +255,6 @@ async fn sync_patch_from_github(
                 },
                 Some(patch_id.clone()),
                 api::patches::UpsertPatchRequest::new(updated_patch.into()),
-                None,
             )
             .await
             .with_context(|| format!("failed to persist GitHub sync for patch '{patch_id}'"))?;
