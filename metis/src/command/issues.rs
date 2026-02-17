@@ -377,8 +377,7 @@ pub async fn run(
             max_retries,
             secrets,
         } => {
-            let creator =
-                resolve_creator_username(client, &dependencies, current_issue_id.as_ref()).await?;
+            let creator = resolve_creator_username(client).await?;
             create_issue(
                 client,
                 r#type,
@@ -1672,57 +1671,15 @@ async fn update_issue(
     ))
 }
 
-async fn resolve_creator_username(
-    client: &dyn MetisClientInterface,
-    dependencies: &[IssueDependency],
-    current_issue_id: Option<&IssueId>,
-) -> Result<Username> {
-    let resolve_from_current_issue = || async {
-        if let Some(issue_id) = current_issue_id {
-            let issue = client
-                .get_issue(issue_id, false)
-                .await
-                .with_context(|| format!("failed to fetch current issue '{issue_id}'"))?;
-            Ok(issue.issue.creator)
-        } else {
-            bail!("No current issue id available to resolve creator");
-        }
-    };
-
-    let resolve_from_parent = || async {
-        if let Some(parent_id) = dependencies
-            .iter()
-            .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
-            .map(|dependency| dependency.issue_id.clone())
-        {
-            let parent = client
-                .get_issue(&parent_id, false)
-                .await
-                .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
-            Ok(parent.issue.creator)
-        } else {
-            bail!("Failed to resolve authenticated user and no parent issue found");
-        }
-    };
-
-    let resolve_for_task = || async {
-        match resolve_from_current_issue().await {
-            Ok(username) => Ok(username),
-            Err(_) => resolve_from_parent().await,
-        }
-    };
-
-    match client
+async fn resolve_creator_username(client: &dyn MetisClientInterface) -> Result<Username> {
+    let response = client
         .whoami()
         .await
-        .context("failed to resolve authenticated actor")
-    {
-        Ok(response) => match response.actor {
-            ActorIdentity::User { username } => Ok(username),
-            ActorIdentity::Task { creator, .. } => Ok(creator),
-            _ => resolve_for_task().await,
-        },
-        Err(_) => resolve_for_task().await,
+        .context("failed to resolve authenticated actor")?;
+    match response.actor {
+        ActorIdentity::User { username } => Ok(username),
+        ActorIdentity::Task { creator, .. } => Ok(creator),
+        other => bail!("unexpected actor identity: {other:?}"),
     }
 }
 
@@ -3695,105 +3652,11 @@ mod tests {
             then.status(200).json_body_obj(&whoami_response);
         });
 
-        let username = resolve_creator_username(&client, &[], None).await.unwrap();
+        let username = resolve_creator_username(&client).await.unwrap();
 
         assert_eq!(username, Username::from("creator-a"));
         whoami_mock.assert();
         assert_eq!(whoami_mock.hits(), 1);
-    }
-
-    #[tokio::test]
-    async fn resolve_creator_username_falls_back_to_parent_for_task() {
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let parent_id = issue_id("i-parent");
-        let whoami_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/whoami");
-            then.status(500);
-        });
-        let parent_issue = IssueVersionRecord::new(
-            parent_id.clone(),
-            0,
-            Utc::now(),
-            Issue::new(
-                IssueType::Task,
-                "Parent issue".into(),
-                Username::from("parent-creator"),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                false,
-            ),
-            None,
-        );
-        let parent_mock = server.mock(|when, then| {
-            when.method(GET)
-                .path(format!("/v1/issues/{parent_id}").as_str());
-            then.status(200).json_body_obj(&parent_issue);
-        });
-
-        let dependencies = vec![IssueDependency::new(
-            IssueDependencyType::ChildOf,
-            parent_id,
-        )];
-        let username = resolve_creator_username(&client, &dependencies, None)
-            .await
-            .unwrap();
-
-        assert_eq!(username, Username::from("parent-creator"));
-        whoami_mock.assert();
-        parent_mock.assert();
-        assert_eq!(whoami_mock.hits(), 1);
-        assert_eq!(parent_mock.hits(), 1);
-    }
-
-    #[tokio::test]
-    async fn resolve_creator_username_resolves_from_current_issue_for_task() {
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let current_id = issue_id("i-current");
-        let whoami_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/whoami");
-            then.status(500);
-        });
-        let current_issue = IssueVersionRecord::new(
-            current_id.clone(),
-            0,
-            Utc::now(),
-            Issue::new(
-                IssueType::Task,
-                "Current issue".into(),
-                Username::from("current-creator"),
-                String::new(),
-                IssueStatus::InProgress,
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                false,
-            ),
-            None,
-        );
-        let current_issue_mock = server.mock(|when, then| {
-            when.method(GET)
-                .path(format!("/v1/issues/{current_id}").as_str());
-            then.status(200).json_body_obj(&current_issue);
-        });
-
-        let username = resolve_creator_username(&client, &[], Some(&current_id))
-            .await
-            .unwrap();
-
-        assert_eq!(username, Username::from("current-creator"));
-        whoami_mock.assert();
-        current_issue_mock.assert();
-        assert_eq!(whoami_mock.hits(), 1);
-        assert_eq!(current_issue_mock.hits(), 1);
     }
 
     #[tokio::test]
@@ -3809,7 +3672,7 @@ mod tests {
             then.status(200).json_body_obj(&whoami_response);
         });
 
-        let username = resolve_creator_username(&client, &[], None).await.unwrap();
+        let username = resolve_creator_username(&client).await.unwrap();
 
         assert_eq!(username, Username::from("whoami-creator"));
         whoami_mock.assert();
