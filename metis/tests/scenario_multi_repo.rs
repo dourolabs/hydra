@@ -3,24 +3,18 @@ mod harness;
 use anyhow::Result;
 use harness::TestHarness;
 use metis_common::{
-    issues::{IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings},
+    issues::{IssueDependencyType, IssueStatus, IssueType, JobSettings},
     task_status::Status,
 };
 use std::str::FromStr;
 
-fn job_settings_for_repo(repo_name: &str) -> JobSettings {
-    let mut settings = JobSettings::default();
-    settings.repo_name =
-        Some(metis_common::RepoName::from_str(repo_name).expect("valid repo name"));
-    settings
-}
-
 /// Scenario 6: Multi-Repo Workflow
 ///
-/// Tests tasks that require changes to multiple repositories. A parent issue
-/// spawns two children, each targeting a different repo, with the second
-/// blocked on the first. Verifies correct BundleSpec per repo and that
-/// patches are created in the correct repository context.
+/// Tests tasks that require changes to multiple repositories. A user creates
+/// a parent issue assigned to a PM agent. The PM worker creates two child
+/// issues via the CLI, each targeting a different repo, with the second
+/// blocked on the first. SWE workers then pick up each child and create
+/// patches in the correct repository context.
 #[tokio::test]
 async fn multi_repo_workflow() -> Result<()> {
     let harness = TestHarness::builder()
@@ -35,40 +29,82 @@ async fn multi_repo_workflow() -> Result<()> {
     let repo_app = metis_common::RepoName::from_str("org/app")?;
     let repo_cluster = metis_common::RepoName::from_str("org/cluster")?;
 
-    // User creates parent issue.
-    let parent_id = user.create_issue("Add new agent queue").await?;
+    // User creates parent issue assigned to PM.
+    let mut pm_settings = JobSettings::default();
+    pm_settings.repo_name = Some(repo_app.clone());
 
-    // PM creates child 1: targets org/app repo.
-    let child1_id = user
-        .create_issue_full(
+    let parent_id = user
+        .create_issue_with_settings(
+            "Add new agent queue",
             IssueType::Task,
-            "Add agent queue to service.sh",
             IssueStatus::Open,
-            Some("swe"),
-            Some(job_settings_for_repo("org/app")),
-            vec![IssueDependency::new(
-                IssueDependencyType::ChildOf,
-                parent_id.clone(),
-            )],
-            Vec::new(),
+            Some("pm"),
+            Some(pm_settings),
         )
         .await?;
 
-    // PM creates child 2: targets org/cluster repo, blocked-on child 1.
-    let _child2_id = user
-        .create_issue_full(
-            IssueType::Task,
-            "Add agent queue to configmap",
-            IssueStatus::Open,
-            Some("swe"),
-            Some(job_settings_for_repo("org/cluster")),
-            vec![
-                IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone()),
-                IssueDependency::new(IssueDependencyType::BlockedOn, child1_id.clone()),
-            ],
-            Vec::new(),
+    // PM agent spawns and creates child issues via worker CLI.
+    let pm_tasks = harness.step_schedule().await?;
+    assert_eq!(pm_tasks.len(), 1, "should spawn exactly one PM task");
+
+    // PM worker creates child 1 (org/app) and child 2 (org/cluster, blocked-on child 1),
+    // then sets the parent issue to in-progress.
+    // We extract child 1's issue ID from the JSONL output so child 2 can reference it.
+    let create_child1_cmd = format!(
+        "metis --output-format jsonl issues create 'Add agent queue to service.sh' \
+         --assignee swe --deps child-of:{parent_id} --repo-name org/app \
+         | python3 -c \"import json,sys; print(json.load(sys.stdin)['issue_id'])\" \
+         > child1_id.txt"
+    );
+    let create_child2_cmd = format!(
+        "metis issues create 'Add agent queue to configmap' \
+         --assignee swe --deps child-of:{parent_id} \
+         --deps blocked-on:$(cat child1_id.txt) --repo-name org/cluster"
+    );
+    let set_status_cmd = format!("metis issues update {parent_id} --status in-progress");
+    let pm_result = harness
+        .run_worker(
+            &pm_tasks[0],
+            vec![&create_child1_cmd, &create_child2_cmd, &set_status_cmd],
         )
         .await?;
+
+    assert_eq!(pm_result.final_status, Status::Complete);
+
+    // Find the child issues created by PM.
+    let all_issues = user.list_issues().await?;
+    let child1 = all_issues
+        .issues
+        .iter()
+        .find(|i| {
+            i.issue
+                .description
+                .contains("Add agent queue to service.sh")
+                && i.issue.dependencies.iter().any(|d| {
+                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == parent_id
+                })
+        })
+        .expect("PM should have created child 1");
+    let child1_id = child1.issue_id.clone();
+
+    let child2 = all_issues
+        .issues
+        .iter()
+        .find(|i| {
+            i.issue.description.contains("Add agent queue to configmap")
+                && i.issue.dependencies.iter().any(|d| {
+                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == parent_id
+                })
+        })
+        .expect("PM should have created child 2");
+
+    // Verify child 2 is blocked-on child 1.
+    assert!(
+        child2.issue.dependencies.iter().any(|d| {
+            d.dependency_type == IssueDependencyType::BlockedOn && d.issue_id == child1_id
+        }),
+        "child 2 should be blocked-on child 1"
+    );
 
     // step_schedule: child 1 is ready, child 2 is blocked.
     let task_ids = harness.step_schedule().await?;

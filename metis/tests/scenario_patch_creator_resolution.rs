@@ -3,7 +3,7 @@ mod harness;
 use anyhow::Result;
 use harness::TestHarness;
 use metis_common::{
-    issues::{IssueStatus, IssueType, JobSettings},
+    issues::{IssueDependencyType, IssueStatus, IssueType, JobSettings},
     task_status::Status,
     users::Username,
 };
@@ -13,6 +13,9 @@ use metis_server::policy::automations::patch_workflow::{
 use std::str::FromStr;
 
 /// Scenario 15a: User creates patch directly → $patch_creator resolves to user's username.
+///
+/// Also verifies that the patch_workflow automation fires and creates
+/// ReviewRequest/MergeRequest issues assigned via $patch_creator substitution.
 #[tokio::test]
 async fn patch_creator_resolves_to_user_for_direct_patch() -> Result<()> {
     let harness = TestHarness::builder()
@@ -46,11 +49,51 @@ async fn patch_creator_resolves_to_user_for_direct_patch() -> Result<()> {
         "$patch_creator should resolve to alice for a direct user patch"
     );
 
+    // Verify patch_workflow automation created ReviewRequest and MergeRequest
+    // issues with $patch_creator resolved to "alice".
+    let all_issues = alice.list_issues().await?;
+
+    let review_requests: Vec<_> = all_issues
+        .issues
+        .iter()
+        .filter(|i| i.issue.issue_type == IssueType::ReviewRequest)
+        .collect();
+    assert_eq!(
+        review_requests.len(),
+        1,
+        "patch_workflow should create 1 ReviewRequest issue"
+    );
+    assert_eq!(
+        review_requests[0].issue.assignee,
+        Some("alice".to_string()),
+        "ReviewRequest should be assigned to alice via $patch_creator"
+    );
+
+    let merge_requests: Vec<_> = all_issues
+        .issues
+        .iter()
+        .filter(|i| i.issue.issue_type == IssueType::MergeRequest)
+        .collect();
+    assert_eq!(
+        merge_requests.len(),
+        1,
+        "patch_workflow should create 1 MergeRequest issue"
+    );
+    assert_eq!(
+        merge_requests[0].issue.assignee,
+        Some("alice".to_string()),
+        "MergeRequest should be assigned to alice via $patch_creator"
+    );
+
     Ok(())
 }
 
 /// Scenario 15b: Agent creates patch → patch.creator resolved from Actor.creator
 /// (the human who created the originating issue).
+///
+/// Also verifies that the patch_workflow automation fires and creates
+/// ReviewRequest/MergeRequest child issues of the SWE's issue, assigned to
+/// the original issue creator via $patch_creator substitution.
 #[tokio::test]
 async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()> {
     let harness = TestHarness::builder()
@@ -75,7 +118,7 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
     let mut job_settings = JobSettings::default();
     job_settings.repo_name = Some(repo.clone());
 
-    let _issue_id = user
+    let issue_id = user
         .create_issue_with_settings(
             "Fix authentication bug",
             IssueType::Task,
@@ -124,6 +167,61 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
         patch.patch.created_by,
         Some(job_id.clone()),
         "patch.created_by should reference the worker's task ID"
+    );
+
+    // Verify patch_workflow automation created ReviewRequest and MergeRequest
+    // child issues of the SWE's issue, with $patch_creator resolved to "default".
+    let all_issues = user.list_issues().await?;
+
+    let review_requests: Vec<_> = all_issues
+        .issues
+        .iter()
+        .filter(|i| {
+            i.issue.issue_type == IssueType::ReviewRequest
+                && i.issue.dependencies.iter().any(|d| {
+                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == issue_id
+                })
+        })
+        .collect();
+    assert_eq!(
+        review_requests.len(),
+        1,
+        "patch_workflow should create 1 ReviewRequest child issue"
+    );
+    assert_eq!(
+        review_requests[0].issue.assignee,
+        Some("default".to_string()),
+        "ReviewRequest should be assigned to 'default' (issue creator) via $patch_creator"
+    );
+
+    let merge_requests: Vec<_> = all_issues
+        .issues
+        .iter()
+        .filter(|i| {
+            i.issue.issue_type == IssueType::MergeRequest
+                && i.issue.dependencies.iter().any(|d| {
+                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == issue_id
+                })
+        })
+        .collect();
+    assert_eq!(
+        merge_requests.len(),
+        1,
+        "patch_workflow should create 1 MergeRequest child issue"
+    );
+    assert_eq!(
+        merge_requests[0].issue.assignee,
+        Some("default".to_string()),
+        "MergeRequest should be assigned to 'default' (issue creator) via $patch_creator"
+    );
+
+    // Verify MergeRequest is blocked-on ReviewRequest.
+    let rr_id = &review_requests[0].issue_id;
+    assert!(
+        merge_requests[0].issue.dependencies.iter().any(|d| {
+            d.dependency_type == IssueDependencyType::BlockedOn && d.issue_id == *rr_id
+        }),
+        "MergeRequest should be blocked-on ReviewRequest"
     );
 
     Ok(())

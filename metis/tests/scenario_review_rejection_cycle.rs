@@ -43,9 +43,10 @@ async fn find_children_by_type(
         if record.issue.issue_type != issue_type {
             continue;
         }
-        let is_child = record.issue.dependencies.iter().any(|d| {
-            d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
-        });
+        let is_child =
+            record.issue.dependencies.iter().any(|d| {
+                d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
+            });
         if is_child {
             matches.push((record.issue_id.clone(), record));
         }
@@ -228,8 +229,12 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
             repo_owner,
             repo_name,
             MockPr::new(pr_number, &patch_branch, &head_sha).with_review(
-                MockReview::new("reviewer", "CHANGES_REQUESTED", "Please fix the implementation")
-                    .with_author_id(1001),
+                MockReview::new(
+                    "reviewer",
+                    "CHANGES_REQUESTED",
+                    "Please fix the implementation",
+                )
+                .with_author_id(1001),
             ),
         )
         .build()?;
@@ -336,8 +341,7 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
             MockPr::new(pr_number, &patch_branch, &head_sha)
                 .merged()
                 .with_review(
-                    MockReview::new("reviewer", "APPROVED", "LGTM, approved")
-                        .with_author_id(1001),
+                    MockReview::new("reviewer", "APPROVED", "LGTM, approved").with_author_id(1001),
                 ),
         )
         .build()?;
@@ -377,10 +381,8 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     );
 
     // ── Step 17: Verify coexistence of old and new workflow issues ─
-    let all_rr =
-        find_children_by_type(&client, &swe_issue_id, IssueType::ReviewRequest).await?;
-    let all_mr =
-        find_children_by_type(&client, &swe_issue_id, IssueType::MergeRequest).await?;
+    let all_rr = find_children_by_type(&client, &swe_issue_id, IssueType::ReviewRequest).await?;
+    let all_mr = find_children_by_type(&client, &swe_issue_id, IssueType::MergeRequest).await?;
 
     assert_eq!(
         all_rr.len(),
