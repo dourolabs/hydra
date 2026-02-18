@@ -2593,6 +2593,9 @@ mod tests {
             Vec::new(),
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
+            None,
+            None,
+            None,
         )
     }
 
@@ -2698,11 +2701,11 @@ mod tests {
                 Some("https://github.com/owner/repo/pull/42".to_string()),
                 None,
             )),
+            Some("feature/xyz".to_string()),
+            Some(CommitRange::new(base_oid, head_oid)),
+            Some("main".to_string()),
         );
         patch.creator = Username::from("patch-creator");
-        patch.branch_name = Some("feature/xyz".to_string());
-        patch.commit_range = Some(CommitRange::new(base_oid, head_oid));
-        patch.base_branch = Some("main".to_string());
         patch
     }
 
@@ -3353,6 +3356,9 @@ mod tests {
             vec![],
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
+            None,
+            None,
+            None,
         );
         let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
@@ -3367,6 +3373,9 @@ mod tests {
             Username::from("test-creator"),
             vec![],
             RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+            None,
+            None,
             None,
         );
         store

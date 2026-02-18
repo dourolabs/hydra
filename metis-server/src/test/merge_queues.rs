@@ -79,6 +79,9 @@ async fn state_with_repo_and_patch(
         Vec::new(),
         repo.clone(),
         None,
+        None,
+        None,
+        None,
     );
 
     let (patch_id, _) = handles.store.add_patch(patch, &ActorRef::test()).await?;

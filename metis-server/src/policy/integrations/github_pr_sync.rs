@@ -297,13 +297,16 @@ mod tests {
             vec![],
             RepoName::new("org", "repo").unwrap(),
             None,
+            None,
+            None,
+            None,
         );
         assert!(patch.branch_name.is_none());
     }
 
     #[test]
     fn triggers_when_branch_name_is_set() {
-        let mut patch = Patch::new(
+        let patch = Patch::new(
             "title".into(),
             "desc".into(),
             "diff".into(),
@@ -314,14 +317,16 @@ mod tests {
             vec![],
             RepoName::new("org", "repo").unwrap(),
             None,
+            Some("feature/branch".into()),
+            None,
+            None,
         );
-        patch.branch_name = Some("feature/branch".into());
         assert!(patch.branch_name.is_some());
     }
 
     #[test]
     fn skips_when_only_github_field_changed() {
-        let mut old_patch = Patch::new(
+        let old_patch = Patch::new(
             "title".into(),
             "desc".into(),
             "diff".into(),
@@ -332,8 +337,10 @@ mod tests {
             vec![],
             RepoName::new("org", "repo").unwrap(),
             None,
+            Some("feature/branch".into()),
+            None,
+            None,
         );
-        old_patch.branch_name = Some("feature/branch".into());
 
         let mut new_patch = old_patch.clone();
         new_patch.github = Some(GithubPr::new(
@@ -368,8 +375,10 @@ mod tests {
             vec![],
             RepoName::new("org", "repo").unwrap(),
             None,
+            Some("feature/branch".into()),
+            None,
+            None,
         );
-        old_patch.branch_name = Some("feature/branch".into());
         old_patch.github = Some(GithubPr::new(
             "org".into(),
             "repo".into(),

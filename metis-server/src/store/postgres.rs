@@ -2029,6 +2029,9 @@ mod tests {
             Vec::new(),
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
+            None,
+            None,
+            None,
         )
     }
 
@@ -2803,6 +2806,9 @@ mod tests {
             vec![],
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
+            None,
+            None,
+            None,
         );
         let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
@@ -2817,6 +2823,9 @@ mod tests {
             Username::from("test-creator"),
             vec![],
             RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+            None,
+            None,
             None,
         );
         store

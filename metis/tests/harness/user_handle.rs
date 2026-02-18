@@ -190,6 +190,9 @@ impl UserHandle {
             repo.clone(),
             None,
             false,
+            None,
+            None,
+            None,
         );
         let request = UpsertPatchRequest::new(patch);
         let response = self
@@ -230,6 +233,9 @@ impl UserHandle {
             repo.clone(),
             Some(github_pr),
             false,
+            None,
+            None,
+            None,
         );
         let request = UpsertPatchRequest::new(patch);
         let response = self

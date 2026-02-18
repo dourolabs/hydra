@@ -657,6 +657,9 @@ mod tests {
                         None,
                         None,
                     )),
+                    None,
+                    None,
+                    None,
                 ),
                 &ActorRef::test(),
             )
@@ -814,6 +817,9 @@ mod tests {
             Vec::new(),
             RepoName::from_str("dourolabs/api").unwrap(),
             Some(github.clone()),
+            None,
+            None,
+            None,
         );
         let pr: PullRequest = serde_json::from_value(json!({
             "url": "",
@@ -883,6 +889,9 @@ mod tests {
             existing_reviews.clone(),
             RepoName::from_str("dourolabs/api").unwrap(),
             Some(github.clone()),
+            None,
+            None,
+            None,
         );
         let pr: PullRequest = serde_json::from_value(json!({
             "url": "",

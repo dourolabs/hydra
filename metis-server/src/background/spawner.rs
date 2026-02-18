@@ -670,6 +670,9 @@ mod tests {
             Vec::new(),
             repo_name.clone(),
             None,
+            None,
+            None,
+            None,
         );
         let (patch_id, _) = handles.store.add_patch(patch, &ActorRef::test()).await?;
         handles

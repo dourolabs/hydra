@@ -1380,6 +1380,9 @@ mod tests {
             Vec::new(),
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
+            None,
+            None,
+            None,
         )
     }
 
@@ -1825,6 +1828,9 @@ mod tests {
             Vec::new(),
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
+            None,
+            None,
+            None,
         );
 
         store
@@ -1879,6 +1885,9 @@ mod tests {
                     Username::from("test-creator"),
                     Vec::new(),
                     RepoName::from_str("dourolabs/sample").unwrap(),
+                    None,
+                    None,
+                    None,
                     None,
                 ),
                 &ActorRef::test(),
