@@ -7,11 +7,12 @@ use metis_common::{
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     issues::IssueId,
     jobs::BundleSpec,
-    merge_queues::MergeQueue,
     patches::{
         Patch, PatchStatus, PatchVersionRecord, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
+    repositories::SearchRepositoriesQuery,
+    review_utils::{find_last_commit_range_change_timestamp, has_approved_non_dismissed_review},
     users::Username,
     whoami::ActorIdentity,
     PatchId, RelativeVersionNumber, RepoName, TaskId,
@@ -20,8 +21,10 @@ use serde::Serialize;
 
 use crate::git;
 use crate::git::{
-    apply_patch, current_branch, diff_commit_range as git_diff_commit_range,
-    has_uncommitted_changes as git_has_uncommitted_changes, push_branch,
+    apply_patch, checkout_branch as git_checkout_branch, current_branch,
+    diff_commit_range as git_diff_commit_range, fetch_remote as git_fetch_remote,
+    has_uncommitted_changes as git_has_uncommitted_changes, push_branch, push_to_ref,
+    rebase_onto as git_rebase_onto,
     resolve_commit_range_from_merge_base as git_resolve_commit_range_from_merge_base,
 };
 use crate::{
@@ -152,19 +155,15 @@ pub enum PatchesCommand {
         base_ref: String,
     },
 
-    /// Inspect or enqueue merge queue entries for a repository branch.
+    /// Merge a patch by rebasing onto a base branch and pushing.
     Merge {
-        /// Repository to target, e.g. dourolabs/api.
-        #[arg(long = "repo", value_name = "REPO", required = true)]
-        repo: RepoName,
+        /// Patch ID to merge.
+        #[arg(value_name = "PATCH_ID")]
+        patch_id: PatchId,
 
-        /// Branch name for the merge queue.
-        #[arg(long = "branch", value_name = "BRANCH", required = true)]
-        branch: String,
-
-        /// Patch id to enqueue onto the merge queue. Omit to only fetch the queue.
-        #[arg(long = "patch-id", value_name = "PATCH_ID")]
-        patch_id: Option<PatchId>,
+        /// Base branch to rebase onto (defaults to the repo's configured default branch or 'main').
+        #[arg(long = "base", value_name = "BASE")]
+        base: Option<String>,
     },
     /// Manage patch assets.
     Assets {
@@ -254,11 +253,7 @@ pub async fn run(
             write_patch_output(context.output_format, &patch)?;
             Ok(())
         }
-        PatchesCommand::Merge {
-            repo,
-            branch,
-            patch_id,
-        } => merge_queue(client, repo, branch, patch_id, context.output_format).await,
+        PatchesCommand::Merge { patch_id, base } => merge_patch(client, patch_id, base).await,
         PatchesCommand::Assets { command } => {
             patch_assets(client, command, context.output_format).await
         }
@@ -645,68 +640,111 @@ async fn update_patch_inner(
     ))
 }
 
-async fn merge_queue(
+async fn merge_patch(
     client: &dyn MetisClientInterface,
-    repo: RepoName,
-    branch: String,
-    patch_id: Option<PatchId>,
-    output_format: ResolvedOutputFormat,
+    patch_id: PatchId,
+    base_override: Option<String>,
 ) -> Result<()> {
-    let mut buffer = Vec::new();
-    merge_queue_with_writer(client, repo, branch, patch_id, output_format, &mut buffer).await?;
-    std::io::stdout().write_all(&buffer)?;
-    std::io::stdout().flush()?;
-    Ok(())
-}
+    // 1. Fetch the patch and its version history.
+    let patch_record = client
+        .get_patch(&patch_id)
+        .await
+        .with_context(|| format!("failed to fetch patch '{patch_id}'"))?;
+    let patch = &patch_record.patch;
 
-async fn merge_queue_with_writer(
-    client: &dyn MetisClientInterface,
-    repo: RepoName,
-    branch: String,
-    patch_id: Option<PatchId>,
-    output_format: ResolvedOutputFormat,
-    writer: &mut impl Write,
-) -> Result<()> {
-    let queue = match patch_id {
-        Some(patch_id) => client
-            .enqueue_merge_patch(&repo, &branch, &patch_id)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to enqueue patch '{patch_id}' onto merge queue for '{repo}:{branch}'"
-                )
-            })?,
-        None => client
-            .get_merge_queue(&repo, &branch)
-            .await
-            .with_context(|| format!("failed to fetch merge queue for '{repo}:{branch}'"))?,
+    // 2. Validate review status.
+    let versions_response = client
+        .list_patch_versions(&patch_id)
+        .await
+        .with_context(|| format!("failed to fetch version history for patch '{patch_id}'"))?;
+    let staleness_cutoff = find_last_commit_range_change_timestamp(&versions_response.versions);
+    if !has_approved_non_dismissed_review(&patch.reviews, staleness_cutoff) {
+        bail!(
+            "Error: patch {patch_id} cannot be merged because it does not have an approved review.\n\n\
+             The patch is pending code review. To proceed, end your session now. \
+             A reviewer agent will provide a review, and the merge can be retried afterward.\n\n\
+             Do NOT wait or poll for the review. End your session so the system can schedule the review."
+        );
+    }
+
+    // 3. Resolve the branch name from the patch.
+    let branch_name = patch
+        .branch_name
+        .as_deref()
+        .ok_or_else(|| anyhow!("patch '{patch_id}' does not have a branch name set"))?;
+
+    // 4. Resolve the base branch.
+    let base_branch = match &base_override {
+        Some(b) => b.clone(),
+        None => {
+            // Try to get the default branch from the repository config.
+            let repo_name = &patch.service_repo_name;
+            let repos_response = client
+                .list_repositories(&SearchRepositoriesQuery::new(None))
+                .await
+                .context("failed to list repositories")?;
+            let repo_config = repos_response
+                .repositories
+                .iter()
+                .find(|r| r.name == *repo_name);
+            match repo_config {
+                Some(r) => r
+                    .repository
+                    .default_branch
+                    .clone()
+                    .unwrap_or_else(|| "main".to_string()),
+                None => "main".to_string(),
+            }
+        }
     };
 
-    match output_format {
-        ResolvedOutputFormat::Pretty => print_merge_queue_pretty(&queue, &repo, &branch, writer)?,
-        ResolvedOutputFormat::Jsonl => {
-            serde_json::to_writer(&mut *writer, &queue)?;
-            writeln!(writer)?;
-        }
+    // 5. Ensure we are in a git repo and perform the git operations.
+    let repo_root = git_repository_root()?;
+
+    // Fetch from origin to ensure we have the latest refs.
+    let github_token = client.get_github_token().await.ok();
+    git_fetch_remote(&repo_root, github_token.as_deref())?;
+
+    // Checkout the patch branch.
+    git_checkout_branch(&repo_root, branch_name)
+        .with_context(|| format!("failed to checkout patch branch '{branch_name}'"))?;
+
+    // 6. Rebase the patch branch onto origin/<base>.
+    let onto_ref = format!("origin/{base_branch}");
+    if let Err(err) = git_rebase_onto(&repo_root, &onto_ref) {
+        bail!(
+            "Error: failed to rebase patch {patch_id} onto {base_branch}.\n\n\
+             The patch branch \"{branch_name}\" has conflicts with \"{base_branch}\". To resolve:\n\
+             1. Rebase your changes onto {base_branch} locally: git rebase origin/{base_branch}\n\
+             2. Resolve any conflicts\n\
+             3. Update the patch: metis patches update {patch_id}\n\
+             4. Try merging again: metis patches merge {patch_id}\n\n\
+             Do NOT attempt to resolve conflicts in this session. End your session, rebase manually, and retry.\n\n\
+             Underlying error: {err}"
+        );
     }
 
-    Ok(())
-}
+    // 7. Push the rebased branch to the base branch on origin.
+    push_to_ref(
+        &repo_root,
+        branch_name,
+        &base_branch,
+        github_token.as_deref(),
+        false,
+    )
+    .with_context(|| {
+        format!("failed to push rebased branch '{branch_name}' to origin/{base_branch}")
+    })?;
 
-fn print_merge_queue_pretty(
-    queue: &MergeQueue,
-    repo: &RepoName,
-    branch: &str,
-    writer: &mut impl Write,
-) -> Result<()> {
-    writeln!(writer, "Merge queue for {repo}:{branch}")?;
-    if queue.patches.is_empty() {
-        writeln!(writer, "- <empty>")?;
-    } else {
-        for patch_id in &queue.patches {
-            writeln!(writer, "- {patch_id}")?;
-        }
-    }
+    // 8. Update the patch status to Merged.
+    let mut merged_patch = patch.clone();
+    merged_patch.status = PatchStatus::Merged;
+    client
+        .update_patch(&patch_id, &UpsertPatchRequest::new(merged_patch))
+        .await
+        .with_context(|| format!("failed to update patch '{patch_id}' status to Merged"))?;
+
+    println!("Patch '{patch_id}' merged successfully onto '{base_branch}'.");
     Ok(())
 }
 
@@ -885,10 +923,9 @@ mod tests {
     use httpmock::{prelude::*, Mock};
     use metis_common::{
         jobs::{BundleSpec, JobVersionRecord, Task},
-        merge_queues::{EnqueueMergePatchRequest, MergeQueue},
         patches::{
-            CommitRange, CreatePatchAssetResponse, GitOid, ListPatchesResponse, Patch,
-            PatchVersionRecord, Review, UpsertPatchResponse,
+            CommitRange, CreatePatchAssetResponse, GitOid, ListPatchVersionsResponse,
+            ListPatchesResponse, Patch, PatchVersionRecord, Review, UpsertPatchResponse,
         },
         task_status::Status,
         users::Username,
@@ -1671,69 +1708,155 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn merge_queue_fetches_queue_and_writes_json() -> Result<()> {
+    async fn merge_patch_rejects_without_approved_review() -> Result<()> {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let repo = sample_repo_name();
-        let branch = "main".to_string();
-        let queued_patch = patch_id("p-queue-001");
-        let merge_queue = MergeQueue::new(vec![queued_patch.clone()]);
-        let mock = server.mock(|when, then| {
+        let merge_patch_id = patch_id("p-merge-no-review");
+        let patch_record = PatchVersionRecord::new(
+            merge_patch_id.clone(),
+            1,
+            Utc::now(),
+            Patch::new(
+                "test patch".to_string(),
+                "description".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                Username::from("test-creator"),
+                vec![],
+                sample_repo_name(),
+                None,
+                false,
+                Some("feature-branch".to_string()),
+                None,
+                Some("main".to_string()),
+            ),
+            None,
+        );
+        let versions_response = ListPatchVersionsResponse::new(vec![patch_record.clone()]);
+
+        let get_mock = mock_get_patch(&server, patch_record);
+        let versions_mock = server.mock(|when, then| {
             when.method(GET)
-                .path("/v1/merge-queues/dourolabs/example/main/patches");
-            then.status(200).json_body_obj(&merge_queue);
+                .path(format!("/v1/patches/{}/versions", merge_patch_id.as_ref()));
+            then.status(200).json_body_obj(&versions_response);
         });
 
-        let mut output = Vec::new();
-        merge_queue_with_writer(
-            &client,
-            repo.clone(),
-            branch.clone(),
-            None,
-            ResolvedOutputFormat::Jsonl,
-            &mut output,
-        )
-        .await?;
+        let result = merge_patch(&client, merge_patch_id, None).await;
 
-        mock.assert();
-        assert_eq!(
-            String::from_utf8(output)?,
-            format!("{}\n", serde_json::to_string(&merge_queue)?)
+        get_mock.assert();
+        versions_mock.assert();
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("does not have an approved review"),
+            "expected review error, got: {error}"
+        );
+        assert!(
+            error.contains("End your session"),
+            "expected agent-friendly instruction, got: {error}"
         );
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn merge_queue_enqueues_patch_and_pretty_prints() -> Result<()> {
+    async fn merge_patch_rejects_with_stale_review() -> Result<()> {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let repo = sample_repo_name();
-        let branch = "feature".to_string();
-        let patch = patch_id("p-queue-002");
-        let merge_queue = MergeQueue::new(vec![patch.clone()]);
-        let enqueue_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/merge-queues/dourolabs/example/feature/patches")
-                .json_body_obj(&EnqueueMergePatchRequest::new(patch.clone()));
-            then.status(200).json_body_obj(&merge_queue);
+        let merge_patch_id = patch_id("p-merge-stale");
+        let now = Utc::now();
+
+        // Version 1: original commit range with an approval
+        let range_v1 = Some(CommitRange::new(
+            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+            GitOid::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
+        ));
+        // Version 2: updated commit range (review is now stale)
+        let range_v2 = Some(CommitRange::new(
+            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+            GitOid::from_str("cccccccccccccccccccccccccccccccccccccccc").unwrap(),
+        ));
+
+        let approval = Review::new(
+            "LGTM".to_string(),
+            true,
+            "reviewer".to_string(),
+            Some(now - chrono::Duration::hours(2)),
+        );
+
+        let patch_v2 = Patch::new(
+            "test patch".to_string(),
+            "description".to_string(),
+            sample_diff(),
+            PatchStatus::Open,
+            false,
+            None,
+            Username::from("test-creator"),
+            vec![approval],
+            sample_repo_name(),
+            None,
+            false,
+            Some("feature-branch".to_string()),
+            range_v2.clone(),
+            Some("main".to_string()),
+        );
+
+        let version1 = PatchVersionRecord::new(
+            merge_patch_id.clone(),
+            1,
+            now - chrono::Duration::hours(3),
+            Patch::new(
+                "test patch".to_string(),
+                "description".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                Username::from("test-creator"),
+                vec![],
+                sample_repo_name(),
+                None,
+                false,
+                Some("feature-branch".to_string()),
+                range_v1,
+                Some("main".to_string()),
+            ),
+            None,
+        );
+        let version2 = PatchVersionRecord::new(
+            merge_patch_id.clone(),
+            2,
+            now - chrono::Duration::hours(1),
+            patch_v2.clone(),
+            None,
+        );
+
+        let current_record = PatchVersionRecord::new(
+            merge_patch_id.clone(),
+            2,
+            now - chrono::Duration::hours(1),
+            patch_v2,
+            None,
+        );
+
+        let versions_response = ListPatchVersionsResponse::new(vec![version1, version2]);
+
+        let get_mock = mock_get_patch(&server, current_record);
+        let versions_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/patches/{}/versions", merge_patch_id.as_ref()));
+            then.status(200).json_body_obj(&versions_response);
         });
 
-        let mut output = Vec::new();
-        merge_queue_with_writer(
-            &client,
-            repo.clone(),
-            branch.clone(),
-            Some(patch.clone()),
-            ResolvedOutputFormat::Pretty,
-            &mut output,
-        )
-        .await?;
+        let result = merge_patch(&client, merge_patch_id, None).await;
 
-        enqueue_mock.assert();
-        assert_eq!(
-            String::from_utf8(output)?,
-            format!("Merge queue for {repo}:{branch}\n- {patch}\n")
+        get_mock.assert();
+        versions_mock.assert();
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("does not have an approved review"),
+            "expected stale review error, got: {error}"
         );
 
         Ok(())

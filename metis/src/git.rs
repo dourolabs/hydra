@@ -447,6 +447,155 @@ pub fn resolve_commit_range_from_merge_base(
     Ok((GitOid::new(merge_base), GitOid::new(head_oid)))
 }
 
+/// Fetch all refs from the "origin" remote.
+pub fn fetch_remote(repo_root: &Path, github_token: Option<&str>) -> Result<()> {
+    let repo = repo_for_path(repo_root)?;
+    let mut remote = repo
+        .find_remote("origin")
+        .context("failed to find 'origin' remote")?;
+    let mut fetch_opts = FetchOptions::new();
+    fetch_opts.remote_callbacks(remote_callbacks(github_token));
+    remote
+        .fetch(&[] as &[&str], Some(&mut fetch_opts), None)
+        .context("failed to fetch from origin")?;
+    Ok(())
+}
+
+/// Checkout an existing local or remote-tracking branch by name.
+///
+/// If the branch exists locally, checks it out. Otherwise, if a remote-tracking
+/// branch `origin/<branch>` exists, creates a local branch from it and checks out.
+pub fn checkout_branch(repo_root: &Path, branch: &str) -> Result<()> {
+    let repo = repo_for_path(repo_root)?;
+
+    // Try local branch first.
+    let local_exists = repo.find_branch(branch, BranchType::Local).is_ok();
+    if !local_exists {
+        // Create local branch from the remote-tracking branch.
+        let remote_ref = format!("refs/remotes/origin/{branch}");
+        let remote_obj = repo.revparse_single(&remote_ref).with_context(|| {
+            format!("branch '{branch}' not found locally or as origin/{branch}")
+        })?;
+        let remote_commit = remote_obj
+            .peel_to_commit()
+            .with_context(|| format!("failed to resolve origin/{branch} to a commit"))?;
+        repo.branch(branch, &remote_commit, false)
+            .with_context(|| {
+                format!("failed to create local branch '{branch}' from origin/{branch}")
+            })?;
+    }
+
+    repo.set_head(&format!("refs/heads/{branch}"))
+        .with_context(|| format!("failed to set HEAD to branch '{branch}'"))?;
+    let mut checkout = CheckoutBuilder::new();
+    checkout.force();
+    repo.checkout_head(Some(&mut checkout))
+        .with_context(|| format!("failed to checkout branch '{branch}'"))?;
+    Ok(())
+}
+
+/// Rebase the current branch onto a target reference (e.g. "origin/main").
+///
+/// Returns `Ok(())` on success. Returns an error if conflicts are encountered
+/// or the rebase cannot be completed.
+pub fn rebase_onto(repo_root: &Path, onto_ref: &str) -> Result<()> {
+    let repo = repo_for_path(repo_root)?;
+
+    let onto_annotated = repo
+        .revparse_single(onto_ref)
+        .and_then(|obj| repo.find_annotated_commit(obj.id()))
+        .with_context(|| format!("failed to resolve rebase target '{onto_ref}'"))?;
+
+    let head_annotated = {
+        let head = repo.head().context("failed to resolve HEAD for rebase")?;
+        let oid = head
+            .target()
+            .ok_or_else(|| anyhow!("HEAD does not point to a commit"))?;
+        repo.find_annotated_commit(oid)
+            .context("failed to find HEAD annotated commit")?
+    };
+
+    let mut rebase = repo
+        .rebase(Some(&head_annotated), None, Some(&onto_annotated), None)
+        .context("failed to initialize rebase")?;
+
+    let signature = repo
+        .signature()
+        .context("failed to resolve git signature for rebase")?;
+
+    while let Some(op) = rebase.next() {
+        let _op = op.context("rebase operation failed (possible conflict)")?;
+
+        let index = repo.index().context("failed to read index during rebase")?;
+        if index.has_conflicts() {
+            rebase.abort().ok();
+            bail!("rebase conflict encountered");
+        }
+
+        rebase
+            .commit(None, &signature, None)
+            .context("failed to commit rebase operation")?;
+    }
+
+    rebase
+        .finish(Some(&signature))
+        .context("failed to finish rebase")?;
+    Ok(())
+}
+
+/// Push a local branch to a different ref on the remote.
+///
+/// For example, `push_to_ref(root, "feature", "main", token, false)` pushes
+/// the local "feature" branch to `refs/heads/main` on origin.
+pub fn push_to_ref(
+    repo_root: &Path,
+    local_branch: &str,
+    remote_ref: &str,
+    github_token: Option<&str>,
+    force: bool,
+) -> Result<()> {
+    let repo = repo_for_path(repo_root)?;
+    let mut remote = repo
+        .find_remote("origin")
+        .context("failed to find 'origin' remote")?;
+    let callbacks = remote_callbacks(github_token);
+    let mut push_options = PushOptions::new();
+    push_options.remote_callbacks(callbacks);
+
+    let refspec = if force {
+        format!("+refs/heads/{local_branch}:refs/heads/{remote_ref}")
+    } else {
+        format!("refs/heads/{local_branch}:refs/heads/{remote_ref}")
+    };
+    remote
+        .push(&[refspec.as_str()], Some(&mut push_options))
+        .map_err(|err| {
+            if !force && err.code() == ErrorCode::NotFastForward {
+                anyhow!(
+                    "failed to push to origin/{remote_ref}: not a fast-forward. \
+                     The base branch may have been updated. Fetch and retry."
+                )
+            } else {
+                anyhow!(err).context(format!("failed to push to origin/{remote_ref}"))
+            }
+        })?;
+
+    Ok(())
+}
+
+/// Resolve the "origin" remote URL for the repository at `repo_root`.
+pub fn remote_url(repo_root: &Path) -> Result<String> {
+    let repo = repo_for_path(repo_root)?;
+    let remote = repo
+        .find_remote("origin")
+        .context("failed to find 'origin' remote")?;
+    let url = remote
+        .url()
+        .ok_or_else(|| anyhow!("origin remote has no URL"))?
+        .to_string();
+    Ok(url)
+}
+
 pub fn has_uncommitted_changes(repo_root: &Path) -> Result<bool> {
     let repo = repo_for_path(repo_root)?;
     let mut opts = StatusOptions::new();
