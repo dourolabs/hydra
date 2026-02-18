@@ -133,8 +133,6 @@ impl AppState {
                         })?;
 
                 patch.created_by = existing_patch.item.created_by;
-                // Preserve the original creator on updates.
-                patch.creator = existing_patch.item.creator.clone();
                 if patch.github.is_none() {
                     patch.github = existing_patch.item.github.clone();
                 }
@@ -582,59 +580,6 @@ mod tests {
         assert_eq!(
             stored.item.creator, creator_username,
             "patch.creator should be preserved as set by the caller"
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn upsert_patch_preserves_original_creator_on_update() -> anyhow::Result<()> {
-        let handles = test_state_handles();
-        let repo_name = RepoName::new("octo", "repo")?;
-
-        let original_creator = Username::from("original-author");
-        let patch = Patch::new(
-            "Original".to_string(),
-            "desc".to_string(),
-            "diff".to_string(),
-            PatchStatus::Open,
-            false,
-            None,
-            original_creator.clone(),
-            Vec::new(),
-            repo_name.clone(),
-            None,
-        );
-        let request = api::patches::UpsertPatchRequest::new(patch.into());
-        let (patch_id, _) = handles
-            .state
-            .upsert_patch(ActorRef::test(), None, request)
-            .await?;
-
-        // Update the patch with a different creator in the request — upsert_patch
-        // should preserve the original creator.
-        let update = Patch::new(
-            "Updated".to_string(),
-            "new desc".to_string(),
-            "diff2".to_string(),
-            PatchStatus::Open,
-            false,
-            None,
-            Username::from("different-user"),
-            Vec::new(),
-            repo_name,
-            None,
-        );
-        let request2 = api::patches::UpsertPatchRequest::new(update.into());
-        handles
-            .state
-            .upsert_patch(ActorRef::test(), Some(patch_id.clone()), request2)
-            .await?;
-
-        let stored = handles.store.as_ref().get_patch(&patch_id, false).await?;
-        assert_eq!(
-            stored.item.creator, original_creator,
-            "patch.creator should be preserved from the original creation"
         );
 
         Ok(())
