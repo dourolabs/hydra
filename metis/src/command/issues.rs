@@ -4522,7 +4522,7 @@ mod tests {
             &patch_versions,
         ));
 
-        let base_task = Task::new_with_status(
+        let base_task = Task::new(
             "run build".into(),
             BundleSpec::None,
             Some(main_issue_id.clone()),
@@ -4537,6 +4537,9 @@ mod tests {
             None,
             None,
             false,
+            None,
+            None,
+            None,
         );
         let mut updated_task = base_task.clone();
         updated_task.status = Status::Running;

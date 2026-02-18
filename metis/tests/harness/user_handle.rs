@@ -350,6 +350,7 @@ impl UserHandle {
                 rev: None,
             },
             HashMap::new(),
+            None,
         );
         let response = self
             .client
@@ -370,7 +371,7 @@ impl UserHandle {
         prompt: &str,
         issue_id: &IssueId,
     ) -> Result<TaskId> {
-        let mut request = CreateJobRequest::new(
+        let request = CreateJobRequest::new(
             prompt.to_string(),
             None,
             BundleSpec::ServiceRepository {
@@ -378,8 +379,8 @@ impl UserHandle {
                 rev: None,
             },
             HashMap::new(),
+            Some(issue_id.clone()),
         );
-        request.issue_id = Some(issue_id.clone());
         let response = self
             .client
             .create_job(&request)

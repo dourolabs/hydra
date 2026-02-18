@@ -130,6 +130,9 @@ impl AgentQueue {
             job_settings.cpu_limit.clone(),
             job_settings.memory_limit.clone(),
             job_settings.secrets.clone(),
+            Status::Created,
+            None,
+            None,
         )))
     }
 
@@ -514,6 +517,9 @@ mod tests {
             None,
             env_vars,
             None,
+            None,
+            None,
+            Status::Created,
             None,
             None,
         )

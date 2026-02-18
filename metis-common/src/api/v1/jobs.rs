@@ -58,45 +58,13 @@ impl Task {
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
         secrets: Option<Vec<String>>,
-        deleted: bool,
-    ) -> Self {
-        Self {
-            prompt,
-            context,
-            spawned_from,
-            creator,
-            image,
-            model,
-            env_vars,
-            cpu_limit,
-            memory_limit,
-            secrets,
-            status: Status::Created,
-            last_message: None,
-            error: None,
-            deleted,
-            creation_time: None,
-            start_time: None,
-            end_time: None,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_status(
-        prompt: String,
-        context: BundleSpec,
-        spawned_from: Option<IssueId>,
-        creator: Username,
-        image: Option<String>,
-        model: Option<String>,
-        env_vars: HashMap<String, String>,
-        cpu_limit: Option<String>,
-        memory_limit: Option<String>,
-        secrets: Option<Vec<String>>,
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
         deleted: bool,
+        creation_time: Option<DateTime<Utc>>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             prompt,
@@ -113,23 +81,10 @@ impl Task {
             last_message,
             error,
             deleted,
-            creation_time: None,
-            start_time: None,
-            end_time: None,
+            creation_time,
+            start_time,
+            end_time,
         }
-    }
-
-    /// Sets timing fields derived from the task version history.
-    pub fn with_timing(
-        mut self,
-        creation_time: Option<DateTime<Utc>>,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
-    ) -> Self {
-        self.creation_time = creation_time;
-        self.start_time = start_time;
-        self.end_time = end_time;
-        self
     }
 }
 
@@ -157,19 +112,15 @@ impl CreateJobRequest {
         image: Option<String>,
         context: BundleSpec,
         variables: HashMap<String, String>,
+        issue_id: Option<IssueId>,
     ) -> Self {
         Self {
             prompt,
             image,
             context,
             variables,
-            issue_id: None,
+            issue_id,
         }
-    }
-
-    pub fn with_issue_id(mut self, issue_id: Option<IssueId>) -> Self {
-        self.issue_id = issue_id;
-        self
     }
 }
 
@@ -489,7 +440,7 @@ mod tests {
     #[test]
     fn strip_large_fields_clears_prompt_and_last_message() {
         let long_prompt = "x".repeat(500);
-        let task = Task::new_with_status(
+        let task = Task::new(
             long_prompt,
             BundleSpec::None,
             None,
@@ -504,6 +455,9 @@ mod tests {
             Some("very large output".to_string()),
             None,
             false,
+            None,
+            None,
+            None,
         );
 
         let task_id = crate::TaskId::new();
@@ -522,7 +476,7 @@ mod tests {
     #[test]
     fn strip_large_fields_preserves_short_prompt() {
         let short_prompt = "short prompt".to_string();
-        let task = Task::new_with_status(
+        let task = Task::new(
             short_prompt.clone(),
             BundleSpec::None,
             None,
@@ -537,6 +491,9 @@ mod tests {
             None,
             None,
             false,
+            None,
+            None,
+            None,
         );
 
         let task_id = crate::TaskId::new();

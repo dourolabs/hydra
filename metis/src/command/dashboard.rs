@@ -4080,7 +4080,7 @@ mod tests {
             task_id(id),
             0,
             Utc::now(),
-            Task::new_with_status(
+            Task::new(
                 "0".into(),
                 BundleSpec::None,
                 None,
@@ -4095,6 +4095,9 @@ mod tests {
                 None,
                 error,
                 false,
+                None,
+                None,
+                None,
             ),
             None,
         )

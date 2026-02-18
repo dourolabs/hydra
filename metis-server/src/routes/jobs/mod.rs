@@ -86,12 +86,12 @@ pub async fn list_jobs(
     let mut records: Vec<v1::jobs::JobVersionRecord> = tasks
         .into_iter()
         .map(|(task_id, versioned_task)| {
-            let api_task: v1::jobs::Task = versioned_task.item.into();
-            let api_task = if let Some(log) = status_logs.get(&task_id) {
-                api_task.with_timing(log.creation_time(), log.start_time(), log.end_time())
-            } else {
-                api_task
-            };
+            let mut api_task: v1::jobs::Task = versioned_task.item.into();
+            if let Some(log) = status_logs.get(&task_id) {
+                api_task.creation_time = log.creation_time();
+                api_task.start_time = log.start_time();
+                api_task.end_time = log.end_time();
+            }
             v1::jobs::JobVersionRecord::new(
                 task_id,
                 versioned_task.version,
@@ -147,12 +147,12 @@ pub async fn get_job(
     })?;
 
     let status_log = crate::store::task_status_log_from_versions(&versions);
-    let api_task: v1::jobs::Task = latest.item.clone().into();
-    let api_task = if let Some(log) = &status_log {
-        api_task.with_timing(log.creation_time(), log.start_time(), log.end_time())
-    } else {
-        api_task
-    };
+    let mut api_task: v1::jobs::Task = latest.item.clone().into();
+    if let Some(log) = &status_log {
+        api_task.creation_time = log.creation_time();
+        api_task.start_time = log.start_time();
+        api_task.end_time = log.end_time();
+    }
     let record = v1::jobs::JobVersionRecord::new(
         job_id.clone(),
         latest.version,

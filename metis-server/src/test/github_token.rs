@@ -3,6 +3,7 @@ use crate::{
         actors::{Actor, ActorRef},
         issues::{Issue, IssueStatus, IssueType},
         jobs::{BundleSpec, Task},
+        task_status::Status,
         users::{User, Username},
     },
     test_utils::{
@@ -113,6 +114,9 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         None,
         HashMap::new(),
         None,
+        None,
+        None,
+        Status::Created,
         None,
         None,
     );
@@ -232,6 +236,9 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Status::Created,
+        None,
+        None,
     );
     let (task_id, _) = handles
         .store
@@ -321,6 +328,9 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         None,
         HashMap::new(),
         None,
+        None,
+        None,
+        Status::Created,
         None,
         None,
     );

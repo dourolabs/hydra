@@ -2618,6 +2618,9 @@ mod tests {
             None,
             None,
             None,
+            Status::Created,
+            None,
+            None,
         )
     }
 
@@ -2634,6 +2637,9 @@ mod tests {
             None,
             None,
             None,
+            Status::Created,
+            None,
+            None,
         )
     }
 
@@ -2647,7 +2653,7 @@ mod tests {
 
     /// Task with every optional field set so serialization round-trip can assert full equality.
     fn sample_task_all_fields() -> Task {
-        let mut task = Task::new(
+        Task::new(
             "full prompt".to_string(),
             BundleSpec::None,
             None,
@@ -2658,9 +2664,10 @@ mod tests {
             Some("1000m".to_string()),
             Some("512Mi".to_string()),
             Some(vec!["secret-a".to_string(), "secret-b".to_string()]),
-        );
-        task.last_message = Some("last message".to_string());
-        task
+            Status::Created,
+            Some("last message".to_string()),
+            None,
+        )
     }
 
     /// Patch with every optional field set so serialization round-trip can assert full equality.

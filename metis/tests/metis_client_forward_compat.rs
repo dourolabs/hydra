@@ -408,6 +408,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         None,
         BundleSpec::None,
         HashMap::new(),
+        None,
     );
     let created_job = client.create_job(&create_job_request).await?;
     assert_eq!(created_job.job_id, job_id);

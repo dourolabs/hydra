@@ -677,6 +677,9 @@ fn make_dummy_task() -> crate::store::Task {
         None,
         None,
         None,
+        crate::store::Status::Created,
+        None,
+        None,
     )
 }
 

@@ -113,6 +113,9 @@ mod tests {
             None,
             None,
             None,
+            Status::Created,
+            None,
+            None,
         );
         let first_id = state
             .add_task(task.clone(), Utc::now(), ActorRef::test())

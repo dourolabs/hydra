@@ -3,6 +3,7 @@ use crate::{
     domain::{
         issues::{Issue, IssueDependency, IssueStatus, IssueType},
         jobs::{BundleSpec, Task},
+        task_status::Status,
         users::Username,
     },
     store::MemoryStore,
@@ -25,6 +26,9 @@ pub fn sample_task() -> Task {
         None,
         None,
         None,
+        Status::Created,
+        None,
+        None,
     )
 }
 
@@ -38,6 +42,9 @@ pub fn task_for_issue(issue_id: &IssueId) -> Task {
         None,
         HashMap::new(),
         None,
+        None,
+        None,
+        Status::Created,
         None,
         None,
     )
