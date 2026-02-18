@@ -1,27 +1,15 @@
 mod harness;
 
 use anyhow::{Context, Result};
-use harness::{test_job_settings, test_patch_workflow_config, IssueAssertions, PatchAssertions};
-use metis::client::MetisClientInterface;
+use harness::{
+    merge_patch, test_job_settings, test_patch_workflow_config, IssueAssertions, PatchAssertions,
+};
 use metis_common::{
     issues::{IssueStatus, IssueType},
-    patches::{PatchStatus, UpsertPatchRequest},
+    patches::PatchStatus,
     task_status::Status,
 };
 use std::str::FromStr;
-
-/// Helper: set a patch status to Merged via the API, triggering
-/// close_merge_request_issues automation.
-async fn merge_patch(
-    client: &dyn MetisClientInterface,
-    patch_id: &metis_common::PatchId,
-) -> Result<()> {
-    let mut patch = client.get_patch(patch_id).await?;
-    patch.patch.status = PatchStatus::Merged;
-    let request = UpsertPatchRequest::new(patch.patch);
-    client.update_patch(patch_id, &request).await?;
-    Ok(())
-}
 
 /// Scenario 1: Planning agent creates sub-issues for SWE (with patch workflow)
 ///
@@ -697,7 +685,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
             "Add search result ranking",
             IssueStatus::Open,
             Some("swe"),
-            Some(job_settings),
+            Some(test_job_settings(&repo)),
             vec![
                 metis_common::issues::IssueDependency::new(
                     metis_common::issues::IssueDependencyType::ChildOf,

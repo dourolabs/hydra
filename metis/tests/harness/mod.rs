@@ -6,14 +6,18 @@ pub mod user_handle;
 mod worker;
 
 use anyhow::{Context, Result};
-use metis::client::MetisClient;
+use metis::client::{MetisClient, MetisClientInterface};
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{
-    issues::JobSettings,
+    issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
+        UpsertIssueRequest,
+    },
     jobs::SearchJobsQuery,
+    patches::{PatchStatus, UpsertPatchRequest},
     repositories::Repository,
     users::{User, Username},
-    RepoName, TaskId,
+    IssueId, PatchId, RepoName, TaskId,
 };
 use metis_server::{
     app::{AppState, ServiceState},
@@ -85,6 +89,57 @@ pub fn test_job_settings_full(repo: &RepoName, image: &str, branch: &str) -> Job
     settings.image = Some(image.to_string());
     settings.branch = Some(branch.to_string());
     settings
+}
+
+/// Set a patch status to Merged via the API, triggering the
+/// `close_merge_request_issues` automation.
+pub async fn merge_patch(client: &dyn MetisClientInterface, patch_id: &PatchId) -> Result<()> {
+    let mut patch = client.get_patch(patch_id).await?;
+    patch.patch.status = PatchStatus::Merged;
+    let request = UpsertPatchRequest::new(patch.patch);
+    client.update_patch(patch_id, &request).await?;
+    Ok(())
+}
+
+/// Create a merge-request tracking issue for a patch in tests.
+///
+/// The issue is created as a child of `parent_issue_id`, inheriting the
+/// parent's creator and job settings.
+pub async fn create_merge_request_issue(
+    client: &dyn MetisClientInterface,
+    patch_id: PatchId,
+    assignee: String,
+    parent_issue_id: IssueId,
+    patch_title: String,
+) -> Result<IssueId> {
+    let parent_issue = client
+        .get_issue(&parent_issue_id, false)
+        .await
+        .context("failed to fetch parent issue")?;
+    let creator = parent_issue.issue.creator;
+    let job_settings = parent_issue.issue.job_settings.clone();
+    let description = format!("Review patch {}: {patch_title}", patch_id.as_ref());
+    let issue = Issue::new(
+        IssueType::MergeRequest,
+        description,
+        creator,
+        String::new(),
+        IssueStatus::Open,
+        Some(assignee),
+        Some(job_settings),
+        Vec::new(),
+        vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_issue_id,
+        )],
+        vec![patch_id],
+        false,
+    );
+    let response = client
+        .create_issue(&UpsertIssueRequest::new(issue, None))
+        .await
+        .context("failed to create merge-request issue")?;
+    Ok(response.issue_id)
 }
 
 /// Holds the GitHub mock server and the Octocrab client configured to use it.
