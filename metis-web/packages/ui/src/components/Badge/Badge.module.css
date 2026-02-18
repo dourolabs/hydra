@@ -1,0 +1,46 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  font-family: var(--font-family-mono);
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+.open {
+  background-color: rgba(74, 158, 255, 0.15);
+  color: var(--color-status-open);
+}
+
+.in_progress {
+  background-color: rgba(240, 192, 64, 0.15);
+  color: var(--color-status-in-progress);
+}
+
+.closed {
+  background-color: rgba(0, 204, 102, 0.15);
+  color: var(--color-status-closed);
+}
+
+.failed {
+  background-color: rgba(255, 68, 68, 0.15);
+  color: var(--color-status-failed);
+}
+
+.dropped {
+  background-color: rgba(139, 48, 48, 0.15);
+  color: var(--color-status-dropped);
+}
+
+.blocked {
+  background-color: rgba(204, 102, 255, 0.15);
+  color: var(--color-status-blocked);
+}
+
+.rejected {
+  background-color: rgba(255, 136, 0, 0.15);
+  color: var(--color-status-rejected);
+}

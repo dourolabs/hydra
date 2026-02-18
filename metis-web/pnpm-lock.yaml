@@ -40,6 +40,10 @@ importers:
         version: 2.1.9(jsdom@25.0.1)
 
   packages/ui:
+    dependencies:
+      ansi-to-html:
+        specifier: ^0.7.2
+        version: 0.7.2
     devDependencies:
       '@types/react':
         specifier: ^19.0.0
@@ -960,6 +964,11 @@ packages:
     resolution: {integrity: sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg==}
     engines: {node: '>=8'}
 
+  ansi-to-html@0.7.2:
+    resolution: {integrity: sha512-v6MqmEpNlxF+POuyhKkidusCHWWkaLcGRURzivcU3I9tv7k4JVhFcnukrM5Rlk2rUywdZuzYAZ+kbZqWCnfN3g==}
+    engines: {node: '>=8.0.0'}
+    hasBin: true
+
   argparse@1.0.10:
     resolution: {integrity: sha512-o5Roy6tNG4SL/FOkCAN6RzjiakZS25RLYFrcMttJqbdd8BWrnA+fGz57iN5Pb06pvBGvl5gQ0B48dJlslXvoTg==}
 
@@ -1099,6 +1108,9 @@ packages:
 
   electron-to-chromium@1.5.286:
     resolution: {integrity: sha512-9tfDXhJ4RKFNerfjdCcZfufu49vg620741MNs26a9+bhLThdB+plgMeou98CAaHu/WATj2iHOOHTp1hWtABj2A==}
+
+  entities@2.2.0:
+    resolution: {integrity: sha512-p92if5Nz619I0w+akJrLZH0MX0Pb5DX39XOwQTtXSdQQOaYH03S1uIQp4mhOZtAXrxq4ViO67YTiLBo2638o9A==}
 
   entities@6.0.1:
     resolution: {integrity: sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g==}
@@ -2774,6 +2786,10 @@ snapshots:
     dependencies:
       color-convert: 2.0.1
 
+  ansi-to-html@0.7.2:
+    dependencies:
+      entities: 2.2.0
+
   argparse@1.0.10:
     dependencies:
       sprintf-js: 1.0.3
@@ -2896,6 +2912,8 @@ snapshots:
       gopd: 1.2.0
 
   electron-to-chromium@1.5.286: {}
+
+  entities@2.2.0: {}
 
   entities@6.0.1: {}
 

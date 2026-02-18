@@ -8,6 +8,7 @@ export default defineConfig({
     react(),
     dts({
       include: ["src"],
+      exclude: ["src/demo"],
       outDir: "dist",
     }),
   ],
@@ -17,6 +18,7 @@ export default defineConfig({
       formats: ["es"],
       fileName: "index",
     },
+    cssCodeSplit: false,
     rollupOptions: {
       external: ["react", "react-dom", "react/jsx-runtime"],
     },
