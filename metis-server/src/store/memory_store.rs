@@ -1358,6 +1358,9 @@ mod tests {
             None,
             None,
             None,
+            Status::Created,
+            None,
+            None,
         )
     }
 

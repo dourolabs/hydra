@@ -49,8 +49,7 @@ pub async fn run(
         }
         None => None,
     };
-    let request =
-        CreateJobRequest::new(prompt, image, bundle_context, variables).with_issue_id(issue_id);
+    let request = CreateJobRequest::new(prompt, image, bundle_context, variables, issue_id);
     let response = client.create_job(&request).await?;
     let job_id = response.job_id;
 
@@ -274,7 +273,7 @@ mod tests {
             task_id(id),
             0,
             chrono::Utc::now(),
-            Task::new_with_status(
+            Task::new(
                 "0".to_string(),
                 BundleSpec::None,
                 None,
@@ -289,6 +288,9 @@ mod tests {
                 None,
                 error,
                 false,
+                None,
+                None,
+                None,
             ),
             None,
         )
@@ -320,6 +322,7 @@ mod tests {
             None,
             BundleSpec::None,
             variables.clone(),
+            None,
         );
         let create_mock = server.mock(|when, then| {
             when.method(POST)
@@ -385,6 +388,7 @@ mod tests {
                 rev: Some("feature".into()),
             },
             variables,
+            None,
         );
         let job_id = task_id("t-job-service");
         let create_mock = server.mock(|when, then| {
@@ -429,6 +433,7 @@ mod tests {
                 rev: Some("main".into()),
             },
             variables,
+            None,
         );
         let job_id = task_id("t-job-service-default-rev");
         let create_mock = server.mock(|when, then| {
@@ -473,6 +478,7 @@ mod tests {
                 rev: "main".into(),
             },
             variables,
+            None,
         );
         let job_id = task_id("t-job-git");
         let create_mock = server.mock(|when, then| {
@@ -517,6 +523,7 @@ mod tests {
                 rev: "main".into(),
             },
             variables,
+            None,
         );
         let job_id = task_id("t-job-git-default-rev");
         let create_mock = server.mock(|when, then| {
@@ -558,6 +565,7 @@ mod tests {
             Some("ghcr.io/example/metis:dev".to_string()),
             BundleSpec::None,
             variables,
+            None,
         );
         let job_id = task_id("t-job-image");
         let create_mock = server.mock(|when, then| {
@@ -600,6 +608,7 @@ mod tests {
                 ("PROMPT".to_string(), "variable prompt".to_string()),
                 ("FOO".to_string(), "bar".to_string()),
             ]),
+            None,
         );
         let job_id = task_id("t-job-with-vars");
         let create_mock = server.mock(|when, then| {

@@ -21,7 +21,7 @@ use reqwest::StatusCode;
 use std::collections::HashMap;
 
 fn sample_task(status: Status) -> Task {
-    let mut task = Task::new(
+    Task::new(
         "prompt".to_string(),
         BundleSpec::None,
         None,
@@ -32,9 +32,10 @@ fn sample_task(status: Status) -> Task {
         None,
         None,
         None,
-    );
-    task.status = status;
-    task
+        status,
+        None,
+        None,
+    )
 }
 
 #[tokio::test]

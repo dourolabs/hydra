@@ -51,6 +51,9 @@ impl Task {
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
         secrets: Option<Vec<String>>,
+        status: Status,
+        last_message: Option<String>,
+        error: Option<TaskError>,
     ) -> Self {
         Self {
             prompt,
@@ -63,9 +66,9 @@ impl Task {
             cpu_limit,
             memory_limit,
             secrets,
-            status: Status::Created,
-            last_message: None,
-            error: None,
+            status,
+            last_message,
+            error,
             deleted: false,
         }
     }
@@ -190,7 +193,7 @@ impl From<api::jobs::Task> for Task {
 
 impl From<Task> for api::jobs::Task {
     fn from(value: Task) -> Self {
-        api::jobs::Task::new_with_status(
+        api::jobs::Task::new(
             value.prompt,
             value.context.into(),
             value.spawned_from,
@@ -205,6 +208,9 @@ impl From<Task> for api::jobs::Task {
             value.last_message,
             value.error.map(Into::into),
             value.deleted,
+            None,
+            None,
+            None,
         )
     }
 }
@@ -212,6 +218,7 @@ impl From<Task> for api::jobs::Task {
 #[cfg(test)]
 mod tests {
     use super::{BundleSpec, Task};
+    use crate::domain::task_status::Status;
     use crate::domain::users::Username;
     use metis_common::RepoName;
     use metis_common::api::v1 as api;
@@ -246,6 +253,9 @@ mod tests {
             Some("400m".to_string()),
             Some("768Mi".to_string()),
             secrets.clone(),
+            Status::Created,
+            None,
+            None,
         );
 
         let api_task: api::jobs::Task = domain_task.clone().into();
@@ -268,6 +278,9 @@ mod tests {
             None,
             HashMap::new(),
             None,
+            None,
+            None,
+            Status::Created,
             None,
             None,
         );

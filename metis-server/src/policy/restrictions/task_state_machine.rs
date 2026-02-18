@@ -93,7 +93,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn make_task_with_status(status: Status) -> Task {
-        let mut task = Task::new(
+        Task::new(
             "test".to_string(),
             BundleSpec::None,
             None,
@@ -104,9 +104,10 @@ mod tests {
             None,
             None,
             None,
-        );
-        task.status = status;
-        task
+            status,
+            None,
+            None,
+        )
     }
 
     #[tokio::test]

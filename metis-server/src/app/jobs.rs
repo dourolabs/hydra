@@ -161,6 +161,9 @@ impl AppState {
             cpu_limit,
             memory_limit,
             None,
+            Status::Created,
+            None,
+            None,
         );
 
         self.resolve_task(&task).await?;

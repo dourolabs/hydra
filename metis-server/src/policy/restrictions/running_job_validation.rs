@@ -80,6 +80,7 @@ mod tests {
     use crate::domain::actors::ActorRef;
     use crate::domain::documents::Document;
     use crate::domain::jobs::{BundleSpec, Task};
+    use crate::domain::task_status::Status;
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, ReadOnlyStore, Store};
@@ -96,6 +97,9 @@ mod tests {
             None,
             HashMap::new(),
             None,
+            None,
+            None,
+            Status::Created,
             None,
             None,
         )

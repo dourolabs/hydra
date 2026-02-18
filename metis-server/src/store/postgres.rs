@@ -2054,6 +2054,9 @@ mod tests {
             None,
             None,
             None,
+            Status::Created,
+            None,
+            None,
         )
     }
 
@@ -2068,6 +2071,9 @@ mod tests {
             Some("model-v1".to_string()),
             Default::default(),
             None,
+            None,
+            None,
+            Status::Created,
             None,
             None,
         )

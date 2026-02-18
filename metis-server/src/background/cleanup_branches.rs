@@ -567,6 +567,9 @@ mod tests {
             None,
             None,
             None,
+            crate::store::Status::Created,
+            None,
+            None,
         );
         let (task_id, _) = handles
             .store
@@ -632,6 +635,9 @@ mod tests {
             None,
             std::collections::HashMap::new(),
             None,
+            None,
+            None,
+            crate::store::Status::Created,
             None,
             None,
         );

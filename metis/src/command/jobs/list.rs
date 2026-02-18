@@ -57,6 +57,7 @@ mod tests {
     use chrono::Utc;
     use httpmock::prelude::*;
     use metis_common::jobs::{BundleSpec, ListJobsResponse, Task};
+    use metis_common::task_status::Status;
     use metis_common::users::Username;
     use std::collections::HashMap;
 
@@ -85,7 +86,13 @@ mod tests {
                 None,
                 None,
                 None,
+                Status::Created,
+                None,
+                None,
                 false,
+                None,
+                None,
+                None,
             ),
             None,
         )

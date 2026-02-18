@@ -138,6 +138,9 @@ mod tests {
             None,
             None,
             None,
+            Status::Created,
+            None,
+            None,
         );
         let (task_id, _) = handles
             .store
@@ -216,6 +219,9 @@ mod tests {
             None,
             HashMap::new(),
             None,
+            None,
+            None,
+            Status::Created,
             None,
             None,
         );
