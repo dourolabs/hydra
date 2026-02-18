@@ -442,7 +442,12 @@ async fn fetch_patches(
 ) -> Result<Vec<PatchVersionRecord>> {
     let include_deleted_opt = if include_deleted { Some(true) } else { None };
     let response = client
-        .list_patches(&SearchPatchesQuery::new(query, include_deleted_opt))
+        .list_patches(&SearchPatchesQuery::new(
+            query,
+            include_deleted_opt,
+            vec![],
+            None,
+        ))
         .await
         .context("failed to search for patches")?;
     Ok(response.patches)

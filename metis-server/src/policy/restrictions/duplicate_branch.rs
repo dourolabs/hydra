@@ -34,9 +34,12 @@ impl Restriction for DuplicateBranchRestriction {
             return Ok(());
         };
 
-        let query = SearchPatchesQuery::new(None, None)
-            .with_status(vec![ApiPatchStatus::Open, ApiPatchStatus::ChangesRequested])
-            .with_branch_name(branch_name.clone());
+        let query = SearchPatchesQuery::new(
+            None,
+            None,
+            vec![ApiPatchStatus::Open, ApiPatchStatus::ChangesRequested],
+            Some(branch_name.clone()),
+        );
 
         let existing = ctx
             .store

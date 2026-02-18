@@ -21,16 +21,7 @@ pub struct AgentRecord {
 }
 
 impl AgentRecord {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self::with_details(
-            name,
-            String::new(),
-            default_max_tries(),
-            default_max_simultaneous(),
-        )
-    }
-
-    pub fn with_details(
+    pub fn new(
         name: impl Into<String>,
         prompt: impl Into<String>,
         max_tries: u32,
@@ -57,19 +48,18 @@ pub struct UpsertAgentRequest {
 }
 
 impl UpsertAgentRequest {
-    pub fn new(name: impl Into<String>, prompt: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        prompt: impl Into<String>,
+        max_tries: u32,
+        max_simultaneous: u32,
+    ) -> Self {
         Self {
             name: name.into(),
             prompt: prompt.into(),
-            max_tries: default_max_tries(),
-            max_simultaneous: default_max_simultaneous(),
+            max_tries,
+            max_simultaneous,
         }
-    }
-
-    pub fn with_limits(mut self, max_tries: u32, max_simultaneous: u32) -> Self {
-        self.max_tries = max_tries;
-        self.max_simultaneous = max_simultaneous;
-        self
     }
 }
 

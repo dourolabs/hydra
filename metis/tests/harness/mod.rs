@@ -645,6 +645,7 @@ impl TestHarnessBuilder {
             1,
             default_token.clone(),
             "gh-refresh-default".to_string(),
+            false,
         );
         store
             .add_user(default_user.into(), &ActorRef::test())
@@ -664,6 +665,7 @@ impl TestHarnessBuilder {
                 (i + 2) as u64, // github_id, avoid collision with default (1)
                 token.clone(),
                 format!("gh-refresh-{user_name}"),
+                false,
             );
             store.add_user(user.into(), &ActorRef::test()).await?;
             user_credentials.push((user_name.clone(), token));

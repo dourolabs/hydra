@@ -362,22 +362,18 @@ pub struct SearchPatchesQuery {
 }
 
 impl SearchPatchesQuery {
-    pub fn new(q: Option<String>, include_deleted: Option<bool>) -> Self {
+    pub fn new(
+        q: Option<String>,
+        include_deleted: Option<bool>,
+        status: Vec<PatchStatus>,
+        branch_name: Option<String>,
+    ) -> Self {
         Self {
             q,
             include_deleted,
-            ..Default::default()
+            status,
+            branch_name,
         }
-    }
-
-    pub fn with_status(mut self, status: Vec<PatchStatus>) -> Self {
-        self.status = status;
-        self
-    }
-
-    pub fn with_branch_name(mut self, branch_name: String) -> Self {
-        self.branch_name = Some(branch_name);
-        self
     }
 }
 

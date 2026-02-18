@@ -50,8 +50,12 @@ fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
 }
 
 fn agent_request(name: &str) -> UpsertAgentRequest {
-    UpsertAgentRequest::new(name, format!("prompt for {name}"))
-        .with_limits(DEFAULT_AGENT_MAX_TRIES, DEFAULT_AGENT_MAX_SIMULTANEOUS)
+    UpsertAgentRequest::new(
+        name,
+        format!("prompt for {name}"),
+        DEFAULT_AGENT_MAX_TRIES,
+        DEFAULT_AGENT_MAX_SIMULTANEOUS,
+    )
 }
 
 #[tokio::test]
@@ -127,7 +131,7 @@ async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(state.state.clone(), state.store.clone()).await?;
     let client = test_client();
 
-    let request = UpsertAgentRequest::new("alpha", "updated prompt").with_limits(7, 11);
+    let request = UpsertAgentRequest::new("alpha", "updated prompt", 7, 11);
     let response = client
         .put(format!("{}/v1/agents/alpha", server.base_url()))
         .json(&request)

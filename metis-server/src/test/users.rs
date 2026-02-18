@@ -16,6 +16,7 @@ async fn get_user_returns_user_summary() -> anyhow::Result<()> {
         12345,
         "gh-token".to_string(),
         "gh-refresh".to_string(),
+        false,
     );
     handles.store.add_user(user, &ActorRef::test()).await?;
 
@@ -60,6 +61,7 @@ async fn get_user_does_not_expose_tokens() -> anyhow::Result<()> {
         99999,
         "secret-gh-token".to_string(),
         "secret-gh-refresh".to_string(),
+        false,
     );
     handles.store.add_user(user, &ActorRef::test()).await?;
 

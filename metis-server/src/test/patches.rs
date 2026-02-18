@@ -248,7 +248,12 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
 
     let patch_results: ListPatchesResponse = client
         .get(format!("{}/v1/patches", server.base_url()))
-        .query(&SearchPatchesQuery::new(Some("login".to_string()), None))
+        .query(&SearchPatchesQuery::new(
+            Some("login".to_string()),
+            None,
+            vec![],
+            None,
+        ))
         .send()
         .await?
         .json()
@@ -292,6 +297,7 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
                 42,
                 "gh-token".to_string(),
                 "gh-refresh".to_string(),
+                false,
             ),
             &ActorRef::test(),
         )
@@ -378,6 +384,7 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
                 42,
                 "gh-token".to_string(),
                 "gh-refresh".to_string(),
+                false,
             ),
             &ActorRef::test(),
         )
@@ -490,6 +497,7 @@ async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Re
                 42,
                 "gh-token".to_string(),
                 "gh-refresh".to_string(),
+                false,
             ),
             &ActorRef::test(),
         )
@@ -574,6 +582,7 @@ async fn create_patch_asset_surfaces_github_bad_size() -> anyhow::Result<()> {
                 42,
                 "gh-token".to_string(),
                 "gh-refresh".to_string(),
+                false,
             ),
             &ActorRef::test(),
         )
@@ -799,7 +808,7 @@ async fn delete_patch_include_deleted_in_listing() -> anyhow::Result<()> {
     // List with include_deleted=true - verify present with deleted=true
     let list_with: ListPatchesResponse = client
         .get(format!("{}/v1/patches", server.base_url()))
-        .query(&SearchPatchesQuery::new(None, Some(true)))
+        .query(&SearchPatchesQuery::new(None, Some(true), vec![], None))
         .send()
         .await?
         .json()

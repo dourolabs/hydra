@@ -235,6 +235,7 @@ mod tests {
             42,
             "token-123".to_string(),
             "refresh-123".to_string(),
+            false,
         );
         handles
             .store
@@ -359,6 +360,7 @@ mod tests {
             42,
             "token-456".to_string(),
             "refresh-456".to_string(),
+            false,
         );
         handles
             .store

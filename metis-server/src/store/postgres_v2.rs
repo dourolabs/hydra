@@ -645,8 +645,8 @@ impl PostgresStoreV2 {
             row.github_user_id as u64,
             row.github_token.clone(),
             row.github_refresh_token.clone(),
+            row.deleted,
         )
-        .with_deleted(row.deleted)
     }
 
     async fn fetch_latest_users(
@@ -3368,8 +3368,12 @@ mod tests {
             .unwrap();
 
         // Search for the old title - should return NO results
-        let old_query =
-            SearchPatchesQuery::new(Some("original_unique_patch_title_abc123".to_string()), None);
+        let old_query = SearchPatchesQuery::new(
+            Some("original_unique_patch_title_abc123".to_string()),
+            None,
+            vec![],
+            None,
+        );
         let old_results = store.list_patches(&old_query).await.unwrap();
         assert!(
             old_results.is_empty(),
@@ -3378,8 +3382,12 @@ mod tests {
         );
 
         // Search for the new title - should return the patch
-        let new_query =
-            SearchPatchesQuery::new(Some("changed_unique_patch_title_xyz789".to_string()), None);
+        let new_query = SearchPatchesQuery::new(
+            Some("changed_unique_patch_title_xyz789".to_string()),
+            None,
+            vec![],
+            None,
+        );
         let new_results = store.list_patches(&new_query).await.unwrap();
         assert_eq!(new_results.len(), 1);
         assert_eq!(new_results[0].0, patch_id);
