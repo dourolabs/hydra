@@ -41,9 +41,14 @@ fn sample_task(status: Status) -> Task {
 async fn documents_can_be_created_listed_and_retrieved() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
-    let document = Document::new("Design doc".to_string(), "initial body".to_string(), false)
-        .with_path("docs/design.md")
-        .unwrap();
+    let document = Document::new(
+        "Design doc".to_string(),
+        "initial body".to_string(),
+        Some("docs/design.md".to_string()),
+        None,
+        false,
+    )
+    .unwrap();
 
     let created: UpsertDocumentResponse = client
         .post(format!("{}/v1/documents", server.base_url()))
@@ -91,11 +96,16 @@ async fn document_versions_endpoints_return_history() -> anyhow::Result<()> {
 
     let created: UpsertDocumentResponse = client
         .post(format!("{base}/v1/documents"))
-        .json(&UpsertDocumentRequest::new(Document::new(
-            "Doc v1".to_string(),
-            "body v1".to_string(),
-            false,
-        )))
+        .json(&UpsertDocumentRequest::new(
+            Document::new(
+                "Doc v1".to_string(),
+                "body v1".to_string(),
+                None,
+                None,
+                false,
+            )
+            .unwrap(),
+        ))
         .send()
         .await?
         .json()
@@ -103,11 +113,16 @@ async fn document_versions_endpoints_return_history() -> anyhow::Result<()> {
 
     let _updated: UpsertDocumentResponse = client
         .put(format!("{base}/v1/documents/{}", created.document_id))
-        .json(&UpsertDocumentRequest::new(Document::new(
-            "Doc v2".to_string(),
-            "body v2".to_string(),
-            false,
-        )))
+        .json(&UpsertDocumentRequest::new(
+            Document::new(
+                "Doc v2".to_string(),
+                "body v2".to_string(),
+                None,
+                None,
+                false,
+            )
+            .unwrap(),
+        ))
         .send()
         .await?
         .json()
@@ -150,8 +165,14 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     let response = client
         .post(format!("{}/v1/documents", server.base_url()))
         .json(&UpsertDocumentRequest::new(
-            Document::new("Doc".to_string(), "body".to_string(), false)
-                .with_created_by(missing_job.clone()),
+            Document::new(
+                "Doc".to_string(),
+                "body".to_string(),
+                None,
+                Some(missing_job.clone()),
+                false,
+            )
+            .unwrap(),
         ))
         .send()
         .await?;
@@ -169,8 +190,14 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     let response = client
         .post(format!("{}/v1/documents", server.base_url()))
         .json(&UpsertDocumentRequest::new(
-            Document::new("Doc".to_string(), "body".to_string(), false)
-                .with_created_by(non_running.clone()),
+            Document::new(
+                "Doc".to_string(),
+                "body".to_string(),
+                None,
+                Some(non_running.clone()),
+                false,
+            )
+            .unwrap(),
         ))
         .send()
         .await?;
@@ -192,8 +219,14 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     let response = client
         .post(format!("{}/v1/documents", server.base_url()))
         .json(&UpsertDocumentRequest::new(
-            Document::new("Doc".to_string(), "body".to_string(), false)
-                .with_created_by(running_job.clone()),
+            Document::new(
+                "Doc".to_string(),
+                "body".to_string(),
+                None,
+                Some(running_job.clone()),
+                false,
+            )
+            .unwrap(),
         ))
         .send()
         .await?;
@@ -219,16 +252,30 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
     let base = server.base_url();
 
     let docs = [
-        Document::new("Runbook".to_string(), "operations".to_string(), false)
-            .with_path("docs/runbook.md")
-            .unwrap(),
-        Document::new("API Guide".to_string(), "api details".to_string(), false)
-            .with_path("docs/guide.md")
-            .unwrap(),
-        Document::new("Notes".to_string(), "private".to_string(), false)
-            .with_path("notes/internal.md")
-            .unwrap()
-            .with_created_by(running_task.clone()),
+        Document::new(
+            "Runbook".to_string(),
+            "operations".to_string(),
+            Some("docs/runbook.md".to_string()),
+            None,
+            false,
+        )
+        .unwrap(),
+        Document::new(
+            "API Guide".to_string(),
+            "api details".to_string(),
+            Some("docs/guide.md".to_string()),
+            None,
+            false,
+        )
+        .unwrap(),
+        Document::new(
+            "Notes".to_string(),
+            "private".to_string(),
+            Some("notes/internal.md".to_string()),
+            Some(running_task.clone()),
+            false,
+        )
+        .unwrap(),
     ];
 
     for doc in docs.iter() {
@@ -317,15 +364,30 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
     let base = server.base_url();
 
     let docs = [
-        Document::new("Exact Doc".to_string(), "exact match".to_string(), false)
-            .with_path("docs/guide.md")
-            .unwrap(),
-        Document::new("Prefix Doc".to_string(), "prefix match".to_string(), false)
-            .with_path("docs/guide.md.bak")
-            .unwrap(),
-        Document::new("Nested Doc".to_string(), "nested match".to_string(), false)
-            .with_path("docs/guide.md/extra")
-            .unwrap(),
+        Document::new(
+            "Exact Doc".to_string(),
+            "exact match".to_string(),
+            Some("docs/guide.md".to_string()),
+            None,
+            false,
+        )
+        .unwrap(),
+        Document::new(
+            "Prefix Doc".to_string(),
+            "prefix match".to_string(),
+            Some("docs/guide.md.bak".to_string()),
+            None,
+            false,
+        )
+        .unwrap(),
+        Document::new(
+            "Nested Doc".to_string(),
+            "nested match".to_string(),
+            Some("docs/guide.md/extra".to_string()),
+            None,
+            false,
+        )
+        .unwrap(),
     ];
 
     for doc in docs.iter() {
@@ -401,8 +463,11 @@ async fn delete_document_basic_operation() -> anyhow::Result<()> {
     let document = Document::new(
         "Doc to delete".to_string(),
         "document body".to_string(),
+        None,
+        None,
         false,
-    );
+    )
+    .unwrap();
 
     let created: UpsertDocumentResponse = client
         .post(format!("{base}/v1/documents"))
@@ -451,8 +516,11 @@ async fn delete_document_include_deleted_in_listing() -> anyhow::Result<()> {
     let document = Document::new(
         "Deleted doc".to_string(),
         "document body".to_string(),
+        None,
+        None,
         false,
-    );
+    )
+    .unwrap();
 
     let created: UpsertDocumentResponse = client
         .post(format!("{base}/v1/documents"))
@@ -519,8 +587,11 @@ async fn delete_document_get_deleted_by_id() -> anyhow::Result<()> {
     let document = Document::new(
         "Get deleted doc".to_string(),
         "document body".to_string(),
+        None,
+        None,
         false,
-    );
+    )
+    .unwrap();
 
     let created: UpsertDocumentResponse = client
         .post(format!("{base}/v1/documents"))
@@ -557,8 +628,11 @@ async fn delete_document_idempotency() -> anyhow::Result<()> {
     let document = Document::new(
         "Idempotency doc".to_string(),
         "document body".to_string(),
+        None,
+        None,
         false,
-    );
+    )
+    .unwrap();
 
     let created: UpsertDocumentResponse = client
         .post(format!("{base}/v1/documents"))
@@ -616,11 +690,16 @@ async fn get_document_version_negative_offset_returns_correct_version() -> anyho
     // Create document (v1)
     let created: UpsertDocumentResponse = client
         .post(format!("{base}/v1/documents"))
-        .json(&UpsertDocumentRequest::new(Document::new(
-            "Doc v1".to_string(),
-            "body v1".to_string(),
-            false,
-        )))
+        .json(&UpsertDocumentRequest::new(
+            Document::new(
+                "Doc v1".to_string(),
+                "body v1".to_string(),
+                None,
+                None,
+                false,
+            )
+            .unwrap(),
+        ))
         .send()
         .await?
         .json()
@@ -629,11 +708,16 @@ async fn get_document_version_negative_offset_returns_correct_version() -> anyho
     // Update document (v2)
     client
         .put(format!("{base}/v1/documents/{}", created.document_id))
-        .json(&UpsertDocumentRequest::new(Document::new(
-            "Doc v2".to_string(),
-            "body v2".to_string(),
-            false,
-        )))
+        .json(&UpsertDocumentRequest::new(
+            Document::new(
+                "Doc v2".to_string(),
+                "body v2".to_string(),
+                None,
+                None,
+                false,
+            )
+            .unwrap(),
+        ))
         .send()
         .await?
         .error_for_status()?;

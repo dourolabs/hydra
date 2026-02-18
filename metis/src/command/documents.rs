@@ -345,13 +345,13 @@ async fn create_document(
     };
 
     let body = args.body.read_required(true)?;
-    let mut document = DocumentPayload::new(args.title.clone(), body, false);
-    if let Some(path) = parsed_path {
-        document.path = Some(path);
-    }
-    if let Some(created_by) = &args.created_by {
-        document.created_by = Some(created_by.clone());
-    }
+    let document = DocumentPayload::new(
+        args.title.clone(),
+        body,
+        parsed_path.map(|p| p.to_string()),
+        args.created_by.clone(),
+        false,
+    )?;
 
     let response = client
         .create_document(&UpsertDocumentRequest::new(document))
@@ -811,8 +811,13 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
             if args.dry_run {
                 println!("Would create: {relative_path} (title: \"{title}\")");
             } else {
-                let document = DocumentPayload::new(title.clone(), content.clone(), false)
-                    .with_path(doc_path)?;
+                let document = DocumentPayload::new(
+                    title.clone(),
+                    content.clone(),
+                    Some(doc_path),
+                    None,
+                    false,
+                )?;
                 let response = client
                     .create_document(&UpsertDocumentRequest::new(document))
                     .await
@@ -944,10 +949,14 @@ mod tests {
     }
 
     fn sample_document_record(id: &DocumentId) -> DocumentVersionRecord {
-        let document = DocumentPayload::new("Runbook".to_string(), "# Steps".to_string(), false)
-            .with_path("docs/runbook.md")
-            .unwrap()
-            .with_created_by(TaskId::new());
+        let document = DocumentPayload::new(
+            "Runbook".to_string(),
+            "# Steps".to_string(),
+            Some("docs/runbook.md".to_string()),
+            Some(TaskId::new()),
+            false,
+        )
+        .unwrap();
         DocumentVersionRecord::new(id.clone(), 0, Utc::now(), document, None)
     }
 
@@ -1331,9 +1340,10 @@ mod tests {
         let document = DocumentPayload::new(
             "Deploy Guide".to_string(),
             "# Deploy\nStep 1: Run deploy".to_string(),
+            Some("guides/deploy.md".to_string()),
+            None,
             false,
         )
-        .with_path("guides/deploy.md")
         .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
         let response = ListDocumentsResponse::new(vec![record]);
@@ -1381,16 +1391,28 @@ mod tests {
             pathed_id.clone(),
             0,
             Utc::now(),
-            DocumentPayload::new("Pathed".to_string(), "body".to_string(), false)
-                .with_path("docs/pathed.md")
-                .unwrap(),
+            DocumentPayload::new(
+                "Pathed".to_string(),
+                "body".to_string(),
+                Some("docs/pathed.md".to_string()),
+                None,
+                false,
+            )
+            .unwrap(),
             None,
         );
         let unpathed = DocumentVersionRecord::new(
             unpathed_id,
             0,
             Utc::now(),
-            DocumentPayload::new("Unpathed".to_string(), "body".to_string(), false),
+            DocumentPayload::new(
+                "Unpathed".to_string(),
+                "body".to_string(),
+                None,
+                None,
+                false,
+            )
+            .unwrap(),
             None,
         );
         let response = ListDocumentsResponse::new(vec![pathed, unpathed]);
@@ -1423,9 +1445,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let doc_id = DocumentId::new();
         let body = "# Steps\nDo the thing";
-        let document = DocumentPayload::new("Guide".to_string(), body.to_string(), false)
-            .with_path("guides/steps.md")
-            .unwrap();
+        let document = DocumentPayload::new(
+            "Guide".to_string(),
+            body.to_string(),
+            Some("guides/steps.md".to_string()),
+            None,
+            false,
+        )
+        .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
         let response = ListDocumentsResponse::new(vec![record]);
 
@@ -1473,16 +1500,25 @@ mod tests {
     async fn sync_documents_clean_removes_stale_files() {
         let dir = tempfile::tempdir().unwrap();
         let doc_id = DocumentId::new();
-        let document = DocumentPayload::new("Keep".to_string(), "keep body".to_string(), false)
-            .with_path("docs/keep.md")
-            .unwrap();
+        let document = DocumentPayload::new(
+            "Keep".to_string(),
+            "keep body".to_string(),
+            Some("docs/keep.md".to_string()),
+            None,
+            false,
+        )
+        .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
 
         let removed_id = DocumentId::new();
-        let removed_doc =
-            DocumentPayload::new("Remove".to_string(), "remove body".to_string(), false)
-                .with_path("docs/remove.md")
-                .unwrap();
+        let removed_doc = DocumentPayload::new(
+            "Remove".to_string(),
+            "remove body".to_string(),
+            Some("docs/remove.md".to_string()),
+            None,
+            false,
+        )
+        .unwrap();
         let removed_record =
             DocumentVersionRecord::new(removed_id.clone(), 0, Utc::now(), removed_doc, None);
 
@@ -1538,9 +1574,14 @@ mod tests {
     async fn sync_documents_with_path_prefix_filter() {
         let dir = tempfile::tempdir().unwrap();
         let doc_id = DocumentId::new();
-        let document = DocumentPayload::new("Guide".to_string(), "body".to_string(), false)
-            .with_path("playbooks/guide.md")
-            .unwrap();
+        let document = DocumentPayload::new(
+            "Guide".to_string(),
+            "body".to_string(),
+            Some("playbooks/guide.md".to_string()),
+            None,
+            false,
+        )
+        .unwrap();
         let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None);
         let response = ListDocumentsResponse::new(vec![record]);
 
@@ -1574,9 +1615,14 @@ mod tests {
     async fn sync_documents_handles_leading_slash_in_path() {
         let dir = tempfile::tempdir().unwrap();
         let doc_id = DocumentId::new();
-        let document = DocumentPayload::new("Guide".to_string(), "body".to_string(), false)
-            .with_path("/playbooks/guide.md")
-            .unwrap();
+        let document = DocumentPayload::new(
+            "Guide".to_string(),
+            "body".to_string(),
+            Some("/playbooks/guide.md".to_string()),
+            None,
+            false,
+        )
+        .unwrap();
         let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None);
         let response = ListDocumentsResponse::new(vec![record]);
 
@@ -1672,9 +1718,14 @@ mod tests {
             doc_id.clone(),
             1,
             Utc::now(),
-            DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
-                .with_path("/docs/guide.md")
-                .unwrap(),
+            DocumentPayload::new(
+                "Guide".to_string(),
+                original_body.to_string(),
+                Some("/docs/guide.md".to_string()),
+                None,
+                false,
+            )
+            .unwrap(),
             None,
         );
         let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
@@ -1752,9 +1803,14 @@ mod tests {
             doc_id.clone(),
             1,
             Utc::now(),
-            DocumentPayload::new("Stable".to_string(), body.to_string(), false)
-                .with_path("/docs/stable.md")
-                .unwrap(),
+            DocumentPayload::new(
+                "Stable".to_string(),
+                body.to_string(),
+                Some("/docs/stable.md".to_string()),
+                None,
+                false,
+            )
+            .unwrap(),
             None,
         );
         let list_response = ListDocumentsResponse::new(vec![list_record]);
@@ -1877,9 +1933,14 @@ mod tests {
             doc_id.clone(),
             1,
             Utc::now(),
-            DocumentPayload::new("Guide".to_string(), original_body.to_string(), false)
-                .with_path("/docs/guide.md")
-                .unwrap(),
+            DocumentPayload::new(
+                "Guide".to_string(),
+                original_body.to_string(),
+                Some("/docs/guide.md".to_string()),
+                None,
+                false,
+            )
+            .unwrap(),
             None,
         );
         let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
@@ -1949,9 +2010,14 @@ mod tests {
             doc_id.clone(),
             2, // server version > manifest version (1), indicates server changed
             Utc::now(),
-            DocumentPayload::new("Guide".to_string(), server_body.to_string(), false)
-                .with_path("/docs/guide.md")
-                .unwrap(),
+            DocumentPayload::new(
+                "Guide".to_string(),
+                server_body.to_string(),
+                Some("/docs/guide.md".to_string()),
+                None,
+                false,
+            )
+            .unwrap(),
             None,
         );
         let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
@@ -2031,9 +2097,10 @@ mod tests {
             DocumentPayload::new(
                 "Guide".to_string(),
                 "# Server updated content".to_string(),
+                Some("/docs/guide.md".to_string()),
+                None,
                 false,
             )
-            .with_path("/docs/guide.md")
             .unwrap(),
             None,
         );
@@ -2091,9 +2158,14 @@ mod tests {
     async fn sync_documents_records_version_in_manifest() {
         let dir = tempfile::tempdir().unwrap();
         let doc_id = DocumentId::new();
-        let document = DocumentPayload::new("Guide".to_string(), "# Content".to_string(), false)
-            .with_path("docs/guide.md")
-            .unwrap();
+        let document = DocumentPayload::new(
+            "Guide".to_string(),
+            "# Content".to_string(),
+            Some("docs/guide.md".to_string()),
+            None,
+            false,
+        )
+        .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 5, Utc::now(), document, None);
         let response = ListDocumentsResponse::new(vec![record]);
 
@@ -2264,7 +2336,8 @@ mod tests {
                 doc_id_for_delete.clone(),
                 1,
                 Utc::now(),
-                DocumentPayload::new("Old".to_string(), body.to_string(), true),
+                DocumentPayload::new("Old".to_string(), body.to_string(), None, None, true)
+                    .unwrap(),
                 None,
             );
             then.status(200).json_body_obj(&record);
@@ -2390,7 +2463,14 @@ mod tests {
                 playbook_id_for_delete.clone(),
                 1,
                 Utc::now(),
-                DocumentPayload::new("Old".to_string(), "# Old playbook".to_string(), true),
+                DocumentPayload::new(
+                    "Old".to_string(),
+                    "# Old playbook".to_string(),
+                    None,
+                    None,
+                    true,
+                )
+                .unwrap(),
                 None,
             );
             then.status(200).json_body_obj(&record);

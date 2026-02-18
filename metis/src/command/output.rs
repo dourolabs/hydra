@@ -794,10 +794,14 @@ mod tests {
         for index in 0..25 {
             body_lines.push(format!("line {index:02} {}", "x".repeat(10)));
         }
-        let document = Document::new("Doc".to_string(), body_lines.join("\n"), false)
-            .with_path("docs/runbook.md")
-            .unwrap()
-            .with_created_by(TaskId::new());
+        let document = Document::new(
+            "Doc".to_string(),
+            body_lines.join("\n"),
+            Some("docs/runbook.md".to_string()),
+            Some(TaskId::new()),
+            false,
+        )
+        .unwrap();
         let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document, None);
         let mut output = Vec::new();
         render_document_records(ResolvedOutputFormat::Pretty, &[record], false, &mut output)
@@ -815,10 +819,14 @@ mod tests {
         for index in 0..25 {
             body_lines.push(format!("line {index:02} {}", "x".repeat(10)));
         }
-        let document = Document::new("Doc".to_string(), body_lines.join("\n"), false)
-            .with_path("docs/runbook.md")
-            .unwrap()
-            .with_created_by(TaskId::new());
+        let document = Document::new(
+            "Doc".to_string(),
+            body_lines.join("\n"),
+            Some("docs/runbook.md".to_string()),
+            Some(TaskId::new()),
+            false,
+        )
+        .unwrap();
         let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document, None);
         let mut output = Vec::new();
         render_document_records(ResolvedOutputFormat::Pretty, &[record], true, &mut output)

@@ -537,10 +537,14 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(patches.patches.len(), 1);
 
     // Documents
-    let document = Document::new("forward doc".to_string(), "# Runbook".to_string(), false)
-        .with_path("docs/runbook.md")
-        .unwrap()
-        .with_created_by(job_id.clone());
+    let document = Document::new(
+        "forward doc".to_string(),
+        "# Runbook".to_string(),
+        Some("docs/runbook.md".to_string()),
+        Some(job_id.clone()),
+        false,
+    )
+    .unwrap();
     let upsert_document = UpsertDocumentRequest::new(document);
 
     let created_document = client.create_document(&upsert_document).await?;
