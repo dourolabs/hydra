@@ -513,6 +513,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         PatchStatus::Open,
         false,
         None,
+        Username::from("test-creator"),
         vec![],
         repo_name.clone(),
         None,
@@ -707,6 +708,7 @@ fn forward_patch_json(
             "status": "stale",
             "is_automatic_backup": false,
             "created_by": job_id,
+            "creator": "test-creator",
             "reviews": [
                 { "contents": "looks ok", "is_approved": true, "author": "reviewer", "submitted_at": now, "confidence": "medium" }
             ],

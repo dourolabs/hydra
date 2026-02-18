@@ -208,8 +208,7 @@ pub struct Patch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<TaskId>,
     /// The resolved username of the human/agent that authored the patch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub creator: Option<Username>,
+    pub creator: Username,
     #[serde(default)]
     pub reviews: Vec<Review>,
     /// Name of the configured service repository this patch targets, when known.
@@ -242,6 +241,7 @@ impl Patch {
         status: PatchStatus,
         is_automatic_backup: bool,
         created_by: Option<TaskId>,
+        creator: Username,
         reviews: Vec<Review>,
         service_repo_name: RepoName,
         github: Option<GithubPr>,
@@ -254,7 +254,7 @@ impl Patch {
             status,
             is_automatic_backup,
             created_by,
-            creator: None,
+            creator,
             reviews,
             service_repo_name,
             github,
@@ -508,7 +508,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             created_by: None,
-            creator: None,
+            creator: Username::from("test-creator"),
             reviews: vec![],
             service_repo_name: "org/repo".parse().unwrap(),
             github: None,
@@ -539,6 +539,7 @@ mod tests {
             "diff": "",
             "status": "Open",
             "is_automatic_backup": false,
+            "creator": "test-creator",
             "reviews": [],
             "service_repo_name": "org/repo"
         }"#;

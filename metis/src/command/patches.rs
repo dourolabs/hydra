@@ -12,6 +12,8 @@ use metis_common::{
         Patch, PatchStatus, PatchVersionRecord, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
+    users::Username,
+    whoami::ActorIdentity,
     PatchId, RelativeVersionNumber, RepoName, TaskId,
 };
 use serde::Serialize;
@@ -746,6 +748,7 @@ pub async fn create_patch_artifact_from_repo(
         bail!("Patch diff must not be empty.");
     }
 
+    let creator = resolve_creator_username(client).await?;
     let mut patch_payload = Patch::new(
         title.clone(),
         description.clone(),
@@ -753,6 +756,7 @@ pub async fn create_patch_artifact_from_repo(
         PatchStatus::Open,
         is_automatic_backup,
         job_id.clone(),
+        creator,
         Vec::new(),
         service_repo_name.clone(),
         None,
@@ -787,6 +791,18 @@ pub async fn create_patch_artifact_from_repo(
         .context("failed to create patch")?;
 
     Ok(response)
+}
+
+async fn resolve_creator_username(client: &dyn MetisClientInterface) -> Result<Username> {
+    let response = client
+        .whoami()
+        .await
+        .context("failed to resolve authenticated actor")?;
+    match response.actor {
+        ActorIdentity::User { username } => Ok(username),
+        ActorIdentity::Task { creator, .. } => Ok(creator),
+        other => bail!("unexpected actor identity: {other:?}"),
+    }
 }
 
 fn git_repository_root() -> Result<PathBuf> {
@@ -872,12 +888,13 @@ mod tests {
             PatchVersionRecord, Review, UpsertPatchResponse,
         },
         users::Username,
+        whoami::{ActorIdentity, WhoAmIResponse},
         RepoName,
     };
     use reqwest::Client as HttpClient;
     use std::{fs, str::FromStr};
 
-    const TEST_METIS_TOKEN: &str = "test-metis-token";
+    const TEST_METIS_TOKEN: &str = "u-test-user:test-metis-token";
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -934,6 +951,16 @@ mod tests {
         server.mock(move |when, then| {
             when.method(GET).path("/v1/github/token");
             then.status(401);
+        })
+    }
+
+    fn mock_whoami(server: &MockServer) -> Mock {
+        let response = WhoAmIResponse::new(ActorIdentity::User {
+            username: Username::from("test-user"),
+        });
+        server.mock(move |when, then| {
+            when.method(GET).path("/v1/whoami");
+            then.status(200).json_body_obj(&response);
         })
     }
 
@@ -1125,6 +1152,7 @@ mod tests {
                 PatchStatus::Open,
                 false,
                 Some(job_id_clone.clone()),
+                Username::from("test-user"),
                 Vec::new(),
                 sample_repo_name(),
                 None,
@@ -1143,6 +1171,7 @@ mod tests {
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
         mock_get_github_token_failure(&server);
+        mock_whoami(&server);
         create_patch(
             &client,
             patch_title.clone(),
@@ -1206,6 +1235,7 @@ mod tests {
                 PatchStatus::Open,
                 false,
                 job_id_opt.clone(),
+                Username::from("test-user"),
                 Vec::new(),
                 sample_repo_name(),
                 None,
@@ -1224,6 +1254,7 @@ mod tests {
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
         mock_get_github_token_failure(&server);
+        mock_whoami(&server);
 
         create_patch(
             &client,
@@ -1286,6 +1317,7 @@ mod tests {
             PatchStatus::Open,
             true,
             Some(job_id.clone()),
+            Username::from("test-user"),
             Vec::new(),
             sample_repo_name(),
             None,
@@ -1300,6 +1332,7 @@ mod tests {
         let client = metis_client(&server);
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         mock_get_github_token_failure(&server);
+        mock_whoami(&server);
         let _ = create_patch_artifact_from_repo(
             &client,
             &repo_path,
@@ -1357,6 +1390,7 @@ mod tests {
                 PatchStatus::Open,
                 false,
                 Some(job_id.clone()),
+                Username::from("test-user"),
                 Vec::new(),
                 RepoName::from_str("dourolabs/api")?,
                 None,
@@ -1376,6 +1410,7 @@ mod tests {
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
         mock_get_github_token_failure(&server);
+        mock_whoami(&server);
 
         create_patch(
             &client,
@@ -1471,6 +1506,7 @@ mod tests {
                 PatchStatus::Open,
                 false,
                 None,
+                Username::from("test-creator"),
                 vec![existing_review.clone()],
                 sample_repo_name(),
                 None,
@@ -1532,6 +1568,7 @@ mod tests {
                 PatchStatus::Open,
                 false,
                 None,
+                Username::from("test-creator"),
                 vec![Review::new(
                     "looks ok".to_string(),
                     false,
@@ -1551,6 +1588,7 @@ mod tests {
             PatchStatus::Closed,
             false,
             None,
+            Username::from("test-creator"),
             vec![Review::new(
                 "looks ok".to_string(),
                 false,

@@ -1,10 +1,16 @@
 use super::users::Username;
+use crate::domain::actors::UNKNOWN_CREATOR;
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use metis_common::api::v1 as api;
 use metis_common::{RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
+
+/// Serde default for backward compatibility with v1 JSONB payloads that lack the creator field.
+fn default_patch_creator() -> Username {
+    Username::from(UNKNOWN_CREATOR)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PatchStatus {
@@ -200,8 +206,9 @@ pub struct Patch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<TaskId>,
     /// The resolved username of the human/agent that authored the patch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub creator: Option<Username>,
+    /// Uses a serde default for backward compatibility with v1 JSONB payloads that lack the field.
+    #[serde(default = "default_patch_creator")]
+    pub creator: Username,
     #[serde(default)]
     pub reviews: Vec<Review>,
     /// Name of the configured service repository this patch targets, when known.
@@ -234,6 +241,7 @@ impl Patch {
         status: PatchStatus,
         is_automatic_backup: bool,
         created_by: Option<TaskId>,
+        creator: Username,
         reviews: Vec<Review>,
         service_repo_name: RepoName,
         github: Option<GithubPr>,
@@ -245,7 +253,7 @@ impl Patch {
             status,
             is_automatic_backup,
             created_by,
-            creator: None,
+            creator,
             reviews,
             service_repo_name,
             github,
@@ -405,7 +413,7 @@ impl From<api::patches::Patch> for Patch {
             status: value.status.into(),
             is_automatic_backup: value.is_automatic_backup,
             created_by: value.created_by,
-            creator: value.creator.map(Into::into),
+            creator: value.creator.into(),
             reviews: value.reviews.into_iter().map(Into::into).collect(),
             service_repo_name: value.service_repo_name,
             github: value.github.map(Into::into),
@@ -426,12 +434,12 @@ impl From<Patch> for api::patches::Patch {
             value.status.into(),
             value.is_automatic_backup,
             value.created_by,
+            value.creator.into(),
             value.reviews.into_iter().map(Into::into).collect(),
             value.service_repo_name,
             value.github.map(Into::into),
             value.deleted,
         );
-        patch.creator = value.creator.map(Into::into);
         patch.branch_name = value.branch_name;
         patch.commit_range = value.commit_range.map(Into::into);
         patch.base_branch = value.base_branch;
@@ -557,7 +565,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             created_by: None,
-            creator: None,
+            creator: Username::from("test-creator"),
             reviews: vec![],
             service_repo_name: "org/repo".parse().unwrap(),
             github: None,
@@ -587,6 +595,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             vec![],
             "org/repo".parse().unwrap(),
             None,

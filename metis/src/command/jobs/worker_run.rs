@@ -769,10 +769,12 @@ mod tests {
     use git2::{build::CheckoutBuilder, Oid, Repository};
     use httpmock::prelude::*;
     use metis_common::patches::{Patch, PatchStatus, UpsertPatchRequest, UpsertPatchResponse};
+    use metis_common::users::Username;
+    use metis_common::whoami::{ActorIdentity, WhoAmIResponse};
     use reqwest::Client as HttpClient;
     use std::{collections::HashMap, path::Path, str::FromStr};
 
-    const TEST_METIS_TOKEN: &str = "test-metis-token";
+    const TEST_METIS_TOKEN: &str = "u-test-user:test-metis-token";
 
     fn init_git_repo(repo_path: &Path) -> Result<String> {
         Repository::init(repo_path).context("failed to init git repo for test")?;
@@ -908,6 +910,7 @@ mod tests {
             PatchStatus::Open,
             true,
             Some(job_id.clone()),
+            Username::from("test-user"),
             Vec::new(),
             repo_name.clone(),
             None,
@@ -933,6 +936,13 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET).path("/v1/github/token");
             then.status(401);
+        });
+        let whoami_response = WhoAmIResponse::new(ActorIdentity::User {
+            username: Username::from("test-user"),
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/whoami");
+            then.status(200).json_body_obj(&whoami_response);
         });
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;

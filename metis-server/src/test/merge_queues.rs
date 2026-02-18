@@ -3,6 +3,7 @@ use crate::{
     domain::{
         actors::ActorRef,
         patches::{Patch, PatchStatus},
+        users::Username,
     },
     test::{TestStateHandles, spawn_test_server_with_state, test_client, test_state_handles},
 };
@@ -74,6 +75,7 @@ async fn state_with_repo_and_patch(
         PatchStatus::Open,
         false,
         None,
+        Username::from("test-creator"),
         Vec::new(),
         repo.clone(),
         None,

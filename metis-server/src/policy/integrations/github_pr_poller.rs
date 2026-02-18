@@ -255,7 +255,6 @@ async fn sync_patch_from_github(
                 },
                 Some(patch_id.clone()),
                 api::patches::UpsertPatchRequest::new(updated_patch.into()),
-                None,
             )
             .await
             .with_context(|| format!("failed to persist GitHub sync for patch '{patch_id}'"))?;
@@ -618,6 +617,7 @@ mod tests {
     use serde_json::json;
     use std::{str::FromStr, sync::Arc};
 
+    use crate::domain::users::Username;
     use crate::test_utils::{FailingStore, test_state, test_state_handles, test_state_with_store};
 
     fn sample_diff() -> String {
@@ -645,6 +645,7 @@ mod tests {
                     PatchStatus::Open,
                     false,
                     None,
+                    Username::from("test-creator"),
                     Vec::new(),
                     RepoName::from_str("dourolabs/api")?,
                     Some(GithubPr::new(
@@ -809,6 +810,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             RepoName::from_str("dourolabs/api").unwrap(),
             Some(github.clone()),
@@ -877,6 +879,7 @@ mod tests {
             PatchStatus::ChangesRequested,
             false,
             None,
+            Username::from("test-creator"),
             existing_reviews.clone(),
             RepoName::from_str("dourolabs/api").unwrap(),
             Some(github.clone()),

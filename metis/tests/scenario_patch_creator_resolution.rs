@@ -44,7 +44,7 @@ async fn patch_creator_resolves_to_user_for_direct_patch() -> Result<()> {
     let patch = alice.get_patch(&patch_id).await?;
     assert_eq!(
         patch.patch.creator,
-        Some(Username::from("alice")),
+        Username::from("alice"),
         "$patch_creator should resolve to alice for a direct user patch"
     );
 
@@ -148,13 +148,9 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
     // Verify patch.creator is set to the original user who created the issue,
     // not the agent/task that executed the worker.
     let patch = user.get_patch(&result.patches_created[0]).await?;
-    assert!(
-        patch.patch.creator.is_some(),
-        "patch.creator should be set for agent-created patches"
-    );
     assert_eq!(
         patch.patch.creator,
-        Some(Username::from("default")),
+        Username::from("default"),
         "patch.creator should resolve to the issue creator (default user), not the agent"
     );
 

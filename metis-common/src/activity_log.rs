@@ -185,6 +185,7 @@ mod tests {
     use crate::api::v1::documents::Document;
     use crate::api::v1::issues::{Issue, IssueStatus, IssueType};
     use crate::api::v1::patches::{Patch, PatchStatus};
+    use crate::api::v1::users::Username;
     use crate::{DocumentId, IssueId, PatchId, RepoName, Versioned};
     use chrono::{TimeZone, Utc};
 
@@ -249,7 +250,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             created_by: None,
-            creator: None,
+            creator: Username::from("test-creator"),
             reviews: Vec::new(),
             service_repo_name: repo_name.clone(),
             github: None,

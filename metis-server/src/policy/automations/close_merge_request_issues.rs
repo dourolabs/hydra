@@ -208,6 +208,7 @@ mod tests {
             status,
             false,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             RepoName::new("test", "repo").unwrap(),
             None,
