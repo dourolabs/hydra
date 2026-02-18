@@ -6,13 +6,18 @@ pub mod user_handle;
 mod worker;
 
 use anyhow::{Context, Result};
-use metis::client::MetisClient;
+use metis::client::{MetisClient, MetisClientInterface};
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{
+    issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
+        UpsertIssueRequest,
+    },
     jobs::SearchJobsQuery,
+    patches::{PatchStatus, UpsertPatchRequest},
     repositories::Repository,
     users::{User, Username},
-    RepoName, TaskId,
+    IssueId, PatchId, RepoName, TaskId,
 };
 use metis_server::{
     app::{AppState, ServiceState},
@@ -26,7 +31,6 @@ use metis_server::{
     config::AgentQueueConfig,
     domain::actors::{Actor, ActorRef},
     policy::{
-        automations::patch_workflow::PatchWorkflowConfig,
         config::{PolicyConfig, PolicyEntry, PolicyList},
         integrations::github_pr_poller::GithubPollerWorker,
         registry::build_default_registry,
@@ -43,8 +47,100 @@ use tokio::sync::RwLock;
 
 pub use assertions::{wait_until, IssueAssertions, JobAssertions, PatchAssertions};
 pub use concurrency::{concurrent, test_all_orderings, Step};
+// Re-export patch workflow config types for test files that construct configs directly.
+pub use metis_server::policy::automations::patch_workflow::{
+    MergeRequestConfig, PatchWorkflowConfig, ReviewRequestConfig,
+};
 pub use user_handle::UserHandle;
 pub use worker::{CommandOutput, WorkerFailure, WorkerResult};
+
+/// Build a `PatchWorkflowConfig` with a single reviewer and an optional
+/// merge-request assignee.
+///
+/// This covers the common test pattern where a patch creates one
+/// `ReviewRequest` and one `MergeRequest` issue. For configs that use
+/// `$patch_creator` or per-repo overrides, construct the struct directly.
+pub fn test_patch_workflow_config(
+    reviewer: &str,
+    merge_assignee: Option<&str>,
+) -> PatchWorkflowConfig {
+    PatchWorkflowConfig {
+        review_requests: vec![ReviewRequestConfig {
+            assignee: reviewer.to_string(),
+        }],
+        merge_request: Some(MergeRequestConfig {
+            assignee: merge_assignee.map(|s| s.to_string()),
+        }),
+        repos: Default::default(),
+    }
+}
+
+/// Build a `JobSettings` with only `repo_name` set.
+pub fn test_job_settings(repo: &RepoName) -> JobSettings {
+    let mut settings = JobSettings::default();
+    settings.repo_name = Some(repo.clone());
+    settings
+}
+
+/// Build a `JobSettings` with `repo_name`, `image`, and `branch` set.
+pub fn test_job_settings_full(repo: &RepoName, image: &str, branch: &str) -> JobSettings {
+    let mut settings = JobSettings::default();
+    settings.repo_name = Some(repo.clone());
+    settings.image = Some(image.to_string());
+    settings.branch = Some(branch.to_string());
+    settings
+}
+
+/// Set a patch status to Merged via the API, triggering the
+/// `close_merge_request_issues` automation.
+pub async fn merge_patch(client: &dyn MetisClientInterface, patch_id: &PatchId) -> Result<()> {
+    let mut patch = client.get_patch(patch_id).await?;
+    patch.patch.status = PatchStatus::Merged;
+    let request = UpsertPatchRequest::new(patch.patch);
+    client.update_patch(patch_id, &request).await?;
+    Ok(())
+}
+
+/// Create a merge-request tracking issue for a patch in tests.
+///
+/// The issue is created as a child of `parent_issue_id`, inheriting the
+/// parent's creator and job settings.
+pub async fn create_merge_request_issue(
+    client: &dyn MetisClientInterface,
+    patch_id: PatchId,
+    assignee: String,
+    parent_issue_id: IssueId,
+    patch_title: String,
+) -> Result<IssueId> {
+    let parent_issue = client
+        .get_issue(&parent_issue_id, false)
+        .await
+        .context("failed to fetch parent issue")?;
+    let creator = parent_issue.issue.creator;
+    let job_settings = parent_issue.issue.job_settings.clone();
+    let description = format!("Review patch {}: {patch_title}", patch_id.as_ref());
+    let issue = Issue::new(
+        IssueType::MergeRequest,
+        description,
+        creator,
+        String::new(),
+        IssueStatus::Open,
+        Some(assignee),
+        Some(job_settings),
+        Vec::new(),
+        vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_issue_id,
+        )],
+        vec![patch_id],
+        false,
+    );
+    let response = client
+        .create_issue(&UpsertIssueRequest::new(issue, None))
+        .await
+        .context("failed to create merge-request issue")?;
+    Ok(response.issue_id)
+}
 
 /// Holds the GitHub mock server and the Octocrab client configured to use it.
 pub struct GitHubMock {

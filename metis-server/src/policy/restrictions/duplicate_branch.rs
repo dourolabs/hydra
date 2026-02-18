@@ -66,6 +66,7 @@ mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
     use crate::domain::patches::{Patch, PatchStatus};
+    use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, Store};
     use metis_common::RepoName;
@@ -81,7 +82,7 @@ mod tests {
             branch_name: branch_name.map(String::from),
             service_repo_name: RepoName::from_str("test/repo").unwrap(),
             created_by: None,
-            creator: None,
+            creator: Username::from("test-creator"),
             github: None,
             commit_range: None,
             base_branch: None,

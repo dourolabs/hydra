@@ -293,7 +293,7 @@ impl PostgresStoreV2 {
             .bind(patch.deleted)
             .bind(&patch.branch_name)
             .bind(&commit_range_json)
-            .bind(patch.creator.as_ref().map(|u| u.as_str()))
+            .bind(patch.creator.as_str())
             .bind(patch.base_branch.as_deref())
             .bind(actor)
             .execute(&self.pool)
@@ -337,7 +337,7 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        let creator = row.creator.as_deref().map(Username::from);
+        let creator = Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR));
 
         Ok(Patch {
             title: row.title.clone(),
@@ -2589,6 +2589,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
@@ -2673,6 +2674,7 @@ mod tests {
             PatchStatus::Open,
             true,
             created_by,
+            Username::from("test-creator"),
             vec![Review::new(
                 "looks good".to_string(),
                 true,
@@ -2690,7 +2692,7 @@ mod tests {
                 None,
             )),
         );
-        patch.creator = Some(Username::from("patch-creator"));
+        patch.creator = Username::from("patch-creator");
         patch.branch_name = Some("feature/xyz".to_string());
         patch.commit_range = Some(CommitRange::new(base_oid, head_oid));
         patch.base_branch = Some("main".to_string());
@@ -3340,6 +3342,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             vec![],
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
@@ -3354,6 +3357,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             vec![],
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,

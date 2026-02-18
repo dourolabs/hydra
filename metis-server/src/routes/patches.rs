@@ -72,8 +72,16 @@ pub async fn create_patch(
     Json(payload): Json<v1::patches::UpsertPatchRequest>,
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!("create_patch invoked");
+    let expected_creator: metis_common::api::v1::users::Username = actor.creator.clone().into();
+    if payload.patch.creator != expected_creator {
+        return Err(ApiError::bad_request(format!(
+            "patch creator '{}' does not match authenticated actor's creator '{}'",
+            payload.patch.creator.as_str(),
+            expected_creator.as_str(),
+        )));
+    }
     let (patch_id, version) = state
-        .upsert_patch(ActorRef::from(&actor), None, payload, Some(&actor.creator))
+        .upsert_patch(ActorRef::from(&actor), None, payload)
         .await
         .map_err(map_upsert_patch_error)?;
 
@@ -91,12 +99,7 @@ pub async fn update_patch(
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!(patch_id = %patch_id, "update_patch invoked");
     let (patch_id, version) = state
-        .upsert_patch(
-            ActorRef::from(&actor),
-            Some(patch_id),
-            payload,
-            Some(&actor.creator),
-        )
+        .upsert_patch(ActorRef::from(&actor), Some(patch_id), payload)
         .await
         .map_err(map_upsert_patch_error)?;
 

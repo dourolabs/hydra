@@ -1,16 +1,11 @@
 mod harness;
 
 use anyhow::{Context, Result};
-use harness::IssueAssertions;
+use harness::{merge_patch, test_patch_workflow_config, IssueAssertions};
 use metis_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
     patches::PatchStatus,
-    RepoName,
 };
-use metis_server::policy::automations::patch_workflow::{
-    MergeRequestConfig, PatchWorkflowConfig, ReviewRequestConfig,
-};
-use std::str::FromStr;
 
 /// Scenario 14: Full end-to-end pipeline.
 ///
@@ -20,24 +15,13 @@ use std::str::FromStr;
 /// → SWE closes → PM closes parent.
 #[tokio::test]
 async fn full_end_to_end_pipeline() -> Result<()> {
-    let _repo = RepoName::from_str("acme/app")?;
-    let pwc = PatchWorkflowConfig {
-        review_requests: vec![ReviewRequestConfig {
-            assignee: "reviewer".to_string(),
-        }],
-        merge_request: Some(MergeRequestConfig {
-            assignee: Some("merger".to_string()),
-        }),
-        repos: Default::default(),
-    };
-
     let harness = harness::TestHarness::builder()
         .with_repo("acme/app")
         .with_user("reviewer")
         .with_agent("pm", "Plan and delegate tasks")
         .with_agent("swe", "Implement changes")
         .with_assignment_agent("pm")
-        .with_patch_workflow_config(pwc)
+        .with_patch_workflow_config(test_patch_workflow_config("reviewer", Some("merger")))
         .build()
         .await?;
     let user = harness.default_user();
@@ -206,14 +190,7 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     // close_merge_request_issues automation which closes MergeRequest issues.
     {
         let client = harness.client()?;
-        let mut patch_record = client.get_patch(&patch_id).await?;
-        patch_record.patch.status = PatchStatus::Merged;
-        client
-            .update_patch(
-                &patch_id,
-                &metis_common::patches::UpsertPatchRequest::new(patch_record.patch),
-            )
-            .await?;
+        merge_patch(&client, &patch_id).await?;
     }
 
     // ── Step 8: Verify workflow completion ───────────────────────────
@@ -315,8 +292,8 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     // The patch was created by the SWE worker, whose task was spawned from
     // the SWE issue, which was created as a child of the parent issue.
     assert!(
-        patch_final.patch.creator.is_some(),
-        "patch should have a creator"
+        !patch_final.patch.creator.as_str().is_empty(),
+        "patch should have a non-empty creator"
     );
 
     Ok(())

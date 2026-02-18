@@ -469,7 +469,7 @@ pub async fn run(
         .context("failed to resolve authenticated actor")?;
     let username = match whoami.actor {
         ActorIdentity::User { username } => username,
-        ActorIdentity::Task { task_id } => {
+        ActorIdentity::Task { task_id, .. } => {
             bail!("dashboard requires a user token (got task {task_id})");
         }
         _ => bail!("dashboard requires a user token"),

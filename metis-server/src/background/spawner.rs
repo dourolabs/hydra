@@ -660,6 +660,7 @@ mod tests {
             PatchStatus::Open,
             false,
             None,
+            Username::from("test-creator"),
             Vec::new(),
             repo_name.clone(),
             None,

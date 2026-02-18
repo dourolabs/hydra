@@ -18,7 +18,10 @@ pub async fn whoami(
         ActorId::Username(username) => ActorIdentity::User {
             username: username.into(),
         },
-        ActorId::Task(task_id) => ActorIdentity::Task { task_id },
+        ActorId::Task(task_id) => ActorIdentity::Task {
+            task_id,
+            creator: actor.creator.clone(),
+        },
     };
 
     info!("whoami completed");

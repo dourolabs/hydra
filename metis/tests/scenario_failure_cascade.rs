@@ -9,8 +9,9 @@
 mod harness;
 
 use anyhow::Result;
+use harness::test_job_settings_full;
 use metis_common::{
-    issues::{IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings},
+    issues::{IssueDependency, IssueDependencyType, IssueStatus, IssueType},
     jobs::SearchJobsQuery,
     RepoName,
 };
@@ -31,10 +32,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
     let user = harness.default_user();
 
     // ── Step 1: Create parent issue with job settings ──────────────
-    let mut job_settings = JobSettings::default();
-    job_settings.repo_name = Some(repo.clone());
-    job_settings.image = Some("worker:latest".to_string());
-    job_settings.branch = Some("main".to_string());
+    let job_settings = test_job_settings_full(&repo, "worker:latest", "main");
 
     let parent_id = user
         .create_issue_with_settings(
