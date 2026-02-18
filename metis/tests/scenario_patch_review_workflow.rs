@@ -61,6 +61,9 @@ async fn backup_patches_do_not_trigger_patch_workflow() -> Result<()> {
     assert_eq!(result.patches_created.len(), 1);
     let normal_patch_id = result.patches_created[0].clone();
 
+    // Flush automations so patch_workflow creates workflow issues.
+    harness.flush_automations().await?;
+
     // Query all patches from the server (including backups).
     let client = harness.client()?;
     let all_patches = client.list_patches(&SearchPatchesQuery::default()).await?;
@@ -153,6 +156,9 @@ async fn closing_patch_drops_review_workflow_issues() -> Result<()> {
     assert_eq!(result.patches_created.len(), 1);
     let patch_id = result.patches_created[0].clone();
 
+    // Flush automations so patch_workflow creates workflow issues.
+    harness.flush_automations().await?;
+
     // Verify workflow issues exist.
     let all_issues = user.list_issues().await?;
     let review_request = all_issues
@@ -176,6 +182,10 @@ async fn closing_patch_drops_review_workflow_issues() -> Result<()> {
     client
         .update_patch(&patch_id, &UpsertPatchRequest::new(patch_record.patch))
         .await?;
+
+    // Flush automations so close_merge_request_issues and
+    // sync_review_request_issues process the patch closure.
+    harness.flush_automations().await?;
 
     // Verify the close_merge_request_issues automation ran.
     let review_request_updated = user.get_issue(&review_request.issue_id).await?;

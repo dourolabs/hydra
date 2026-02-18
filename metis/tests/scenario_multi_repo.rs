@@ -135,6 +135,9 @@ async fn multi_repo_workflow() -> Result<()> {
         "patch 1 should reference org/app"
     );
 
+    // Flush automations so patch_workflow creates workflow issues.
+    harness.flush_automations().await?;
+
     // The patch_workflow automation may have created child issues (e.g. MergeRequest)
     // on child 1 when the patch was created. Close them before closing child 1.
     let all_issues = user.list_issues().await?;

@@ -122,6 +122,10 @@ async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
         .await
         .context("sync_open_patches failed")?;
 
+    // Flush automations so close_merge_request_issues processes the
+    // ChangesRequested status change.
+    harness.flush_automations().await?;
+
     let updated_patch = client.get_patch(&patch_id).await?;
     assert_eq!(updated_patch.patch.status, PatchStatus::ChangesRequested);
     assert_eq!(

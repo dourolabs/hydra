@@ -93,6 +93,9 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     assert_eq!(swe_result.patches_created.len(), 1);
     let patch_id = swe_result.patches_created[0].clone();
 
+    // Flush automations so patch_workflow creates ReviewRequest + MergeRequest.
+    harness.flush_automations().await?;
+
     // ── Step 4: Verify patch_workflow automation fired ───────────────
     let all_issues = user.list_issues().await?;
     let swe_issue_record = user.get_issue(&swe_issue_id).await?;
@@ -164,26 +167,8 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     ])
     .await?;
 
-    // Wait for the sync_review_request_issues automation to process the review.
-    // The automation fires on the PatchUpdated event from the review CLI command.
-    {
-        let client = harness.client()?;
-        let rr_id = review_request.issue_id.clone();
-        harness::wait_until(
-            std::time::Duration::from_secs(5),
-            std::time::Duration::from_millis(50),
-            "ReviewRequest to be closed after review approval",
-            || {
-                let client = client.clone();
-                let rr_id = rr_id.clone();
-                async move {
-                    let issue = client.get_issue(&rr_id, false).await.unwrap();
-                    issue.issue.status == IssueStatus::Closed
-                }
-            },
-        )
-        .await?;
-    }
+    // Flush automations so sync_review_request_issues processes the review.
+    harness.flush_automations().await?;
 
     // ── Step 7: Merge the patch ─────────────────────────────────────
     // Simulate patch merge by updating status to Merged. This triggers the
@@ -193,29 +178,10 @@ async fn full_end_to_end_pipeline() -> Result<()> {
         merge_patch(&client, &patch_id).await?;
     }
 
+    // Flush automations so close_merge_request_issues processes the merge.
+    harness.flush_automations().await?;
+
     // ── Step 8: Verify workflow completion ───────────────────────────
-    // Wait for close_merge_request_issues automation to process the merge.
-    {
-        let client = harness.client()?;
-        let mr_id = merge_request.issue_id.clone();
-        harness::wait_until(
-            std::time::Duration::from_secs(5),
-            std::time::Duration::from_millis(50),
-            "MergeRequest to become terminal after patch merge",
-            || {
-                let client = client.clone();
-                let mr_id = mr_id.clone();
-                async move {
-                    let issue = client.get_issue(&mr_id, false).await.unwrap();
-                    matches!(
-                        issue.issue.status,
-                        IssueStatus::Closed | IssueStatus::Failed
-                    )
-                }
-            },
-        )
-        .await?;
-    }
 
     let review_request_final = user.get_issue(&review_request.issue_id).await?;
     assert!(

@@ -158,6 +158,9 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     );
     let patch1_id = &swe1_result.patches_created[0];
 
+    // Flush automations so patch_workflow creates ReviewRequest + MergeRequest.
+    harness.flush_automations().await?;
+
     // ── Step 6: Verify patch_workflow automation fired ────────────────
     // The patch_workflow should have created ReviewRequest + MergeRequest
     // as children of child 1.
@@ -220,8 +223,8 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
         ])
         .await?;
 
-    // sync_review_request_issues should close the ReviewRequest.
-    harness.step_github_sync().await?;
+    // Flush automations so sync_review_request_issues processes the review.
+    harness.flush_automations().await?;
 
     let review_request1_updated = user.get_issue(&review_request1.issue_id).await?;
     review_request1_updated.assert_status(IssueStatus::Closed);
@@ -230,6 +233,9 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     // Update patch status to Merged via API, triggering
     // close_merge_request_issues to close the MergeRequest.
     merge_patch(&client, patch1_id).await?;
+
+    // Flush automations so close_merge_request_issues processes the merge.
+    harness.flush_automations().await?;
 
     let patch1 = user.get_patch(patch1_id).await?;
     patch1.assert_status(PatchStatus::Merged);
@@ -282,6 +288,9 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     assert_eq!(swe2_result.patches_created.len(), 1);
     let patch2_id = &swe2_result.patches_created[0];
 
+    // Flush automations so patch_workflow creates workflow issues for child 2.
+    harness.flush_automations().await?;
+
     // Verify patch_workflow fired on child 2 as well.
     let all_issues = user.list_issues().await?;
     let child2_children: Vec<_> = all_issues
@@ -319,12 +328,16 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
         ])
         .await?;
 
-    harness.step_github_sync().await?;
+    // Flush automations so sync_review_request_issues processes the review.
+    harness.flush_automations().await?;
 
     let rr2 = user.get_issue(&review_request2.issue_id).await?;
     rr2.assert_status(IssueStatus::Closed);
 
     merge_patch(&client, patch2_id).await?;
+
+    // Flush automations so close_merge_request_issues processes the merge.
+    harness.flush_automations().await?;
 
     let patch2 = user.get_patch(patch2_id).await?;
     patch2.assert_status(PatchStatus::Merged);

@@ -40,6 +40,9 @@ async fn patch_creator_resolves_to_user_for_direct_patch() -> Result<()> {
         .create_patch("Direct user patch", "Created by alice directly", &repo)
         .await?;
 
+    // Flush automations so patch_workflow creates ReviewRequest + MergeRequest.
+    harness.flush_automations().await?;
+
     // Verify patch.creator resolves to alice's username.
     let patch = alice.get_patch(&patch_id).await?;
     assert_eq!(
@@ -144,6 +147,9 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
 
     assert_eq!(result.final_status, Status::Complete);
     assert_eq!(result.patches_created.len(), 1);
+
+    // Flush automations so patch_workflow creates ReviewRequest + MergeRequest.
+    harness.flush_automations().await?;
 
     // Verify patch.creator is set to the original user who created the issue,
     // not the agent/task that executed the worker.

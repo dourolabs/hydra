@@ -87,6 +87,9 @@ async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> 
         .await
         .context("sync_open_patches failed")?;
 
+    // Flush automations so close_merge_request_issues processes the status change.
+    harness.flush_automations().await?;
+
     let updated_patch = user.get_patch(&patch_id).await?;
     assert_eq!(updated_patch.patch.status, PatchStatus::ChangesRequested);
     assert!(updated_patch
@@ -187,6 +190,9 @@ async fn sync_open_patches_closes_merge_request_issue_on_merged_pr() -> Result<(
         .await
         .context("sync_open_patches failed")?;
 
+    // Flush automations so close_merge_request_issues processes the merge.
+    harness.flush_automations().await?;
+
     let updated_patch = user.get_patch(&patch_id).await?;
     assert_eq!(updated_patch.patch.status, PatchStatus::Merged);
 
@@ -275,6 +281,9 @@ async fn sync_open_patches_fails_merge_request_issue_on_closed_pr() -> Result<()
         .step_github_sync()
         .await
         .context("sync_open_patches failed")?;
+
+    // Flush automations so close_merge_request_issues processes the closure.
+    harness.flush_automations().await?;
 
     let updated_patch = user.get_patch(&patch_id).await?;
     assert_eq!(updated_patch.patch.status, PatchStatus::Closed);

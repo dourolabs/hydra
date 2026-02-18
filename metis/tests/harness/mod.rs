@@ -431,6 +431,72 @@ impl TestHarness {
         self.step_pending_jobs().await?;
         Ok(created)
     }
+
+    // ── Automation flushing ───────────────────────────────────────────
+
+    /// Synchronously drain all pending events from the event bus and run
+    /// automations for each one.
+    ///
+    /// This replaces `wait_until()` polling for automation side effects.
+    /// Call it after any operation that triggers automations (e.g.,
+    /// `run_worker()`, `step_github_sync()`, CLI review commands) and
+    /// before asserting on the resulting state.
+    ///
+    /// The method handles cascading: automations may generate new events
+    /// (e.g., `patch_workflow` creates issues, which triggers
+    /// `cascade_issue_status`), so it loops until the event bus is quiet.
+    pub async fn flush_automations(&self) -> Result<()> {
+        use metis_server::policy::context::AutomationContext;
+
+        let mut rx = self.state.subscribe();
+
+        // Yield once to let any in-flight background runner processing finish
+        // before we start draining.
+        tokio::task::yield_now().await;
+
+        loop {
+            // Try to receive a buffered event without blocking.
+            match rx.try_recv() {
+                Ok(event) => {
+                    let ctx = AutomationContext {
+                        event: &event,
+                        app_state: &self.state,
+                        store: self.state.store(),
+                    };
+                    self.state.policy_engine().run_automations(&ctx).await;
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
+                    // No more buffered events. Yield once more to let any
+                    // cascading events from the automations we just ran get
+                    // emitted, then check again.
+                    tokio::task::yield_now().await;
+                    match rx.try_recv() {
+                        Ok(event) => {
+                            let ctx = AutomationContext {
+                                event: &event,
+                                app_state: &self.state,
+                                store: self.state.store(),
+                            };
+                            self.state.policy_engine().run_automations(&ctx).await;
+                            // Continue the loop to drain any further cascading events.
+                        }
+                        Err(_) => break, // Truly empty — all automations are flushed.
+                    }
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                    eprintln!(
+                        "flush_automations: event bus receiver lagged; skipped {n} events"
+                    );
+                    // Continue draining remaining events.
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                    anyhow::bail!("flush_automations: event bus closed unexpectedly");
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Builder for constructing a [`TestHarness`] with custom configuration.

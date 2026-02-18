@@ -128,6 +128,9 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     );
     let patch_id = result.patches_created[0].clone();
 
+    // Flush automations so patch_workflow creates ReviewRequest + MergeRequest.
+    harness.flush_automations().await?;
+
     // ── Step 3: Verify patch_workflow created ReviewRequest + MergeRequest ──
     let rr_children =
         find_children_by_type(&client, &swe_issue_id, IssueType::ReviewRequest).await?;
@@ -228,6 +231,10 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         .await
         .context("step_github_sync failed after CHANGES_REQUESTED")?;
 
+    // Flush automations so close_merge_request_issues and
+    // sync_review_request_issues process the PatchUpdated events.
+    harness.flush_automations().await?;
+
     // ── Step 6: Verify patch status → ChangesRequested ────────────
     let patch_after_reject = client.get_patch(&patch_id).await?;
     assert_eq!(
@@ -278,6 +285,9 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
             )
             .await?;
     }
+
+    // Flush automations so patch_workflow creates new ReviewRequest + MergeRequest.
+    harness.flush_automations().await?;
 
     // ── Step 10: Verify patch_workflow re-fires → new workflow issues ──
     let new_rr_children = find_children_by_type_and_status(
@@ -333,6 +343,9 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         ])
         .await?;
 
+    // Flush automations so sync_review_request_issues processes the review.
+    harness.flush_automations().await?;
+
     // ── Step 12: Reconfigure GitHub mock with APPROVED + merged PR ─
     let (_github_server2, github_app2) = GitHubMockBuilder::new()
         .with_pr(
@@ -352,6 +365,10 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         .step_github_sync()
         .await
         .context("step_github_sync failed after APPROVED")?;
+
+    // Flush automations so close_merge_request_issues and
+    // sync_review_request_issues process the merge events.
+    harness.flush_automations().await?;
 
     // ── Step 14: Verify patch → Merged ────────────────────────────
     let patch_final = client.get_patch(&patch_id).await?;
