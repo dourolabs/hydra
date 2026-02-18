@@ -7,6 +7,7 @@
     "build": "vite build",
     "dev": "vite",
     "dev:server": "tsx --watch server/index.ts",
+    "build:server": "tsc --project tsconfig.server.json",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
