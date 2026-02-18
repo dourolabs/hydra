@@ -260,7 +260,7 @@ impl PatchWorkflowAutomation {
                 )],
             )
         } else {
-            (Username::from("system"), None, Vec::new())
+            (patch.creator.clone(), None, Vec::new())
         };
 
         let title = issue_title(patch);
@@ -777,7 +777,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn patch_created_without_parent_issue_uses_system_creator() {
+    async fn patch_created_without_parent_issue_uses_patch_creator() {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
@@ -817,11 +817,11 @@ mod tests {
             if issue.item.issue_type == IssueType::MergeRequest
                 && issue.item.status == IssueStatus::Open
             {
-                assert_eq!(issue.item.creator, Username::from("system"));
+                assert_eq!(issue.item.creator, Username::from("test-creator"));
                 found = true;
             }
         }
-        assert!(found, "expected a MergeRequest issue with system creator");
+        assert!(found, "expected a MergeRequest issue with patch creator");
     }
 
     // ---- New tests for patch_workflow-specific functionality ----
