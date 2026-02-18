@@ -3406,7 +3406,7 @@ mod tests {
 
         // Deleted patch should appear with include_deleted=true
         let patches = store
-            .list_patches(&SearchPatchesQuery::new(None, Some(true)))
+            .list_patches(&SearchPatchesQuery::new(None, Some(true), vec![], None))
             .await
             .unwrap();
         assert_eq!(patches.len(), 1);
@@ -3468,7 +3468,12 @@ mod tests {
 
         // Search by title
         let patches = store
-            .list_patches(&SearchPatchesQuery::new(Some("first".to_string()), None))
+            .list_patches(&SearchPatchesQuery::new(
+                Some("first".to_string()),
+                None,
+                vec![],
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(patches.len(), 1);
@@ -3479,6 +3484,8 @@ mod tests {
             .list_patches(&SearchPatchesQuery::new(
                 Some("authentication".to_string()),
                 None,
+                vec![],
+                None,
             ))
             .await
             .unwrap();
@@ -3487,14 +3494,24 @@ mod tests {
 
         // Search term matching multiple patches (login)
         let patches = store
-            .list_patches(&SearchPatchesQuery::new(Some("login".to_string()), None))
+            .list_patches(&SearchPatchesQuery::new(
+                Some("login".to_string()),
+                None,
+                vec![],
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(patches.len(), 2);
 
         // Search by patch (matches all)
         let patches = store
-            .list_patches(&SearchPatchesQuery::new(Some("patch".to_string()), None))
+            .list_patches(&SearchPatchesQuery::new(
+                Some("patch".to_string()),
+                None,
+                vec![],
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(patches.len(), 2); // patch1 and patch2, patch3 has "update" in title
@@ -3503,6 +3520,8 @@ mod tests {
         let patches = store
             .list_patches(&SearchPatchesQuery::new(
                 Some("nonexistent".to_string()),
+                None,
+                vec![],
                 None,
             ))
             .await
@@ -3518,7 +3537,12 @@ mod tests {
 
         // Whitespace-only query returns all
         let patches = store
-            .list_patches(&SearchPatchesQuery::new(Some("   ".to_string()), None))
+            .list_patches(&SearchPatchesQuery::new(
+                Some("   ".to_string()),
+                None,
+                vec![],
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(patches.len(), 3);
@@ -3554,7 +3578,12 @@ mod tests {
 
         // Search by github owner
         let patches = store
-            .list_patches(&SearchPatchesQuery::new(Some("orgxyz".to_string()), None))
+            .list_patches(&SearchPatchesQuery::new(
+                Some("orgxyz".to_string()),
+                None,
+                vec![],
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(patches.len(), 1);
@@ -3562,7 +3591,12 @@ mod tests {
 
         // Search by github repo (patch1 has "repoabc")
         let patches = store
-            .list_patches(&SearchPatchesQuery::new(Some("repoabc".to_string()), None))
+            .list_patches(&SearchPatchesQuery::new(
+                Some("repoabc".to_string()),
+                None,
+                vec![],
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(patches.len(), 1);
@@ -3570,7 +3604,12 @@ mod tests {
 
         // Search by github repo (patch2 has "project")
         let patches = store
-            .list_patches(&SearchPatchesQuery::new(Some("project".to_string()), None))
+            .list_patches(&SearchPatchesQuery::new(
+                Some("project".to_string()),
+                None,
+                vec![],
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(patches.len(), 1);
@@ -3578,7 +3617,12 @@ mod tests {
 
         // Search by PR number
         let patches = store
-            .list_patches(&SearchPatchesQuery::new(Some("123".to_string()), None))
+            .list_patches(&SearchPatchesQuery::new(
+                Some("123".to_string()),
+                None,
+                vec![],
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(patches.len(), 1);
@@ -3589,6 +3633,8 @@ mod tests {
             .list_patches(&SearchPatchesQuery::new(
                 Some("feature/login".to_string()),
                 None,
+                vec![],
+                None,
             ))
             .await
             .unwrap();
@@ -3597,7 +3643,12 @@ mod tests {
 
         // Search by base ref
         let patches = store
-            .list_patches(&SearchPatchesQuery::new(Some("develop".to_string()), None))
+            .list_patches(&SearchPatchesQuery::new(
+                Some("develop".to_string()),
+                None,
+                vec![],
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(patches.len(), 1);
@@ -3617,6 +3668,8 @@ mod tests {
             .list_patches(&SearchPatchesQuery::new(
                 Some("important".to_string()),
                 None,
+                vec![],
+                None,
             ))
             .await
             .unwrap();
@@ -3627,6 +3680,8 @@ mod tests {
             .list_patches(&SearchPatchesQuery::new(
                 Some("IMPORTANT".to_string()),
                 None,
+                vec![],
+                None,
             ))
             .await
             .unwrap();
@@ -3636,6 +3691,8 @@ mod tests {
         let patches = store
             .list_patches(&SearchPatchesQuery::new(
                 Some("ImPoRtAnT".to_string()),
+                None,
+                vec![],
                 None,
             ))
             .await
@@ -4488,14 +4545,18 @@ mod tests {
             .unwrap();
 
         // Filter for Open only
-        let query = SearchPatchesQuery::new(None, None).with_status(vec![ApiPatchStatus::Open]);
+        let query = SearchPatchesQuery::new(None, None, vec![ApiPatchStatus::Open], None);
         let patches = store.list_patches(&query).await.unwrap();
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].0, open_id);
 
         // Filter for Open and Closed
-        let query = SearchPatchesQuery::new(None, None)
-            .with_status(vec![ApiPatchStatus::Open, ApiPatchStatus::Closed]);
+        let query = SearchPatchesQuery::new(
+            None,
+            None,
+            vec![ApiPatchStatus::Open, ApiPatchStatus::Closed],
+            None,
+        );
         let patches = store.list_patches(&query).await.unwrap();
         assert_eq!(patches.len(), 2);
     }
@@ -4516,7 +4577,7 @@ mod tests {
         patch3.branch_name = None;
         store.add_patch(patch3, &ActorRef::test()).await.unwrap();
 
-        let query = SearchPatchesQuery::new(None, None).with_branch_name("feature/foo".to_string());
+        let query = SearchPatchesQuery::new(None, None, vec![], Some("feature/foo".to_string()));
         let patches = store.list_patches(&query).await.unwrap();
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].0, patch1_id);
@@ -4547,9 +4608,12 @@ mod tests {
         store.add_patch(open_bar, &ActorRef::test()).await.unwrap();
 
         // Open patches with branch "feature/foo"
-        let query = SearchPatchesQuery::new(None, None)
-            .with_status(vec![ApiPatchStatus::Open])
-            .with_branch_name("feature/foo".to_string());
+        let query = SearchPatchesQuery::new(
+            None,
+            None,
+            vec![ApiPatchStatus::Open],
+            Some("feature/foo".to_string()),
+        );
         let patches = store.list_patches(&query).await.unwrap();
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].0, open_foo_id);
@@ -4564,7 +4628,7 @@ mod tests {
         store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         let query =
-            SearchPatchesQuery::new(None, None).with_branch_name("feature/nonexistent".to_string());
+            SearchPatchesQuery::new(None, None, vec![], Some("feature/nonexistent".to_string()));
         let patches = store.list_patches(&query).await.unwrap();
         assert!(patches.is_empty());
     }
@@ -4581,7 +4645,7 @@ mod tests {
             .await
             .unwrap();
 
-        let query = SearchPatchesQuery::new(None, None).with_branch_name("feature/foo".to_string());
+        let query = SearchPatchesQuery::new(None, None, vec![], Some("feature/foo".to_string()));
         let patches = store.list_patches(&query).await.unwrap();
         assert!(patches.is_empty());
     }

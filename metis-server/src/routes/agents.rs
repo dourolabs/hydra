@@ -127,7 +127,7 @@ fn map_agent_error(err: AgentError) -> ApiError {
 
 impl From<AgentQueueConfig> for AgentRecord {
     fn from(config: AgentQueueConfig) -> Self {
-        AgentRecord::with_details(
+        AgentRecord::new(
             config.name,
             config.prompt,
             config.max_tries,

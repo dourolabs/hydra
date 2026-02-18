@@ -83,6 +83,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         101,
         "task-token".to_string(),
         "refresh-token".to_string(),
+        false,
     );
 
     handles.store.add_user(user, &ActorRef::test()).await?;
