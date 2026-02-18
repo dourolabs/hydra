@@ -1,0 +1,30 @@
+import { Navigate, Outlet } from "react-router-dom";
+import { Spinner } from "@metis/ui";
+import { useAuth } from "../features/auth/AuthContext";
+import { NavBar } from "./NavBar";
+import styles from "./AppLayout.module.css";
+
+export function AppLayout() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className={styles.loading}>
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return (
+    <div className={styles.layout}>
+      <NavBar />
+      <main className={styles.main}>
+        <Outlet />
+      </main>
+    </div>
+  );
+}
