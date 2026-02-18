@@ -1,8 +1,8 @@
 use crate::{
     config::non_empty,
     domain::{
-        actors::{ActorId, ActorRef, UNKNOWN_CREATOR},
-        issues::{Issue, JobSettings},
+        actors::ActorRef,
+        issues::JobSettings,
         jobs::BundleSpec,
         users::Username,
     },
@@ -82,6 +82,7 @@ impl AppState {
         &self,
         request: api::jobs::CreateJobRequest,
         actor: ActorRef,
+        creator: Username,
     ) -> Result<TaskId, CreateJobError> {
         let env_vars = request.variables;
 
@@ -146,10 +147,6 @@ impl AppState {
             }
         }
 
-        let creator = self
-            .resolve_creator_for_job(&actor, issue.as_ref().map(|i| &i.item))
-            .await;
-
         let task = Task::new(
             request.prompt,
             context,
@@ -187,44 +184,6 @@ impl AppState {
         }
 
         settings
-    }
-
-    async fn resolve_creator_for_job(&self, actor: &ActorRef, issue: Option<&Issue>) -> Username {
-        self.try_resolve_creator_for_job(actor, issue)
-            .await
-            .unwrap_or_else(|| Username::from(UNKNOWN_CREATOR))
-    }
-
-    async fn try_resolve_creator_for_job(
-        &self,
-        actor: &ActorRef,
-        issue: Option<&Issue>,
-    ) -> Option<Username> {
-        if let Some(issue) = issue {
-            return Some(issue.creator.clone());
-        }
-
-        match actor {
-            ActorRef::Authenticated { actor_id } => match actor_id {
-                ActorId::Username(username) => Some(username.clone().into()),
-                ActorId::Task(task_id) => {
-                    let task = self.get_task(task_id).await.ok()?;
-                    let issue_id = task.spawned_from.as_ref()?;
-                    let issue = self.get_issue(issue_id, false).await.ok()?;
-                    Some(issue.item.creator.clone())
-                }
-            },
-            ActorRef::System { on_behalf_of, .. } => match on_behalf_of.as_ref()? {
-                ActorId::Username(username) => Some(username.clone().into()),
-                ActorId::Task(task_id) => {
-                    let task = self.get_task(task_id).await.ok()?;
-                    let issue_id = task.spawned_from.as_ref()?;
-                    let issue = self.get_issue(issue_id, false).await.ok()?;
-                    Some(issue.item.creator.clone())
-                }
-            },
-            ActorRef::Automation { .. } => None,
-        }
     }
 
     pub async fn set_job_status(
