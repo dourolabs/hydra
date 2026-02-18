@@ -1,5 +1,5 @@
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
-use crate::domain::actors::{Actor, ActorId, ActorRef};
+use crate::domain::actors::{ActorId, ActorRef, get_github_token_for_user};
 use crate::domain::patches::GithubPr;
 use crate::policy::context::AutomationContext;
 use crate::policy::{AutomationError, EventFilter};
@@ -102,7 +102,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
         };
 
-        // Build a temporary Actor to fetch the GitHub token.
+        // Resolve the creator username from the actor identity.
         let creator = match &actor_id {
             ActorId::Username(username) => username.clone().into(),
             ActorId::Task(task_id) => {
@@ -114,18 +114,14 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 task.creator
             }
         };
-        let actor = Actor {
-            auth_token_hash: String::new(),
-            auth_token_salt: String::new(),
-            actor_id,
-            creator,
-        };
 
-        let token = actor.get_github_token(ctx.app_state).await.map_err(|e| {
-            AutomationError::Other(anyhow::anyhow!(
-                "github_pr_sync: failed to get github token for actor '{actor_name}': {e:?}"
-            ))
-        })?;
+        let token = get_github_token_for_user(ctx.app_state, &creator, &actor_id)
+            .await
+            .map_err(|e| {
+                AutomationError::Other(anyhow::anyhow!(
+                    "github_pr_sync: failed to get github token for actor '{actor_name}': {e:?}"
+                ))
+            })?;
 
         let client = Octocrab::builder()
             .base_uri(ctx.app_state.config.github_app.api_base_url().to_string())
