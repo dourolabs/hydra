@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metis-web
+  namespace: metis
+  labels:
+    app: metis-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metis-web
+  template:
+    metadata:
+      labels:
+        app: metis-web
+    spec:
+      containers:
+        - name: metis-web
+          image: ghcr.io/dourolabs/metis-web:latest
+          ports:
+            - containerPort: 4000
+              protocol: TCP
+          env:
+            - name: METIS_SERVER_URL
+              value: "http://server.metis.svc.cluster.local"
+            - name: PORT
+              value: "4000"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+      imagePullSecrets:
+        - name: ghcr-credentials
