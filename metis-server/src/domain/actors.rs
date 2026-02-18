@@ -141,54 +141,65 @@ impl Actor {
         &self,
         state: &AppState,
     ) -> Result<GithubTokenResponse, ApiError> {
-        info!(actor = %self.name(), "get_github_token invoked");
-        let username = self.creator.clone();
-
-        let user = state.get_user(&username).await.map_err(|err| match err {
-            StoreError::UserNotFound(missing) => {
-                error!(username = %missing, "user not found");
-                ApiError::not_found(format!("user '{missing}' not found"))
-            }
-            other => {
-                error!(username = %username, error = %other, "failed to load user");
-                ApiError::internal(format!("failed to load user '{username}': {other}"))
-            }
-        })?;
-
-        let mut github_token = user.github_token.clone();
-        if !github_token_is_valid(&state.config.github_app, &github_token).await? {
-            let refreshed =
-                refresh_github_token(&state.config.github_app, &user.github_refresh_token).await?;
-            let updated = state
-                .set_user_github_token(
-                    &username,
-                    refreshed.access_token.clone(),
-                    user.github_user_id,
-                    refreshed.refresh_token.clone(),
-                    ActorRef::Authenticated {
-                        actor_id: self.actor_id.clone(),
-                    },
-                )
-                .await
-                .map_err(|err| match err {
-                    StoreError::UserNotFound(missing) => {
-                        error!(username = %missing, "user not found");
-                        ApiError::not_found(format!("user '{missing}' not found"))
-                    }
-                    other => {
-                        error!(username = %username, error = %other, "failed to refresh github token");
-                        ApiError::internal(format!(
-                            "failed to refresh github token for '{username}': {other}"
-                        ))
-                    }
-                })?;
-
-            github_token = updated.github_token;
-        }
-
-        info!(actor = %self.name(), username = %username, "get_github_token completed");
-        Ok(GithubTokenResponse { github_token })
+        get_github_token_for_user(state, &self.creator, &self.actor_id).await
     }
+}
+
+/// Resolve a GitHub token for the given `username`, refreshing it if expired.
+///
+/// The `actor_id` is only used to record which actor triggered a token refresh
+/// in the audit trail — it is not required for fetching the token itself.
+pub async fn get_github_token_for_user(
+    state: &AppState,
+    username: &Username,
+    actor_id: &ActorId,
+) -> Result<GithubTokenResponse, ApiError> {
+    info!(username = %username, "get_github_token_for_user invoked");
+
+    let user = state.get_user(username).await.map_err(|err| match err {
+        StoreError::UserNotFound(missing) => {
+            error!(username = %missing, "user not found");
+            ApiError::not_found(format!("user '{missing}' not found"))
+        }
+        other => {
+            error!(username = %username, error = %other, "failed to load user");
+            ApiError::internal(format!("failed to load user '{username}': {other}"))
+        }
+    })?;
+
+    let mut github_token = user.github_token.clone();
+    if !github_token_is_valid(&state.config.github_app, &github_token).await? {
+        let refreshed =
+            refresh_github_token(&state.config.github_app, &user.github_refresh_token).await?;
+        let updated = state
+            .set_user_github_token(
+                username,
+                refreshed.access_token.clone(),
+                user.github_user_id,
+                refreshed.refresh_token.clone(),
+                ActorRef::Authenticated {
+                    actor_id: actor_id.clone(),
+                },
+            )
+            .await
+            .map_err(|err| match err {
+                StoreError::UserNotFound(missing) => {
+                    error!(username = %missing, "user not found");
+                    ApiError::not_found(format!("user '{missing}' not found"))
+                }
+                other => {
+                    error!(username = %username, error = %other, "failed to refresh github token");
+                    ApiError::internal(format!(
+                        "failed to refresh github token for '{username}': {other}"
+                    ))
+                }
+            })?;
+
+        github_token = updated.github_token;
+    }
+
+    info!(username = %username, "get_github_token_for_user completed");
+    Ok(GithubTokenResponse { github_token })
 }
 
 #[derive(Debug, Deserialize)]
