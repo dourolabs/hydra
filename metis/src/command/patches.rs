@@ -662,8 +662,7 @@ async fn merge_patch(
         bail!(
             "Error: patch {patch_id} cannot be merged because it does not have an approved review.\n\n\
              The patch is pending code review. To proceed, end your session now. \
-             A reviewer agent will provide a review, and the merge can be retried afterward.\n\n\
-             Do NOT wait or poll for the review. End your session so the system can schedule the review."
+             A reviewer agent will provide a review, and the merge can be retried afterward."
         );
     }
 
@@ -698,8 +697,18 @@ async fn merge_patch(
         }
     };
 
-    // 5. Ensure we are in a git repo and perform the git operations.
+    // 5. Ensure we are in a git repo and check working tree state.
     let repo_root = git_repository_root()?;
+
+    if git_has_uncommitted_changes(&repo_root)? {
+        bail!(
+            "Error: the working tree has uncommitted changes.\n\n\
+             Please commit or stash your changes before running 'metis patches merge', then retry."
+        );
+    }
+
+    // Save the current branch so we can restore it after the merge.
+    let original_branch = current_branch(&repo_root)?;
 
     // Fetch from origin to ensure we have the latest refs.
     let github_token = client.get_github_token().await.ok();
@@ -709,9 +718,17 @@ async fn merge_patch(
     git_checkout_branch(&repo_root, branch_name)
         .with_context(|| format!("failed to checkout patch branch '{branch_name}'"))?;
 
+    // Helper closure to restore the original branch on failure.
+    let restore_branch = |repo_root: &Path, original: &str| {
+        if let Err(e) = git_checkout_branch(repo_root, original) {
+            eprintln!("Warning: failed to restore original branch '{original}': {e}");
+        }
+    };
+
     // 6. Rebase the patch branch onto origin/<base>.
     let onto_ref = format!("origin/{base_branch}");
     if let Err(err) = git_rebase_onto(&repo_root, &onto_ref) {
+        restore_branch(&repo_root, &original_branch);
         bail!(
             "Error: failed to rebase patch {patch_id} onto {base_branch}.\n\n\
              The patch branch \"{branch_name}\" has conflicts with \"{base_branch}\". To resolve:\n\
@@ -719,22 +736,29 @@ async fn merge_patch(
              2. Resolve any conflicts\n\
              3. Update the patch: metis patches update {patch_id}\n\
              4. Try merging again: metis patches merge {patch_id}\n\n\
-             Do NOT attempt to resolve conflicts in this session. End your session, rebase manually, and retry.\n\n\
              Underlying error: {err}"
         );
     }
 
     // 7. Push the rebased branch to the base branch on origin.
-    push_to_ref(
+    if let Err(err) = push_to_ref(
         &repo_root,
         branch_name,
         &base_branch,
         github_token.as_deref(),
         false,
-    )
-    .with_context(|| {
-        format!("failed to push rebased branch '{branch_name}' to origin/{base_branch}")
-    })?;
+    ) {
+        restore_branch(&repo_root, &original_branch);
+        bail!(
+            "Error: failed to push rebased branch '{branch_name}' to origin/{base_branch}.\n\n\
+             The base branch may have been updated by another push. \
+             Please fetch the latest changes and retry: metis patches merge {patch_id}\n\n\
+             Underlying error: {err}"
+        );
+    }
+
+    // Restore the original branch.
+    restore_branch(&repo_root, &original_branch);
 
     // 8. Update the patch status to Merged.
     let mut merged_patch = patch.clone();
@@ -1753,7 +1777,7 @@ mod tests {
             "expected review error, got: {error}"
         );
         assert!(
-            error.contains("End your session"),
+            error.contains("end your session"),
             "expected agent-friendly instruction, got: {error}"
         );
 
