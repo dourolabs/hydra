@@ -4,7 +4,7 @@ use crate::{
     config::{
         AgentQueueConfig, AppConfig, BackgroundSection, BuildCacheSection,
         DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES, DatabaseSection, GithubAppSection,
-        JobSection, KubernetesSection, MetisSection,
+        JobSection, KubernetesSection, MetisSection, SchedulerSection, WorkerSchedulerConfig,
     },
     domain::actors::{Actor, ActorRef},
     job_engine::JobEngine,
@@ -96,10 +96,28 @@ pub fn test_app_config() -> AppConfig {
                 },
             ],
             assignment_agent: "assignment".to_string(),
+            scheduler: test_scheduler_section(),
             ..BackgroundSection::default()
         },
         build_cache: BuildCacheSection::default(),
         policies: None,
+    }
+}
+
+/// Scheduler section that disables the background spawner to prevent it
+/// from racing with manual `step_schedule()` calls in integration tests.
+/// Other workers (pending-jobs, monitor, etc.) keep their default intervals
+/// so that task lifecycle transitions proceed normally.
+fn test_scheduler_section() -> SchedulerSection {
+    let inert = WorkerSchedulerConfig {
+        interval_secs: 86_400, // 24 hours — effectively disabled
+        initial_backoff_secs: 86_400,
+        max_backoff_secs: 86_400,
+    };
+    SchedulerSection {
+        run_spawners: inert.clone(),
+        github_poller: inert,
+        ..SchedulerSection::default()
     }
 }
 
