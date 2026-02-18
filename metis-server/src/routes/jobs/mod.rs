@@ -25,7 +25,7 @@ pub async fn create_job(
 ) -> Result<Json<v1::jobs::CreateJobResponse>, ApiError> {
     info!("create_job invoked");
     let job_id = state
-        .create_job(payload, ActorRef::from(&actor))
+        .create_job(payload, ActorRef::from(&actor), actor.creator.clone())
         .await
         .map_err(|err| match err {
             CreateJobError::TaskResolution(err) => ApiError::from(err),
