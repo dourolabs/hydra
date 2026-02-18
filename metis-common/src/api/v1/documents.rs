@@ -17,25 +17,21 @@ pub struct Document {
 }
 
 impl Document {
-    pub fn new(title: String, body_markdown: String, deleted: bool) -> Self {
-        Self {
+    pub fn new(
+        title: String,
+        body_markdown: String,
+        path: Option<String>,
+        created_by: Option<TaskId>,
+        deleted: bool,
+    ) -> Result<Self, crate::DocumentPathError> {
+        let path = path.map(|p| p.parse()).transpose()?;
+        Ok(Self {
             title,
             body_markdown,
-            path: None,
-            created_by: None,
+            path,
+            created_by,
             deleted,
-        }
-    }
-
-    pub fn with_path(mut self, path: impl Into<String>) -> Result<Self, crate::DocumentPathError> {
-        let path_str = path.into();
-        self.path = Some(path_str.parse()?);
-        Ok(self)
-    }
-
-    pub fn with_created_by(mut self, created_by: TaskId) -> Self {
-        self.created_by = Some(created_by);
-        self
+        })
     }
 }
 
@@ -171,12 +167,16 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn document_builder_supports_option_fields() {
+    fn document_new_accepts_all_fields() {
         let created_by = TaskId::new();
-        let document = Document::new("Title".to_string(), "Body".to_string(), false)
-            .with_path("docs/path.md")
-            .unwrap()
-            .with_created_by(created_by.clone());
+        let document = Document::new(
+            "Title".to_string(),
+            "Body".to_string(),
+            Some("docs/path.md".to_string()),
+            Some(created_by.clone()),
+            false,
+        )
+        .unwrap();
         assert_eq!(document.path.as_deref(), Some("/docs/path.md"));
         assert_eq!(document.created_by, Some(created_by));
     }

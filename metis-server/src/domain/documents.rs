@@ -29,10 +29,14 @@ impl From<api::documents::Document> for Document {
 
 impl From<Document> for api::documents::Document {
     fn from(value: Document) -> Self {
-        let mut document =
-            api::documents::Document::new(value.title, value.body_markdown, value.deleted);
-        document.path = value.path;
-        document.created_by = value.created_by;
-        document
+        // Path is already a valid DocumentPath, so re-parsing via new() cannot fail.
+        api::documents::Document::new(
+            value.title,
+            value.body_markdown,
+            value.path.map(|p| p.to_string()),
+            value.created_by,
+            value.deleted,
+        )
+        .expect("domain Document always has a valid path")
     }
 }
