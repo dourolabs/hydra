@@ -1,9 +1,9 @@
 mod harness;
 
 use anyhow::Result;
-use harness::{test_job_settings, JobAssertions, TestHarness};
+use harness::{find_children_of, test_job_settings, JobAssertions, TestHarness};
 use metis_common::{
-    issues::{IssueDependencyType, IssueStatus, IssueType, JobSettings},
+    issues::{IssueStatus, IssueType, JobSettings},
     jobs::BundleSpec,
 };
 use std::str::FromStr;
@@ -137,15 +137,10 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
 
     // Find the child issue created by PM.
     let all_issues = user.list_issues().await?;
-    let child = all_issues
-        .issues
+    let children = find_children_of(&all_issues.issues, &parent_id);
+    let child = children
         .iter()
-        .find(|i| {
-            i.issue.description.contains("Implement child feature")
-                && i.issue.dependencies.iter().any(|d| {
-                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == parent_id
-                })
-        })
+        .find(|i| i.issue.description.contains("Implement child feature"))
         .expect("PM should have created a child issue");
 
     // Verify the child issue has repo job settings.
