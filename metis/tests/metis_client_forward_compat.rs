@@ -518,6 +518,9 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         repo_name.clone(),
         None,
         false,
+        None,
+        None,
+        None,
     );
     let upsert_patch = UpsertPatchRequest::new(patch);
 

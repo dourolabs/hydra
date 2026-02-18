@@ -749,7 +749,14 @@ pub async fn create_patch_artifact_from_repo(
     }
 
     let creator = resolve_creator_username(client).await?;
-    let mut patch_payload = Patch::new(
+
+    // Resolve branch name, base branch, and commit range SHAs.
+    let branch_name = current_branch(repo_root)?;
+    let commit_range = git_resolve_commit_range_from_merge_base(repo_root, base_ref)
+        .ok()
+        .map(|(base_oid, head_oid)| metis_common::patches::CommitRange::new(base_oid, head_oid));
+
+    let patch_payload = Patch::new(
         title.clone(),
         description.clone(),
         diff,
@@ -761,24 +768,15 @@ pub async fn create_patch_artifact_from_repo(
         service_repo_name.clone(),
         None,
         false,
+        Some(branch_name.clone()),
+        commit_range,
+        Some(
+            base_ref
+                .strip_prefix("origin/")
+                .unwrap_or(base_ref)
+                .to_string(),
+        ),
     );
-
-    // Resolve branch name, base branch, and commit range SHAs.
-    let branch_name = current_branch(repo_root)?;
-    patch_payload.branch_name = Some(branch_name.clone());
-    patch_payload.base_branch = Some(
-        base_ref
-            .strip_prefix("origin/")
-            .unwrap_or(base_ref)
-            .to_string(),
-    );
-
-    // Derive commit range from merge-base with the provided base ref.
-    if let Ok((base_oid, head_oid)) = git_resolve_commit_range_from_merge_base(repo_root, base_ref)
-    {
-        patch_payload.commit_range =
-            Some(metis_common::patches::CommitRange::new(base_oid, head_oid));
-    }
 
     let github_token = client.get_github_token().await.ok();
     push_branch(repo_root, &branch_name, github_token.as_deref(), force)?;
@@ -898,15 +896,6 @@ mod tests {
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
-    }
-
-    /// Build a Patch with the given branch_name and commit_range set (for tests
-    /// that exercise the new always-push logic).
-    fn with_git_identity(mut patch: Patch, branch_name: &str, base: GitOid, head: GitOid) -> Patch {
-        patch.branch_name = Some(branch_name.to_string());
-        patch.commit_range = Some(CommitRange::new(base, head));
-        patch.base_branch = Some("main".to_string());
-        patch
     }
 
     fn sample_repo_name() -> RepoName {
@@ -1144,23 +1133,21 @@ mod tests {
         let job_id_clone = job_id.clone();
         let expected_diff =
             git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
-        let patch = with_git_identity(
-            Patch::new(
-                patch_title.clone(),
-                patch_description.clone(),
-                expected_diff.clone(),
-                PatchStatus::Open,
-                false,
-                Some(job_id_clone.clone()),
-                Username::from("test-user"),
-                Vec::new(),
-                sample_repo_name(),
-                None,
-                false,
-            ),
-            &branch_name,
-            base_commit,
-            head_commit,
+        let patch = Patch::new(
+            patch_title.clone(),
+            patch_description.clone(),
+            expected_diff.clone(),
+            PatchStatus::Open,
+            false,
+            Some(job_id_clone.clone()),
+            Username::from("test-user"),
+            Vec::new(),
+            sample_repo_name(),
+            None,
+            false,
+            Some(branch_name.to_string()),
+            Some(CommitRange::new(base_commit, head_commit)),
+            Some("main".to_string()),
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-1"), 0);
@@ -1227,23 +1214,21 @@ mod tests {
         let issue_id = issue_id("i-job-1234");
         let expected_diff =
             git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
-        let patch = with_git_identity(
-            Patch::new(
-                title.clone(),
-                description.clone(),
-                expected_diff,
-                PatchStatus::Open,
-                false,
-                job_id_opt.clone(),
-                Username::from("test-user"),
-                Vec::new(),
-                sample_repo_name(),
-                None,
-                false,
-            ),
-            &branch_name,
-            base_commit,
-            head_commit,
+        let patch = Patch::new(
+            title.clone(),
+            description.clone(),
+            expected_diff,
+            PatchStatus::Open,
+            false,
+            job_id_opt.clone(),
+            Username::from("test-user"),
+            Vec::new(),
+            sample_repo_name(),
+            None,
+            false,
+            Some(branch_name.to_string()),
+            Some(CommitRange::new(base_commit, head_commit)),
+            Some("main".to_string()),
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-2"), 0);
@@ -1310,7 +1295,7 @@ mod tests {
         let branch_name = current_branch(&repo_path)?;
         let diff = git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
         let job_id = task_id("t-job-automatic");
-        let mut expected_patch = Patch::new(
+        let expected_patch = Patch::new(
             "backup patch".to_string(),
             "backup description".to_string(),
             diff.clone(),
@@ -1322,10 +1307,10 @@ mod tests {
             sample_repo_name(),
             None,
             false,
+            Some(branch_name),
+            Some(CommitRange::new(base_commit, head_commit)),
+            Some("main".to_string()),
         );
-        expected_patch.branch_name = Some(branch_name);
-        expected_patch.commit_range = Some(CommitRange::new(base_commit, head_commit));
-        expected_patch.base_branch = Some("main".to_string());
         let expected_request = UpsertPatchRequest::new(expected_patch);
         let patch_response = UpsertPatchResponse::new(patch_id("p-automatic"), 0);
         let server = MockServer::start();
@@ -1382,23 +1367,21 @@ mod tests {
         let issue_id = issue_id("i-service");
         let expected_diff =
             git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
-        let patch = with_git_identity(
-            Patch::new(
-                "backup patch".to_string(),
-                "backup description".to_string(),
-                expected_diff,
-                PatchStatus::Open,
-                false,
-                Some(job_id.clone()),
-                Username::from("test-user"),
-                Vec::new(),
-                RepoName::from_str("dourolabs/api")?,
-                None,
-                false,
-            ),
-            &branch_name,
-            base_commit,
-            head_commit,
+        let patch = Patch::new(
+            "backup patch".to_string(),
+            "backup description".to_string(),
+            expected_diff,
+            PatchStatus::Open,
+            false,
+            Some(job_id.clone()),
+            Username::from("test-user"),
+            Vec::new(),
+            RepoName::from_str("dourolabs/api")?,
+            None,
+            false,
+            Some(branch_name.to_string()),
+            Some(CommitRange::new(base_commit, head_commit)),
+            Some("main".to_string()),
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-service"), 0);
@@ -1511,6 +1494,9 @@ mod tests {
                 sample_repo_name(),
                 None,
                 false,
+                None,
+                None,
+                None,
             ),
             None,
         );
@@ -1578,6 +1564,9 @@ mod tests {
                 sample_repo_name(),
                 None,
                 false,
+                None,
+                None,
+                None,
             ),
             None,
         );
@@ -1598,6 +1587,9 @@ mod tests {
             sample_repo_name(),
             None,
             false,
+            None,
+            None,
+            None,
         ));
         let server = MockServer::start();
         let client = metis_client(&server);

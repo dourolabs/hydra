@@ -265,6 +265,9 @@ mod tests {
                 None,
                 None,
             )),
+            None,
+            None,
+            None,
         );
 
         let (patch_id, _) = handles
@@ -273,7 +276,7 @@ mod tests {
             .add_patch(existing_patch, &ActorRef::test())
             .await?;
 
-        let mut request_patch = Patch::new(
+        let request_patch = Patch::new(
             "Updated title".to_string(),
             "Updated description".to_string(),
             "diff".to_string(),
@@ -284,8 +287,10 @@ mod tests {
             Vec::new(),
             repo_name,
             None,
+            Some("feature".to_string()),
+            None,
+            None,
         );
-        request_patch.branch_name = Some("feature".to_string());
         let request = api::patches::UpsertPatchRequest::new(request_patch.into());
 
         handles
@@ -394,7 +399,7 @@ mod tests {
             .as_ref()
             .update_task(&task_id, task, &ActorRef::test())
             .await?;
-        let mut patch = Patch::new(
+        let patch = Patch::new(
             "New patch".to_string(),
             "New patch description".to_string(),
             "diff".to_string(),
@@ -405,8 +410,10 @@ mod tests {
             Vec::new(),
             repo_name,
             None,
+            Some("metis-t-test".to_string()),
+            None,
+            None,
         );
-        patch.branch_name = Some("metis-t-test".to_string());
         let request = api::patches::UpsertPatchRequest::new(patch.into());
 
         let (patch_id, _) = handles
@@ -445,7 +452,7 @@ mod tests {
         let handles = test_state_handles();
         let repo_name = RepoName::new("octo", "repo")?;
 
-        let mut patch1 = Patch::new(
+        let patch1 = Patch::new(
             "First patch".to_string(),
             "desc".to_string(),
             "diff".to_string(),
@@ -456,8 +463,10 @@ mod tests {
             Vec::new(),
             repo_name.clone(),
             None,
+            Some("feature/foo".to_string()),
+            None,
+            None,
         );
-        patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
         let (patch1_id, _) = handles
             .state
@@ -473,7 +482,7 @@ mod tests {
             .await?;
 
         // Creating a new patch with the same branch_name should succeed
-        let mut patch2 = Patch::new(
+        let patch2 = Patch::new(
             "Second patch".to_string(),
             "desc".to_string(),
             "diff".to_string(),
@@ -484,8 +493,10 @@ mod tests {
             Vec::new(),
             repo_name,
             None,
+            Some("feature/foo".to_string()),
+            None,
+            None,
         );
-        patch2.branch_name = Some("feature/foo".to_string());
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
         handles
             .state
@@ -500,7 +511,7 @@ mod tests {
         let handles = test_state_handles();
         let repo_name = RepoName::new("octo", "repo")?;
 
-        let mut patch1 = Patch::new(
+        let patch1 = Patch::new(
             "First patch".to_string(),
             "desc".to_string(),
             "diff".to_string(),
@@ -511,8 +522,10 @@ mod tests {
             Vec::new(),
             repo_name.clone(),
             None,
+            Some("feature/foo".to_string()),
+            None,
+            None,
         );
-        patch1.branch_name = Some("feature/foo".to_string());
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
         let (patch1_id, _) = handles
             .state
@@ -521,7 +534,7 @@ mod tests {
 
         // Updating the same patch should succeed (the uniqueness check is only
         // on creates, not updates).
-        let mut update_patch = Patch::new(
+        let update_patch = Patch::new(
             "Updated title".to_string(),
             "desc".to_string(),
             "diff".to_string(),
@@ -532,8 +545,10 @@ mod tests {
             Vec::new(),
             repo_name,
             None,
+            Some("feature/foo".to_string()),
+            None,
+            None,
         );
-        update_patch.branch_name = Some("feature/foo".to_string());
         let request2 = api::patches::UpsertPatchRequest::new(update_patch.into());
         handles
             .state
@@ -567,6 +582,9 @@ mod tests {
             creator_username.clone(),
             Vec::new(),
             repo_name,
+            None,
+            None,
+            None,
             None,
         );
         let request = api::patches::UpsertPatchRequest::new(patch.into());

@@ -38,6 +38,9 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
         Vec::new(),
         service_repo_name(),
         None,
+        None,
+        None,
+        None,
     );
 
     let response = client
@@ -85,6 +88,9 @@ async fn patch_versions_endpoints_return_history() -> anyhow::Result<()> {
         Vec::new(),
         service_repo_name(),
         None,
+        None,
+        None,
+        None,
     );
 
     let response = client
@@ -106,6 +112,9 @@ async fn patch_versions_endpoints_return_history() -> anyhow::Result<()> {
         Username::from("test-creator"),
         Vec::new(),
         service_repo_name(),
+        None,
+        None,
+        None,
         None,
     );
     let _updated: UpsertPatchResponse = client
@@ -185,6 +194,9 @@ async fn patch_version_endpoints_return_404s() -> anyhow::Result<()> {
         Vec::new(),
         service_repo_name(),
         None,
+        None,
+        None,
+        None,
     );
     let response = client
         .post(format!("{}/v1/patches", server.base_url()))
@@ -223,6 +235,9 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
         Vec::new(),
         service_repo_name(),
         None,
+        None,
+        None,
+        None,
     );
     let filtered_patch = Patch::new(
         "login retry patch".to_string(),
@@ -234,6 +249,9 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
         Username::from("test-creator"),
         Vec::new(),
         service_repo_name(),
+        None,
+        None,
+        None,
         None,
     );
 
@@ -321,6 +339,9 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
             None,
             None,
         )),
+        None,
+        None,
+        None,
     );
 
     let created: UpsertPatchResponse = client
@@ -407,6 +428,9 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
             None,
             None,
         )),
+        None,
+        None,
+        None,
     );
 
     let created: UpsertPatchResponse = client
@@ -519,6 +543,9 @@ async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Re
             None,
             None,
         )),
+        None,
+        None,
+        None,
     );
 
     let created: UpsertPatchResponse = client
@@ -603,6 +630,9 @@ async fn create_patch_asset_surfaces_github_bad_size() -> anyhow::Result<()> {
             None,
             None,
         )),
+        None,
+        None,
+        None,
     );
 
     let created: UpsertPatchResponse = client
@@ -649,6 +679,9 @@ async fn create_patch_asset_errors_without_github_pr() -> anyhow::Result<()> {
         Username::from("test-creator"),
         Vec::new(),
         service_repo_name(),
+        None,
+        None,
+        None,
         None,
     );
 
@@ -706,6 +739,9 @@ async fn delete_patch_basic_operation() -> anyhow::Result<()> {
         Vec::new(),
         service_repo_name(),
         None,
+        None,
+        None,
+        None,
     );
 
     let created: UpsertPatchResponse = client
@@ -760,6 +796,9 @@ async fn delete_patch_include_deleted_in_listing() -> anyhow::Result<()> {
         Username::from("test-creator"),
         Vec::new(),
         service_repo_name(),
+        None,
+        None,
+        None,
         None,
     );
 
@@ -833,6 +872,9 @@ async fn delete_patch_get_deleted_by_id() -> anyhow::Result<()> {
         Vec::new(),
         service_repo_name(),
         None,
+        None,
+        None,
+        None,
     );
 
     let created: UpsertPatchResponse = client
@@ -884,6 +926,9 @@ async fn delete_patch_idempotency() -> anyhow::Result<()> {
         Username::from("test-creator"),
         Vec::new(),
         service_repo_name(),
+        None,
+        None,
+        None,
         None,
     );
 

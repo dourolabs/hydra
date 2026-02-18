@@ -245,6 +245,9 @@ impl Patch {
         reviews: Vec<Review>,
         service_repo_name: RepoName,
         github: Option<GithubPr>,
+        branch_name: Option<String>,
+        commit_range: Option<CommitRange>,
+        base_branch: Option<String>,
     ) -> Self {
         Self {
             title,
@@ -258,9 +261,9 @@ impl Patch {
             service_repo_name,
             github,
             deleted: false,
-            branch_name: None,
-            commit_range: None,
-            base_branch: None,
+            branch_name,
+            commit_range,
+            base_branch,
         }
     }
 }
@@ -427,7 +430,7 @@ impl From<api::patches::Patch> for Patch {
 
 impl From<Patch> for api::patches::Patch {
     fn from(value: Patch) -> Self {
-        let mut patch = api::patches::Patch::new(
+        api::patches::Patch::new(
             value.title,
             value.description,
             value.diff,
@@ -439,11 +442,10 @@ impl From<Patch> for api::patches::Patch {
             value.service_repo_name,
             value.github.map(Into::into),
             value.deleted,
-        );
-        patch.branch_name = value.branch_name;
-        patch.commit_range = value.commit_range.map(Into::into);
-        patch.base_branch = value.base_branch;
-        patch
+            value.branch_name,
+            value.commit_range.map(Into::into),
+            value.base_branch,
+        )
     }
 }
 
@@ -598,6 +600,9 @@ mod tests {
             Username::from("test-creator"),
             vec![],
             "org/repo".parse().unwrap(),
+            None,
+            None,
+            None,
             None,
         );
 

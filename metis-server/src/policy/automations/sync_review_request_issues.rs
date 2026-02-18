@@ -224,6 +224,9 @@ mod tests {
             reviews,
             RepoName::new("test", "repo").unwrap(),
             None,
+            None,
+            None,
+            None,
         )
     }
 
@@ -232,9 +235,21 @@ mod tests {
         reviews: Vec<Review>,
         commit_range: Option<CommitRange>,
     ) -> Patch {
-        let mut patch = make_patch(status, reviews);
-        patch.commit_range = commit_range;
-        patch
+        Patch::new(
+            "test patch".to_string(),
+            "desc".to_string(),
+            String::new(),
+            status,
+            false,
+            None,
+            Username::from("test-creator"),
+            reviews,
+            RepoName::new("test", "repo").unwrap(),
+            None,
+            None,
+            commit_range,
+            None,
+        )
     }
 
     fn make_review_request_issue(

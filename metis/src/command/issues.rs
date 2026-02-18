@@ -2939,6 +2939,9 @@ mod tests {
                 sample_repo_name(),
                 None,
                 false,
+                None,
+                None,
+                None,
             ),
             None,
         );
@@ -2958,6 +2961,9 @@ mod tests {
                 sample_repo_name(),
                 None,
                 false,
+                None,
+                None,
+                None,
             ),
             None,
         );
@@ -2977,6 +2983,9 @@ mod tests {
                 sample_repo_name(),
                 None,
                 false,
+                None,
+                None,
+                None,
             ),
             None,
         );
@@ -4387,6 +4396,9 @@ mod tests {
                 sample_repo_name(),
                 None,
                 false,
+                None,
+                None,
+                None,
             ),
             None,
         );
@@ -4502,6 +4514,9 @@ mod tests {
             sample_repo_name(),
             None,
             false,
+            None,
+            None,
+            None,
         );
         let mut updated_patch = base_patch.clone();
         updated_patch.status = PatchStatus::Merged;
@@ -4816,6 +4831,9 @@ mod tests {
                         sample_repo_name(),
                         None,
                         false,
+                        None,
+                        None,
+                        None,
                     ),
                     None,
                 )],

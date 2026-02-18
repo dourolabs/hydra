@@ -212,6 +212,9 @@ mod tests {
             Vec::new(),
             RepoName::new("test", "repo").unwrap(),
             None,
+            None,
+            None,
+            None,
         )
     }
 

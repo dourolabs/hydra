@@ -246,6 +246,9 @@ impl Patch {
         service_repo_name: RepoName,
         github: Option<GithubPr>,
         deleted: bool,
+        branch_name: Option<String>,
+        commit_range: Option<CommitRange>,
+        base_branch: Option<String>,
     ) -> Self {
         Self {
             title,
@@ -259,9 +262,9 @@ impl Patch {
             service_repo_name,
             github,
             deleted,
-            branch_name: None,
-            commit_range: None,
-            base_branch: None,
+            branch_name,
+            commit_range,
+            base_branch,
         }
     }
 }

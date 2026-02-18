@@ -50,6 +50,9 @@ fn dummy_patch_payload() -> Arc<MutationPayload> {
             Vec::new(),
             metis_common::RepoName::new("test", "repo").unwrap(),
             None,
+            None,
+            None,
+            None,
         ),
         actor: ActorRef::test(),
     })
@@ -661,6 +664,9 @@ fn make_dummy_patch() -> crate::domain::patches::Patch {
         Username::from("test-creator"),
         Vec::new(),
         metis_common::RepoName::new("test", "repo").unwrap(),
+        None,
+        None,
+        None,
         None,
     )
 }

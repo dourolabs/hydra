@@ -903,7 +903,7 @@ mod tests {
         let repo_name = RepoName::from_str("dourolabs/example")?;
         let diff = workdir_diff(&repo_path)?;
         let branch_name = git_current_branch(&repo_path)?;
-        let mut expected_patch = Patch::new(
+        let expected_patch = Patch::new(
             "final output line".to_string(),
             "final output line".to_string(),
             diff.clone(),
@@ -915,14 +915,14 @@ mod tests {
             repo_name.clone(),
             None,
             false,
+            Some(branch_name),
+            // Merge-base of HEAD with origin/main is the initial commit (same as HEAD here).
+            Some(metis_common::patches::CommitRange::new(
+                base_commit,
+                base_commit,
+            )),
+            Some("main".to_string()),
         );
-        expected_patch.branch_name = Some(branch_name);
-        // Merge-base of HEAD with origin/main is the initial commit (same as HEAD here).
-        expected_patch.commit_range = Some(metis_common::patches::CommitRange::new(
-            base_commit,
-            base_commit,
-        ));
-        expected_patch.base_branch = Some("main".to_string());
         let expected_request = UpsertPatchRequest::new(expected_patch);
         let server = MockServer::start();
         let patch_mock = server.mock(|when, then| {

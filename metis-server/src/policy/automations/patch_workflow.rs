@@ -483,6 +483,9 @@ mod tests {
             Vec::new(),
             RepoName::new("test", "repo").unwrap(),
             None,
+            None,
+            None,
+            None,
         )
     }
 
@@ -503,6 +506,9 @@ mod tests {
             Username::from("test-creator"),
             Vec::new(),
             RepoName::new("test", "repo").unwrap(),
+            None,
+            None,
+            None,
             None,
         )
     }
