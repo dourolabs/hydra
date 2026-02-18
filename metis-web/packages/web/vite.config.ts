@@ -5,5 +5,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    proxy: {
+      "/auth": "http://localhost:4000",
+      "/api": "http://localhost:4000",
+      "/health": "http://localhost:4000",
+    },
   },
 });

@@ -6,6 +6,7 @@
   "scripts": {
     "build": "pnpm -r --filter @metis/ui build && pnpm -r --filter @metis/web build",
     "dev": "pnpm -r --filter @metis/web dev",
+    "dev:server": "pnpm -r --filter @metis/web dev:server",
     "lint": "eslint packages/*/src --ext .ts,.tsx",
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck"
