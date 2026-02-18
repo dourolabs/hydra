@@ -10,6 +10,7 @@ pub mod github;
 pub mod ids;
 pub mod models;
 pub mod repo_name;
+pub mod review_utils;
 pub mod util;
 pub mod versioning;
 

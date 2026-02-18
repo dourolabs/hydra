@@ -144,57 +144,41 @@ impl Automation for SyncReviewRequestIssuesAutomation {
     }
 }
 
-/// Find the latest non-stale review by a given author (case-insensitive match).
-/// When multiple reviews exist from the same author, the one with the latest
-/// `submitted_at` timestamp wins. Reviews without a timestamp are treated
-/// as older than any review with a timestamp.
+/// Finds the latest non-stale review by a given author.
 ///
-/// If `staleness_cutoff` is `Some`, reviews whose `submitted_at` is before the
-/// cutoff are considered stale and excluded. Reviews without a `submitted_at`
-/// are also considered stale when a cutoff is present.
-fn find_latest_review_by_author<'a>(
-    reviews: &'a [Review],
+/// Converts domain `Review` types to API types and delegates to the shared
+/// implementation in `metis_common::review_utils`.
+fn find_latest_review_by_author(
+    reviews: &[Review],
     author: &str,
     staleness_cutoff: Option<DateTime<Utc>>,
-) -> Option<&'a Review> {
-    reviews
-        .iter()
-        .filter(|r| r.author.eq_ignore_ascii_case(author))
-        .filter(|r| {
-            // If there is a staleness cutoff, only keep reviews submitted at or after it.
-            // Reviews without a submitted_at timestamp are considered stale when a cutoff exists.
-            match staleness_cutoff {
-                Some(cutoff) => r.submitted_at.is_some_and(|t| t >= cutoff),
-                None => true,
-            }
-        })
-        .max_by(|a, b| {
-            // Reviews with submitted_at are always newer than those without
-            match (&a.submitted_at, &b.submitted_at) {
-                (Some(a_time), Some(b_time)) => a_time.cmp(b_time),
-                (Some(_), None) => std::cmp::Ordering::Greater,
-                (None, Some(_)) => std::cmp::Ordering::Less,
-                // If neither has a timestamp, use position (later in vec = newer)
-                (None, None) => std::cmp::Ordering::Less,
-            }
-        })
+) -> Option<metis_common::api::v1::patches::Review> {
+    let api_reviews: Vec<metis_common::api::v1::patches::Review> =
+        reviews.iter().cloned().map(Into::into).collect();
+    metis_common::review_utils::find_latest_review_by_author(&api_reviews, author, staleness_cutoff)
+        .cloned()
 }
 
 /// Finds the timestamp of the last version where the patch's `commit_range` changed.
 ///
-/// Walks the version history in order and returns the timestamp of the most
-/// recent version where `commit_range` differs from the previous version.
-/// Returns `None` if there is only one version or the `commit_range` never changed.
+/// Converts domain `Versioned<Patch>` to `PatchVersionRecord` and delegates to the
+/// shared implementation in `metis_common::review_utils`.
 fn find_last_commit_range_change_timestamp(versions: &[Versioned<Patch>]) -> Option<DateTime<Utc>> {
-    let mut last_change_timestamp = None;
-    for window in versions.windows(2) {
-        let prev = &window[0];
-        let curr = &window[1];
-        if curr.item.commit_range != prev.item.commit_range {
-            last_change_timestamp = Some(curr.timestamp);
-        }
-    }
-    last_change_timestamp
+    // Use a dummy patch_id; the shared function only inspects commit_range and timestamp.
+    let dummy_patch_id = metis_common::PatchId::new();
+    let api_versions: Vec<metis_common::api::v1::patches::PatchVersionRecord> = versions
+        .iter()
+        .map(|v| {
+            metis_common::api::v1::patches::PatchVersionRecord::new(
+                dummy_patch_id.clone(),
+                v.version,
+                v.timestamp,
+                v.item.clone().into(),
+                v.actor.clone(),
+            )
+        })
+        .collect();
+    metis_common::review_utils::find_last_commit_range_change_timestamp(&api_versions)
 }
 
 #[cfg(test)]
@@ -752,225 +736,6 @@ mod tests {
             IssueStatus::Closed,
             "in-progress review-request should also be synced"
         );
-    }
-
-    // --- Unit tests for find_latest_review_by_author ---
-
-    #[test]
-    fn find_latest_review_picks_most_recent() {
-        let now = Utc::now();
-        let reviews = vec![
-            Review::new(
-                "old".to_string(),
-                false,
-                "alice".to_string(),
-                Some(now - Duration::hours(3)),
-            ),
-            Review::new(
-                "newer".to_string(),
-                true,
-                "alice".to_string(),
-                Some(now - Duration::hours(1)),
-            ),
-            Review::new("other".to_string(), true, "bob".to_string(), Some(now)),
-        ];
-
-        let result = find_latest_review_by_author(&reviews, "alice", None).unwrap();
-        assert!(result.is_approved);
-        assert_eq!(result.contents, "newer");
-    }
-
-    #[test]
-    fn find_latest_review_case_insensitive() {
-        let reviews = vec![Review::new(
-            "ok".to_string(),
-            true,
-            "Alice".to_string(),
-            Some(Utc::now()),
-        )];
-
-        let result = find_latest_review_by_author(&reviews, "alice", None);
-        assert!(result.is_some());
-        assert!(result.unwrap().is_approved);
-    }
-
-    #[test]
-    fn find_latest_review_no_match() {
-        let reviews = vec![Review::new(
-            "ok".to_string(),
-            true,
-            "bob".to_string(),
-            Some(Utc::now()),
-        )];
-
-        let result = find_latest_review_by_author(&reviews, "alice", None);
-        assert!(result.is_none());
-    }
-
-    // --- Unit tests for find_last_commit_range_change_timestamp ---
-
-    #[test]
-    fn commit_range_change_timestamp_single_version() {
-        let now = Utc::now();
-        let versions = vec![Versioned::new(
-            make_patch(PatchStatus::Open, vec![]),
-            1,
-            now,
-        )];
-
-        assert_eq!(find_last_commit_range_change_timestamp(&versions), None);
-    }
-
-    #[test]
-    fn commit_range_change_timestamp_no_change() {
-        let now = Utc::now();
-        let range = Some(CommitRange::new(
-            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
-            GitOid::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
-        ));
-        let versions = vec![
-            Versioned::new(
-                make_patch_with_commit_range(PatchStatus::Open, vec![], range.clone()),
-                1,
-                now - Duration::hours(2),
-            ),
-            Versioned::new(
-                make_patch_with_commit_range(PatchStatus::Open, vec![], range.clone()),
-                2,
-                now - Duration::hours(1),
-            ),
-        ];
-
-        assert_eq!(find_last_commit_range_change_timestamp(&versions), None);
-    }
-
-    #[test]
-    fn commit_range_change_timestamp_detects_change() {
-        let now = Utc::now();
-        let range_v1 = Some(CommitRange::new(
-            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
-            GitOid::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
-        ));
-        let range_v2 = Some(CommitRange::new(
-            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
-            GitOid::from_str("cccccccccccccccccccccccccccccccccccccccc").unwrap(),
-        ));
-        let change_ts = now - Duration::hours(1);
-        let versions = vec![
-            Versioned::new(
-                make_patch_with_commit_range(PatchStatus::Open, vec![], range_v1),
-                1,
-                now - Duration::hours(2),
-            ),
-            Versioned::new(
-                make_patch_with_commit_range(PatchStatus::Open, vec![], range_v2),
-                2,
-                change_ts,
-            ),
-        ];
-
-        assert_eq!(
-            find_last_commit_range_change_timestamp(&versions),
-            Some(change_ts)
-        );
-    }
-
-    #[test]
-    fn commit_range_change_timestamp_picks_last_change() {
-        let now = Utc::now();
-        let range_v1 = Some(CommitRange::new(
-            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
-            GitOid::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
-        ));
-        let range_v2 = Some(CommitRange::new(
-            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
-            GitOid::from_str("cccccccccccccccccccccccccccccccccccccccc").unwrap(),
-        ));
-        let range_v3 = Some(CommitRange::new(
-            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
-            GitOid::from_str("dddddddddddddddddddddddddddddddddddddddd").unwrap(),
-        ));
-        let ts_second_change = now - Duration::minutes(30);
-        let versions = vec![
-            Versioned::new(
-                make_patch_with_commit_range(PatchStatus::Open, vec![], range_v1),
-                1,
-                now - Duration::hours(2),
-            ),
-            Versioned::new(
-                make_patch_with_commit_range(PatchStatus::Open, vec![], range_v2),
-                2,
-                now - Duration::hours(1),
-            ),
-            Versioned::new(
-                make_patch_with_commit_range(PatchStatus::Open, vec![], range_v3),
-                3,
-                ts_second_change,
-            ),
-        ];
-
-        assert_eq!(
-            find_last_commit_range_change_timestamp(&versions),
-            Some(ts_second_change)
-        );
-    }
-
-    // --- Unit tests for staleness filtering ---
-
-    #[test]
-    fn find_latest_review_filters_stale_reviews() {
-        let now = Utc::now();
-        let cutoff = now - Duration::hours(1);
-        let reviews = vec![
-            // Review before the cutoff (stale)
-            Review::new(
-                "old LGTM".to_string(),
-                true,
-                "alice".to_string(),
-                Some(now - Duration::hours(2)),
-            ),
-            // Review after the cutoff (fresh)
-            Review::new(
-                "changes needed".to_string(),
-                false,
-                "alice".to_string(),
-                Some(now),
-            ),
-        ];
-
-        let result = find_latest_review_by_author(&reviews, "alice", Some(cutoff)).unwrap();
-        assert!(!result.is_approved);
-        assert_eq!(result.contents, "changes needed");
-    }
-
-    #[test]
-    fn find_latest_review_all_stale_returns_none() {
-        let now = Utc::now();
-        let cutoff = now - Duration::hours(1);
-        let reviews = vec![Review::new(
-            "old LGTM".to_string(),
-            true,
-            "alice".to_string(),
-            Some(now - Duration::hours(2)),
-        )];
-
-        let result = find_latest_review_by_author(&reviews, "alice", Some(cutoff));
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn find_latest_review_no_timestamp_considered_stale_when_cutoff_present() {
-        let now = Utc::now();
-        let cutoff = now - Duration::hours(1);
-        let reviews = vec![Review::new(
-            "LGTM".to_string(),
-            true,
-            "alice".to_string(),
-            None, // no timestamp
-        )];
-
-        let result = find_latest_review_by_author(&reviews, "alice", Some(cutoff));
-        assert!(result.is_none());
     }
 
     // --- Integration tests for staleness in the automation ---
