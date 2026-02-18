@@ -1,11 +1,6 @@
 use crate::{
     config::non_empty,
-    domain::{
-        actors::ActorRef,
-        issues::JobSettings,
-        jobs::BundleSpec,
-        users::Username,
-    },
+    domain::{actors::ActorRef, issues::JobSettings, jobs::BundleSpec, users::Username},
     job_engine::{JobEngineError, JobStatus},
     store::{ReadOnlyStore, Status, StoreError, Task, TaskError, TaskStatusLog},
 };
