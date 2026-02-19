@@ -32,8 +32,8 @@ function formatDuration(ms: number): string {
 
 /** Compute runtime from start_time to end_time (or now). */
 function getRuntime(
-  startTime: string | null,
-  endTime: string | null,
+  startTime: string | null | undefined,
+  endTime: string | null | undefined,
 ): string {
   if (!startTime) return "\u2014";
   const start = new Date(startTime).getTime();
@@ -46,7 +46,7 @@ export function JobLogPage() {
     issueId: string;
     jobId: string;
   }>();
-  const { data: job, isLoading, error } = useJob(jobId ?? "");
+  const { data: record, isLoading, error } = useJob(jobId ?? "");
 
   return (
     <div className={styles.page}>
@@ -74,13 +74,13 @@ export function JobLogPage() {
         </div>
       )}
 
-      {job && (
+      {record && (
         <>
           {/* Job metadata header */}
           <div className={styles.header}>
             <div className={styles.headerTop}>
-              <span className={styles.jobId}>{job.job_id}</span>
-              <Badge status={toBadgeStatus(job.status)} />
+              <span className={styles.jobId}>{record.job_id}</span>
+              <Badge status={toBadgeStatus(record.task.status)} />
             </div>
             <div className={styles.meta}>
               <div className={styles.metaItem}>
@@ -92,14 +92,14 @@ export function JobLogPage() {
               <div className={styles.metaItem}>
                 <span className={styles.metaLabel}>Runtime</span>
                 <span className={styles.metaValue}>
-                  {getRuntime(job.start_time, job.end_time)}
+                  {getRuntime(record.task.start_time, record.task.end_time)}
                 </span>
               </div>
-              {job.creation_time && (
+              {record.task.creation_time && (
                 <div className={styles.metaItem}>
                   <span className={styles.metaLabel}>Created</span>
                   <span className={styles.metaValue}>
-                    {new Date(job.creation_time).toLocaleString()}
+                    {new Date(record.task.creation_time).toLocaleString()}
                   </span>
                 </div>
               )}
@@ -107,7 +107,7 @@ export function JobLogPage() {
           </div>
 
           {/* Log viewer */}
-          <JobLogViewer jobId={job.job_id} status={job.status} />
+          <JobLogViewer jobId={record.job_id} status={record.task.status} />
         </>
       )}
     </div>

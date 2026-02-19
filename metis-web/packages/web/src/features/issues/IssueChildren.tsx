@@ -38,8 +38,8 @@ export function IssueChildren({ issueId }: IssueChildrenProps) {
 
   // Find children: issues that have a "child-of" dependency on this issueId
   const children = allIssues
-    ? allIssues.filter((issue) =>
-        issue.dependencies.some(
+    ? allIssues.filter((record) =>
+        record.issue.dependencies.some(
           (dep) => dep.type === "child-of" && dep.issue_id === issueId,
         ),
       )
@@ -51,13 +51,13 @@ export function IssueChildren({ issueId }: IssueChildrenProps) {
 
   return (
     <ul className={styles.list}>
-      {children.map((child) => (
-        <li key={child.issue_id} className={styles.item}>
-          <Badge status={toBadgeStatus(child.status)} />
-          <Link to={`/issues/${child.issue_id}`} className={styles.link}>
-            <span className={styles.id}>{child.issue_id}</span>
+      {children.map((record) => (
+        <li key={record.issue_id} className={styles.item}>
+          <Badge status={toBadgeStatus(record.issue.status)} />
+          <Link to={`/issues/${record.issue_id}`} className={styles.link}>
+            <span className={styles.id}>{record.issue_id}</span>
             <span className={styles.desc}>
-              {descriptionSnippet(child.description)}
+              {descriptionSnippet(record.issue.description)}
             </span>
           </Link>
         </li>

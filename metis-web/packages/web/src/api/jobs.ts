@@ -1,39 +1,4 @@
-import type { JobVersionRecord, ListJobsResponse } from "@metis/api";
 import { ApiError } from "@metis/api";
-import { apiClient } from "./client";
-
-export type { JobVersionRecord, ListJobsResponse };
-
-/** Flattened job type used throughout the UI. */
-export interface Job {
-  job_id: string;
-  status: string;
-  spawned_from: string;
-  creation_time: string | null;
-  start_time: string | null;
-  end_time: string | null;
-}
-
-/** Convert a JobVersionRecord to the flat Job type used in the UI. */
-export function toJob(record: JobVersionRecord): Job {
-  return {
-    job_id: record.job_id,
-    status: record.task.status,
-    spawned_from: record.task.spawned_from ?? "",
-    creation_time: record.task.creation_time ?? null,
-    start_time: record.task.start_time ?? null,
-    end_time: record.task.end_time ?? null,
-  };
-}
-
-export function fetchJobsByIssue(issueId: string): Promise<ListJobsResponse> {
-  return apiClient.listJobs({ spawned_from: issueId });
-}
-
-/** Fetch a single job by ID. */
-export function fetchJob(jobId: string): Promise<JobVersionRecord> {
-  return apiClient.getJob(jobId);
-}
 
 /** Fetch full log output for a completed job (plain text). */
 export async function fetchJobLogs(jobId: string): Promise<string> {
