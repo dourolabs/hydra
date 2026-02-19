@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { apiFetch, ApiError } from "./client";
 
 /** Nested task data inside a JobVersionRecord. */
 export interface TaskData {
@@ -47,5 +47,35 @@ export function toJob(record: JobVersionRecord): Job {
 export function fetchJobsByIssue(issueId: string): Promise<ListJobsResponse> {
   return apiFetch<ListJobsResponse>(
     `/api/v1/jobs?spawned_from=${encodeURIComponent(issueId)}`,
+  );
+}
+
+/** Fetch a single job by ID. */
+export function fetchJob(jobId: string): Promise<JobVersionRecord> {
+  return apiFetch<JobVersionRecord>(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}`,
+  );
+}
+
+/** Fetch full log output for a completed job (plain text). */
+export async function fetchJobLogs(jobId: string): Promise<string> {
+  const resp = await fetch(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/logs`,
+  );
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => resp.statusText);
+    throw new ApiError(resp.status, body || resp.statusText);
+  }
+  return resp.text();
+}
+
+/**
+ * Stream job logs via SSE for a running job.
+ * Returns an EventSource instance. The caller is responsible for closing it.
+ * Each "message" event's `data` field contains a chunk of log text.
+ */
+export function streamJobLogs(jobId: string): EventSource {
+  return new EventSource(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/logs?watch=true`,
   );
 }

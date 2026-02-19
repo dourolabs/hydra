@@ -1,0 +1,115 @@
+import { Link, useParams } from "react-router-dom";
+import { Badge, Spinner, type BadgeStatus } from "@metis/ui";
+import { useJob } from "../features/jobs/useJob";
+import { TaskLogViewer } from "../features/jobs/TaskLogViewer";
+import { ApiError } from "../api/client";
+import styles from "./TaskLogPage.module.css";
+
+/** Map job statuses to BadgeStatus values. */
+function toBadgeStatus(status: string): BadgeStatus {
+  const mapped: Record<string, BadgeStatus> = {
+    created: "open",
+    pending: "open",
+    running: "in-progress",
+    complete: "closed",
+    failed: "failed",
+  };
+  const s = mapped[status];
+  return s ?? "open";
+}
+
+/** Format a duration in milliseconds to a human-readable string. */
+function formatDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}h ${remainingMinutes}m`;
+}
+
+/** Compute runtime from start_time to end_time (or now). */
+function getRuntime(
+  startTime: string | null,
+  endTime: string | null,
+): string {
+  if (!startTime) return "\u2014";
+  const start = new Date(startTime).getTime();
+  const end = endTime ? new Date(endTime).getTime() : Date.now();
+  return formatDuration(end - start);
+}
+
+export function TaskLogPage() {
+  const { issueId, taskId } = useParams<{
+    issueId: string;
+    taskId: string;
+  }>();
+  const { data: job, isLoading, error } = useJob(taskId ?? "");
+
+  return (
+    <div className={styles.page}>
+      <Link to={`/issues/${issueId}`} className={styles.back}>
+        &larr; Back to issue
+      </Link>
+
+      {isLoading && (
+        <div className={styles.center}>
+          <Spinner size="md" />
+        </div>
+      )}
+
+      {error && (
+        <div className={styles.errorContainer}>
+          {error instanceof ApiError && error.status === 404 ? (
+            <p className={styles.error}>
+              Task <strong>{taskId}</strong> not found.
+            </p>
+          ) : (
+            <p className={styles.error}>
+              Failed to load task: {(error as Error).message}
+            </p>
+          )}
+        </div>
+      )}
+
+      {job && (
+        <>
+          {/* Task metadata header */}
+          <div className={styles.header}>
+            <div className={styles.headerTop}>
+              <span className={styles.jobId}>{job.job_id}</span>
+              <Badge status={toBadgeStatus(job.status)} />
+            </div>
+            <div className={styles.meta}>
+              <div className={styles.metaItem}>
+                <span className={styles.metaLabel}>Issue</span>
+                <Link to={`/issues/${issueId}`} className={styles.metaLink}>
+                  {issueId}
+                </Link>
+              </div>
+              <div className={styles.metaItem}>
+                <span className={styles.metaLabel}>Runtime</span>
+                <span className={styles.metaValue}>
+                  {getRuntime(job.start_time, job.end_time)}
+                </span>
+              </div>
+              {job.creation_time && (
+                <div className={styles.metaItem}>
+                  <span className={styles.metaLabel}>Created</span>
+                  <span className={styles.metaValue}>
+                    {new Date(job.creation_time).toLocaleString()}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Log viewer */}
+          <TaskLogViewer jobId={job.job_id} status={job.status} />
+        </>
+      )}
+    </div>
+  );
+}

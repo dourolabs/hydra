@@ -40,7 +40,6 @@
 
 .logLink {
   color: var(--color-accent-dim);
-  cursor: pointer;
   text-decoration: underline;
   text-decoration-style: dotted;
 }
