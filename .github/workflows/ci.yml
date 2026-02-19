@@ -80,3 +80,43 @@ jobs:
 
       - name: Run tests
         run: cargo nextest run --workspace --run-ignored all
+
+  ts-bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Regenerate TypeScript bindings
+        run: >
+          TS_RS_EXPORT_DIR=${{ github.workspace }}/metis-web/packages/api/src/generated
+          cargo test -p metis-common --features ts export_bindings
+
+      - name: Check for stale TypeScript types
+        run: |
+          CHANGED=$(git diff --name-only metis-web/packages/api/src/generated/)
+          UNTRACKED=$(git ls-files --others --exclude-standard metis-web/packages/api/src/generated/)
+          if [ -n "$CHANGED" ] || [ -n "$UNTRACKED" ]; then
+            echo "ERROR: Generated TypeScript types are out of date."
+            echo ""
+            if [ -n "$CHANGED" ]; then
+              echo "Modified files:"
+              echo "$CHANGED"
+            fi
+            if [ -n "$UNTRACKED" ]; then
+              echo "New untracked files:"
+              echo "$UNTRACKED"
+            fi
+            echo ""
+            echo "Run the following command and commit the updated files:"
+            echo ""
+            echo "  TS_RS_EXPORT_DIR=\$(pwd)/metis-web/packages/api/src/generated cargo test -p metis-common --features ts export_bindings"
+            echo ""
+            exit 1
+          fi

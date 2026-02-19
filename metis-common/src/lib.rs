@@ -57,7 +57,7 @@ mod ts_export {
     /// definitions to the specified directory.
     ///
     /// Usage:
-    ///   TS_RS_EXPORT_DIR=metis-web/packages/api/src/generated \
+    ///   TS_RS_EXPORT_DIR=$(pwd)/metis-web/packages/api/src/generated \
     ///     cargo test -p metis-common --features ts export_bindings
     #[test]
     fn export_bindings() {
