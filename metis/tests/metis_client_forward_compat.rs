@@ -123,7 +123,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     });
 
     server.mock(move |when, then| {
-        when.method(GET).path("/v1/jobs/");
+        when.method(GET).path("/v1/jobs");
         then.status(200).json_body(json!({
             "jobs": [job_record_body_for_list.clone()],
             "future": "job-list"
