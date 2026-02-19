@@ -1,4 +1,4 @@
-import { Select } from "@metis/ui";
+import { Input, Select } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
 import type { IssueFilterValues as IssueFilterState, SortOption } from "./useIssueFilters";
 import styles from "./IssueFilters.module.css";
@@ -43,6 +43,24 @@ function buildAssigneeOptions(assignees: string[]): SelectOption[] {
 export function IssueFilters({ filters, assignees, onFilterChange }: IssueFiltersProps) {
   return (
     <div className={styles.filters}>
+      <div className={styles.searchWrapper}>
+        <Input
+          placeholder="Search issues…"
+          value={filters.q}
+          onChange={(e) => onFilterChange({ q: e.target.value })}
+          aria-label="Search issues"
+        />
+        {filters.q && (
+          <button
+            type="button"
+            className={styles.clearButton}
+            onClick={() => onFilterChange({ q: "" })}
+            aria-label="Clear search"
+          >
+            ✕
+          </button>
+        )}
+      </div>
       <Select
         label="Status"
         options={STATUS_OPTIONS}
