@@ -109,8 +109,12 @@ export function IssueDetail({ record }: IssueDetailProps) {
             <IssueChildren issueId={record.issue_id} />
           )}
           {activeTab === "tasks" && <TaskList issueId={record.issue_id} />}
-          {activeTab === "patches" && <PatchList patchIds={issue.patches} />}
-          {activeTab === "todo" && <IssueTodoList items={issue.todo_list} />}
+          {activeTab === "patches" && (
+            <PatchList patchIds={issue.patches ?? []} />
+          )}
+          {activeTab === "todo" && (
+            <IssueTodoList items={issue.todo_list ?? []} />
+          )}
         </div>
       </Panel>
     </div>

@@ -15,7 +15,8 @@ export interface IssueData {
   progress: string;
   dependencies: IssueDependency[];
   patches: string[];
-  todo_list: { description: string; is_done: boolean }[];
+  /** May be omitted in JSON when the list is empty. */
+  todo_list?: { description: string; is_done: boolean }[];
 }
 
 /** Versioned record wrapping an issue. */

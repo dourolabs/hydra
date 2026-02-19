@@ -9,12 +9,12 @@ interface PatchListProps {
 /** Map patch statuses to BadgeStatus values. */
 function toBadgeStatus(status: string): BadgeStatus {
   const mapped: Record<string, BadgeStatus> = {
-    open: "open",
-    merged: "closed",
-    closed: "failed",
-    changes_requested: "rejected",
+    Open: "open",
+    Merged: "closed",
+    Closed: "failed",
+    ChangesRequested: "rejected",
   };
-  const s = mapped[status.toLowerCase().replace(/\s+/g, "_")];
+  const s = mapped[status];
   if (s) return s;
   return "open";
 }
@@ -49,9 +49,9 @@ export function PatchList({ patchIds }: PatchListProps) {
           <Badge status={toBadgeStatus(patch.status)} />
           <span className={styles.id}>{patch.patch_id}</span>
           <span className={styles.title}>{patch.title}</span>
-          {patch.github?.html_url && (
+          {patch.github_url && (
             <a
-              href={patch.github.html_url}
+              href={patch.github_url}
               target="_blank"
               rel="noopener noreferrer"
               className={styles.prLink}

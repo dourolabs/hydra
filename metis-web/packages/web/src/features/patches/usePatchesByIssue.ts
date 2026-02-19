@@ -1,5 +1,10 @@
 import { useQueries } from "@tanstack/react-query";
-import { fetchPatch, type Patch } from "../../api/patches";
+import {
+  fetchPatch,
+  toPatch,
+  type Patch,
+  type PatchVersionRecord,
+} from "../../api/patches";
 
 export function usePatchesByIssue(patchIds: string[]) {
   const queries = useQueries({
@@ -14,7 +19,8 @@ export function usePatchesByIssue(patchIds: string[]) {
   const error = queries.find((q) => q.error)?.error ?? null;
   const data: Patch[] = queries
     .map((q) => q.data)
-    .filter((d): d is Patch => d !== undefined);
+    .filter((d): d is PatchVersionRecord => d !== undefined)
+    .map(toPatch);
 
   return { data, isLoading, error };
 }

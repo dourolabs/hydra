@@ -1,16 +1,47 @@
 import { apiFetch } from "./client";
 
+/** Nested task data inside a JobVersionRecord. */
+export interface TaskData {
+  status: string;
+  spawned_from?: string;
+  creator: string;
+  creation_time?: string;
+  start_time?: string;
+  end_time?: string;
+}
+
+/** Server response shape: versioned record wrapping a Task. */
+export interface JobVersionRecord {
+  job_id: string;
+  version: number;
+  timestamp: string;
+  task: TaskData;
+}
+
+/** Flattened job type used throughout the UI. */
 export interface Job {
   job_id: string;
   status: string;
   spawned_from: string;
-  creation_time: string;
+  creation_time: string | null;
   start_time: string | null;
   end_time: string | null;
 }
 
 export interface ListJobsResponse {
-  jobs: Job[];
+  jobs: JobVersionRecord[];
+}
+
+/** Convert a JobVersionRecord to the flat Job type used in the UI. */
+export function toJob(record: JobVersionRecord): Job {
+  return {
+    job_id: record.job_id,
+    status: record.task.status,
+    spawned_from: record.task.spawned_from ?? "",
+    creation_time: record.task.creation_time ?? null,
+    start_time: record.task.start_time ?? null,
+    end_time: record.task.end_time ?? null,
+  };
 }
 
 export function fetchJobsByIssue(issueId: string): Promise<ListJobsResponse> {

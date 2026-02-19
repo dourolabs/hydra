@@ -22,9 +22,8 @@ function toBadgeStatus(status: string): BadgeStatus {
     created: "open",
     pending: "open",
     running: "in-progress",
-    completed: "closed",
+    complete: "closed",
     failed: "failed",
-    cancelled: "dropped",
   };
   const s = mapped[status];
   if (s) return s;
@@ -93,7 +92,9 @@ export function TaskList({ issueId }: TaskListProps) {
             </td>
             <td className={styles.td}>
               <span className={styles.time}>
-                {new Date(job.creation_time).toLocaleString()}
+                {job.creation_time
+                  ? new Date(job.creation_time).toLocaleString()
+                  : "\u2014"}
               </span>
             </td>
             <td className={styles.td}>
