@@ -5,7 +5,7 @@ use chrono::Utc;
 use clap::{Args, Subcommand};
 use metis_common::{
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
-    issues::IssueId,
+    issues::{IssueId, UpsertIssueRequest},
     jobs::BundleSpec,
     patches::{
         Patch, PatchStatus, PatchVersionRecord, Review, SearchPatchesQuery, UpsertPatchRequest,
@@ -453,7 +453,7 @@ async fn create_patch(
     title: String,
     description: String,
     job_id: Option<TaskId>,
-    _issue_id: IssueId,
+    issue_id: IssueId,
     allow_uncommitted: bool,
     force: bool,
     base_ref: &str,
@@ -504,6 +504,25 @@ async fn create_patch(
         .get_patch(&response.patch_id)
         .await
         .with_context(|| format!("failed to fetch patch '{}'", response.patch_id))?;
+
+    // Link the newly created patch to the issue by appending its ID to the
+    // issue's patches field. If the update fails, log a warning but do not
+    // fail the command — the patch was already created successfully.
+    match client.get_issue(&issue_id, false).await {
+        Ok(issue_record) => {
+            let mut updated_issue = issue_record.issue;
+            if !updated_issue.patches.contains(&patch.patch_id) {
+                updated_issue.patches.push(patch.patch_id.clone());
+            }
+            let request = UpsertIssueRequest::new(updated_issue, None);
+            if let Err(e) = client.update_issue(&issue_id, &request).await {
+                eprintln!("Warning: failed to update issue '{issue_id}' with patch id: {e}");
+            }
+        }
+        Err(e) => {
+            eprintln!("Warning: failed to fetch issue '{issue_id}' for patch linking: {e}");
+        }
+    }
 
     Ok(patch)
 }
@@ -946,6 +965,7 @@ mod tests {
     use git2::Repository;
     use httpmock::{prelude::*, Mock};
     use metis_common::{
+        issues::{Issue, IssueStatus, IssueType, IssueVersionRecord, UpsertIssueResponse},
         jobs::{BundleSpec, JobVersionRecord, Task},
         patches::{
             CommitRange, CreatePatchAssetResponse, GitOid, ListPatchVersionsResponse,
@@ -1032,6 +1052,48 @@ mod tests {
                 .json_body_obj(&expected_request);
             then.status(200).json_body_obj(&response);
         })
+    }
+
+    fn mock_get_issue(server: &MockServer, issue: IssueVersionRecord) -> Mock {
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{}", issue.issue_id.as_ref()));
+            then.status(200).json_body_obj(&issue);
+        })
+    }
+
+    fn mock_update_issue(
+        server: &MockServer,
+        issue_id: IssueId,
+        response: UpsertIssueResponse,
+    ) -> Mock {
+        server.mock(move |when, then| {
+            when.method(PUT)
+                .path(format!("/v1/issues/{}", issue_id.as_ref()));
+            then.status(200).json_body_obj(&response);
+        })
+    }
+
+    fn sample_issue_record(issue_id: &IssueId, patches: Vec<PatchId>) -> IssueVersionRecord {
+        IssueVersionRecord::new(
+            issue_id.clone(),
+            0,
+            Utc::now(),
+            Issue::new(
+                IssueType::Task,
+                "test issue".to_string(),
+                Username::from("test-creator"),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                patches,
+                false,
+            ),
+            None,
+        )
     }
 
     fn initialize_repo_with_changes(
@@ -1230,6 +1292,10 @@ mod tests {
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
+        let issue_record = sample_issue_record(&issue_id, Vec::new());
+        let issue_update_response = UpsertIssueResponse::new(issue_id.clone(), 1);
+        let get_issue_mock = mock_get_issue(&server, issue_record);
+        let update_issue_mock = mock_update_issue(&server, issue_id.clone(), issue_update_response);
         mock_get_github_token_failure(&server);
         mock_whoami(&server);
         create_patch(
@@ -1248,6 +1314,8 @@ mod tests {
         job_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
+        get_issue_mock.assert();
+        update_issue_mock.assert();
 
         Ok(())
     }
@@ -1317,6 +1385,10 @@ mod tests {
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
+        let issue_record = sample_issue_record(&issue_id, Vec::new());
+        let issue_update_response = UpsertIssueResponse::new(issue_id.clone(), 1);
+        let get_issue_mock = mock_get_issue(&server, issue_record);
+        let update_issue_mock = mock_update_issue(&server, issue_id.clone(), issue_update_response);
         mock_get_github_token_failure(&server);
         mock_whoami(&server);
 
@@ -1336,6 +1408,8 @@ mod tests {
         job_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
+        get_issue_mock.assert();
+        update_issue_mock.assert();
 
         Ok(())
     }
@@ -1477,6 +1551,10 @@ mod tests {
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
+        let issue_record = sample_issue_record(&issue_id, Vec::new());
+        let issue_update_response = UpsertIssueResponse::new(issue_id.clone(), 1);
+        let get_issue_mock = mock_get_issue(&server, issue_record);
+        let update_issue_mock = mock_update_issue(&server, issue_id.clone(), issue_update_response);
         mock_get_github_token_failure(&server);
         mock_whoami(&server);
 
@@ -1496,6 +1574,101 @@ mod tests {
         job_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
+        get_issue_mock.assert();
+        update_issue_mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_links_patch_to_issue() -> Result<()> {
+        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
+        let branch_name = current_branch(&repo_path)?;
+        let job_id = task_id("t-job-link");
+        let issue_id = issue_id("i-link");
+        let job_record = JobVersionRecord::new(
+            job_id.clone(),
+            0,
+            Utc::now(),
+            Task::new(
+                "0".to_string(),
+                BundleSpec::ServiceRepository {
+                    name: sample_repo_name(),
+                    rev: None,
+                },
+                None,
+                Username::from("test-creator"),
+                None,
+                None,
+                Default::default(),
+                None,
+                None,
+                None,
+                Status::Created,
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+            ),
+            None,
+        );
+        let expected_diff =
+            git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
+        let patch = Patch::new(
+            "link test".to_string(),
+            "link description".to_string(),
+            expected_diff,
+            PatchStatus::Open,
+            false,
+            Some(job_id.clone()),
+            Username::from("test-user"),
+            Vec::new(),
+            sample_repo_name(),
+            None,
+            false,
+            Some(branch_name.to_string()),
+            Some(CommitRange::new(base_commit, head_commit)),
+            Some("main".to_string()),
+        );
+        let expected_request = UpsertPatchRequest::new(patch.clone());
+        let new_patch_id = patch_id("p-link");
+        let patch_response = UpsertPatchResponse::new(new_patch_id.clone(), 0);
+        let patch_record =
+            PatchVersionRecord::new(new_patch_id.clone(), 0, Utc::now(), patch, None);
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        mock_get_job(&server, job_record);
+        mock_create_patch(&server, expected_request, patch_response);
+        mock_get_patch(&server, patch_record);
+        let issue_record = sample_issue_record(&issue_id, Vec::new());
+        let issue_update_response = UpsertIssueResponse::new(issue_id.clone(), 1);
+        mock_get_issue(&server, issue_record);
+
+        // Verify the update_issue call receives the patch id in the issue's patches field.
+        let update_issue_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path(format!("/v1/issues/{}", issue_id.as_ref()))
+                .json_body_partial(r#"{"issue": {"patches": ["p-link"]}}"#);
+            then.status(200).json_body_obj(&issue_update_response);
+        });
+        mock_get_github_token_failure(&server);
+        mock_whoami(&server);
+
+        create_patch(
+            &client,
+            "link test".to_string(),
+            "link description".to_string(),
+            Some(job_id),
+            issue_id,
+            false,
+            false,
+            "origin/main",
+            Some(&repo_path),
+        )
+        .await?;
+
+        update_issue_mock.assert();
         Ok(())
     }
 
