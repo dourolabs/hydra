@@ -8,7 +8,7 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./style.css": "./dist/style.css",
+    "./style.css": "./dist/index.css",
     "./theme/global.css": "./src/theme/global.css"
   },
   "main": "./dist/index.js",

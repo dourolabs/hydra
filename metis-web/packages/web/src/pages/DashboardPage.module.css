@@ -1,0 +1,28 @@
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.header {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.center {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-8);
+}
+
+.error {
+  color: var(--color-status-failed);
+  padding: var(--space-4);
+  margin: 0;
+}
+
+.empty {
+  color: var(--color-text-secondary);
+  padding: var(--space-4);
+  margin: 0;
+}

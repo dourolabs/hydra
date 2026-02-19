@@ -1,22 +1,25 @@
-import { UI_VERSION } from "@metis/ui";
+import { RouterProvider } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import "@metis/ui/style.css";
+import "@metis/ui/theme/global.css";
+import { AuthProvider } from "./features/auth/AuthContext";
+import { router } from "./router";
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: false,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 export default function App() {
   return (
-    <div
-      style={{
-        backgroundColor: "#0a0a0a",
-        color: "#e0e0e0",
-        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <h1 style={{ color: "#00cc66" }}>metis</h1>
-      <p>Web interface — coming soon</p>
-      <p style={{ color: "#555555", fontSize: "0.8rem" }}>@metis/ui v{UI_VERSION}</p>
-    </div>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <RouterProvider router={router} />
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }
