@@ -1,11 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchJob, toJob } from "../../api/jobs";
+import { apiClient } from "../../api/client";
 
 export function useJob(jobId: string) {
   return useQuery({
     queryKey: ["job", jobId],
-    queryFn: () => fetchJob(jobId),
-    select: (data) => toJob(data),
+    queryFn: () => apiClient.getJob(jobId),
     enabled: !!jobId,
   });
 }

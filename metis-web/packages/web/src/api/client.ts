@@ -1,13 +1,18 @@
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
-}
+import { MetisApiClient, ApiError } from "@metis/api";
 
+export { ApiError };
+
+/**
+ * Shared MetisApiClient instance configured for the BFF proxy.
+ * All API calls to /api/v1/* go through this client.
+ */
+export const apiClient = new MetisApiClient({ baseUrl: "/api" });
+
+/**
+ * Low-level fetch wrapper for BFF-specific routes (e.g. /auth/*) that
+ * are not part of the metis-server API and therefore not covered by
+ * MetisApiClient.
+ */
 export async function apiFetch<T>(
   path: string,
   init?: RequestInit,

@@ -78,6 +78,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.19.9
         version: 1.19.9(hono@4.11.10)
+      '@metis/api':
+        specifier: workspace:*
+        version: link:../api
       '@metis/ui':
         specifier: workspace:*
         version: link:../ui

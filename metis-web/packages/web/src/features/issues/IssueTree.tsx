@@ -2,12 +2,12 @@ import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { TreeView } from "@metis/ui";
 import type { TreeNode } from "@metis/ui";
+import type { IssueVersionRecord } from "@metis/api";
 import { IssueRow } from "./IssueRow";
 import { type IssueTreeNode, buildIssueTree } from "./useIssues";
-import type { Issue } from "../../api/issues";
 
 interface IssueTreeProps {
-  issues: Issue[];
+  issues: IssueVersionRecord[];
   /** When provided, only show branches containing these issue IDs. Non-matching ancestors are dimmed. */
   matchingIds?: Set<string>;
   className?: string;
@@ -38,7 +38,7 @@ function toTreeNodes(nodes: IssueTreeNode[], matchingIds?: Set<string>): TreeNod
 
     result.push({
       id: node.id,
-      label: <IssueRow issue={node.issue} dimmed={dimmed} />,
+      label: <IssueRow record={node.issue} dimmed={dimmed} />,
       children:
         node.children.length > 0
           ? toTreeNodes(node.children, matchingIds)
