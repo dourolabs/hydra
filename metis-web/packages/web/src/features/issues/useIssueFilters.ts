@@ -8,6 +8,7 @@ export interface IssueFilterValues {
   assignee: string;
   type: string;
   sort: SortOption;
+  q: string;
 }
 
 const VALID_SORTS: Set<string> = new Set(["newest", "oldest", "updated", "status"]);
@@ -26,8 +27,9 @@ export function useIssueFilters() {
     const assignee = searchParams.get("assignee") ?? "";
     const type = searchParams.get("type") ?? "";
     const sort = parseSortParam(searchParams.get("sort"));
+    const q = searchParams.get("q") ?? "";
 
-    return { statuses, assignee, type, sort };
+    return { statuses, assignee, type, sort, q };
   }, [searchParams]);
 
   const setFilters = useCallback(
@@ -64,6 +66,14 @@ export function useIssueFilters() {
             next.set("sort", updates.sort);
           } else {
             next.delete("sort");
+          }
+        }
+
+        if (updates.q !== undefined) {
+          if (updates.q) {
+            next.set("q", updates.q);
+          } else {
+            next.delete("q");
           }
         }
 

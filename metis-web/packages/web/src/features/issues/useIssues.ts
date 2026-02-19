@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchIssues, toIssue, type Issue } from "../../api/issues";
 
-export function useIssues() {
+export function useIssues(q?: string) {
   return useQuery({
-    queryKey: ["issues"],
+    queryKey: q ? ["issues", { q }] : ["issues"],
     queryFn: async () => {
-      const data = await fetchIssues();
+      const data = await fetchIssues(q ? { q } : undefined);
       return data.issues.map(toIssue);
     },
   });

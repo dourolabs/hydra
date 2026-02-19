@@ -59,8 +59,17 @@ export function toIssue(record: IssueVersionRecord): Issue {
   };
 }
 
-export function fetchIssues(): Promise<IssueListResponse> {
-  return apiFetch<IssueListResponse>("/api/v1/issues");
+export interface SearchIssuesQuery {
+  q?: string;
+}
+
+export function fetchIssues(query?: SearchIssuesQuery): Promise<IssueListResponse> {
+  const params = new URLSearchParams();
+  if (query?.q) {
+    params.set("q", query.q);
+  }
+  const qs = params.toString();
+  return apiFetch<IssueListResponse>(`/api/v1/issues${qs ? `?${qs}` : ""}`);
 }
 
 export function fetchIssue(issueId: string): Promise<IssueVersionRecord> {

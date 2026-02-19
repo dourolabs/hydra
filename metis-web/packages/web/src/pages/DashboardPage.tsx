@@ -5,6 +5,7 @@ import { useIssueFilters } from "../features/issues/useIssueFilters";
 import { IssueTree } from "../features/issues/IssueTree";
 import { IssueFilters } from "../features/issues/IssueFilters";
 import { IssueCreator } from "../features/issues/IssueCreator";
+import { useDebounce } from "../hooks/useDebounce";
 import type { Issue } from "../api/issues";
 import type { IssueFilterValues, SortOption } from "../features/issues/useIssueFilters";
 import styles from "./DashboardPage.module.css";
@@ -66,14 +67,15 @@ function extractAssignees(issues: Issue[]): string[] {
   return Array.from(set).sort();
 }
 
-/** Check whether any filter is actively set. */
+/** Check whether any client-side filter is actively set. */
 function hasActiveFilters(filters: IssueFilterValues): boolean {
   return filters.statuses.length > 0 || filters.assignee !== "" || filters.type !== "";
 }
 
 export function DashboardPage() {
-  const { data: issues, isLoading, error } = useIssues();
   const { filters, setFilters } = useIssueFilters();
+  const debouncedQuery = useDebounce(filters.q, 300);
+  const { data: issues, isLoading, error } = useIssues(debouncedQuery || undefined);
 
   const assignees = useMemo(() => (issues ? extractAssignees(issues) : []), [issues]);
 
@@ -110,7 +112,11 @@ export function DashboardPage() {
           <p className={styles.error}>Failed to load issues: {(error as Error).message}</p>
         )}
         {issues && (sortedIssues.length === 0 || (active && matchingIds.size === 0)) && (
-          <p className={styles.empty}>No issues found.</p>
+          <p className={styles.empty}>
+            {debouncedQuery
+              ? `No issues matching "${debouncedQuery}".`
+              : "No issues found."}
+          </p>
         )}
         {sortedIssues.length > 0 && (!active || matchingIds.size > 0) && (
           <IssueTree
