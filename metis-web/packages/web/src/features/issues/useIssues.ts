@@ -1,20 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchIssues, type Issue } from "../../api/issues";
-import type { TreeNode } from "@metis/ui";
+import { fetchIssues, toIssue, type Issue } from "../../api/issues";
 
 export function useIssues() {
   return useQuery({
     queryKey: ["issues"],
     queryFn: async () => {
       const data = await fetchIssues();
-      return data.issues.map((entry) => entry.issue);
+      return data.issues.map(toIssue);
     },
   });
 }
 
-export interface IssueTreeNode extends TreeNode {
+export interface IssueTreeNode {
+  id: string;
   issue: Issue;
   children: IssueTreeNode[];
+  defaultExpanded: boolean;
 }
 
 /**
@@ -52,7 +53,6 @@ export function buildIssueTree(issues: Issue[]): IssueTreeNode[] {
 
     return {
       id: issue.issue_id,
-      label: issue.issue_id, // placeholder; IssueTree will override with IssueRow
       issue,
       children,
       defaultExpanded: true,
