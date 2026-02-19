@@ -3,6 +3,7 @@ import { AppLayout } from "./layout/AppLayout";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { IssueDetailPage } from "./pages/IssueDetailPage";
+import { JobLogPage } from "./pages/JobLogPage";
 
 export const router = createBrowserRouter([
   {
@@ -20,6 +21,10 @@ export const router = createBrowserRouter([
       {
         path: "issues/:issueId",
         element: <IssueDetailPage />,
+      },
+      {
+        path: "issues/:issueId/jobs/:jobId/logs",
+        element: <JobLogPage />,
       },
     ],
   },

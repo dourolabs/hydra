@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Badge, Spinner, type BadgeStatus } from "@metis/ui";
 import { useJobsByIssue } from "./useJobsByIssue";
 import styles from "./JobList.module.css";
@@ -103,7 +104,12 @@ export function JobList({ issueId }: JobListProps) {
               </span>
             </td>
             <td className={styles.td}>
-              <span className={styles.logLink}>View Logs</span>
+              <Link
+                to={`/issues/${issueId}/jobs/${job.job_id}/logs`}
+                className={styles.logLink}
+              >
+                View Logs
+              </Link>
             </td>
           </tr>
         ))}
