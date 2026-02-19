@@ -1,17 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import type { EntityEventData } from "@metis/api";
 
 export type SSEConnectionState = "connecting" | "connected" | "disconnected";
-
-/**
- * Entity mutation event data from metis-server SSE /v1/events.
- */
-interface EntityEventData {
-  entity_type: string;
-  entity_id: string;
-  version: number;
-  timestamp: string;
-}
 
 const ENTITY_EVENT_TYPES = [
   "issue_created",
