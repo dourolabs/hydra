@@ -1,20 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { apiFetch } from "./client";
+import type { RepositoryRecord, ListRepositoriesResponse } from "@metis/api";
+import { apiClient } from "./client";
 
-export interface RepositoryRecord {
-  name: string;
-  repository: {
-    remote_url?: string;
-    default_branch?: string;
-  };
-}
-
-export interface ListRepositoriesResponse {
-  repositories: RepositoryRecord[];
-}
+export type { RepositoryRecord, ListRepositoriesResponse };
 
 function fetchRepositories(): Promise<ListRepositoriesResponse> {
-  return apiFetch<ListRepositoriesResponse>("/api/v1/repositories");
+  return apiClient.listRepositories();
 }
 
 export function useRepositories() {

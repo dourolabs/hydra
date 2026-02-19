@@ -1,22 +1,7 @@
-import { apiFetch } from "./client";
+import type { PatchVersionRecord } from "@metis/api";
+import { apiClient } from "./client";
 
-/** Nested patch data inside a PatchVersionRecord. */
-export interface PatchData {
-  title: string;
-  description: string;
-  status: string;
-  github?: {
-    url?: string;
-  };
-}
-
-/** Server response shape: versioned record wrapping a Patch. */
-export interface PatchVersionRecord {
-  patch_id: string;
-  version: number;
-  timestamp: string;
-  patch: PatchData;
-}
+export type { PatchVersionRecord };
 
 /** Flattened patch type used throughout the UI. */
 export interface Patch {
@@ -39,7 +24,5 @@ export function toPatch(record: PatchVersionRecord): Patch {
 }
 
 export function fetchPatch(patchId: string): Promise<PatchVersionRecord> {
-  return apiFetch<PatchVersionRecord>(
-    `/api/v1/patches/${encodeURIComponent(patchId)}`,
-  );
+  return apiClient.getPatch(patchId);
 }

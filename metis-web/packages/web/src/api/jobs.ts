@@ -1,22 +1,8 @@
-import { apiFetch, ApiError } from "./client";
+import type { JobVersionRecord, ListJobsResponse } from "@metis/api";
+import { ApiError } from "@metis/api";
+import { apiClient } from "./client";
 
-/** Nested job data inside a JobVersionRecord. */
-export interface JobData {
-  status: string;
-  spawned_from?: string;
-  creator: string;
-  creation_time?: string;
-  start_time?: string;
-  end_time?: string;
-}
-
-/** Server response shape: versioned record wrapping a Job. */
-export interface JobVersionRecord {
-  job_id: string;
-  version: number;
-  timestamp: string;
-  task: JobData;
-}
+export type { JobVersionRecord, ListJobsResponse };
 
 /** Flattened job type used throughout the UI. */
 export interface Job {
@@ -26,10 +12,6 @@ export interface Job {
   creation_time: string | null;
   start_time: string | null;
   end_time: string | null;
-}
-
-export interface ListJobsResponse {
-  jobs: JobVersionRecord[];
 }
 
 /** Convert a JobVersionRecord to the flat Job type used in the UI. */
@@ -45,16 +27,12 @@ export function toJob(record: JobVersionRecord): Job {
 }
 
 export function fetchJobsByIssue(issueId: string): Promise<ListJobsResponse> {
-  return apiFetch<ListJobsResponse>(
-    `/api/v1/jobs?spawned_from=${encodeURIComponent(issueId)}`,
-  );
+  return apiClient.listJobs({ spawned_from: issueId });
 }
 
 /** Fetch a single job by ID. */
 export function fetchJob(jobId: string): Promise<JobVersionRecord> {
-  return apiFetch<JobVersionRecord>(
-    `/api/v1/jobs/${encodeURIComponent(jobId)}`,
-  );
+  return apiClient.getJob(jobId);
 }
 
 /** Fetch full log output for a completed job (plain text). */

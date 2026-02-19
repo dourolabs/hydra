@@ -7,6 +7,7 @@ WORKDIR /app/metis-web
 
 # Copy workspace config and lockfile first for layer caching
 COPY metis-web/package.json metis-web/pnpm-workspace.yaml metis-web/pnpm-lock.yaml ./
+COPY metis-web/packages/api/package.json ./packages/api/package.json
 COPY metis-web/packages/ui/package.json ./packages/ui/package.json
 COPY metis-web/packages/web/package.json ./packages/web/package.json
 
@@ -14,11 +15,12 @@ RUN pnpm install --frozen-lockfile
 
 # Copy source files
 COPY metis-web/tsconfig.base.json ./tsconfig.base.json
+COPY metis-web/packages/api/ ./packages/api/
 COPY metis-web/packages/ui/ ./packages/ui/
 COPY metis-web/packages/web/ ./packages/web/
 
-# Build @metis/ui library first, then @metis/web SPA
-RUN pnpm --filter @metis/ui build && pnpm --filter @metis/web build
+# Build packages in dependency order: api → ui → web
+RUN pnpm --filter @metis/api build && pnpm --filter @metis/ui build && pnpm --filter @metis/web build
 
 # Compile BFF server TypeScript to JavaScript
 RUN pnpm --filter @metis/web exec tsc --project tsconfig.server.json
@@ -32,6 +34,7 @@ WORKDIR /app
 
 # Copy only production dependencies
 COPY metis-web/package.json metis-web/pnpm-workspace.yaml metis-web/pnpm-lock.yaml ./
+COPY metis-web/packages/api/package.json ./packages/api/package.json
 COPY metis-web/packages/ui/package.json ./packages/ui/package.json
 COPY metis-web/packages/web/package.json ./packages/web/package.json
 
@@ -42,6 +45,9 @@ COPY --from=build /app/metis-web/packages/web/dist ./packages/web/dist
 
 # Copy compiled BFF server
 COPY --from=build /app/metis-web/packages/web/server-dist ./packages/web/server-dist
+
+# Copy built @metis/api dist (needed as workspace dependency)
+COPY --from=build /app/metis-web/packages/api/dist ./packages/api/dist
 
 # Copy built @metis/ui dist (needed as workspace dependency)
 COPY --from=build /app/metis-web/packages/ui/dist ./packages/ui/dist
