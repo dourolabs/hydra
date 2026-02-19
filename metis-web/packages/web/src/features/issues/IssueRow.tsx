@@ -1,9 +1,9 @@
 import { Avatar, Badge, type BadgeStatus } from "@metis/ui";
-import type { Issue } from "../../api/issues";
+import type { IssueVersionRecord } from "@metis/api";
 import styles from "./IssueRow.module.css";
 
 interface IssueRowProps {
-  issue: Issue;
+  record: IssueVersionRecord;
   dimmed?: boolean;
 }
 
@@ -29,11 +29,12 @@ function toBadgeStatus(status: string): BadgeStatus {
   return "open";
 }
 
-export function IssueRow({ issue, dimmed }: IssueRowProps) {
+export function IssueRow({ record, dimmed }: IssueRowProps) {
+  const { issue } = record;
   return (
     <span className={`${styles.row}${dimmed ? ` ${styles.dimmed}` : ""}`}>
       <Badge status={toBadgeStatus(issue.status)} />
-      <span className={styles.id}>{issue.issue_id}</span>
+      <span className={styles.id}>{record.issue_id}</span>
       {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
       <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
     </span>

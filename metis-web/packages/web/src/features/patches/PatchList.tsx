@@ -44,14 +44,14 @@ export function PatchList({ patchIds }: PatchListProps) {
 
   return (
     <ul className={styles.list}>
-      {patches.map((patch) => (
-        <li key={patch.patch_id} className={styles.item}>
-          <Badge status={toBadgeStatus(patch.status)} />
-          <span className={styles.id}>{patch.patch_id}</span>
-          <span className={styles.title}>{patch.title}</span>
-          {patch.github_url && (
+      {patches.map((record) => (
+        <li key={record.patch_id} className={styles.item}>
+          <Badge status={toBadgeStatus(record.patch.status)} />
+          <span className={styles.id}>{record.patch_id}</span>
+          <span className={styles.title}>{record.patch.title}</span>
+          {record.patch.github?.url && (
             <a
-              href={patch.github_url}
+              href={record.patch.github.url}
               target="_blank"
               rel="noopener noreferrer"
               className={styles.prLink}
