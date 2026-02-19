@@ -347,7 +347,7 @@ mod tests {
             None,
         )]);
         let list_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/jobs/");
+            when.method(GET).path("/v1/jobs");
             then.status(200).json_body_obj(&completed_jobs);
         });
 
