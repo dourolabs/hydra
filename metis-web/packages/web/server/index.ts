@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { auth } from "./auth.js";
+import { sse } from "./sse.js";
 import { proxy } from "./proxy.js";
 import { config } from "./config.js";
 
@@ -12,6 +13,9 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 
 // Auth routes
 app.route("/auth", auth);
+
+// SSE relay: /api/v1/events -> metis-server /v1/events (before generic proxy)
+app.route("/api/v1", sse);
 
 // API proxy: /api/v1/* -> metis-server /v1/*
 app.route("/api/v1", proxy);
