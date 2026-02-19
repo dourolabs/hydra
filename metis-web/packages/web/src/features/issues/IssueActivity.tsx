@@ -1,26 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { Avatar, Badge, Spinner, type BadgeStatus } from "@metis/ui";
+import { Avatar, Badge, Spinner } from "@metis/ui";
 import type { ActorRef, Issue, IssueVersionRecord } from "@metis/api";
+import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { apiClient } from "../../api/client";
 import styles from "./IssueActivity.module.css";
 
 interface IssueActivityProps {
   issueId: string;
-}
-
-const validStatuses: Set<string> = new Set([
-  "open",
-  "in-progress",
-  "closed",
-  "failed",
-  "dropped",
-  "blocked",
-  "rejected",
-]);
-
-function toBadgeStatus(status: string): BadgeStatus {
-  if (validStatuses.has(status)) return status as BadgeStatus;
-  return "open";
 }
 
 /** Extract a human-readable display name from an ActorRef. */
@@ -158,9 +144,9 @@ function ChangeEntry({ change }: { change: Change }) {
       <div className={styles.change}>
         <span className={styles.changeLabel}>Status</span>
         <span className={styles.statusTransition}>
-          <Badge status={toBadgeStatus(change.before)} />
+          <Badge status={issueToBadgeStatus(change.before)} />
           <span className={styles.arrow}>{"\u2192"}</span>
-          <Badge status={toBadgeStatus(change.after)} />
+          <Badge status={issueToBadgeStatus(change.after)} />
         </span>
       </div>
     );

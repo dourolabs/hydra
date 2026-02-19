@@ -1,22 +1,10 @@
-import { Badge, Spinner, type BadgeStatus } from "@metis/ui";
+import { Badge, Spinner } from "@metis/ui";
+import { patchToBadgeStatus } from "../../utils/statusMapping";
 import { usePatchesByIssue } from "./usePatchesByIssue";
 import styles from "./PatchList.module.css";
 
 interface PatchListProps {
   patchIds: string[];
-}
-
-/** Map patch statuses to BadgeStatus values. */
-function toBadgeStatus(status: string): BadgeStatus {
-  const mapped: Record<string, BadgeStatus> = {
-    Open: "open",
-    Merged: "closed",
-    Closed: "failed",
-    ChangesRequested: "rejected",
-  };
-  const s = mapped[status];
-  if (s) return s;
-  return "open";
 }
 
 export function PatchList({ patchIds }: PatchListProps) {
@@ -46,7 +34,7 @@ export function PatchList({ patchIds }: PatchListProps) {
     <ul className={styles.list}>
       {patches.map((record) => (
         <li key={record.patch_id} className={styles.item}>
-          <Badge status={toBadgeStatus(record.patch.status)} />
+          <Badge status={patchToBadgeStatus(record.patch.status)} />
           <span className={styles.id}>{record.patch_id}</span>
           <span className={styles.title}>{record.patch.title}</span>
           {record.patch.github?.url && (

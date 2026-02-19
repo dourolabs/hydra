@@ -1,32 +1,12 @@
 import { Link } from "react-router-dom";
-import { Badge, Spinner, type BadgeStatus } from "@metis/ui";
+import { Badge, Spinner } from "@metis/ui";
+import { issueToBadgeStatus } from "../../utils/statusMapping";
+import { descriptionSnippet } from "../../utils/text";
 import { useIssues } from "./useIssues";
 import styles from "./IssueChildren.module.css";
 
 interface IssueChildrenProps {
   issueId: string;
-}
-
-const validStatuses: Set<string> = new Set([
-  "open",
-  "in-progress",
-  "closed",
-  "failed",
-  "dropped",
-  "blocked",
-  "rejected",
-]);
-
-function toBadgeStatus(status: string): BadgeStatus {
-  if (validStatuses.has(status)) return status as BadgeStatus;
-  return "open";
-}
-
-/** First line of the description, truncated. */
-function descriptionSnippet(desc: string, max = 60): string {
-  const line = desc.split("\n")[0].trim();
-  if (line.length <= max) return line;
-  return line.slice(0, max) + "\u2026";
 }
 
 export function IssueChildren({ issueId }: IssueChildrenProps) {
@@ -53,11 +33,11 @@ export function IssueChildren({ issueId }: IssueChildrenProps) {
     <ul className={styles.list}>
       {children.map((record) => (
         <li key={record.issue_id} className={styles.item}>
-          <Badge status={toBadgeStatus(record.issue.status)} />
+          <Badge status={issueToBadgeStatus(record.issue.status)} />
           <Link to={`/issues/${record.issue_id}`} className={styles.link}>
             <span className={styles.id}>{record.issue_id}</span>
             <span className={styles.desc}>
-              {descriptionSnippet(record.issue.description)}
+              {descriptionSnippet(record.issue.description, 60)}
             </span>
           </Link>
         </li>

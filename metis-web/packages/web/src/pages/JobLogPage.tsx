@@ -1,45 +1,11 @@
 import { Link, useParams } from "react-router-dom";
-import { Badge, Spinner, type BadgeStatus } from "@metis/ui";
+import { Badge, Spinner } from "@metis/ui";
+import { jobToBadgeStatus } from "../utils/statusMapping";
+import { getRuntime } from "../utils/time";
 import { useJob } from "../features/jobs/useJob";
 import { JobLogViewer } from "../features/jobs/JobLogViewer";
 import { ApiError } from "../api/client";
 import styles from "./JobLogPage.module.css";
-
-/** Map job statuses to BadgeStatus values. */
-function toBadgeStatus(status: string): BadgeStatus {
-  const mapped: Record<string, BadgeStatus> = {
-    created: "open",
-    pending: "open",
-    running: "in-progress",
-    complete: "closed",
-    failed: "failed",
-  };
-  const s = mapped[status];
-  return s ?? "open";
-}
-
-/** Format a duration in milliseconds to a human-readable string. */
-function formatDuration(ms: number): string {
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return `${hours}h ${remainingMinutes}m`;
-}
-
-/** Compute runtime from start_time to end_time (or now). */
-function getRuntime(
-  startTime: string | null | undefined,
-  endTime: string | null | undefined,
-): string {
-  if (!startTime) return "\u2014";
-  const start = new Date(startTime).getTime();
-  const end = endTime ? new Date(endTime).getTime() : Date.now();
-  return formatDuration(end - start);
-}
 
 export function JobLogPage() {
   const { issueId, jobId } = useParams<{
@@ -80,7 +46,7 @@ export function JobLogPage() {
           <div className={styles.header}>
             <div className={styles.headerTop}>
               <span className={styles.jobId}>{record.job_id}</span>
-              <Badge status={toBadgeStatus(record.task.status)} />
+              <Badge status={jobToBadgeStatus(record.task.status)} />
             </div>
             <div className={styles.meta}>
               <div className={styles.metaItem}>
