@@ -1,11 +1,13 @@
 import { Navigate, Outlet } from "react-router-dom";
 import { Spinner } from "@metis/ui";
 import { useAuth } from "../features/auth/AuthContext";
+import { useSSE } from "../hooks/useSSE";
 import { NavBar } from "./NavBar";
 import styles from "./AppLayout.module.css";
 
 export function AppLayout() {
   const { user, loading } = useAuth();
+  const sseState = useSSE();
 
   if (loading) {
     return (
@@ -21,7 +23,7 @@ export function AppLayout() {
 
   return (
     <div className={styles.layout}>
-      <NavBar />
+      <NavBar connectionState={sseState} />
       <main className={styles.main}>
         <Outlet />
       </main>
