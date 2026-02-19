@@ -45,7 +45,7 @@ function formatDuration(ms: number): string {
 }
 
 /** Compute runtime from start_time to end_time (or now). */
-function getRuntime(startTime: string | null, endTime: string | null): string {
+function getRuntime(startTime: string | null | undefined, endTime: string | null | undefined): string {
   if (!startTime) return "\u2014";
   const start = new Date(startTime).getTime();
   const end = endTime ? new Date(endTime).getTime() : Date.now();
@@ -83,29 +83,29 @@ export function JobList({ issueId }: JobListProps) {
         </tr>
       </thead>
       <tbody>
-        {jobs.map((job) => (
-          <tr key={job.job_id} className={styles.row}>
+        {jobs.map((record) => (
+          <tr key={record.job_id} className={styles.row}>
             <td className={styles.td}>
-              <Badge status={toBadgeStatus(job.status)} />
+              <Badge status={toBadgeStatus(record.task.status)} />
             </td>
             <td className={styles.td}>
-              <span className={styles.jobId}>{job.job_id}</span>
+              <span className={styles.jobId}>{record.job_id}</span>
             </td>
             <td className={styles.td}>
               <span className={styles.time}>
-                {job.creation_time
-                  ? new Date(job.creation_time).toLocaleString()
+                {record.task.creation_time
+                  ? new Date(record.task.creation_time).toLocaleString()
                   : "\u2014"}
               </span>
             </td>
             <td className={styles.td}>
               <span className={styles.time}>
-                {getRuntime(job.start_time, job.end_time)}
+                {getRuntime(record.task.start_time, record.task.end_time)}
               </span>
             </td>
             <td className={styles.td}>
               <Link
-                to={`/issues/${issueId}/jobs/${job.job_id}/logs`}
+                to={`/issues/${issueId}/jobs/${record.job_id}/logs`}
                 className={styles.logLink}
               >
                 View Logs

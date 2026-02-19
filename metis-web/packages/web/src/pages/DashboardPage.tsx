@@ -1,11 +1,11 @@
 import { useMemo } from "react";
 import { Panel, Spinner } from "@metis/ui";
+import type { IssueVersionRecord } from "@metis/api";
 import { useIssues } from "../features/issues/useIssues";
 import { useIssueFilters } from "../features/issues/useIssueFilters";
 import { IssueTree } from "../features/issues/IssueTree";
 import { IssueFilters } from "../features/issues/IssueFilters";
 import { IssueCreator } from "../features/issues/IssueCreator";
-import type { Issue } from "../api/issues";
 import type { IssueFilterValues, SortOption } from "../features/issues/useIssueFilters";
 import styles from "./DashboardPage.module.css";
 
@@ -19,25 +19,25 @@ const STATUS_ORDER: Record<string, number> = {
   rejected: 6,
 };
 
-function issueMatchesFilter(issue: Issue, statuses: string[], assignee: string, type: string): boolean {
-  if (statuses.length > 0 && !statuses.includes(issue.status)) return false;
-  if (assignee && issue.assignee !== assignee) return false;
-  if (type && issue.type !== type) return false;
+function issueMatchesFilter(record: IssueVersionRecord, statuses: string[], assignee: string, type: string): boolean {
+  if (statuses.length > 0 && !statuses.includes(record.issue.status)) return false;
+  if (assignee && record.issue.assignee !== assignee) return false;
+  if (type && record.issue.type !== type) return false;
   return true;
 }
 
 /** Return the set of issue IDs that directly match the current filters. */
-function getMatchingIds(issues: Issue[], filters: IssueFilterValues): Set<string> {
+function getMatchingIds(issues: IssueVersionRecord[], filters: IssueFilterValues): Set<string> {
   const ids = new Set<string>();
-  for (const issue of issues) {
-    if (issueMatchesFilter(issue, filters.statuses, filters.assignee, filters.type)) {
-      ids.add(issue.issue_id);
+  for (const record of issues) {
+    if (issueMatchesFilter(record, filters.statuses, filters.assignee, filters.type)) {
+      ids.add(record.issue_id);
     }
   }
   return ids;
 }
 
-function sortIssues(issues: Issue[], sort: SortOption): Issue[] {
+function sortIssues(issues: IssueVersionRecord[], sort: SortOption): IssueVersionRecord[] {
   const sorted = [...issues];
 
   switch (sort) {
@@ -51,17 +51,17 @@ function sortIssues(issues: Issue[], sort: SortOption): Issue[] {
       sorted.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
       break;
     case "status":
-      sorted.sort((a, b) => (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99));
+      sorted.sort((a, b) => (STATUS_ORDER[a.issue.status] ?? 99) - (STATUS_ORDER[b.issue.status] ?? 99));
       break;
   }
 
   return sorted;
 }
 
-function extractAssignees(issues: Issue[]): string[] {
+function extractAssignees(issues: IssueVersionRecord[]): string[] {
   const set = new Set<string>();
-  for (const issue of issues) {
-    if (issue.assignee) set.add(issue.assignee);
+  for (const record of issues) {
+    if (record.issue.assignee) set.add(record.issue.assignee);
   }
   return Array.from(set).sort();
 }
