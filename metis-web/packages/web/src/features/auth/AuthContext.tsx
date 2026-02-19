@@ -6,10 +6,10 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { type User, fetchMe, login as apiLogin, logout as apiLogout } from "../../api/auth";
+import { type WhoAmIResponse, fetchMe, login as apiLogin, logout as apiLogout } from "../../api/auth";
 
 interface AuthState {
-  user: User | null;
+  user: WhoAmIResponse | null;
   loading: boolean;
   error: string | null;
   login: (token: string) => Promise<void>;
@@ -19,7 +19,7 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<WhoAmIResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
