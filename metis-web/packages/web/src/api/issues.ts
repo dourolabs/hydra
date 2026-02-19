@@ -19,12 +19,24 @@ export interface IssueData {
   todo_list?: { description: string; is_done: boolean }[];
 }
 
+/** Actor identifier — either a username or a task ID. */
+export type ActorId =
+  | { Username: string }
+  | { Task: string };
+
+/** Typed reference to who performed an operation. */
+export type ActorRef =
+  | { Authenticated: { actor_id: ActorId } }
+  | { System: { worker_name: string; on_behalf_of?: ActorId } }
+  | { Automation: { automation_name: string; triggered_by?: ActorRef } };
+
 /** Versioned record wrapping an issue. */
 export interface IssueVersionRecord {
   issue_id: string;
   version: number;
   timestamp: string;
   issue: IssueData;
+  actor?: ActorRef;
 }
 
 /** Flattened issue type used throughout the UI. */
@@ -99,4 +111,14 @@ export function createIssue(params: CreateIssueParams): Promise<CreateIssueRespo
     method: "POST",
     body: JSON.stringify({ issue }),
   });
+}
+
+export interface IssueVersionsResponse {
+  versions: IssueVersionRecord[];
+}
+
+export function fetchIssueVersions(issueId: string): Promise<IssueVersionsResponse> {
+  return apiFetch<IssueVersionsResponse>(
+    `/api/v1/issues/${encodeURIComponent(issueId)}/versions`,
+  );
 }

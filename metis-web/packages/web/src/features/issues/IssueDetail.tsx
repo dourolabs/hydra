@@ -3,6 +3,7 @@ import { Avatar, Badge, Panel, Tabs, type BadgeStatus } from "@metis/ui";
 import type { IssueVersionRecord } from "../../api/issues";
 import { IssueTodoList } from "./IssueTodoList";
 import { IssueChildren } from "./IssueChildren";
+import { IssueActivity } from "./IssueActivity";
 import { JobList } from "../jobs/JobList";
 import { PatchList } from "../patches/PatchList";
 import styles from "./IssueDetail.module.css";
@@ -31,6 +32,7 @@ const TABS = [
   { id: "jobs", label: "Jobs" },
   { id: "patches", label: "Patches" },
   { id: "todo", label: "Todo" },
+  { id: "activity", label: "Activity" },
 ];
 
 export function IssueDetail({ record }: IssueDetailProps) {
@@ -114,6 +116,9 @@ export function IssueDetail({ record }: IssueDetailProps) {
           )}
           {activeTab === "todo" && (
             <IssueTodoList items={issue.todo_list ?? []} />
+          )}
+          {activeTab === "activity" && (
+            <IssueActivity issueId={record.issue_id} />
           )}
         </div>
       </Panel>
