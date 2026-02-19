@@ -36,6 +36,9 @@
     "vite-plugin-dts": "^4.3.0"
   },
   "dependencies": {
-    "ansi-to-html": "^0.7.2"
+    "ansi-to-html": "^0.7.2",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1"
   }
 }
