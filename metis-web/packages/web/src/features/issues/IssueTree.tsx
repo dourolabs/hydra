@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { TreeView } from "@metis/ui";
 import type { TreeNode } from "@metis/ui";
 import { IssueRow } from "./IssueRow";
@@ -50,10 +51,16 @@ function toTreeNodes(nodes: IssueTreeNode[], matchingIds?: Set<string>): TreeNod
 }
 
 export function IssueTree({ issues, matchingIds, className }: IssueTreeProps) {
+  const navigate = useNavigate();
+
   const tree = useMemo(() => {
     const issueNodes = buildIssueTree(issues);
     return toTreeNodes(issueNodes, matchingIds);
   }, [issues, matchingIds]);
 
-  return <TreeView nodes={tree} className={className} />;
+  const handleNodeClick = (id: string) => {
+    navigate(`/issues/${id}`);
+  };
+
+  return <TreeView nodes={tree} onNodeClick={handleNodeClick} className={className} />;
 }

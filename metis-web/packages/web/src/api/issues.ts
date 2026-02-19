@@ -15,7 +15,8 @@ export interface IssueData {
   progress: string;
   dependencies: IssueDependency[];
   patches: string[];
-  todo_list: { description: string; is_done: boolean }[];
+  /** May be omitted in JSON when the list is empty. */
+  todo_list?: { description: string; is_done: boolean }[];
 }
 
 /** Versioned record wrapping an issue. */
@@ -60,6 +61,10 @@ export function toIssue(record: IssueVersionRecord): Issue {
 
 export function fetchIssues(): Promise<IssueListResponse> {
   return apiFetch<IssueListResponse>("/api/v1/issues");
+}
+
+export function fetchIssue(issueId: string): Promise<IssueVersionRecord> {
+  return apiFetch<IssueVersionRecord>(`/api/v1/issues/${encodeURIComponent(issueId)}`);
 }
 
 export interface CreateIssueParams {
