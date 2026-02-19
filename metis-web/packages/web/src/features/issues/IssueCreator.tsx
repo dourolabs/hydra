@@ -1,0 +1,114 @@
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Button, Textarea, Select } from "@metis/ui";
+import type { SelectOption } from "@metis/ui";
+import { createIssue } from "../../api/issues";
+import { useRepositories, type RepositoryRecord } from "../../api/repositories";
+import styles from "./IssueCreator.module.css";
+
+function buildRepoOptions(repos: RepositoryRecord[] | undefined): SelectOption[] {
+  const options: SelectOption[] = [{ value: "", label: "None" }];
+  if (repos) {
+    for (const r of repos) {
+      options.push({ value: r.name, label: r.name });
+    }
+  }
+  return options;
+}
+
+interface IssueCreatorProps {
+  assignees: string[];
+}
+
+export function IssueCreator({ assignees }: IssueCreatorProps) {
+  const [description, setDescription] = useState("");
+  const [assignee, setAssignee] = useState("");
+  const [repoName, setRepoName] = useState("");
+  const [showOptions, setShowOptions] = useState(false);
+
+  const queryClient = useQueryClient();
+  const { data: repos } = useRepositories();
+
+  const mutation = useMutation({
+    mutationFn: createIssue,
+    onSuccess: () => {
+      setDescription("");
+      setAssignee("");
+      setRepoName("");
+      queryClient.invalidateQueries({ queryKey: ["issues"] });
+    },
+  });
+
+  const handleSubmit = () => {
+    const desc = description.trim();
+    if (!desc) return;
+
+    mutation.mutate({
+      description: desc,
+      ...(assignee && { assignee }),
+      ...(repoName && { repoName }),
+    });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      handleSubmit();
+    }
+  };
+
+  const assigneeOptions: SelectOption[] = [
+    { value: "", label: "Unassigned" },
+    ...assignees.map((a) => ({ value: a, label: a })),
+  ];
+
+  return (
+    <div className={styles.creator}>
+      <Textarea
+        placeholder="Create a new issue..."
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        onKeyDown={handleKeyDown}
+        rows={2}
+        className={styles.textarea}
+      />
+      {showOptions && (
+        <div className={styles.options}>
+          <Select
+            label="Assignee"
+            options={assigneeOptions}
+            value={assignee}
+            onChange={(e) => setAssignee(e.target.value)}
+          />
+          <Select
+            label="Repository"
+            options={buildRepoOptions(repos)}
+            value={repoName}
+            onChange={(e) => setRepoName(e.target.value)}
+          />
+        </div>
+      )}
+      <div className={styles.actions}>
+        <button
+          type="button"
+          className={styles.toggleOptions}
+          onClick={() => setShowOptions(!showOptions)}
+        >
+          {showOptions ? "Hide options" : "Options"}
+        </button>
+        {mutation.error && (
+          <span className={styles.error}>
+            {mutation.error instanceof Error ? mutation.error.message : "Failed to create issue"}
+          </span>
+        )}
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={handleSubmit}
+          disabled={!description.trim() || mutation.isPending}
+        >
+          {mutation.isPending ? "Creating..." : "Create issue"}
+        </Button>
+      </div>
+    </div>
+  );
+}
