@@ -1,16 +1,7 @@
+import type { ActorIdentity, WhoAmIResponse } from "@metis/api";
 import { apiFetch } from "./client";
 
-/**
- * Actor identity as returned by the metis-server /v1/whoami endpoint.
- * Tagged union on the "type" field.
- */
-export type ActorIdentity =
-  | { type: "user"; username: string }
-  | { type: "task"; task_id: string; creator: string };
-
-export interface WhoAmIResponse {
-  actor: ActorIdentity;
-}
+export type { ActorIdentity, WhoAmIResponse };
 
 /** Extract a display name from any actor identity. */
 export function actorDisplayName(actor: ActorIdentity): string {

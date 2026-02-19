@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Avatar, Badge, Panel, Tabs, type BadgeStatus } from "@metis/ui";
-import type { IssueVersionRecord } from "../../api/issues";
+import type { IssueVersionRecord } from "@metis/api";
 import { IssueTodoList } from "./IssueTodoList";
 import { IssueChildren } from "./IssueChildren";
 import { IssueActivity } from "./IssueActivity";

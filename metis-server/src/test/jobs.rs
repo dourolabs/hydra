@@ -452,7 +452,7 @@ async fn list_jobs_returns_empty_list_when_store_is_empty() -> anyhow::Result<()
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
-        .get(format!("{}/v1/jobs/", server.base_url()))
+        .get(format!("{}/v1/jobs", server.base_url()))
         .send()
         .await?;
 

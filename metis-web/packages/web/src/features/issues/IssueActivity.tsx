@@ -1,11 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Avatar, Badge, Spinner, type BadgeStatus } from "@metis/ui";
-import {
-  fetchIssueVersions,
-  type ActorRef,
-  type IssueData,
-  type IssueVersionRecord,
-} from "../../api/issues";
+import type { ActorRef, Issue, IssueVersionRecord } from "@metis/api";
+import { apiClient } from "../../api/client";
 import styles from "./IssueActivity.module.css";
 
 interface IssueActivityProps {
@@ -71,7 +67,7 @@ interface Change {
 }
 
 /** Diff two adjacent issue versions and return a list of what changed. */
-function diffVersions(prev: IssueData, curr: IssueData): Change[] {
+function diffVersions(prev: Issue, curr: Issue): Change[] {
   const changes: Change[] = [];
 
   if (prev.status !== curr.status) {
@@ -140,7 +136,7 @@ function TimelineEntry({ version, changes, isCreation }: TimelineEntryProps) {
           <span className={styles.timestamp}>
             {formatTimestamp(version.timestamp)}
           </span>
-          <span className={styles.version}>v{version.version}</span>
+          <span className={styles.version}>v{String(version.version)}</span>
         </div>
 
         <div className={styles.changes}>
@@ -238,7 +234,7 @@ function ChangeEntry({ change }: { change: Change }) {
 export function IssueActivity({ issueId }: IssueActivityProps) {
   const { data, isLoading } = useQuery({
     queryKey: ["issue", issueId, "versions"],
-    queryFn: () => fetchIssueVersions(issueId),
+    queryFn: () => apiClient.listIssueVersions(issueId),
   });
 
   if (isLoading) {
@@ -251,12 +247,16 @@ export function IssueActivity({ issueId }: IssueActivityProps) {
     return <p className={styles.empty}>No activity.</p>;
   }
 
-  // Sort newest-first for display
-  const sorted = [...versions].sort((a, b) => b.version - a.version);
+  // Sort newest-first for display (version is bigint)
+  const sorted = [...versions].sort((a, b) =>
+    a.version > b.version ? -1 : a.version < b.version ? 1 : 0,
+  );
 
   // Build timeline entries by diffing adjacent versions
   // Versions from the API are ordered by version number ascending
-  const byVersion = [...versions].sort((a, b) => a.version - b.version);
+  const byVersion = [...versions].sort((a, b) =>
+    a.version < b.version ? -1 : a.version > b.version ? 1 : 0,
+  );
 
   type EntryData = {
     version: IssueVersionRecord;
@@ -283,7 +283,7 @@ export function IssueActivity({ issueId }: IssueActivityProps) {
       <ul className={styles.timeline}>
         {entries.map((entry) => (
           <TimelineEntry
-            key={entry.version.version}
+            key={String(entry.version.version)}
             version={entry.version}
             changes={entry.changes}
             isCreation={entry.isCreation}

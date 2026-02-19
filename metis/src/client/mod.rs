@@ -398,9 +398,9 @@ impl MetisClient {
             .context("failed to decode create job response")
     }
 
-    /// Call `GET /v1/jobs/` to list existing jobs.
+    /// Call `GET /v1/jobs` to list existing jobs.
     pub async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse> {
-        let url = self.endpoint("/v1/jobs/")?;
+        let url = self.endpoint("/v1/jobs")?;
         let response = self
             .authed(self.http.get(url))
             .query(query)
