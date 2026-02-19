@@ -3,7 +3,7 @@ import { AppLayout } from "./layout/AppLayout";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { IssueDetailPage } from "./pages/IssueDetailPage";
-import { TaskLogPage } from "./pages/TaskLogPage";
+import { JobLogPage } from "./pages/JobLogPage";
 
 export const router = createBrowserRouter([
   {
@@ -23,8 +23,8 @@ export const router = createBrowserRouter([
         element: <IssueDetailPage />,
       },
       {
-        path: "issues/:issueId/tasks/:taskId/logs",
-        element: <TaskLogPage />,
+        path: "issues/:issueId/jobs/:jobId/logs",
+        element: <JobLogPage />,
       },
     ],
   },

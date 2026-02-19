@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { LogViewer, Spinner } from "@metis/ui";
 import { useJobLogs } from "./useJobLogs";
 import { streamJobLogs } from "../../api/jobs";
-import styles from "./TaskLogViewer.module.css";
+import styles from "./JobLogViewer.module.css";
 
-interface TaskLogViewerProps {
+interface JobLogViewerProps {
   jobId: string;
   /** Current job status — determines streaming vs snapshot mode. */
   status: string;
@@ -13,7 +13,7 @@ interface TaskLogViewerProps {
 /** Statuses that indicate the job is still running and should stream. */
 const STREAMING_STATUSES = new Set(["created", "pending", "running"]);
 
-export function TaskLogViewer({ jobId, status }: TaskLogViewerProps) {
+export function JobLogViewer({ jobId, status }: JobLogViewerProps) {
   const isStreaming = STREAMING_STATUSES.has(status);
 
   // For completed jobs: fetch the full log snapshot

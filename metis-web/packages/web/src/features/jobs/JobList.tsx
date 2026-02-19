@@ -105,7 +105,7 @@ export function JobList({ issueId }: JobListProps) {
             </td>
             <td className={styles.td}>
               <Link
-                to={`/issues/${issueId}/tasks/${job.job_id}/logs`}
+                to={`/issues/${issueId}/jobs/${job.job_id}/logs`}
                 className={styles.logLink}
               >
                 View Logs

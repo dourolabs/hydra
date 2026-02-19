@@ -1,7 +1,7 @@
 import { apiFetch, ApiError } from "./client";
 
-/** Nested task data inside a JobVersionRecord. */
-export interface TaskData {
+/** Nested job data inside a JobVersionRecord. */
+export interface JobData {
   status: string;
   spawned_from?: string;
   creator: string;
@@ -10,12 +10,12 @@ export interface TaskData {
   end_time?: string;
 }
 
-/** Server response shape: versioned record wrapping a Task. */
+/** Server response shape: versioned record wrapping a Job. */
 export interface JobVersionRecord {
   job_id: string;
   version: number;
   timestamp: string;
-  task: TaskData;
+  task: JobData;
 }
 
 /** Flattened job type used throughout the UI. */

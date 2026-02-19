@@ -1,9 +1,9 @@
 import { Link, useParams } from "react-router-dom";
 import { Badge, Spinner, type BadgeStatus } from "@metis/ui";
 import { useJob } from "../features/jobs/useJob";
-import { TaskLogViewer } from "../features/jobs/TaskLogViewer";
+import { JobLogViewer } from "../features/jobs/JobLogViewer";
 import { ApiError } from "../api/client";
-import styles from "./TaskLogPage.module.css";
+import styles from "./JobLogPage.module.css";
 
 /** Map job statuses to BadgeStatus values. */
 function toBadgeStatus(status: string): BadgeStatus {
@@ -41,12 +41,12 @@ function getRuntime(
   return formatDuration(end - start);
 }
 
-export function TaskLogPage() {
-  const { issueId, taskId } = useParams<{
+export function JobLogPage() {
+  const { issueId, jobId } = useParams<{
     issueId: string;
-    taskId: string;
+    jobId: string;
   }>();
-  const { data: job, isLoading, error } = useJob(taskId ?? "");
+  const { data: job, isLoading, error } = useJob(jobId ?? "");
 
   return (
     <div className={styles.page}>
@@ -64,11 +64,11 @@ export function TaskLogPage() {
         <div className={styles.errorContainer}>
           {error instanceof ApiError && error.status === 404 ? (
             <p className={styles.error}>
-              Task <strong>{taskId}</strong> not found.
+              Job <strong>{jobId}</strong> not found.
             </p>
           ) : (
             <p className={styles.error}>
-              Failed to load task: {(error as Error).message}
+              Failed to load job: {(error as Error).message}
             </p>
           )}
         </div>
@@ -76,7 +76,7 @@ export function TaskLogPage() {
 
       {job && (
         <>
-          {/* Task metadata header */}
+          {/* Job metadata header */}
           <div className={styles.header}>
             <div className={styles.headerTop}>
               <span className={styles.jobId}>{job.job_id}</span>
@@ -107,7 +107,7 @@ export function TaskLogPage() {
           </div>
 
           {/* Log viewer */}
-          <TaskLogViewer jobId={job.job_id} status={job.status} />
+          <JobLogViewer jobId={job.job_id} status={job.status} />
         </>
       )}
     </div>
