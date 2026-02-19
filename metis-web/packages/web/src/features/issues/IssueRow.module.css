@@ -18,3 +18,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.dimmed {
+  opacity: 0.4;
+}

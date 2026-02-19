@@ -4,6 +4,7 @@ import styles from "./IssueRow.module.css";
 
 interface IssueRowProps {
   issue: Issue;
+  dimmed?: boolean;
 }
 
 /** First line of the description, truncated. */
@@ -28,9 +29,9 @@ function toBadgeStatus(status: string): BadgeStatus {
   return "open";
 }
 
-export function IssueRow({ issue }: IssueRowProps) {
+export function IssueRow({ issue, dimmed }: IssueRowProps) {
   return (
-    <span className={styles.row}>
+    <span className={`${styles.row}${dimmed ? ` ${styles.dimmed}` : ""}`}>
       <Badge status={toBadgeStatus(issue.status)} />
       <span className={styles.id}>{issue.issue_id}</span>
       {issue.assignee && <Avatar name={issue.assignee} size="sm" />}

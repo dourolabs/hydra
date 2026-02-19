@@ -1,12 +1,9 @@
 .page {
   max-width: 960px;
   margin: 0 auto;
-}
-
-.header {
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  color: var(--color-text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
 .center {
