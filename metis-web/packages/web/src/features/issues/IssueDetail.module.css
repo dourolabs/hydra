@@ -62,16 +62,6 @@
   padding: var(--space-4);
 }
 
-.preText {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  font-family: var(--font-family-mono);
-  line-height: var(--line-height-normal);
-}
-
 .empty {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);

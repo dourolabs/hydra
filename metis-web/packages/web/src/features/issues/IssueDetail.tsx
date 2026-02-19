@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Avatar, Badge, Panel, Tabs, type BadgeStatus } from "@metis/ui";
+import { Avatar, Badge, MarkdownViewer, Panel, Tabs, type BadgeStatus } from "@metis/ui";
 import type { IssueVersionRecord } from "../../api/issues";
 import { IssueTodoList } from "./IssueTodoList";
 import { IssueChildren } from "./IssueChildren";
@@ -78,7 +78,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
       <Panel header={<span className={styles.sectionTitle}>Description</span>}>
         <div className={styles.sectionBody}>
           {issue.description ? (
-            <pre className={styles.preText}>{issue.description}</pre>
+            <MarkdownViewer content={issue.description} />
           ) : (
             <p className={styles.empty}>No description.</p>
           )}
@@ -89,7 +89,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
       {issue.progress && (
         <Panel header={<span className={styles.sectionTitle}>Progress</span>}>
           <div className={styles.sectionBody}>
-            <pre className={styles.preText}>{issue.progress}</pre>
+            <MarkdownViewer content={issue.progress} />
           </div>
         </Panel>
       )}
