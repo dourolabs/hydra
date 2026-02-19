@@ -3,7 +3,7 @@ import { Avatar, Badge, Panel, Tabs, type BadgeStatus } from "@metis/ui";
 import type { IssueVersionRecord } from "../../api/issues";
 import { IssueTodoList } from "./IssueTodoList";
 import { IssueChildren } from "./IssueChildren";
-import { TaskList } from "../tasks/TaskList";
+import { JobList } from "../jobs/JobList";
 import { PatchList } from "../patches/PatchList";
 import styles from "./IssueDetail.module.css";
 
@@ -28,7 +28,7 @@ function toBadgeStatus(status: string): BadgeStatus {
 
 const TABS = [
   { id: "children", label: "Children" },
-  { id: "tasks", label: "Tasks" },
+  { id: "jobs", label: "Jobs" },
   { id: "patches", label: "Patches" },
   { id: "todo", label: "Todo" },
 ];
@@ -108,7 +108,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
           {activeTab === "children" && (
             <IssueChildren issueId={record.issue_id} />
           )}
-          {activeTab === "tasks" && <TaskList issueId={record.issue_id} />}
+          {activeTab === "jobs" && <JobList issueId={record.issue_id} />}
           {activeTab === "patches" && (
             <PatchList patchIds={issue.patches ?? []} />
           )}

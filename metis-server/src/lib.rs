@@ -148,7 +148,10 @@ pub async fn run_with_state(
             get(routes::merge_queues::get_merge_queue).post(routes::merge_queues::enqueue_patch),
         )
         .route("/v1/github/token", get(routes::github::get_github_token))
-        .route("/v1/jobs/", get(routes::jobs::list_jobs))
+        .route(
+            "/v1/jobs",
+            get(routes::jobs::list_jobs).post(routes::jobs::create_job),
+        )
         .route(
             "/v1/agents",
             get(routes::agents::list_agents).post(routes::agents::create_agent),
@@ -171,7 +174,6 @@ pub async fn run_with_state(
             "/v1/jobs/:job_id/versions/:version_number",
             get(routes::jobs::get_job_version),
         )
-        .route("/v1/jobs", post(routes::jobs::create_job))
         .route(
             "/v1/jobs/:job_id/logs",
             get(routes::jobs::logs::get_job_logs),

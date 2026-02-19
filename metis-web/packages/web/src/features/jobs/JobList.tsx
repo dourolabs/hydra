@@ -1,8 +1,8 @@
 import { Badge, Spinner, type BadgeStatus } from "@metis/ui";
 import { useJobsByIssue } from "./useJobsByIssue";
-import styles from "./TaskList.module.css";
+import styles from "./JobList.module.css";
 
-interface TaskListProps {
+interface JobListProps {
   issueId: string;
 }
 
@@ -51,7 +51,7 @@ function getRuntime(startTime: string | null, endTime: string | null): string {
   return formatDuration(end - start);
 }
 
-export function TaskList({ issueId }: TaskListProps) {
+export function JobList({ issueId }: JobListProps) {
   const { data: jobs, isLoading, error } = useJobsByIssue(issueId);
 
   if (isLoading) {
@@ -61,13 +61,13 @@ export function TaskList({ issueId }: TaskListProps) {
   if (error) {
     return (
       <p className={styles.error}>
-        Failed to load tasks: {(error as Error).message}
+        Failed to load jobs: {(error as Error).message}
       </p>
     );
   }
 
   if (!jobs || jobs.length === 0) {
-    return <p className={styles.empty}>No tasks.</p>;
+    return <p className={styles.empty}>No jobs.</p>;
   }
 
   return (
