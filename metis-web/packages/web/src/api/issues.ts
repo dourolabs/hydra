@@ -62,6 +62,10 @@ export function fetchIssues(): Promise<IssueListResponse> {
   return apiFetch<IssueListResponse>("/api/v1/issues");
 }
 
+export function fetchIssue(issueId: string): Promise<IssueVersionRecord> {
+  return apiFetch<IssueVersionRecord>(`/api/v1/issues/${encodeURIComponent(issueId)}`);
+}
+
 export interface CreateIssueParams {
   description: string;
   creator: string;
