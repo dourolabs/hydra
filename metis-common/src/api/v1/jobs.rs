@@ -10,6 +10,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct Task {
     pub prompt: String,
@@ -93,6 +95,8 @@ fn default_status() -> Status {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct CreateJobRequest {
     pub prompt: String,
@@ -125,6 +129,8 @@ impl CreateJobRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BundleSpec {
@@ -199,6 +205,8 @@ impl<'de> Deserialize<'de> for BundleSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Bundle {
@@ -240,6 +248,8 @@ impl<'de> Deserialize<'de> for Bundle {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct WorkerContext {
     pub request_context: Bundle,
@@ -271,6 +281,8 @@ impl WorkerContext {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct CreateJobResponse {
     pub job_id: TaskId,
@@ -283,6 +295,8 @@ impl CreateJobResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ListJobsResponse {
     pub jobs: Vec<JobVersionRecord>,
@@ -295,6 +309,8 @@ impl ListJobsResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct JobVersionRecord {
     pub job_id: TaskId,
@@ -337,6 +353,8 @@ impl JobVersionRecord {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct SearchJobsQuery {
     #[serde(default)]
@@ -350,6 +368,8 @@ pub struct SearchJobsQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ListJobVersionsResponse {
     pub versions: Vec<JobVersionRecord>,
@@ -378,6 +398,8 @@ impl SearchJobsQuery {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct KillJobResponse {
     pub job_id: TaskId,

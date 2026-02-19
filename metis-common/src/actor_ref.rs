@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub enum ActorId {
     Username(Username),
     Task(TaskId),
@@ -13,6 +15,8 @@ pub enum ActorId {
 ///
 /// Used in event payloads (`MutationPayload`) to attribute mutations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub enum ActorRef {
     Authenticated {
         actor_id: ActorId,

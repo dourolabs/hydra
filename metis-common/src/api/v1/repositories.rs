@@ -6,6 +6,8 @@ fn is_false(b: &bool) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct Repository {
     pub remote_url: String,
@@ -33,6 +35,8 @@ impl Repository {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct RepositoryRecord {
     pub name: RepoName,
@@ -52,6 +56,8 @@ impl From<(RepoName, Repository)> for RepositoryRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct CreateRepositoryRequest {
     pub name: RepoName,
@@ -66,6 +72,8 @@ impl CreateRepositoryRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct UpdateRepositoryRequest {
     #[serde(flatten)]
@@ -79,6 +87,8 @@ impl UpdateRepositoryRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct UpsertRepositoryResponse {
     pub repository: RepositoryRecord,
@@ -91,6 +101,8 @@ impl UpsertRepositoryResponse {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct SearchRepositoriesQuery {
     #[serde(default)]
@@ -104,6 +116,8 @@ impl SearchRepositoriesQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ListRepositoriesResponse {
     pub repositories: Vec<RepositoryRecord>,
@@ -116,6 +130,8 @@ impl ListRepositoriesResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct DeleteRepositoryResponse {
     pub repository: RepositoryRecord,

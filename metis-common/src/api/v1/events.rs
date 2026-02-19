@@ -7,6 +7,8 @@ pub const LAST_EVENT_ID_HEADER: &str = "last-event-id";
 
 /// Query parameters for the GET /v1/events SSE endpoint.
 #[derive(Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct EventsQuery {
     /// Comma-separated entity types to filter (e.g. "issues,jobs").
     #[serde(default)]
@@ -54,6 +56,8 @@ impl EventsQuery {
 
 /// The SSE event type names sent in the `event:` field.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "snake_case")]
 pub enum SseEventType {
     IssueCreated,
@@ -119,6 +123,8 @@ impl std::str::FromStr for SseEventType {
 
 /// Data payload for entity mutation events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct EntityEventData {
     pub entity_type: String,
     pub entity_id: String,
@@ -128,6 +134,8 @@ pub struct EntityEventData {
 
 /// Data payload for the snapshot event sent on initial connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct SnapshotEventData {
     /// Map from entity ID to its current version number.
     pub versions: HashMap<String, u64>,
@@ -135,6 +143,8 @@ pub struct SnapshotEventData {
 
 /// Data payload for the resync event sent when the client has fallen behind.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct ResyncEventData {
     pub reason: String,
     pub current_seq: u64,
@@ -142,6 +152,8 @@ pub struct ResyncEventData {
 
 /// Data payload for heartbeat events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct HeartbeatEventData {
     pub server_time: DateTime<Utc>,
 }

@@ -8,6 +8,8 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq, SerdeSerialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ActivityObjectKind {
@@ -18,6 +20,8 @@ pub enum ActivityObjectKind {
 }
 
 #[derive(Debug, Clone, PartialEq, SerdeSerialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct FieldChange {
     pub path: String,
@@ -26,6 +30,8 @@ pub struct FieldChange {
 }
 
 #[derive(Debug, Clone, PartialEq, SerdeSerialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ActivityEvent {
@@ -34,6 +40,8 @@ pub enum ActivityEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, SerdeSerialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ActivityLogEntry {
     pub object_id: MetisId,
