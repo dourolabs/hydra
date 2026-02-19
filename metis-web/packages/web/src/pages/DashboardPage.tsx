@@ -6,7 +6,6 @@ import { useIssueFilters } from "../features/issues/useIssueFilters";
 import { IssueTree } from "../features/issues/IssueTree";
 import { IssueFilters } from "../features/issues/IssueFilters";
 import { IssueCreator } from "../features/issues/IssueCreator";
-import { useDebounce } from "../hooks/useDebounce";
 import type { IssueFilterValues, SortOption } from "../features/issues/useIssueFilters";
 import styles from "./DashboardPage.module.css";
 
@@ -20,18 +19,27 @@ const STATUS_ORDER: Record<string, number> = {
   rejected: 6,
 };
 
-function issueMatchesFilter(record: IssueVersionRecord, statuses: string[], assignee: string, type: string): boolean {
+function issueMatchesText(record: IssueVersionRecord, q: string): boolean {
+  const lower = q.toLowerCase();
+  const desc = record.issue.description?.toLowerCase() ?? "";
+  const progress = record.issue.progress?.toLowerCase() ?? "";
+  const id = record.issue_id.toLowerCase();
+  return desc.includes(lower) || progress.includes(lower) || id.includes(lower);
+}
+
+function issueMatchesFilter(record: IssueVersionRecord, statuses: string[], assignee: string, type: string, q: string): boolean {
   if (statuses.length > 0 && !statuses.includes(record.issue.status)) return false;
   if (assignee && record.issue.assignee !== assignee) return false;
   if (type && record.issue.type !== type) return false;
+  if (q && !issueMatchesText(record, q)) return false;
   return true;
 }
 
-/** Return the set of issue IDs that directly match the current filters. */
+/** Return the set of issue IDs that directly match the current filters (including search text). */
 function getMatchingIds(issues: IssueVersionRecord[], filters: IssueFilterValues): Set<string> {
   const ids = new Set<string>();
   for (const record of issues) {
-    if (issueMatchesFilter(record, filters.statuses, filters.assignee, filters.type)) {
+    if (issueMatchesFilter(record, filters.statuses, filters.assignee, filters.type, filters.q)) {
       ids.add(record.issue_id);
     }
   }
@@ -67,15 +75,14 @@ function extractAssignees(issues: IssueVersionRecord[]): string[] {
   return Array.from(set).sort();
 }
 
-/** Check whether any client-side filter is actively set. */
+/** Check whether any filter (including search) is actively set. */
 function hasActiveFilters(filters: IssueFilterValues): boolean {
-  return filters.statuses.length > 0 || filters.assignee !== "" || filters.type !== "";
+  return filters.statuses.length > 0 || filters.assignee !== "" || filters.type !== "" || filters.q !== "";
 }
 
 export function DashboardPage() {
   const { filters, setFilters } = useIssueFilters();
-  const debouncedQuery = useDebounce(filters.q, 300);
-  const { data: issues, isLoading, error } = useIssues(debouncedQuery || undefined);
+  const { data: issues, isLoading, error } = useIssues();
 
   const assignees = useMemo(() => (issues ? extractAssignees(issues) : []), [issues]);
 
@@ -113,8 +120,8 @@ export function DashboardPage() {
         )}
         {issues && (sortedIssues.length === 0 || (active && matchingIds.size === 0)) && (
           <p className={styles.empty}>
-            {debouncedQuery
-              ? `No issues matching "${debouncedQuery}".`
+            {filters.q
+              ? `No issues matching "${filters.q}".`
               : "No issues found."}
           </p>
         )}

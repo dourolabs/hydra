@@ -2,10 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import type { IssueVersionRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 
-export function useIssues(q?: string) {
+export function useIssues() {
   return useQuery({
-    queryKey: q ? ["issues", { q }] : ["issues"],
-    queryFn: () => apiClient.listIssues(q ? { q } : undefined),
+    queryKey: ["issues"],
+    queryFn: () => apiClient.listIssues(),
     select: (data) => data.issues,
   });
 }
