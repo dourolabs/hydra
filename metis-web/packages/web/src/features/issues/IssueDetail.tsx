@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Avatar, Badge, MarkdownViewer, Panel, Tabs, type BadgeStatus } from "@metis/ui";
+import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
+import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { IssueTodoList } from "./IssueTodoList";
 import { IssueChildren } from "./IssueChildren";
 import { IssueActivity } from "./IssueActivity";
@@ -10,21 +11,6 @@ import styles from "./IssueDetail.module.css";
 
 interface IssueDetailProps {
   record: IssueVersionRecord;
-}
-
-const validStatuses: Set<string> = new Set([
-  "open",
-  "in-progress",
-  "closed",
-  "failed",
-  "dropped",
-  "blocked",
-  "rejected",
-]);
-
-function toBadgeStatus(status: string): BadgeStatus {
-  if (validStatuses.has(status)) return status as BadgeStatus;
-  return "open";
 }
 
 const TABS = [
@@ -44,7 +30,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
       {/* Header: ID + Status */}
       <div className={styles.header}>
         <span className={styles.issueId}>{record.issue_id}</span>
-        <Badge status={toBadgeStatus(issue.status)} />
+        <Badge status={issueToBadgeStatus(issue.status)} />
         <span className={styles.type}>{issue.type}</span>
       </div>
 
