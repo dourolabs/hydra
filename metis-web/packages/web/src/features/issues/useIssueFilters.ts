@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 
 export type SortOption = "newest" | "oldest" | "updated" | "status";
 
-export interface IssueFilters {
+export interface IssueFilterValues {
   statuses: string[];
   assignee: string;
   type: string;
@@ -20,7 +20,7 @@ function parseSortParam(value: string | null): SortOption {
 export function useIssueFilters() {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const filters: IssueFilters = useMemo(() => {
+  const filters: IssueFilterValues = useMemo(() => {
     const statusParam = searchParams.get("status");
     const statuses = statusParam ? statusParam.split(",").filter(Boolean) : [];
     const assignee = searchParams.get("assignee") ?? "";
@@ -31,7 +31,7 @@ export function useIssueFilters() {
   }, [searchParams]);
 
   const setFilters = useCallback(
-    (updates: Partial<IssueFilters>) => {
+    (updates: Partial<IssueFilterValues>) => {
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
 

@@ -64,6 +64,7 @@ export function fetchIssues(): Promise<IssueListResponse> {
 
 export interface CreateIssueParams {
   description: string;
+  creator: string;
   assignee?: string;
   type?: string;
   repoName?: string;
@@ -78,7 +79,7 @@ export function createIssue(params: CreateIssueParams): Promise<CreateIssueRespo
   const issue: Record<string, unknown> = {
     type: params.type ?? "task",
     description: params.description,
-    creator: "",
+    creator: params.creator,
   };
 
   if (params.assignee) {

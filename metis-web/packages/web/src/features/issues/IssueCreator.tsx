@@ -4,6 +4,8 @@ import { Button, Textarea, Select } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
 import { createIssue } from "../../api/issues";
 import { useRepositories, type RepositoryRecord } from "../../api/repositories";
+import { useAuth } from "../auth/AuthContext";
+import { actorDisplayName } from "../../api/auth";
 import styles from "./IssueCreator.module.css";
 
 function buildRepoOptions(repos: RepositoryRecord[] | undefined): SelectOption[] {
@@ -21,6 +23,9 @@ interface IssueCreatorProps {
 }
 
 export function IssueCreator({ assignees }: IssueCreatorProps) {
+  const { user } = useAuth();
+  const currentUsername = user ? actorDisplayName(user.actor) : "";
+
   const [description, setDescription] = useState("");
   const [assignee, setAssignee] = useState("");
   const [repoName, setRepoName] = useState("");
@@ -45,6 +50,7 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
 
     mutation.mutate({
       description: desc,
+      creator: currentUsername,
       ...(assignee && { assignee }),
       ...(repoName && { repoName }),
     });

@@ -6,7 +6,7 @@ import { IssueTree } from "../features/issues/IssueTree";
 import { IssueFilters } from "../features/issues/IssueFilters";
 import { IssueCreator } from "../features/issues/IssueCreator";
 import type { Issue } from "../api/issues";
-import type { SortOption } from "../features/issues/useIssueFilters";
+import type { IssueFilterValues, SortOption } from "../features/issues/useIssueFilters";
 import styles from "./DashboardPage.module.css";
 
 const STATUS_ORDER: Record<string, number> = {
@@ -19,23 +19,22 @@ const STATUS_ORDER: Record<string, number> = {
   rejected: 6,
 };
 
-function filterIssues(issues: Issue[], statuses: string[], assignee: string, type: string): Issue[] {
-  let result = issues;
+function issueMatchesFilter(issue: Issue, statuses: string[], assignee: string, type: string): boolean {
+  if (statuses.length > 0 && !statuses.includes(issue.status)) return false;
+  if (assignee && issue.assignee !== assignee) return false;
+  if (type && issue.type !== type) return false;
+  return true;
+}
 
-  if (statuses.length > 0) {
-    const statusSet = new Set(statuses);
-    result = result.filter((i) => statusSet.has(i.status));
+/** Return the set of issue IDs that directly match the current filters. */
+function getMatchingIds(issues: Issue[], filters: IssueFilterValues): Set<string> {
+  const ids = new Set<string>();
+  for (const issue of issues) {
+    if (issueMatchesFilter(issue, filters.statuses, filters.assignee, filters.type)) {
+      ids.add(issue.issue_id);
+    }
   }
-
-  if (assignee) {
-    result = result.filter((i) => i.assignee === assignee);
-  }
-
-  if (type) {
-    result = result.filter((i) => i.type === type);
-  }
-
-  return result;
+  return ids;
 }
 
 function sortIssues(issues: Issue[], sort: SortOption): Issue[] {
@@ -67,17 +66,28 @@ function extractAssignees(issues: Issue[]): string[] {
   return Array.from(set).sort();
 }
 
+/** Check whether any filter is actively set. */
+function hasActiveFilters(filters: IssueFilterValues): boolean {
+  return filters.statuses.length > 0 || filters.assignee !== "" || filters.type !== "";
+}
+
 export function DashboardPage() {
   const { data: issues, isLoading, error } = useIssues();
   const { filters, setFilters } = useIssueFilters();
 
   const assignees = useMemo(() => (issues ? extractAssignees(issues) : []), [issues]);
 
-  const filteredIssues = useMemo(() => {
+  const sortedIssues = useMemo(() => {
     if (!issues) return [];
-    const filtered = filterIssues(issues, filters.statuses, filters.assignee, filters.type);
-    return sortIssues(filtered, filters.sort);
-  }, [issues, filters]);
+    return sortIssues(issues, filters.sort);
+  }, [issues, filters.sort]);
+
+  const matchingIds = useMemo(
+    () => (issues ? getMatchingIds(issues, filters) : new Set<string>()),
+    [issues, filters],
+  );
+
+  const active = hasActiveFilters(filters);
 
   return (
     <div className={styles.page}>
@@ -99,10 +109,15 @@ export function DashboardPage() {
         {error && (
           <p className={styles.error}>Failed to load issues: {(error as Error).message}</p>
         )}
-        {issues && filteredIssues.length === 0 && (
+        {issues && (sortedIssues.length === 0 || (active && matchingIds.size === 0)) && (
           <p className={styles.empty}>No issues found.</p>
         )}
-        {filteredIssues.length > 0 && <IssueTree issues={filteredIssues} />}
+        {sortedIssues.length > 0 && (!active || matchingIds.size > 0) && (
+          <IssueTree
+            issues={sortedIssues}
+            matchingIds={active ? matchingIds : undefined}
+          />
+        )}
       </Panel>
     </div>
   );

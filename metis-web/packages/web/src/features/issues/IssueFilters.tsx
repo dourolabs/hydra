@@ -1,6 +1,6 @@
 import { Select } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
-import type { IssueFilters as IssueFilterState, SortOption } from "./useIssueFilters";
+import type { IssueFilterValues as IssueFilterState, SortOption } from "./useIssueFilters";
 import styles from "./IssueFilters.module.css";
 
 interface IssueFiltersProps {
