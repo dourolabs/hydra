@@ -7,6 +7,8 @@ use std::{fmt, ops::Deref, str::FromStr};
 /// - No empty segments (e.g. `foo//bar`)
 /// - No hidden segments (path components starting with `.`)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, type = "string"))]
 pub struct DocumentPath(String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]

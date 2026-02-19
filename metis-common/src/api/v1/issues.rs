@@ -6,6 +6,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum IssueStatus {
@@ -58,6 +60,8 @@ impl FromStr for IssueStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum IssueType {
@@ -111,6 +115,8 @@ impl FromStr for IssueType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum IssueDependencyType {
@@ -150,6 +156,8 @@ impl FromStr for IssueDependencyType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct IssueDependency {
     #[serde(rename = "type")]
@@ -167,6 +175,8 @@ impl IssueDependency {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct TodoItem {
     pub description: String,
@@ -184,6 +194,8 @@ impl TodoItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct TodoListResponse {
     pub issue_id: IssueId,
@@ -201,6 +213,8 @@ impl TodoListResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct AddTodoItemRequest {
     pub description: String,
@@ -218,6 +232,8 @@ impl AddTodoItemRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ReplaceTodoListRequest {
     #[serde(default)]
@@ -231,6 +247,8 @@ impl ReplaceTodoListRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct SetTodoItemStatusRequest {
     pub is_done: bool,
@@ -407,6 +425,8 @@ impl<'de> Deserialize<'de> for IssueGraphFilter {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct Issue {
     #[serde(rename = "type")]
@@ -463,6 +483,8 @@ impl Issue {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct JobSettings {
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -527,6 +549,8 @@ impl JobSettings {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct IssueVersionRecord {
     pub issue_id: IssueId,
@@ -556,6 +580,8 @@ impl IssueVersionRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct UpsertIssueRequest {
     pub issue: Issue,
@@ -570,6 +596,8 @@ impl UpsertIssueRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct UpsertIssueResponse {
     pub issue_id: IssueId,
@@ -611,6 +639,8 @@ where
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct SearchIssuesQuery {
     #[serde(default)]
@@ -627,6 +657,7 @@ pub struct SearchIssuesQuery {
         serialize_with = "serialize_graph_filters",
         deserialize_with = "deserialize_graph_filters"
     )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub graph_filters: Vec<IssueGraphFilter>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
@@ -653,6 +684,8 @@ impl SearchIssuesQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ListIssuesResponse {
     pub issues: Vec<IssueVersionRecord>,
@@ -665,6 +698,8 @@ impl ListIssuesResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ListIssueVersionsResponse {
     pub versions: Vec<IssueVersionRecord>,

@@ -31,6 +31,8 @@ impl fmt::Display for RelativeVersionNumber {
 
 /// Pairs a value with its version number.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct Versioned<T> {
     pub item: T,
     pub version: VersionNumber,

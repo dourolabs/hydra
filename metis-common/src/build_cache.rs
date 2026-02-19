@@ -26,6 +26,8 @@ pub const DEFAULT_BUILD_CACHE_HOME_INCLUDE: [&str; 18] = [
 pub const DEFAULT_BUILD_CACHE_HOME_EXCLUDE: [&str; 0] = [];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct BuildCacheSettings {
     #[serde(default)]
     pub include: Vec<String>,
@@ -80,6 +82,8 @@ pub fn default_build_cache_home_exclude() -> Vec<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BuildCacheStorageConfig {
     #[serde(rename = "filesystem")]
@@ -99,6 +103,8 @@ pub enum BuildCacheStorageConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct BuildCacheContext {
     pub storage: BuildCacheStorageConfig,
     #[serde(default)]

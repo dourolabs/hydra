@@ -47,3 +47,172 @@ pub mod test_helpers {
             .expect("failed to decode encoded query parameters into key/value pairs")
     }
 }
+
+#[cfg(test)]
+#[cfg(feature = "ts")]
+mod ts_export {
+    use ts_rs::{Config, TS};
+
+    /// Running this test with `TS_RS_EXPORT_DIR` set will export all TypeScript
+    /// definitions to the specified directory.
+    ///
+    /// Usage:
+    ///   TS_RS_EXPORT_DIR=metis-web/packages/api/src/generated \
+    ///     cargo test -p metis-common --features ts export_bindings
+    #[test]
+    fn export_bindings() {
+        let cfg = Config::from_env();
+
+        // Core types
+        crate::MetisId::export_all(&cfg).expect("MetisId");
+        crate::IssueId::export_all(&cfg).expect("IssueId");
+        crate::PatchId::export_all(&cfg).expect("PatchId");
+        crate::DocumentId::export_all(&cfg).expect("DocumentId");
+        crate::TaskId::export_all(&cfg).expect("TaskId");
+        crate::DocumentPath::export_all(&cfg).expect("DocumentPath");
+        crate::RepoName::export_all(&cfg).expect("RepoName");
+        crate::ActorId::export_all(&cfg).expect("ActorId");
+        crate::ActorRef::export_all(&cfg).expect("ActorRef");
+        crate::Versioned::<()>::export_all(&cfg).expect("Versioned");
+
+        // Activity log
+        crate::ActivityObjectKind::export_all(&cfg).expect("ActivityObjectKind");
+        crate::FieldChange::export_all(&cfg).expect("FieldChange");
+        crate::ActivityEvent::export_all(&cfg).expect("ActivityEvent");
+        crate::ActivityLogEntry::export_all(&cfg).expect("ActivityLogEntry");
+
+        // GitHub
+        crate::github::GithubAppClientIdResponse::export_all(&cfg)
+            .expect("GithubAppClientIdResponse");
+        crate::github::GithubTokenResponse::export_all(&cfg).expect("GithubTokenResponse");
+
+        // Build cache
+        crate::BuildCacheSettings::export_all(&cfg).expect("BuildCacheSettings");
+        crate::BuildCacheStorageConfig::export_all(&cfg).expect("BuildCacheStorageConfig");
+        crate::BuildCacheContext::export_all(&cfg).expect("BuildCacheContext");
+
+        // API v1: agents
+        crate::agents::AgentRecord::export_all(&cfg).expect("AgentRecord");
+        crate::agents::UpsertAgentRequest::export_all(&cfg).expect("UpsertAgentRequest");
+        crate::agents::AgentResponse::export_all(&cfg).expect("AgentResponse");
+        crate::agents::DeleteAgentResponse::export_all(&cfg).expect("DeleteAgentResponse");
+        crate::agents::ListAgentsResponse::export_all(&cfg).expect("ListAgentsResponse");
+
+        // API v1: documents
+        crate::documents::Document::export_all(&cfg).expect("Document");
+        crate::documents::DocumentVersionRecord::export_all(&cfg).expect("DocumentVersionRecord");
+        crate::documents::SearchDocumentsQuery::export_all(&cfg).expect("SearchDocumentsQuery");
+        crate::documents::GetDocumentQuery::export_all(&cfg).expect("GetDocumentQuery");
+        crate::documents::UpsertDocumentRequest::export_all(&cfg).expect("UpsertDocumentRequest");
+        crate::documents::UpsertDocumentResponse::export_all(&cfg).expect("UpsertDocumentResponse");
+        crate::documents::ListDocumentsResponse::export_all(&cfg).expect("ListDocumentsResponse");
+        crate::documents::ListDocumentVersionsResponse::export_all(&cfg)
+            .expect("ListDocumentVersionsResponse");
+
+        // API v1: events
+        crate::events::EventsQuery::export_all(&cfg).expect("EventsQuery");
+        crate::events::SseEventType::export_all(&cfg).expect("SseEventType");
+        crate::events::EntityEventData::export_all(&cfg).expect("EntityEventData");
+        crate::events::SnapshotEventData::export_all(&cfg).expect("SnapshotEventData");
+        crate::events::ResyncEventData::export_all(&cfg).expect("ResyncEventData");
+        crate::events::HeartbeatEventData::export_all(&cfg).expect("HeartbeatEventData");
+
+        // API v1: issues
+        crate::issues::IssueStatus::export_all(&cfg).expect("IssueStatus");
+        crate::issues::IssueType::export_all(&cfg).expect("IssueType");
+        crate::issues::IssueDependencyType::export_all(&cfg).expect("IssueDependencyType");
+        crate::issues::IssueDependency::export_all(&cfg).expect("IssueDependency");
+        crate::issues::TodoItem::export_all(&cfg).expect("TodoItem");
+        crate::issues::TodoListResponse::export_all(&cfg).expect("TodoListResponse");
+        crate::issues::AddTodoItemRequest::export_all(&cfg).expect("AddTodoItemRequest");
+        crate::issues::ReplaceTodoListRequest::export_all(&cfg).expect("ReplaceTodoListRequest");
+        crate::issues::SetTodoItemStatusRequest::export_all(&cfg)
+            .expect("SetTodoItemStatusRequest");
+        crate::issues::Issue::export_all(&cfg).expect("Issue");
+        crate::issues::JobSettings::export_all(&cfg).expect("JobSettings");
+        crate::issues::IssueVersionRecord::export_all(&cfg).expect("IssueVersionRecord");
+        crate::issues::UpsertIssueRequest::export_all(&cfg).expect("UpsertIssueRequest");
+        crate::issues::UpsertIssueResponse::export_all(&cfg).expect("UpsertIssueResponse");
+        crate::issues::SearchIssuesQuery::export_all(&cfg).expect("SearchIssuesQuery");
+        crate::issues::ListIssuesResponse::export_all(&cfg).expect("ListIssuesResponse");
+        crate::issues::ListIssueVersionsResponse::export_all(&cfg)
+            .expect("ListIssueVersionsResponse");
+
+        // API v1: job_status
+        crate::job_status::JobStatusUpdate::export_all(&cfg).expect("JobStatusUpdate");
+        crate::job_status::SetJobStatusResponse::export_all(&cfg).expect("SetJobStatusResponse");
+
+        // API v1: jobs
+        crate::jobs::Task::export_all(&cfg).expect("Task");
+        crate::jobs::CreateJobRequest::export_all(&cfg).expect("CreateJobRequest");
+        crate::jobs::BundleSpec::export_all(&cfg).expect("BundleSpec");
+        crate::jobs::Bundle::export_all(&cfg).expect("Bundle");
+        crate::jobs::WorkerContext::export_all(&cfg).expect("WorkerContext");
+        crate::jobs::CreateJobResponse::export_all(&cfg).expect("CreateJobResponse");
+        crate::jobs::ListJobsResponse::export_all(&cfg).expect("ListJobsResponse");
+        crate::jobs::JobVersionRecord::export_all(&cfg).expect("JobVersionRecord");
+        crate::jobs::SearchJobsQuery::export_all(&cfg).expect("SearchJobsQuery");
+        crate::jobs::ListJobVersionsResponse::export_all(&cfg).expect("ListJobVersionsResponse");
+        crate::jobs::KillJobResponse::export_all(&cfg).expect("KillJobResponse");
+
+        // API v1: login
+        crate::login::LoginRequest::export_all(&cfg).expect("LoginRequest");
+        crate::login::LoginResponse::export_all(&cfg).expect("LoginResponse");
+
+        // API v1: logs
+        crate::logs::LogsQuery::export_all(&cfg).expect("LogsQuery");
+
+        // API v1: merge_queues
+        crate::merge_queues::MergeQueue::export_all(&cfg).expect("MergeQueue");
+        crate::merge_queues::EnqueueMergePatchRequest::export_all(&cfg)
+            .expect("EnqueueMergePatchRequest");
+
+        // API v1: patches
+        crate::patches::PatchStatus::export_all(&cfg).expect("PatchStatus");
+        crate::patches::Review::export_all(&cfg).expect("Review");
+        crate::patches::GithubPr::export_all(&cfg).expect("GithubPr");
+        crate::patches::GitOid::export_all(&cfg).expect("GitOid");
+        crate::patches::CommitRange::export_all(&cfg).expect("CommitRange");
+        crate::patches::Patch::export_all(&cfg).expect("Patch");
+        crate::patches::PatchVersionRecord::export_all(&cfg).expect("PatchVersionRecord");
+        crate::patches::UpsertPatchRequest::export_all(&cfg).expect("UpsertPatchRequest");
+        crate::patches::UpsertPatchResponse::export_all(&cfg).expect("UpsertPatchResponse");
+        crate::patches::CreatePatchAssetQuery::export_all(&cfg).expect("CreatePatchAssetQuery");
+        crate::patches::CreatePatchAssetResponse::export_all(&cfg)
+            .expect("CreatePatchAssetResponse");
+        crate::patches::SearchPatchesQuery::export_all(&cfg).expect("SearchPatchesQuery");
+        crate::patches::GithubCiState::export_all(&cfg).expect("GithubCiState");
+        crate::patches::GithubCiFailure::export_all(&cfg).expect("GithubCiFailure");
+        crate::patches::GithubCiStatus::export_all(&cfg).expect("GithubCiStatus");
+        crate::patches::ListPatchesResponse::export_all(&cfg).expect("ListPatchesResponse");
+        crate::patches::ListPatchVersionsResponse::export_all(&cfg)
+            .expect("ListPatchVersionsResponse");
+
+        // API v1: repositories
+        crate::Repository::export_all(&cfg).expect("Repository");
+        crate::RepositoryRecord::export_all(&cfg).expect("RepositoryRecord");
+        crate::CreateRepositoryRequest::export_all(&cfg).expect("CreateRepositoryRequest");
+        crate::UpdateRepositoryRequest::export_all(&cfg).expect("UpdateRepositoryRequest");
+        crate::UpsertRepositoryResponse::export_all(&cfg).expect("UpsertRepositoryResponse");
+        crate::SearchRepositoriesQuery::export_all(&cfg).expect("SearchRepositoriesQuery");
+        crate::ListRepositoriesResponse::export_all(&cfg).expect("ListRepositoriesResponse");
+        crate::DeleteRepositoryResponse::export_all(&cfg).expect("DeleteRepositoryResponse");
+
+        // API v1: task_status
+        crate::task_status::Status::export_all(&cfg).expect("Status");
+        crate::task_status::TaskError::export_all(&cfg).expect("TaskError");
+
+        // API v1: users
+        crate::users::Username::export_all(&cfg).expect("Username");
+        crate::users::User::export_all(&cfg).expect("User");
+        crate::users::UserSummary::export_all(&cfg).expect("UserSummary");
+        crate::users::SearchUsersQuery::export_all(&cfg).expect("SearchUsersQuery");
+
+        // API v1: whoami
+        crate::whoami::ActorIdentity::export_all(&cfg).expect("ActorIdentity");
+        crate::whoami::WhoAmIResponse::export_all(&cfg).expect("WhoAmIResponse");
+
+        // API v1: error
+        crate::api::v1::error::ApiErrorBody::export_all(&cfg).expect("ApiErrorBody");
+    }
+}

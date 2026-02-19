@@ -5,6 +5,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "status", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JobStatusUpdate {
@@ -47,6 +49,8 @@ impl JobStatusUpdate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct SetJobStatusResponse {
     pub job_id: TaskId,
