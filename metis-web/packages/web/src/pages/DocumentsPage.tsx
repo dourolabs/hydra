@@ -1,8 +1,11 @@
 import { useState, useMemo, useCallback } from "react";
-import { Panel, Spinner, MarkdownViewer } from "@metis/ui";
+import { Link } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Panel, Spinner, Button, Modal, Input, Textarea } from "@metis/ui";
 import type { DocumentVersionRecord } from "@metis/api";
+import { apiClient } from "../api/client";
 import { useDocuments } from "../features/documents/useDocuments";
-import { useDocument } from "../features/documents/useDocument";
+import { useToast } from "../features/toast/useToast";
 import { formatRelativeTime } from "../utils/time";
 import styles from "./DocumentsPage.module.css";
 
@@ -55,16 +58,18 @@ function getDocumentDisplayTitle(doc: DocumentVersionRecord): string {
 
 export function DocumentsPage() {
   const { data: documents, isLoading, error } = useDocuments();
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const groups = useMemo(() => (documents ? groupDocumentsByPrefix(documents) : []), [documents]);
 
-  const handleToggle = useCallback((documentId: string) => {
-    setExpandedId((prev) => (prev === documentId ? null : documentId));
-  }, []);
-
   return (
     <div className={styles.page}>
+      <div className={styles.pageHeader}>
+        <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+          New Document
+        </Button>
+      </div>
+
       {isLoading && (
         <div className={styles.center}>
           <Spinner size="md" />
@@ -84,79 +89,158 @@ export function DocumentsPage() {
         >
           <ul className={styles.docList}>
             {group.documents.map((doc) => (
-              <DocumentRow
-                key={doc.document_id}
-                doc={doc}
-                expanded={expandedId === doc.document_id}
-                onToggle={handleToggle}
-              />
+              <DocumentRow key={doc.document_id} doc={doc} />
             ))}
           </ul>
         </Panel>
       ))}
+
+      <DocumentCreateModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+      />
     </div>
   );
 }
 
 interface DocumentRowProps {
   doc: DocumentVersionRecord;
-  expanded: boolean;
-  onToggle: (id: string) => void;
 }
 
-function DocumentRow({ doc, expanded, onToggle }: DocumentRowProps) {
+function DocumentRow({ doc }: DocumentRowProps) {
   return (
     <li>
-      <div
-        className={`${styles.docRow} ${expanded ? styles.docRowExpanded : ""}`}
-        onClick={() => onToggle(doc.document_id)}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onToggle(doc.document_id);
-          }
-        }}
+      <Link
+        to={`/documents/${doc.document_id}`}
+        className={styles.docRow}
       >
-        <span className={styles.expandIcon}>{expanded ? "\u25BC" : "\u25B6"}</span>
         <span className={styles.docTitle}>{getDocumentDisplayTitle(doc)}</span>
-        {doc.document.path && <span className={styles.docPath}>{doc.document.path}</span>}
-        <span className={styles.docTime}>{formatRelativeTime(doc.timestamp)}</span>
-      </div>
-      {expanded && <DocumentContent documentId={doc.document_id} />}
+        <div className={styles.docMeta}>
+          {doc.document.path && <span className={styles.docPath}>{doc.document.path}</span>}
+          <span className={styles.docTime}>{formatRelativeTime(doc.timestamp)}</span>
+        </div>
+      </Link>
     </li>
   );
 }
 
-interface DocumentContentProps {
-  documentId: string;
+interface DocumentCreateModalProps {
+  open: boolean;
+  onClose: () => void;
 }
 
-function DocumentContent({ documentId }: DocumentContentProps) {
-  const { data: record, isLoading, error } = useDocument(documentId);
+function DocumentCreateModal({ open, onClose }: DocumentCreateModalProps) {
+  const { addToast } = useToast();
+  const queryClient = useQueryClient();
 
-  if (isLoading) {
-    return (
-      <div className={styles.docContentCenter}>
-        <Spinner size="sm" />
-      </div>
-    );
-  }
+  const [title, setTitle] = useState("");
+  const [path, setPath] = useState("");
+  const [bodyMarkdown, setBodyMarkdown] = useState("");
 
-  if (error) {
-    return (
-      <div className={styles.docContent}>
-        <p className={styles.error}>Failed to load document: {(error as Error).message}</p>
-      </div>
-    );
-  }
+  const resetForm = useCallback(() => {
+    setTitle("");
+    setPath("");
+    setBodyMarkdown("");
+  }, []);
 
-  if (!record) return null;
+  const mutation = useMutation({
+    mutationFn: (params: { title: string; path: string; body_markdown: string }) =>
+      apiClient.createDocument({
+        document: {
+          title: params.title,
+          body_markdown: params.body_markdown,
+          ...(params.path ? { path: params.path } : {}),
+        },
+      }),
+    onSuccess: (data) => {
+      resetForm();
+      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      addToast(`Document ${data.document_id} created`, "success");
+      onClose();
+    },
+    onError: (err) => {
+      addToast(
+        err instanceof Error ? err.message : "Failed to create document",
+        "error",
+      );
+    },
+  });
+
+  const isValid = title.trim().length > 0 && (!path || path.startsWith("/"));
+
+  const handleSubmit = useCallback(() => {
+    if (!isValid) return;
+    mutation.mutate({
+      title: title.trim(),
+      path: path.trim(),
+      body_markdown: bodyMarkdown,
+    });
+  }, [title, path, bodyMarkdown, isValid, mutation]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleSubmit();
+      }
+    },
+    [handleSubmit],
+  );
+
+  const handleClose = useCallback(() => {
+    if (!mutation.isPending) {
+      resetForm();
+      onClose();
+    }
+  }, [mutation.isPending, resetForm, onClose]);
 
   return (
-    <div className={styles.docContent}>
-      <MarkdownViewer content={record.document.body_markdown} />
-    </div>
+    <Modal open={open} onClose={handleClose} title="New Document" className={styles.createModal}>
+      <div className={styles.createForm} onKeyDown={handleKeyDown}>
+        <div className={styles.createFields}>
+          <Input
+            label="Title"
+            placeholder="Document title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            required
+          />
+          <Input
+            label="Path"
+            placeholder="/path/to/document.md"
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            error={path && !path.startsWith("/") ? "Path must start with /" : undefined}
+          />
+        </div>
+        <div className={styles.createBodyWrapper}>
+          <Textarea
+            label="Body"
+            placeholder="Markdown content..."
+            value={bodyMarkdown}
+            onChange={(e) => setBodyMarkdown(e.target.value)}
+            className={styles.createBodyTextarea}
+          />
+        </div>
+        <div className={styles.createFooter}>
+          <span className={styles.createHint}>
+            {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter to create
+          </span>
+          <div className={styles.createActions}>
+            <Button variant="secondary" size="md" onClick={handleClose}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="md"
+              onClick={handleSubmit}
+              disabled={!isValid || mutation.isPending}
+            >
+              {mutation.isPending ? "Creating..." : "Create Document"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
