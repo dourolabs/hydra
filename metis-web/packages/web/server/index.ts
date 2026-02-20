@@ -5,8 +5,20 @@ import { auth } from "./auth.js";
 import { sse } from "./sse.js";
 import { proxy } from "./proxy.js";
 import { config } from "./config.js";
+import { logger } from "./logger.js";
 
 const app = new Hono();
+
+// Request logging middleware
+app.use("*", async (c, next) => {
+  const start = Date.now();
+  await next();
+  const duration_ms = Date.now() - start;
+  const method = c.req.method;
+  const path = c.req.path;
+  const status = c.res.status;
+  logger.info("request", { method, path, status, duration_ms });
+});
 
 // Health check
 app.get("/health", (c) => c.json({ status: "ok" }));
@@ -38,5 +50,5 @@ app.use(
 );
 
 serve({ fetch: app.fetch, port: config.port }, (info) => {
-  console.log(`BFF server listening on http://localhost:${info.port}`);
+  logger.info("server started", { port: info.port });
 });
