@@ -1,9 +1,16 @@
 .page {
-  max-width: 960px;
+  max-width: 1200px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  align-items: start;
 }
 
 .center {
@@ -22,4 +29,210 @@
   color: var(--color-text-secondary);
   padding: var(--space-4);
   margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+/* Panel headers */
+.panelTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.count {
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+  font-size: var(--font-size-sm);
+}
+
+/* Queue item */
+.queueItem {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.queueItem:last-child {
+  border-bottom: none;
+}
+
+.queueItemHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  font-size: var(--font-size-sm);
+}
+
+.queueItemHeader:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.issueId {
+  color: var(--color-accent);
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.issueType {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+}
+
+.issueDesc {
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.expandIcon {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Expanded queue item */
+.queueItemExpanded {
+  padding: 0 var(--space-4) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.descriptionContent {
+  padding: var(--space-3) 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.actionForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.actionRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.actionRow > :first-child {
+  min-width: 140px;
+}
+
+/* In Progress panel */
+.progressItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.progressItem:last-child {
+  border-bottom: none;
+}
+
+.progressItemHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+}
+
+.progressDesc {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jobRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0 var(--space-1) var(--space-6);
+  font-size: var(--font-size-xs);
+}
+
+.jobId {
+  color: var(--color-text-tertiary);
+}
+
+.spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--color-text-tertiary);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.runtime {
+  color: var(--color-text-tertiary);
+}
+
+.logsLink {
+  color: var(--color-accent);
+  text-decoration: none;
+  font-size: var(--font-size-xs);
+}
+
+.logsLink:hover {
+  text-decoration: underline;
+}
+
+.noJobs {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  padding-left: var(--space-6);
+}
+
+/* Recent Activity */
+.activityItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-size-xs);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.activityItem:last-child {
+  border-bottom: none;
+}
+
+.activityTime {
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  min-width: 60px;
+}
+
+.activityText {
+  color: var(--color-text-secondary);
+}
+
+.activityId {
+  color: var(--color-accent);
+  font-weight: 600;
 }
