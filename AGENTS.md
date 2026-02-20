@@ -32,12 +32,7 @@ Before finishing any task, you **must** run and fix all issues from these comman
 Please use proper capitalization and sentences. Keep pull request descriptions short and to the point: provide motivation / context for the change, explain what changed, and explain how it was tested.
 Please explicitly call out anything that may be confusing or design questions where you made an explicit
 choice with tradeoffs, and what the alternatives were. Attach screenshots or CLI snippets for UX changes and highlight configuration, migration, or security impacts.
-Any visual changes in `metis-ui` or `metis-component-library` must include screenshots in the PR description.
 - **Do not commit screenshots or other images to the git repository.** Instead, upload them to the metis document store under the `screenshots/` directory.
-- Capture with Puppeteer (install if needed): `node -e "const p=require('puppeteer');(async()=>{const b=await p.launch();const pg=await b.newPage();await pg.setViewport({width:1280,height:720});await pg.goto('http://localhost:3000',{waitUntil:'networkidle0'});await pg.screenshot({path:'/tmp/ui.png',fullPage:true});await b.close();})();"`
-- Submit the patch with `metis patches create ...` and capture the new patch id in the response.
-- Upload the screenshot with `metis patches assets create --patch-id <patch id> --file /tmp/ui.png` and capture the returned URL.
-- Update the PR comment with `metis patches update --patch-id <patch id> --description "...include screenshots here..."` so the screenshots render inline.
 
 ## Configuration & Security Notes
 Never commit secrets. Use the `config.toml.sample` files as templates and load them via `METIS_CONFIG` or env vars such as `OPENAI_API_KEY`. Confirm Docker images reference the intended worker image and namespace before publishing. Add new external integrations to `metis-common` so sensitive values stay centralized and masked.
