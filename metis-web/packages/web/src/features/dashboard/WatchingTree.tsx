@@ -15,6 +15,7 @@ interface WatchingTreeProps {
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
+  username: string;
 }
 
 interface SubtreeSummary {
@@ -272,14 +273,35 @@ export function WatchingTree({
   jobsByIssue,
   selectedId,
   onSelect,
+  username,
 }: WatchingTreeProps) {
   const watchingRoots = useMemo(() => {
     const tree = buildIssueTree(issues);
-    return tree.filter((node) => {
+    const roots = tree.filter((node) => {
       const status = node.issue.issue.status;
       return status === "open" || status === "in-progress";
     });
-  }, [issues]);
+
+    // Also include open issues assigned to the logged-in user
+    if (!username) return roots;
+
+    const rootIds = new Set(roots.map((n) => n.id));
+    const assignedNodes: IssueTreeNode[] = issues
+      .filter(
+        (i) =>
+          i.issue.assignee === username &&
+          i.issue.status === "open" &&
+          !rootIds.has(i.issue_id),
+      )
+      .map((i) => ({
+        id: i.issue_id,
+        issue: i,
+        children: [],
+        defaultExpanded: true,
+      }));
+
+    return [...roots, ...assignedNodes];
+  }, [issues, username]);
 
   if (watchingRoots.length === 0) {
     return <p className={styles.empty}>No issues being watched.</p>;
@@ -300,13 +322,25 @@ export function WatchingTree({
   );
 }
 
-export function useWatchingCount(issues: IssueVersionRecord[] | undefined): number {
+export function useWatchingCount(issues: IssueVersionRecord[] | undefined, username: string): number {
   return useMemo(() => {
     if (!issues) return 0;
     const tree = buildIssueTree(issues);
-    return tree.filter((node) => {
+    const roots = tree.filter((node) => {
       const status = node.issue.issue.status;
       return status === "open" || status === "in-progress";
-    }).length;
-  }, [issues]);
+    });
+
+    if (!username) return roots.length;
+
+    const rootIds = new Set(roots.map((n) => n.id));
+    const assignedCount = issues.filter(
+      (i) =>
+        i.issue.assignee === username &&
+        i.issue.status === "open" &&
+        !rootIds.has(i.issue_id),
+    ).length;
+
+    return roots.length + assignedCount;
+  }, [issues, username]);
 }
