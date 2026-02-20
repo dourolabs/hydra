@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { config } from "./config.js";
+import { logger } from "./logger.js";
 
 export const auth = new Hono();
 
@@ -14,6 +15,7 @@ auth.post("/login", async (c) => {
   const token = body?.token;
 
   if (!token) {
+    logger.debug("login attempt with missing token");
     return c.json({ error: "token is required" }, 400);
   }
 
@@ -23,10 +25,11 @@ auth.post("/login", async (c) => {
   });
 
   if (!resp.ok) {
+    logger.warn("login failed: invalid token", { status: resp.status });
     return c.json({ error: "invalid token" }, 401);
   }
 
-  const user = await resp.json();
+  const user = (await resp.json()) as { username?: string };
 
   setCookie(c, config.cookieName, token, {
     httpOnly: true,
@@ -35,6 +38,7 @@ auth.post("/login", async (c) => {
     path: "/",
   });
 
+  logger.info("login success", { username: user.username });
   return c.json(user);
 });
 
@@ -55,6 +59,7 @@ auth.get("/me", async (c) => {
   const token = getCookie(c, config.cookieName);
 
   if (!token) {
+    logger.debug("auth/me: missing cookie");
     return c.json({ error: "not authenticated" }, 401);
   }
 
@@ -63,6 +68,7 @@ auth.get("/me", async (c) => {
   });
 
   if (!resp.ok) {
+    logger.warn("auth/me: token validation failed", { status: resp.status });
     return c.json({ error: "token expired or invalid" }, 401);
   }
 
