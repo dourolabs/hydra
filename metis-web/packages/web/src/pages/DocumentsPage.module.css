@@ -3,6 +3,12 @@
 .error { composes: error from './page.module.css'; }
 .empty { composes: empty from './page.module.css'; }
 
+.pageHeader {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-4);
+}
+
 .sectionTitle {
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
@@ -27,6 +33,8 @@
   cursor: pointer;
   border-bottom: 1px solid var(--color-border);
   transition: background-color 0.1s;
+  text-decoration: none;
+  color: inherit;
 }
 
 .docRow:last-child {
@@ -34,10 +42,6 @@
 }
 
 .docRow:hover {
-  background-color: var(--color-bg-tertiary);
-}
-
-.docRowExpanded {
   background-color: var(--color-bg-tertiary);
 }
 
@@ -51,35 +55,133 @@
   white-space: nowrap;
 }
 
+.docMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
 .docPath {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
   font-family: var(--font-family-mono);
-  flex-shrink: 0;
 }
 
 .docTime {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
-  flex-shrink: 0;
   white-space: nowrap;
 }
 
-.expandIcon {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  flex-shrink: 0;
-  width: 1em;
-  text-align: center;
+/* Create document modal */
+.createModal {
+  width: 80vw;
+  max-width: 80vw;
+  height: 70vh;
+  max-height: 70vh;
 }
 
-.docContent {
-  padding: var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.docContentCenter {
+.createModal > div:last-child {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  justify-content: center;
-  padding: var(--space-4);
+  flex-direction: column;
+}
+
+.createForm {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: var(--space-3);
+}
+
+.createFields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.createFields > * {
+  flex: 1;
+  min-width: 200px;
+}
+
+.createBodyWrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.createBodyWrapper > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.createBodyTextarea {
+  flex: 1;
+  width: 100%;
+  resize: none;
+}
+
+.createFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.createHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.createActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .docRow {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+  }
+
+  .docMeta {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .createModal {
+    width: 95vw;
+    max-width: 95vw;
+    height: 85vh;
+    max-height: 85vh;
+  }
+
+  .createFields {
+    flex-direction: column;
+  }
+
+  .createFields > * {
+    min-width: 0;
+  }
+
+  .createFooter {
+    flex-direction: column;
+    gap: var(--space-2);
+    align-items: stretch;
+  }
+
+  .createActions {
+    justify-content: flex-end;
+  }
 }
