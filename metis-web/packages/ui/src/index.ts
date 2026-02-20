@@ -48,3 +48,6 @@ export type { MarkdownViewerProps } from "./components/MarkdownViewer";
 
 export { Toast } from "./components/Toast";
 export type { ToastProps, ToastVariant } from "./components/Toast";
+
+export { JobStatusIndicator } from "./components/JobStatusIndicator";
+export type { JobStatusIndicatorProps, JobSummary, JobStatus } from "./components/JobStatusIndicator";
