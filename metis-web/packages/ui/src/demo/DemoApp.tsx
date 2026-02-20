@@ -13,6 +13,7 @@ import { Tooltip } from "../components/Tooltip";
 import { Avatar } from "../components/Avatar";
 import { LogViewer } from "../components/LogViewer";
 import { Toast, type ToastVariant } from "../components/Toast";
+import { JobStatusIndicator, type JobSummary } from "../components/JobStatusIndicator";
 import styles from "./DemoApp.module.css";
 
 const statuses: BadgeStatus[] = [
@@ -70,6 +71,37 @@ const sampleTree: TreeNode[] = [
       </span>
     ),
   },
+];
+
+const jobsMixed: JobSummary[] = [
+  { jobId: "t-aaa001", status: "complete", startTime: "2026-02-20T08:00:00Z", endTime: "2026-02-20T08:02:30Z" },
+  { jobId: "t-aaa002", status: "failed", startTime: "2026-02-20T08:10:00Z", endTime: "2026-02-20T08:11:15Z" },
+  { jobId: "t-aaa003", status: "complete", startTime: "2026-02-20T08:20:00Z", endTime: "2026-02-20T08:25:00Z" },
+  { jobId: "t-aaa004", status: "complete", startTime: "2026-02-20T09:00:00Z", endTime: "2026-02-20T09:03:00Z" },
+  { jobId: "t-aaa005", status: "running", startTime: new Date(Date.now() - 165000).toISOString() },
+];
+
+const jobsRunningOnly: JobSummary[] = [
+  { jobId: "t-bbb001", status: "running", startTime: new Date(Date.now() - 42000).toISOString() },
+];
+
+const jobsAllComplete: JobSummary[] = [
+  { jobId: "t-ccc001", status: "complete", startTime: "2026-02-20T06:00:00Z", endTime: "2026-02-20T06:01:00Z" },
+  { jobId: "t-ccc002", status: "complete", startTime: "2026-02-20T07:00:00Z", endTime: "2026-02-20T07:02:00Z" },
+  { jobId: "t-ccc003", status: "complete", startTime: "2026-02-20T08:00:00Z", endTime: "2026-02-20T08:01:30Z" },
+];
+
+const jobsMany: JobSummary[] = Array.from({ length: 15 }, (_, i) => ({
+  jobId: `t-ddd${String(i + 1).padStart(3, "0")}`,
+  status: (i === 3 || i === 7 ? "failed" : "complete") as JobSummary["status"],
+  startTime: `2026-02-20T${String(6 + i).padStart(2, "0")}:00:00Z`,
+  endTime: `2026-02-20T${String(6 + i).padStart(2, "0")}:02:00Z`,
+}));
+
+const jobsPending: JobSummary[] = [
+  { jobId: "t-eee001", status: "complete", startTime: "2026-02-20T08:00:00Z", endTime: "2026-02-20T08:01:00Z" },
+  { jobId: "t-eee002", status: "created" },
+  { jobId: "t-eee003", status: "pending" },
 ];
 
 const sampleLogs = [
@@ -381,6 +413,46 @@ export function DemoApp() {
                 onClose={() => removeToast(t.id)}
               />
             ))}
+          </div>
+        </section>
+
+        {/* JobStatusIndicator */}
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>JobStatusIndicator</h2>
+          <div className={styles.grid}>
+            <Panel header="Mixed (complete, failed, running)">
+              <JobStatusIndicator
+                jobs={jobsMixed}
+                onJobClick={(id) => console.log("job clicked:", id)}
+              />
+            </Panel>
+            <Panel header="Single running job">
+              <JobStatusIndicator
+                jobs={jobsRunningOnly}
+                onJobClick={(id) => console.log("job clicked:", id)}
+              />
+            </Panel>
+            <Panel header="All complete">
+              <JobStatusIndicator
+                jobs={jobsAllComplete}
+                onJobClick={(id) => console.log("job clicked:", id)}
+              />
+            </Panel>
+            <Panel header="Many jobs (truncated)">
+              <JobStatusIndicator
+                jobs={jobsMany}
+                onJobClick={(id) => console.log("job clicked:", id)}
+              />
+            </Panel>
+            <Panel header="With pending/created">
+              <JobStatusIndicator
+                jobs={jobsPending}
+                onJobClick={(id) => console.log("job clicked:", id)}
+              />
+            </Panel>
+            <Panel header="No jobs (empty)">
+              <JobStatusIndicator jobs={[]} />
+            </Panel>
           </div>
         </section>
 
