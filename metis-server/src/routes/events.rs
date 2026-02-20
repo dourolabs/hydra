@@ -104,7 +104,7 @@ pub async fn get_events(
                                 continue;
                             }
 
-                            let (event_type, data) = server_event_to_sse(&event);
+                            let (event_type, data) = server_event_to_sse(&event, &state).await;
                             let sse_event = Event::default()
                                 .event(event_type.as_str())
                                 .id(event.seq().to_string())
@@ -307,11 +307,12 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
 
 /// Serializes the `new` entity from a `MutationPayload` into a version record
 /// JSON value matching the shape returned by the corresponding GET endpoint.
-fn serialize_entity(
+async fn serialize_entity(
     payload: &Arc<MutationPayload>,
     entity_id: &str,
     version: u64,
     timestamp: DateTime<Utc>,
+    state: &AppState,
 ) -> Option<serde_json::Value> {
     let value = match payload.as_ref() {
         MutationPayload::Issue { new, .. } => {
@@ -337,9 +338,15 @@ fn serialize_entity(
             serde_json::to_value(record).ok()?
         }
         MutationPayload::Job { new, .. } => {
-            let api_task: metis_common::api::v1::jobs::Task = new.clone().into();
+            let task_id: TaskId = entity_id.parse().ok()?;
+            let mut api_task: metis_common::api::v1::jobs::Task = new.clone().into();
+            if let Ok(log) = state.get_status_log(&task_id).await {
+                api_task.creation_time = log.creation_time();
+                api_task.start_time = log.start_time();
+                api_task.end_time = log.end_time();
+            }
             let record = JobVersionRecord::new(
-                entity_id.parse().ok()?,
+                task_id,
                 version,
                 timestamp,
                 api_task,
@@ -363,7 +370,10 @@ fn serialize_entity(
 }
 
 /// Converts a ServerEvent into an SSE event type and data payload.
-fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
+async fn server_event_to_sse(
+    event: &ServerEvent,
+    state: &AppState,
+) -> (SseEventType, EntityEventData) {
     let (event_type, entity_type, entity_id, version, timestamp, payload) = match event {
         ServerEvent::IssueCreated {
             issue_id,
@@ -521,7 +531,7 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
         ),
     };
 
-    let entity = serialize_entity(payload, &entity_id, version, timestamp);
+    let entity = serialize_entity(payload, &entity_id, version, timestamp, state).await;
 
     (
         event_type,
@@ -583,7 +593,11 @@ mod tests {
     use crate::app::event_bus::MutationPayload;
     use crate::domain::actors::ActorRef;
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
+    use crate::domain::jobs::{BundleSpec, Task};
+    use crate::domain::task_status::Status;
     use crate::domain::users::Username;
+    use crate::store::{MemoryStore, Store};
+    use crate::test_utils::test_state_with_store;
     use chrono::Utc;
     use metis_common::issues::IssueId;
     use std::sync::Arc;
@@ -603,8 +617,32 @@ mod tests {
         )
     }
 
-    #[test]
-    fn server_event_to_sse_includes_entity_data() {
+    fn dummy_task() -> Task {
+        Task::new(
+            "test prompt".to_string(),
+            BundleSpec::None,
+            None,
+            Username::from("test-creator"),
+            Some("metis-worker:latest".to_string()),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            Status::Created,
+            None,
+            None,
+        )
+    }
+
+    fn test_app_state() -> AppState {
+        let store = Arc::new(MemoryStore::new());
+        test_state_with_store(store).state
+    }
+
+    #[tokio::test]
+    async fn server_event_to_sse_includes_entity_data() {
+        let state = test_app_state();
         let issue_id = IssueId::new();
         let issue = dummy_issue();
         let payload = Arc::new(MutationPayload::Issue {
@@ -621,7 +659,7 @@ mod tests {
             payload,
         };
 
-        let (event_type, data) = server_event_to_sse(&event);
+        let (event_type, data) = server_event_to_sse(&event, &state).await;
 
         assert_eq!(event_type, SseEventType::IssueCreated);
         assert_eq!(data.entity_type, "issue");
@@ -648,8 +686,9 @@ mod tests {
         assert_eq!(issue_obj.get("status").unwrap().as_str().unwrap(), "open");
     }
 
-    #[test]
-    fn server_event_to_sse_includes_entity_on_update() {
+    #[tokio::test]
+    async fn server_event_to_sse_includes_entity_on_update() {
+        let state = test_app_state();
         let issue_id = IssueId::new();
         let old_issue = dummy_issue();
         let mut new_issue = old_issue.clone();
@@ -669,7 +708,7 @@ mod tests {
             payload,
         };
 
-        let (event_type, data) = server_event_to_sse(&event);
+        let (event_type, data) = server_event_to_sse(&event, &state).await;
 
         assert_eq!(event_type, SseEventType::IssueUpdated);
         let entity = data
@@ -686,8 +725,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn server_event_to_sse_includes_entity_on_delete() {
+    #[tokio::test]
+    async fn server_event_to_sse_includes_entity_on_delete() {
+        let state = test_app_state();
         let issue_id = IssueId::new();
         let old_issue = dummy_issue();
         let mut deleted_issue = old_issue.clone();
@@ -706,12 +746,119 @@ mod tests {
             payload,
         };
 
-        let (_, data) = server_event_to_sse(&event);
+        let (_, data) = server_event_to_sse(&event, &state).await;
 
         let entity = data
             .entity
             .expect("entity should be present for delete events");
         let issue_obj = entity.get("issue").expect("should contain issue field");
         assert!(issue_obj.get("deleted").unwrap().as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn server_event_to_sse_job_includes_time_fields() {
+        let store = Arc::new(MemoryStore::new());
+        let handles = test_state_with_store(store.clone());
+        let state = handles.state;
+
+        // Create a task in the store so the status log exists.
+        let task = dummy_task();
+        let (task_id, _) = store
+            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Transition task to running so start_time is populated.
+        state
+            .transition_task_to_pending(&task_id, ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_running(&task_id, ActorRef::test())
+            .await
+            .unwrap();
+
+        // Build a JobUpdated event (simulating what the event bus emits).
+        let mut running_task = task.clone();
+        running_task.status = Status::Running;
+        let payload = Arc::new(MutationPayload::Job {
+            old: Some(task),
+            new: running_task,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::JobUpdated {
+            seq: 3,
+            task_id: task_id.clone(),
+            version: 3,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let (event_type, data) = server_event_to_sse(&event, &state).await;
+
+        assert_eq!(event_type, SseEventType::JobUpdated);
+        assert_eq!(data.entity_type, "job");
+        assert_eq!(data.entity_id, task_id.to_string());
+
+        let entity = data.entity.expect("entity should be present");
+        let obj = entity.as_object().expect("entity should be a JSON object");
+        let task_obj = obj.get("task").expect("should contain task field");
+
+        // Verify time fields are populated.
+        assert!(
+            task_obj.get("creation_time").unwrap().as_str().is_some(),
+            "creation_time should be non-null"
+        );
+        assert!(
+            task_obj.get("start_time").unwrap().as_str().is_some(),
+            "start_time should be non-null for a running job"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_event_to_sse_job_created_includes_creation_time() {
+        let store = Arc::new(MemoryStore::new());
+        let handles = test_state_with_store(store.clone());
+        let state = handles.state;
+
+        // Create a task in the store so the status log exists.
+        let task = dummy_task();
+        let (task_id, _) = store
+            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Build a JobCreated event.
+        let payload = Arc::new(MutationPayload::Job {
+            old: None,
+            new: task,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::JobCreated {
+            seq: 1,
+            task_id: task_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let (event_type, data) = server_event_to_sse(&event, &state).await;
+
+        assert_eq!(event_type, SseEventType::JobCreated);
+        let entity = data.entity.expect("entity should be present");
+        let obj = entity.as_object().expect("entity should be a JSON object");
+        let task_obj = obj.get("task").expect("should contain task field");
+
+        // creation_time should be present for a newly created job.
+        assert!(
+            task_obj.get("creation_time").unwrap().as_str().is_some(),
+            "creation_time should be non-null"
+        );
+        // start_time should be absent since the job hasn't started
+        // (the field is skipped when None due to skip_serializing_if).
+        assert!(
+            task_obj.get("start_time").is_none(),
+            "start_time should be absent for a created (not yet running) job"
+        );
     }
 }
