@@ -12,10 +12,12 @@
 }
 
 .nodeRow {
+  --tree-depth: 0;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
+  padding-left: calc(var(--tree-depth) * var(--tree-indent));
   position: relative;
   cursor: pointer;
   border-radius: var(--radius-sm);
@@ -76,6 +78,20 @@
 
 @media (max-width: 768px) {
   .tree {
-    --tree-indent: 16px;
+    --tree-indent: 12px;
+  }
+
+  .nodeRow {
+    padding-left: calc(min(var(--tree-depth), 2) * var(--tree-indent));
+  }
+
+  .indentGuide {
+    display: none;
+  }
+
+  .nodeLabel {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
   }
 }
