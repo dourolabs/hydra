@@ -168,7 +168,7 @@ describe("computeBlockedStatus", () => {
     expect(result.hardBlockedBy).toEqual(["failed-one"]);
   });
 
-  it("treats missing blocker issues as blocked (conservative)", () => {
+  it("treats missing blocker issues as not blocking", () => {
     const issue = makeRecord("issue", "open", [
       { type: "blocked-on", issue_id: "nonexistent" },
     ]);
@@ -176,8 +176,8 @@ describe("computeBlockedStatus", () => {
 
     const result = computeBlockedStatus(issue, issueMap);
 
-    expect(result.blocked).toBe(true);
-    expect(result.blockedBy).toEqual(["nonexistent"]);
+    expect(result.blocked).toBe(false);
+    expect(result.blockedBy).toEqual([]);
     expect(result.hardBlocked).toBe(false);
     expect(result.hardBlockedBy).toEqual([]);
   });

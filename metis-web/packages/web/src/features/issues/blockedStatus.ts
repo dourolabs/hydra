@@ -19,7 +19,7 @@ const HARD_BLOCKED_STATUSES: ReadonlySet<IssueStatus> = new Set([
  *
  * - blocked: true when the issue has a "blocked-on" dependency on an issue
  *   whose status is NOT "closed". If the target issue is missing from the map,
- *   it is conservatively treated as blocking.
+ *   it is treated as not blocking (skipped).
  * - hardBlocked: true when the issue has a "blocked-on" dependency on an issue
  *   whose status is "failed", "rejected", or "dropped". Hard-blocked is always
  *   a subset of blocked.
@@ -37,8 +37,7 @@ export function computeBlockedStatus(
     const target = issueMap.get(dep.issue_id);
 
     if (!target) {
-      // Missing target — conservatively treat as blocking (but not hard-blocked)
-      blockedBy.push(dep.issue_id);
+      // Missing target — treat as not blocking (skip)
       continue;
     }
 
