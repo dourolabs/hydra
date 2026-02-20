@@ -80,3 +80,24 @@
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
 }
+
+.connectionLabel {
+  /* Default: visible inline with dot */
+}
+
+@media (max-width: 768px) {
+  .navbar {
+    padding: var(--space-3) var(--space-3);
+  }
+
+  .connectionLabel {
+    display: none;
+  }
+
+  .username {
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
