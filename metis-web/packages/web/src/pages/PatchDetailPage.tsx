@@ -11,10 +11,10 @@ export function PatchDetailPage() {
   const issueId = searchParams.get("issueId");
   const { data: record, isLoading, error } = usePatch(patchId ?? "");
 
-  const backTo = issueId ? `/issues/${issueId}` : "/";
+  const backTo = issueId ? `/issues/${issueId}` : "/patches";
   const backLabel = issueId
     ? `\u2190 Back to ${issueId}`
-    : "\u2190 Back to dashboard";
+    : "\u2190 Back to patches";
 
   return (
     <div className={styles.page}>
