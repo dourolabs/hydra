@@ -9,6 +9,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { IssueDetailPage } from "./pages/IssueDetailPage";
 import { JobLogPage } from "./pages/JobLogPage";
 import { PatchDetailPage } from "./pages/PatchDetailPage";
+import { DocumentDetailPage } from "./pages/DocumentDetailPage";
 
 export const router = createBrowserRouter([
   {
@@ -38,6 +39,10 @@ export const router = createBrowserRouter([
       {
         path: "documents",
         element: <DocumentsPage />,
+      },
+      {
+        path: "documents/:documentId",
+        element: <DocumentDetailPage />,
       },
       {
         path: "patches",
