@@ -370,7 +370,10 @@ async fn serialize_entity(
 }
 
 /// Converts a ServerEvent into an SSE event type and data payload.
-async fn server_event_to_sse(event: &ServerEvent, state: &AppState) -> (SseEventType, EntityEventData) {
+async fn server_event_to_sse(
+    event: &ServerEvent,
+    state: &AppState,
+) -> (SseEventType, EntityEventData) {
     let (event_type, entity_type, entity_id, version, timestamp, payload) = match event {
         ServerEvent::IssueCreated {
             issue_id,
