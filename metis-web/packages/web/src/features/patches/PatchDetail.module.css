@@ -121,3 +121,22 @@
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
 }
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+  .sectionBody {
+    padding: var(--space-3);
+  }
+
+  .metaValueMono {
+    word-break: break-all;
+  }
+
+  .ghRow {
+    flex-wrap: wrap;
+  }
+
+  .reviewHeader {
+    flex-wrap: wrap;
+  }
+}
