@@ -171,6 +171,8 @@ function RootTreeNode({
     () => collectActiveChildren(node, jobsByIssue),
     [node, jobsByIssue],
   );
+  // Pruned tree for expanded rendering (excludes terminal-only branches)
+  const prunedNode = useMemo(() => pruneTree(node, jobsByIssue), [node, jobsByIssue]);
   const summaryText = formatSummary(summary);
   const totalChildren = summary.open + summary.inProgress + summary.closed;
 
@@ -208,9 +210,9 @@ function RootTreeNode({
           ))}
         </div>
       )}
-      {expanded && (
+      {expanded && prunedNode && (
         <ChildNodes
-          nodes={node.children}
+          nodes={prunedNode.children}
           jobsByIssue={jobsByIssue}
           selectedId={selectedId}
           onSelect={onSelect}
@@ -298,9 +300,9 @@ export function WatchingTree({
 
   const watchingRoots = useMemo(() => {
     const tree = buildIssueTree(issues);
-    return tree
-      .map((root) => pruneTree(root, jobsByIssue))
-      .filter((root): root is IssueTreeNode => root !== null);
+    // Keep full (unpruned) roots so that summarizeSubtree sees all children.
+    // Use pruneTree only to decide whether the root has any active nodes.
+    return tree.filter((root) => pruneTree(root, jobsByIssue) !== null);
   }, [issues, jobsByIssue]);
 
   if (watchingRoots.length === 0) {
