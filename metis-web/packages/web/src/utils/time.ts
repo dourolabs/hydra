@@ -10,6 +10,11 @@ export function formatDuration(ms: number): string {
   return `${hours}h ${remainingMinutes}m`;
 }
 
+/** Format an ISO timestamp to a locale string. */
+export function formatTimestamp(ts: string): string {
+  return new Date(ts).toLocaleString();
+}
+
 /** Compute runtime from start_time to end_time (or now). */
 export function getRuntime(
   startTime: string | null | undefined,

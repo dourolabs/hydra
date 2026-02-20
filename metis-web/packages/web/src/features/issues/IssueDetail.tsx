@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
+import { formatTimestamp } from "../../utils/time";
 import { IssueTodoList } from "./IssueTodoList";
 import { IssueChildren } from "./IssueChildren";
 import { IssueActivity } from "./IssueActivity";
@@ -57,7 +58,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
         <div className={styles.metaItem}>
           <span className={styles.metaLabel}>Updated</span>
           <span className={styles.metaValue}>
-            {new Date(record.timestamp).toLocaleString()}
+            {formatTimestamp(record.timestamp)}
           </span>
         </div>
       </div>
