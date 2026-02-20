@@ -12,6 +12,10 @@ interface IssueTreeProps {
   matchingIds?: Set<string>;
   /** Jobs grouped by issue ID, used to render job status indicators. */
   jobsByIssue?: Map<string, JobVersionRecord[]>;
+  /** Controlled collapse state: set of collapsed node IDs. */
+  collapsedIds?: Set<string>;
+  /** Called when a node's expand/collapse chevron is clicked. */
+  onToggle?: (id: string) => void;
   className?: string;
 }
 
@@ -58,7 +62,7 @@ function toTreeNodes(
   return result;
 }
 
-export function IssueTree({ issues, matchingIds, jobsByIssue, className }: IssueTreeProps) {
+export function IssueTree({ issues, matchingIds, jobsByIssue, collapsedIds, onToggle, className }: IssueTreeProps) {
   const navigate = useNavigate();
 
   const handleJobClick = useCallback(
@@ -77,5 +81,5 @@ export function IssueTree({ issues, matchingIds, jobsByIssue, className }: Issue
     navigate(`/issues/${id}`);
   };
 
-  return <TreeView nodes={tree} onNodeClick={handleNodeClick} className={className} />;
+  return <TreeView nodes={tree} onNodeClick={handleNodeClick} collapsedIds={collapsedIds} onToggle={onToggle} className={className} />;
 }
