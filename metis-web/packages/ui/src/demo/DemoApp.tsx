@@ -12,6 +12,7 @@ import { Modal } from "../components/Modal";
 import { Tooltip } from "../components/Tooltip";
 import { Avatar } from "../components/Avatar";
 import { LogViewer } from "../components/LogViewer";
+import { Toast, type ToastVariant } from "../components/Toast";
 import styles from "./DemoApp.module.css";
 
 const statuses: BadgeStatus[] = [
@@ -101,6 +102,18 @@ export function DemoApp() {
   const [modalOpen, setModalOpen] = useState(false);
   const [buttonVariant, setButtonVariant] = useState<"primary" | "secondary" | "ghost">("primary");
   const [buttonSize, setButtonSize] = useState<"sm" | "md" | "lg">("md");
+  const [toasts, setToasts] = useState<{ id: number; variant: ToastVariant; message: string }[]>([]);
+  const [toastCounter, setToastCounter] = useState(0);
+
+  const addToast = (variant: ToastVariant, message: string) => {
+    const id = toastCounter;
+    setToastCounter((c) => c + 1);
+    setToasts((prev) => [...prev, { id, variant, message }]);
+  };
+
+  const removeToast = (id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
 
   return (
     <div className={styles.app}>
@@ -314,6 +327,60 @@ export function DemoApp() {
             <Avatar name="Diana Prince" size="md" />
             <Avatar name="jayantk" size="md" />
             <Avatar name="swe" size="md" />
+          </div>
+        </section>
+
+        {/* Toast */}
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>Toast</h2>
+          <div className={styles.preview}>
+            <Toast variant="success" message="Issue i-abc123 created successfully" duration={0} />
+            <Toast variant="error" message="Failed to create issue: unauthorized" duration={0} />
+            <Toast variant="info" message="Issue status updated" duration={0} />
+          </div>
+          <div className={styles.preview}>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => addToast("success", "Issue created successfully")}
+            >
+              Success toast
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => addToast("error", "Something went wrong")}
+            >
+              Error toast
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => addToast("info", "Status updated")}
+            >
+              Info toast
+            </Button>
+          </div>
+          <div
+            style={{
+              position: "fixed",
+              bottom: "var(--space-4)",
+              right: "var(--space-4)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--space-2)",
+              zIndex: 1000,
+              pointerEvents: "none",
+            }}
+          >
+            {toasts.map((t) => (
+              <Toast
+                key={t.id}
+                variant={t.variant}
+                message={t.message}
+                onClose={() => removeToast(t.id)}
+              />
+            ))}
           </div>
         </section>
 

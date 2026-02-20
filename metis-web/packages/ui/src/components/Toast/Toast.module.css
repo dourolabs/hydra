@@ -1,0 +1,86 @@
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  border: 1px solid;
+  pointer-events: auto;
+  max-width: 420px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.success {
+  background-color: #0d1f14;
+  border-color: rgba(0, 204, 102, 0.4);
+  color: #00cc66;
+}
+
+.error {
+  background-color: #1f0d0d;
+  border-color: rgba(255, 68, 68, 0.4);
+  color: #ff4444;
+}
+
+.info {
+  background-color: #161616;
+  border-color: rgba(136, 136, 136, 0.4);
+  color: var(--color-text-secondary);
+}
+
+.message {
+  flex: 1;
+  word-break: break-word;
+}
+
+.close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: var(--font-size-lg);
+  cursor: pointer;
+  padding: 0 var(--space-1);
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+  line-height: 1;
+}
+
+.close:hover {
+  opacity: 1;
+}
+
+/* Entry animation: fade + slide up */
+.enter {
+  animation: slideIn 200ms ease forwards;
+}
+
+/* Exit animation: fade + slide down */
+.exit {
+  animation: slideOut 150ms ease forwards;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}

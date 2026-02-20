@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@metis/ui/style.css";
 import "@metis/ui/theme/global.css";
 import { AuthProvider } from "./features/auth/AuthContext";
+import { ToastProvider } from "./features/toast/ToastContext";
 import { router } from "./router";
 
 const queryClient = new QueryClient({
@@ -18,7 +19,9 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <RouterProvider router={router} />
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
       </AuthProvider>
     </QueryClientProvider>
   );
