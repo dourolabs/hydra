@@ -18,6 +18,7 @@ use crate::{
     },
     store::{ReadOnlyStore, Store, StoreError, TaskStatusLog},
 };
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
@@ -30,10 +31,60 @@ use metis_common::{
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use serde_json::Value;
-use std::{collections::HashMap, collections::HashSet, str::FromStr};
+use sqlx::{
+    Pool, Postgres,
+    migrate::Migrator,
+    postgres::{PgConnectOptions, PgPoolOptions},
+};
+use std::{collections::HashMap, collections::HashSet, str::FromStr, time::Duration};
 
 use super::issue_graph::IssueGraphContext;
-use super::postgres::PgStorePool;
+
+use crate::config::DatabaseSection;
+
+pub type PgStorePool = Pool<Postgres>;
+
+static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+
+/// Establish a Postgres connection pool using the provided configuration.
+///
+/// Returns `Ok(None)` when no database URL is configured, allowing callers to
+/// continue using the in-memory store in development environments.
+pub async fn init_pool(config: &DatabaseSection) -> Result<Option<PgStorePool>> {
+    let Some(database_url) = config.database_url() else {
+        return Ok(None);
+    };
+
+    let max_connections = config.max_connections.max(1);
+    let min_connections = config.min_connections.min(max_connections);
+
+    let mut pool_options = PgPoolOptions::new()
+        .max_connections(max_connections)
+        .min_connections(min_connections)
+        .acquire_timeout(Duration::from_secs(config.connect_timeout_secs));
+
+    let connect_options = PgConnectOptions::from_str(&database_url)
+        .context("failed to parse database URL for Postgres pool")?;
+
+    if let Some(idle_timeout_secs) = config.idle_timeout() {
+        pool_options = pool_options.idle_timeout(Duration::from_secs(idle_timeout_secs));
+    }
+
+    let pool = pool_options
+        .connect_with(connect_options)
+        .await
+        .context("failed to connect to configured Postgres database")?;
+
+    Ok(Some(pool))
+}
+
+/// Run embedded SQLx migrations against the provided pool.
+pub async fn run_migrations(pool: &PgStorePool) -> Result<()> {
+    MIGRATOR
+        .run(pool)
+        .await
+        .context("failed to apply Postgres migrations")
+}
 
 const TABLE_ISSUES_V2: &str = "metis.issues_v2";
 const TABLE_PATCHES_V2: &str = "metis.patches_v2";
