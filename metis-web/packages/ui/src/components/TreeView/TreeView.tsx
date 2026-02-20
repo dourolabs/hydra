@@ -50,7 +50,7 @@ function TreeNodeItem({ node, depth, onNodeClick, collapsedIds, onToggle }: Tree
     <li className={styles.nodeItem}>
       <div
         className={styles.nodeRow}
-        style={{ paddingLeft: `calc(${depth} * var(--tree-indent))` }}
+        style={{ "--tree-depth": depth } as React.CSSProperties}
         onClick={handleClick}
         role="treeitem"
         aria-expanded={hasChildren ? expanded : undefined}

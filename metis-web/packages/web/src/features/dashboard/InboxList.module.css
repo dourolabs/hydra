@@ -68,3 +68,18 @@
   margin: 0;
   text-align: center;
 }
+
+@media (max-width: 768px) {
+  .item {
+    padding: var(--space-3);
+  }
+
+  .desc {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+  }
+}

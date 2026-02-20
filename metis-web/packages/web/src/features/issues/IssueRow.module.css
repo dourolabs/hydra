@@ -7,6 +7,10 @@
   min-width: 0;
 }
 
+.topRow {
+  display: contents;
+}
+
 .id {
   color: var(--color-accent);
   font-weight: 600;
@@ -30,4 +34,31 @@
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+  }
+
+  .topRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .desc {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+  }
 }
