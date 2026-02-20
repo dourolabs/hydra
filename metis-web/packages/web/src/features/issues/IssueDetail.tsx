@@ -1,8 +1,10 @@
-import { useState } from "react";
-import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@metis/ui";
+import { useState, useCallback } from "react";
+import { Avatar, Badge, Button, MarkdownViewer, Panel, Tabs, Textarea } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
+import { useUpdateIssue } from "./useIssue";
+import { useToast } from "../toast/useToast";
 import { IssueTodoList } from "./IssueTodoList";
 import { IssueChildren } from "./IssueChildren";
 import { IssueActivity } from "./IssueActivity";
@@ -22,9 +24,149 @@ const TABS = [
   { id: "activity", label: "Activity" },
 ];
 
+interface EditableSectionProps {
+  title: string;
+  content: string;
+  emptyText: string;
+  onSave: (value: string) => void;
+  isSaving: boolean;
+}
+
+function EditableSection({
+  title,
+  content,
+  emptyText,
+  onSave,
+  isSaving,
+}: EditableSectionProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(content);
+
+  const handleEdit = useCallback(() => {
+    setDraft(content);
+    setEditing(true);
+  }, [content]);
+
+  const handleCancel = useCallback(() => {
+    setDraft(content);
+    setEditing(false);
+  }, [content]);
+
+  const handleSave = useCallback(() => {
+    onSave(draft);
+    setEditing(false);
+  }, [draft, onSave]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleSave();
+      }
+    },
+    [handleSave],
+  );
+
+  return (
+    <Panel
+      header={
+        <div className={styles.panelHeader}>
+          <span className={styles.sectionTitle}>{title}</span>
+          {!editing && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleEdit}
+              className={styles.editButton}
+            >
+              Edit
+            </Button>
+          )}
+        </div>
+      }
+    >
+      <div className={styles.sectionBody}>
+        {editing ? (
+          <div className={styles.editMode}>
+            <Textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={handleKeyDown}
+              rows={8}
+              className={styles.editTextarea}
+            />
+            <div className={styles.editActions}>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleSave}
+                disabled={isSaving}
+              >
+                {isSaving ? "Saving..." : "Save"}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleCancel}
+                disabled={isSaving}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : content ? (
+          <MarkdownViewer content={content} />
+        ) : (
+          <p className={styles.empty}>{emptyText}</p>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 export function IssueDetail({ record }: IssueDetailProps) {
   const [activeTab, setActiveTab] = useState("children");
   const { issue } = record;
+  const { addToast } = useToast();
+  const updateMutation = useUpdateIssue(record.issue_id);
+
+  const handleSaveDescription = useCallback(
+    (value: string) => {
+      updateMutation.mutate(
+        { ...issue, description: value },
+        {
+          onSuccess: () => addToast("Description updated", "success"),
+          onError: (err) =>
+            addToast(
+              err instanceof Error
+                ? err.message
+                : "Failed to update description",
+              "error",
+            ),
+        },
+      );
+    },
+    [issue, updateMutation, addToast],
+  );
+
+  const handleSaveProgress = useCallback(
+    (value: string) => {
+      updateMutation.mutate(
+        { ...issue, progress: value },
+        {
+          onSuccess: () => addToast("Progress updated", "success"),
+          onError: (err) =>
+            addToast(
+              err instanceof Error
+                ? err.message
+                : "Failed to update progress",
+              "error",
+            ),
+        },
+      );
+    },
+    [issue, updateMutation, addToast],
+  );
 
   return (
     <div className={styles.detail}>
@@ -64,24 +206,22 @@ export function IssueDetail({ record }: IssueDetailProps) {
       </div>
 
       {/* Description */}
-      <Panel header={<span className={styles.sectionTitle}>Description</span>}>
-        <div className={styles.sectionBody}>
-          {issue.description ? (
-            <MarkdownViewer content={issue.description} />
-          ) : (
-            <p className={styles.empty}>No description.</p>
-          )}
-        </div>
-      </Panel>
+      <EditableSection
+        title="Description"
+        content={issue.description}
+        emptyText="No description."
+        onSave={handleSaveDescription}
+        isSaving={updateMutation.isPending}
+      />
 
       {/* Progress */}
-      {issue.progress && (
-        <Panel header={<span className={styles.sectionTitle}>Progress</span>}>
-          <div className={styles.sectionBody}>
-            <MarkdownViewer content={issue.progress} />
-          </div>
-        </Panel>
-      )}
+      <EditableSection
+        title="Progress"
+        content={issue.progress}
+        emptyText="No progress notes."
+        onSave={handleSaveProgress}
+        isSaving={updateMutation.isPending}
+      />
 
       {/* Tabbed sections: Children, Tasks, Patches, Todo */}
       <Panel

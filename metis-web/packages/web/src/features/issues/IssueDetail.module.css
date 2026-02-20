@@ -67,3 +67,35 @@
   font-size: var(--font-size-sm);
   margin: 0;
 }
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.editButton {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.editMode {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.editTextarea {
+  width: 100%;
+  min-height: 120px;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  resize: vertical;
+}
+
+.editActions {
+  display: flex;
+  gap: var(--space-2);
+}
