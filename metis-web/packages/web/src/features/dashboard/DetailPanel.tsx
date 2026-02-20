@@ -10,7 +10,7 @@ import { useToast } from "../toast/useToast";
 import styles from "./DetailPanel.module.css";
 
 /** Regex to detect document paths in issue text. */
-const DOC_PATH_RE = /(?:^|\s)(\/(?:designs|repos|playbooks|research)\/\S+\.md)/m;
+const DOC_PATH_RE = /(?:^|\s)(\/\S+\.md)/m;
 
 function extractDocumentPath(text: string): string | null {
   const match = DOC_PATH_RE.exec(text);
