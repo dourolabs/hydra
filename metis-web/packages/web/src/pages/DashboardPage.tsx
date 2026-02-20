@@ -6,6 +6,7 @@ import { useIssueFilters } from "../features/issues/useIssueFilters";
 import { IssueTree } from "../features/issues/IssueTree";
 import { IssueFilters } from "../features/issues/IssueFilters";
 import { IssueCreator } from "../features/issues/IssueCreator";
+import { useAllJobs } from "../features/jobs/useAllJobs";
 import type { IssueFilterValues, SortOption } from "../features/issues/useIssueFilters";
 import styles from "./DashboardPage.module.css";
 
@@ -83,6 +84,7 @@ function hasActiveFilters(filters: IssueFilterValues): boolean {
 export function DashboardPage() {
   const { filters, setFilters } = useIssueFilters();
   const { data: issues, isLoading, error } = useIssues();
+  const { data: jobsByIssue } = useAllJobs();
 
   const assignees = useMemo(() => (issues ? extractAssignees(issues) : []), [issues]);
 
@@ -129,6 +131,7 @@ export function DashboardPage() {
           <IssueTree
             issues={sortedIssues}
             matchingIds={active ? matchingIds : undefined}
+            jobsByIssue={jobsByIssue}
           />
         )}
       </Panel>
