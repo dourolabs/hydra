@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { Badge, JobStatusIndicator } from "@metis/ui";
 import type { JobSummary } from "@metis/ui";
 import type { IssueVersionRecord, JobVersionRecord } from "@metis/api";
@@ -101,6 +102,7 @@ function TreeNodeRow({
   jobsByIssue,
   selectedId,
   onSelect,
+  onJobClick,
   expanded,
   onToggle,
   hasChildren,
@@ -110,6 +112,7 @@ function TreeNodeRow({
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
+  onJobClick: (issueId: string, jobId: string) => void;
   expanded: boolean;
   onToggle: () => void;
   hasChildren: boolean;
@@ -117,6 +120,13 @@ function TreeNodeRow({
   const active = node.id === selectedId;
   const jobs = jobsByIssue.get(node.id);
   const jobSummaries = jobs?.map(toJobSummary);
+
+  const handleJobClick = useCallback(
+    (jobId: string) => {
+      onJobClick(node.id, jobId);
+    },
+    [onJobClick, node.id],
+  );
 
   return (
     <button
@@ -143,7 +153,7 @@ function TreeNodeRow({
           onClick={(e) => e.stopPropagation()}
           role="presentation"
         >
-          <JobStatusIndicator jobs={jobSummaries} />
+          <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
         </span>
       )}
       <span className={styles.id}>{node.id}</span>
@@ -159,12 +169,14 @@ function RootTreeNode({
   jobsByIssue,
   selectedId,
   onSelect,
+  onJobClick,
   username,
 }: {
   node: IssueTreeNode;
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
+  onJobClick: (issueId: string, jobId: string) => void;
   username: string;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -187,6 +199,7 @@ function RootTreeNode({
         jobsByIssue={jobsByIssue}
         selectedId={selectedId}
         onSelect={onSelect}
+        onJobClick={onJobClick}
         expanded={expanded}
         onToggle={toggle}
         hasChildren={totalChildren > 0}
@@ -204,6 +217,7 @@ function RootTreeNode({
               jobsByIssue={jobsByIssue}
               selectedId={selectedId}
               onSelect={onSelect}
+              onJobClick={onJobClick}
               expanded={false}
               onToggle={() => {}}
               hasChildren={false}
@@ -218,6 +232,7 @@ function RootTreeNode({
           jobsByIssue={jobsByIssue}
           selectedId={selectedId}
           onSelect={onSelect}
+          onJobClick={onJobClick}
         />
       )}
     </li>
@@ -230,12 +245,14 @@ function ChildNodes({
   jobsByIssue,
   selectedId,
   onSelect,
+  onJobClick,
 }: {
   nodes: IssueTreeNode[];
   depth: number;
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
+  onJobClick: (issueId: string, jobId: string) => void;
 }) {
   const [expandedSet, setExpandedSet] = useState<Set<string>>(() => new Set());
 
@@ -264,6 +281,7 @@ function ChildNodes({
               jobsByIssue={jobsByIssue}
               selectedId={selectedId}
               onSelect={onSelect}
+              onJobClick={onJobClick}
               expanded={isExpanded}
               onToggle={() => toggle(child.id)}
               hasChildren={hasGrandchildren}
@@ -275,6 +293,7 @@ function ChildNodes({
                 jobsByIssue={jobsByIssue}
                 selectedId={selectedId}
                 onSelect={onSelect}
+                onJobClick={onJobClick}
               />
             )}
           </div>
@@ -291,6 +310,15 @@ export function WatchingTree({
   onSelect,
   username,
 }: WatchingTreeProps) {
+  const navigate = useNavigate();
+
+  const handleJobClick = useCallback(
+    (issueId: string, jobId: string) => {
+      navigate(`/issues/${issueId}/jobs/${jobId}/logs`);
+    },
+    [navigate],
+  );
+
   const watchingRoots = useMemo(() => {
     const tree = buildIssueTree(issues);
 
@@ -325,6 +353,7 @@ export function WatchingTree({
           jobsByIssue={jobsByIssue}
           selectedId={selectedId}
           onSelect={onSelect}
+          onJobClick={handleJobClick}
           username={username}
         />
       ))}
