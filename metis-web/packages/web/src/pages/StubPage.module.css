@@ -1,10 +1,4 @@
-.page {
-  max-width: 960px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
+.page { composes: page from './page.module.css'; }
 
 .placeholder {
   color: var(--color-text-secondary);

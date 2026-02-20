@@ -35,8 +35,4 @@
   text-decoration: line-through;
 }
 
-.empty {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  margin: 0;
-}
+.empty { composes: empty from '../detail.module.css'; }

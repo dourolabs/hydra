@@ -30,14 +30,5 @@
   text-align: center;
 }
 
-.error {
-  color: var(--color-status-failed);
-  padding: var(--space-4);
-  margin: 0;
-}
-
-.empty {
-  color: var(--color-text-secondary);
-  padding: var(--space-4);
-  margin: 0;
-}
+.error { composes: error from './page.module.css'; }
+.empty { composes: empty from './page.module.css'; }

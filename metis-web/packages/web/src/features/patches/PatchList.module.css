@@ -48,14 +48,5 @@
   text-decoration: underline;
 }
 
-.empty {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  margin: 0;
-}
-
-.error {
-  color: var(--color-status-failed);
-  font-size: var(--font-size-sm);
-  margin: 0;
-}
+.empty { composes: empty from '../detail.module.css'; }
+.error { composes: error from '../detail.module.css'; }
