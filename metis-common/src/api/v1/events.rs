@@ -130,6 +130,10 @@ pub struct EntityEventData {
     pub entity_id: String,
     pub version: u64,
     pub timestamp: DateTime<Utc>,
+    /// Full entity state after the mutation, serialized as a version record
+    /// (e.g., `IssueVersionRecord`, `JobVersionRecord`, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<serde_json::Value>,
 }
 
 /// Data payload for the snapshot event sent on initial connection.

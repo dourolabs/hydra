@@ -1,4 +1,4 @@
-use crate::app::{AppState, ServerEvent};
+use crate::app::{AppState, ServerEvent, event_bus::MutationPayload};
 use axum::{
     extract::{Query, State},
     response::{
@@ -6,19 +6,23 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
     },
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
 use metis_common::{
     api::v1::{
+        documents::DocumentVersionRecord,
         error::ApiError,
         events::{
             EntityEventData, EventsQuery, HeartbeatEventData, LAST_EVENT_ID_HEADER,
             ResyncEventData, SnapshotEventData, SseEventType,
         },
+        issues::IssueVersionRecord,
+        jobs::JobVersionRecord,
+        patches::PatchVersionRecord,
     },
     ids::{DocumentId, IssueId, PatchId, TaskId},
 };
-use std::{collections::HashMap, convert::Infallible};
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 use tokio::sync::broadcast::error::RecvError;
 use tracing::{info, warn};
 
@@ -301,13 +305,71 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
     }
 }
 
+/// Serializes the `new` entity from a `MutationPayload` into a version record
+/// JSON value matching the shape returned by the corresponding GET endpoint.
+fn serialize_entity(
+    payload: &Arc<MutationPayload>,
+    entity_id: &str,
+    version: u64,
+    timestamp: DateTime<Utc>,
+) -> Option<serde_json::Value> {
+    let value = match payload.as_ref() {
+        MutationPayload::Issue { new, .. } => {
+            let api_issue: metis_common::api::v1::issues::Issue = new.clone().into();
+            let record = IssueVersionRecord::new(
+                entity_id.parse().ok()?,
+                version,
+                timestamp,
+                api_issue,
+                Some(payload.actor().clone()),
+            );
+            serde_json::to_value(record).ok()?
+        }
+        MutationPayload::Patch { new, .. } => {
+            let api_patch: metis_common::api::v1::patches::Patch = new.clone().into();
+            let record = PatchVersionRecord::new(
+                entity_id.parse().ok()?,
+                version,
+                timestamp,
+                api_patch,
+                Some(payload.actor().clone()),
+            );
+            serde_json::to_value(record).ok()?
+        }
+        MutationPayload::Job { new, .. } => {
+            let api_task: metis_common::api::v1::jobs::Task = new.clone().into();
+            let record = JobVersionRecord::new(
+                entity_id.parse().ok()?,
+                version,
+                timestamp,
+                api_task,
+                Some(payload.actor().clone()),
+            );
+            serde_json::to_value(record).ok()?
+        }
+        MutationPayload::Document { new, .. } => {
+            let api_doc: metis_common::api::v1::documents::Document = new.clone().into();
+            let record = DocumentVersionRecord::new(
+                entity_id.parse().ok()?,
+                version,
+                timestamp,
+                api_doc,
+                Some(payload.actor().clone()),
+            );
+            serde_json::to_value(record).ok()?
+        }
+    };
+    Some(value)
+}
+
 /// Converts a ServerEvent into an SSE event type and data payload.
 fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
-    let (event_type, entity_type, entity_id, version, timestamp) = match event {
+    let (event_type, entity_type, entity_id, version, timestamp, payload) = match event {
         ServerEvent::IssueCreated {
             issue_id,
             version,
             timestamp,
+            payload,
             ..
         } => (
             SseEventType::IssueCreated,
@@ -315,11 +377,13 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             issue_id.to_string(),
             *version,
             *timestamp,
+            payload,
         ),
         ServerEvent::IssueUpdated {
             issue_id,
             version,
             timestamp,
+            payload,
             ..
         } => (
             SseEventType::IssueUpdated,
@@ -327,11 +391,13 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             issue_id.to_string(),
             *version,
             *timestamp,
+            payload,
         ),
         ServerEvent::IssueDeleted {
             issue_id,
             version,
             timestamp,
+            payload,
             ..
         } => (
             SseEventType::IssueDeleted,
@@ -339,11 +405,13 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             issue_id.to_string(),
             *version,
             *timestamp,
+            payload,
         ),
         ServerEvent::PatchCreated {
             patch_id,
             version,
             timestamp,
+            payload,
             ..
         } => (
             SseEventType::PatchCreated,
@@ -351,11 +419,13 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             patch_id.to_string(),
             *version,
             *timestamp,
+            payload,
         ),
         ServerEvent::PatchUpdated {
             patch_id,
             version,
             timestamp,
+            payload,
             ..
         } => (
             SseEventType::PatchUpdated,
@@ -363,11 +433,13 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             patch_id.to_string(),
             *version,
             *timestamp,
+            payload,
         ),
         ServerEvent::PatchDeleted {
             patch_id,
             version,
             timestamp,
+            payload,
             ..
         } => (
             SseEventType::PatchDeleted,
@@ -375,11 +447,13 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             patch_id.to_string(),
             *version,
             *timestamp,
+            payload,
         ),
         ServerEvent::JobCreated {
             task_id,
             version,
             timestamp,
+            payload,
             ..
         } => (
             SseEventType::JobCreated,
@@ -387,11 +461,13 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             task_id.to_string(),
             *version,
             *timestamp,
+            payload,
         ),
         ServerEvent::JobUpdated {
             task_id,
             version,
             timestamp,
+            payload,
             ..
         } => (
             SseEventType::JobUpdated,
@@ -399,11 +475,13 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             task_id.to_string(),
             *version,
             *timestamp,
+            payload,
         ),
         ServerEvent::DocumentCreated {
             document_id,
             version,
             timestamp,
+            payload,
             ..
         } => (
             SseEventType::DocumentCreated,
@@ -411,11 +489,13 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             document_id.to_string(),
             *version,
             *timestamp,
+            payload,
         ),
         ServerEvent::DocumentUpdated {
             document_id,
             version,
             timestamp,
+            payload,
             ..
         } => (
             SseEventType::DocumentUpdated,
@@ -423,11 +503,13 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             document_id.to_string(),
             *version,
             *timestamp,
+            payload,
         ),
         ServerEvent::DocumentDeleted {
             document_id,
             version,
             timestamp,
+            payload,
             ..
         } => (
             SseEventType::DocumentDeleted,
@@ -435,8 +517,11 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             document_id.to_string(),
             *version,
             *timestamp,
+            payload,
         ),
     };
+
+    let entity = serialize_entity(payload, &entity_id, version, timestamp);
 
     (
         event_type,
@@ -445,6 +530,7 @@ fn server_event_to_sse(event: &ServerEvent) -> (SseEventType, EntityEventData) {
             entity_id,
             version,
             timestamp,
+            entity,
         },
     )
 }
@@ -489,4 +575,143 @@ async fn build_snapshot(state: &AppState) -> SnapshotEventData {
     }
 
     SnapshotEventData { versions }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::event_bus::MutationPayload;
+    use crate::domain::actors::ActorRef;
+    use crate::domain::issues::{Issue, IssueStatus, IssueType};
+    use crate::domain::users::Username;
+    use chrono::Utc;
+    use metis_common::issues::IssueId;
+    use std::sync::Arc;
+
+    fn dummy_issue() -> Issue {
+        Issue::new(
+            IssueType::Task,
+            "sse entity test".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn server_event_to_sse_includes_entity_data() {
+        let issue_id = IssueId::new();
+        let issue = dummy_issue();
+        let payload = Arc::new(MutationPayload::Issue {
+            old: None,
+            new: issue,
+            actor: ActorRef::test(),
+        });
+        let timestamp = Utc::now();
+        let event = ServerEvent::IssueCreated {
+            seq: 1,
+            issue_id: issue_id.clone(),
+            version: 1,
+            timestamp,
+            payload,
+        };
+
+        let (event_type, data) = server_event_to_sse(&event);
+
+        assert_eq!(event_type, SseEventType::IssueCreated);
+        assert_eq!(data.entity_type, "issue");
+        assert_eq!(data.entity_id, issue_id.to_string());
+        assert_eq!(data.version, 1);
+
+        let entity = data.entity.expect("entity should be present");
+        let obj = entity.as_object().expect("entity should be a JSON object");
+
+        // Verify the entity has the shape of an IssueVersionRecord.
+        assert_eq!(
+            obj.get("issue_id").unwrap().as_str().unwrap(),
+            issue_id.to_string()
+        );
+        assert_eq!(obj.get("version").unwrap().as_u64().unwrap(), 1);
+        assert!(obj.contains_key("timestamp"));
+
+        // Verify the nested issue data.
+        let issue_obj = obj.get("issue").expect("should contain issue field");
+        assert_eq!(
+            issue_obj.get("description").unwrap().as_str().unwrap(),
+            "sse entity test"
+        );
+        assert_eq!(issue_obj.get("status").unwrap().as_str().unwrap(), "open");
+    }
+
+    #[test]
+    fn server_event_to_sse_includes_entity_on_update() {
+        let issue_id = IssueId::new();
+        let old_issue = dummy_issue();
+        let mut new_issue = old_issue.clone();
+        new_issue.status = IssueStatus::InProgress;
+        new_issue.description = "updated description".to_string();
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(old_issue),
+            new: new_issue,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::IssueUpdated {
+            seq: 2,
+            issue_id: issue_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let (event_type, data) = server_event_to_sse(&event);
+
+        assert_eq!(event_type, SseEventType::IssueUpdated);
+        let entity = data
+            .entity
+            .expect("entity should be present for update events");
+        let issue_obj = entity.get("issue").expect("should contain issue field");
+        assert_eq!(
+            issue_obj.get("description").unwrap().as_str().unwrap(),
+            "updated description"
+        );
+        assert_eq!(
+            issue_obj.get("status").unwrap().as_str().unwrap(),
+            "in-progress"
+        );
+    }
+
+    #[test]
+    fn server_event_to_sse_includes_entity_on_delete() {
+        let issue_id = IssueId::new();
+        let old_issue = dummy_issue();
+        let mut deleted_issue = old_issue.clone();
+        deleted_issue.deleted = true;
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(old_issue),
+            new: deleted_issue,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::IssueDeleted {
+            seq: 3,
+            issue_id: issue_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let (_, data) = server_event_to_sse(&event);
+
+        let entity = data
+            .entity
+            .expect("entity should be present for delete events");
+        let issue_obj = entity.get("issue").expect("should contain issue field");
+        assert!(issue_obj.get("deleted").unwrap().as_bool().unwrap());
+    }
 }
