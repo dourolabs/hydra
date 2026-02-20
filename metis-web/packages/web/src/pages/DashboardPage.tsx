@@ -7,7 +7,8 @@ import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { SplitLayout } from "../layout/SplitLayout";
 import { InboxList } from "../features/dashboard/InboxList";
-import { WatchingTree, useWatchingCount } from "../features/dashboard/WatchingTree";
+import { WatchingTree } from "../features/dashboard/WatchingTree";
+import { useWatchingCount } from "../features/dashboard/useWatchingCount";
 import { DetailPanel, DetailPanelEmpty } from "../features/dashboard/DetailPanel";
 import styles from "./DashboardPage.module.css";
 
