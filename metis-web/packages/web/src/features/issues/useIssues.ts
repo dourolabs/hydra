@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { IssueVersionRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
+import { computeBlockedStatus } from "./blockedStatus";
 
 export function useIssues() {
   return useQuery({
@@ -15,6 +16,10 @@ export interface IssueTreeNode {
   issue: IssueVersionRecord;
   children: IssueTreeNode[];
   defaultExpanded: boolean;
+  blocked: boolean;
+  blockedBy: string[];
+  hardBlocked: boolean;
+  hardBlockedBy: string[];
 }
 
 /**
@@ -50,11 +55,14 @@ export function buildIssueTree(issues: IssueVersionRecord[]): IssueTreeNode[] {
       .filter((i): i is IssueVersionRecord => i !== undefined)
       .map(buildNode);
 
+    const status = computeBlockedStatus(record, issueMap);
+
     return {
       id: record.issue_id,
       issue: record,
       children,
       defaultExpanded: true,
+      ...status,
     };
   }
 
