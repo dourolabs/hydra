@@ -168,7 +168,7 @@ async fn drop_children_recursively(
             ))
         })?;
 
-        if child.item.status != IssueStatus::Dropped {
+        if !child.item.status.is_terminal() {
             let mut child_issue = child.item;
             child_issue.status = IssueStatus::Dropped;
             upsert_issue(app_state, &child_id, child_issue, actor.clone()).await?;
@@ -474,6 +474,240 @@ mod tests {
 
         // Should return Ok without doing anything
         automation.execute(&ctx).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn skips_closed_child_when_parent_dropped() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let (parent_id, _) = store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let child = make_issue(
+            IssueStatus::Closed,
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )],
+        );
+        let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
+
+        let mut dropped_parent = parent;
+        dropped_parent.status = IssueStatus::Dropped;
+        store
+            .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            new: dropped_parent,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 1,
+            issue_id: parent_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = CascadeIssueStatusAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let child_result = store.get_issue(&child_id, false).await.unwrap();
+        assert_eq!(child_result.item.status, IssueStatus::Closed);
+    }
+
+    #[tokio::test]
+    async fn skips_failed_child_when_parent_dropped() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let (parent_id, _) = store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let child = make_issue(
+            IssueStatus::Failed,
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )],
+        );
+        let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
+
+        let mut dropped_parent = parent;
+        dropped_parent.status = IssueStatus::Dropped;
+        store
+            .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            new: dropped_parent,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 1,
+            issue_id: parent_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = CascadeIssueStatusAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let child_result = store.get_issue(&child_id, false).await.unwrap();
+        assert_eq!(child_result.item.status, IssueStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn skips_rejected_child_when_parent_dropped() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let (parent_id, _) = store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let child = make_issue(
+            IssueStatus::Rejected,
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )],
+        );
+        let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
+
+        let mut dropped_parent = parent;
+        dropped_parent.status = IssueStatus::Dropped;
+        store
+            .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            new: dropped_parent,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 1,
+            issue_id: parent_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = CascadeIssueStatusAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let child_result = store.get_issue(&child_id, false).await.unwrap();
+        assert_eq!(child_result.item.status, IssueStatus::Rejected);
+    }
+
+    #[tokio::test]
+    async fn drops_grandchild_of_terminal_child() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        // Create parent -> closed child -> open grandchild
+        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let (parent_id, _) = store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let child = make_issue(
+            IssueStatus::Closed,
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )],
+        );
+        let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
+
+        let grandchild = make_issue(
+            IssueStatus::Open,
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                child_id.clone(),
+            )],
+        );
+        let (grandchild_id, _) = store
+            .add_issue(grandchild, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut dropped_parent = parent;
+        dropped_parent.status = IssueStatus::Dropped;
+        store
+            .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            new: dropped_parent,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 1,
+            issue_id: parent_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = CascadeIssueStatusAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        // Closed child should stay closed
+        let child_result = store.get_issue(&child_id, false).await.unwrap();
+        assert_eq!(child_result.item.status, IssueStatus::Closed);
+
+        // Open grandchild should be dropped
+        let grandchild_result = store.get_issue(&grandchild_id, false).await.unwrap();
+        assert_eq!(grandchild_result.item.status, IssueStatus::Dropped);
     }
 
     #[tokio::test]
