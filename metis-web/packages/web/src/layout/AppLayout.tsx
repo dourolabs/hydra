@@ -1,6 +1,6 @@
 import { Navigate, Outlet } from "react-router-dom";
 import { Spinner } from "@metis/ui";
-import { useAuth } from "../features/auth/AuthContext";
+import { useAuth } from "../features/auth/useAuth";
 import { useSSE } from "../hooks/useSSE";
 import { NavBar } from "./NavBar";
 import styles from "./AppLayout.module.css";
