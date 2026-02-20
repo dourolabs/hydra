@@ -15,6 +15,7 @@ interface WatchingTreeProps {
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
+  username: string;
 }
 
 interface SubtreeSummary {
@@ -46,13 +47,20 @@ function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
   return summary;
 }
 
-function collectInProgressChildren(node: IssueTreeNode): IssueTreeNode[] {
+function collectHighlightedChildren(node: IssueTreeNode, username: string): IssueTreeNode[] {
   const result: IssueTreeNode[] = [];
+  const seen = new Set<string>();
 
   function walk(n: IssueTreeNode) {
     for (const child of n.children) {
-      if (child.issue.issue.status === "in-progress") {
-        result.push(child);
+      if (!seen.has(child.id)) {
+        if (
+          child.issue.issue.status === "in-progress" ||
+          (username && child.issue.issue.assignee === username && child.issue.issue.status === "open")
+        ) {
+          seen.add(child.id);
+          result.push(child);
+        }
       }
       walk(child);
     }
@@ -78,6 +86,13 @@ function formatSummary(summary: SubtreeSummary): string {
   if (summary.open > 0) parts.push(`${summary.open} open`);
   if (summary.closed > 0) parts.push(`${summary.closed} closed`);
   return parts.join(", ");
+}
+
+function containsAssignedOpen(node: IssueTreeNode, username: string): boolean {
+  if (node.issue.issue.assignee === username && node.issue.issue.status === "open") {
+    return true;
+  }
+  return node.children.some((child) => containsAssignedOpen(child, username));
 }
 
 function TreeNodeRow({
@@ -144,18 +159,20 @@ function RootTreeNode({
   jobsByIssue,
   selectedId,
   onSelect,
+  username,
 }: {
   node: IssueTreeNode;
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
+  username: string;
 }) {
   const [expanded, setExpanded] = useState(false);
 
   const summary = useMemo(() => summarizeSubtree(node), [node]);
-  const inProgressChildren = useMemo(
-    () => collectInProgressChildren(node),
-    [node],
+  const highlightedChildren = useMemo(
+    () => collectHighlightedChildren(node, username),
+    [node, username],
   );
   const summaryText = formatSummary(summary);
   const totalChildren = summary.open + summary.inProgress + summary.closed;
@@ -177,9 +194,9 @@ function RootTreeNode({
       {summaryText && (
         <div className={styles.summary}>{summaryText}</div>
       )}
-      {!expanded && inProgressChildren.length > 0 && (
+      {!expanded && highlightedChildren.length > 0 && (
         <div className={styles.inProgressSection}>
-          {inProgressChildren.map((child) => (
+          {highlightedChildren.map((child) => (
             <TreeNodeRow
               key={child.id}
               node={child}
@@ -272,14 +289,28 @@ export function WatchingTree({
   jobsByIssue,
   selectedId,
   onSelect,
+  username,
 }: WatchingTreeProps) {
   const watchingRoots = useMemo(() => {
     const tree = buildIssueTree(issues);
-    return tree.filter((node) => {
-      const status = node.issue.issue.status;
-      return status === "open" || status === "in-progress";
+
+    if (!username) {
+      return tree.filter((node) => {
+        const status = node.issue.issue.status;
+        return status === "open" || status === "in-progress";
+      });
+    }
+
+    // Display the union of:
+    // 1. In-progress root trees
+    // 2. Root trees that contain open issues assigned to the user
+    return tree.filter((root) => {
+      return (
+        root.issue.issue.status === "in-progress" ||
+        containsAssignedOpen(root, username)
+      );
     });
-  }, [issues]);
+  }, [issues, username]);
 
   if (watchingRoots.length === 0) {
     return <p className={styles.empty}>No issues being watched.</p>;
@@ -294,6 +325,7 @@ export function WatchingTree({
           jobsByIssue={jobsByIssue}
           selectedId={selectedId}
           onSelect={onSelect}
+          username={username}
         />
       ))}
     </ul>

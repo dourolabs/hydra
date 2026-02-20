@@ -54,7 +54,7 @@ export function DashboardPage() {
     [issues, selectedId],
   );
 
-  const watchingCount = useWatchingCount(issues);
+  const watchingCount = useWatchingCount(issues, username);
 
   const tabs = useMemo(
     () => [
@@ -93,6 +93,7 @@ export function DashboardPage() {
           jobsByIssue={jobsByIssue ?? new Map()}
           selectedId={selectedId}
           onSelect={setSelectedId}
+          username={username}
         />
       )}
       <button
