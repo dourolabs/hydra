@@ -51,7 +51,6 @@ export function useSSE(): SSEConnectionState {
         queryClient.invalidateQueries({ queryKey: ["jobs"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
-        queryClient.invalidateQueries({ queryKey: ["issues"] });
       }
     },
     [queryClient],
@@ -147,7 +146,6 @@ export function useSSE(): SSEConnectionState {
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         if (eventType === "patch_deleted") {
           queryClient.removeQueries({ queryKey: ["patch", entity_id] });
-          queryClient.invalidateQueries({ queryKey: ["issues"] });
         } else {
           const record = entity as unknown as PatchVersionRecord;
           queryClient.setQueryData<PatchVersionRecord>(
@@ -157,10 +155,6 @@ export function useSSE(): SSEConnectionState {
               return record;
             },
           );
-          // patch_created: issue's patches array changed, need to refetch issue
-          if (eventType === "patch_created") {
-            queryClient.invalidateQueries({ queryKey: ["issues"] });
-          }
         }
       }
     },
