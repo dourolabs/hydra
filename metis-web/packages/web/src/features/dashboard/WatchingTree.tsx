@@ -47,13 +47,20 @@ function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
   return summary;
 }
 
-function collectInProgressChildren(node: IssueTreeNode): IssueTreeNode[] {
+function collectHighlightedChildren(node: IssueTreeNode, username: string): IssueTreeNode[] {
   const result: IssueTreeNode[] = [];
+  const seen = new Set<string>();
 
   function walk(n: IssueTreeNode) {
     for (const child of n.children) {
-      if (child.issue.issue.status === "in-progress") {
-        result.push(child);
+      if (!seen.has(child.id)) {
+        if (
+          child.issue.issue.status === "in-progress" ||
+          (username && child.issue.issue.assignee === username && child.issue.issue.status === "open")
+        ) {
+          seen.add(child.id);
+          result.push(child);
+        }
       }
       walk(child);
     }
@@ -152,18 +159,20 @@ function RootTreeNode({
   jobsByIssue,
   selectedId,
   onSelect,
+  username,
 }: {
   node: IssueTreeNode;
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
+  username: string;
 }) {
   const [expanded, setExpanded] = useState(false);
 
   const summary = useMemo(() => summarizeSubtree(node), [node]);
-  const inProgressChildren = useMemo(
-    () => collectInProgressChildren(node),
-    [node],
+  const highlightedChildren = useMemo(
+    () => collectHighlightedChildren(node, username),
+    [node, username],
   );
   const summaryText = formatSummary(summary);
   const totalChildren = summary.open + summary.inProgress + summary.closed;
@@ -185,9 +194,9 @@ function RootTreeNode({
       {summaryText && (
         <div className={styles.summary}>{summaryText}</div>
       )}
-      {!expanded && inProgressChildren.length > 0 && (
+      {!expanded && highlightedChildren.length > 0 && (
         <div className={styles.inProgressSection}>
-          {inProgressChildren.map((child) => (
+          {highlightedChildren.map((child) => (
             <TreeNodeRow
               key={child.id}
               node={child}
@@ -316,6 +325,7 @@ export function WatchingTree({
           jobsByIssue={jobsByIssue}
           selectedId={selectedId}
           onSelect={onSelect}
+          username={username}
         />
       ))}
     </ul>
