@@ -8,6 +8,7 @@ import {
 } from "../issues/useIssues";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
+import { containsAssignedOpen } from "./watchingUtils";
 import styles from "./WatchingTree.module.css";
 
 interface WatchingTreeProps {
@@ -86,13 +87,6 @@ function formatSummary(summary: SubtreeSummary): string {
   if (summary.open > 0) parts.push(`${summary.open} open`);
   if (summary.closed > 0) parts.push(`${summary.closed} closed`);
   return parts.join(", ");
-}
-
-function containsAssignedOpen(node: IssueTreeNode, username: string): boolean {
-  if (node.issue.issue.assignee === username && node.issue.issue.status === "open") {
-    return true;
-  }
-  return node.children.some((child) => containsAssignedOpen(child, username));
 }
 
 function TreeNodeRow({
