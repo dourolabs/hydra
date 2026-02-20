@@ -20,10 +20,14 @@ export function InboxList({ issues, selectedId, onSelect }: InboxListProps) {
     <ul className={styles.list}>
       {issues.map((record) => {
         const active = record.issue_id === selectedId;
+        const blockedDep = record.issue.dependencies?.find((d) => d.type === "blocked-on");
+        const classNames = [styles.item];
+        if (active) classNames.push(styles.active);
+        if (blockedDep) classNames.push(styles.blocked);
         return (
           <li key={record.issue_id}>
             <button
-              className={`${styles.item}${active ? ` ${styles.active}` : ""}`}
+              className={classNames.join(" ")}
               onClick={() => onSelect(record.issue_id)}
               type="button"
             >
@@ -35,6 +39,11 @@ export function InboxList({ issues, selectedId, onSelect }: InboxListProps) {
               </div>
               <div className={styles.bottom}>
                 <span className={styles.id}>{record.issue_id}</span>
+                {blockedDep && (
+                  <span className={styles.blockedLabel} title={`Blocked by ${blockedDep.issue_id}`}>
+                    blocked by {blockedDep.issue_id}
+                  </span>
+                )}
                 <span className={styles.time}>
                   {formatRelativeTime(record.timestamp)}
                 </span>

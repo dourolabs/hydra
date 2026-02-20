@@ -114,6 +114,7 @@ function TreeNodeRow({
   const active = node.id === selectedId;
   const jobs = jobsByIssue.get(node.id);
   const jobSummaries = jobs?.map(toJobSummary);
+  const blockedDep = node.issue.issue.dependencies?.find((d) => d.type === "blocked-on");
 
   const handleJobClick = useCallback(
     (jobId: string) => {
@@ -122,9 +123,13 @@ function TreeNodeRow({
     [onJobClick, node.id],
   );
 
+  const classNames = [styles.node];
+  if (active) classNames.push(styles.active);
+  if (blockedDep) classNames.push(styles.blocked);
+
   return (
     <button
-      className={`${styles.node}${active ? ` ${styles.active}` : ""}`}
+      className={classNames.join(" ")}
       style={{ paddingLeft: `${depth * 16 + 12}px` }}
       onClick={() => onSelect(node.id)}
       type="button"
@@ -154,6 +159,11 @@ function TreeNodeRow({
       <span className={styles.desc}>
         {descriptionSnippet(node.issue.issue.description, 50)}
       </span>
+      {blockedDep && (
+        <span className={styles.blockedLabel} title={`Blocked by ${blockedDep.issue_id}`}>
+          blocked by {blockedDep.issue_id}
+        </span>
+      )}
     </button>
   );
 }

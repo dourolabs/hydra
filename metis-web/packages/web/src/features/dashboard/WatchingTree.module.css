@@ -80,6 +80,18 @@
   margin-left: 24px;
 }
 
+.blocked {
+  opacity: 0.55;
+}
+
+.blockedLabel {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  font-style: italic;
+  flex-shrink: 0;
+}
+
 .empty {
   color: var(--color-text-secondary);
   padding: var(--space-4);

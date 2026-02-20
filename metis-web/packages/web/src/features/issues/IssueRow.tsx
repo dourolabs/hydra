@@ -35,8 +35,14 @@ export function IssueRow({ record, dimmed, jobs, onJobClick }: IssueRowProps) {
 
   const jobSummaries = jobs?.map(toJobSummary);
 
+  const blockedDep = issue.dependencies?.find((d) => d.type === "blocked-on");
+
+  const classNames = [styles.row];
+  if (dimmed) classNames.push(styles.dimmed);
+  if (blockedDep) classNames.push(styles.blocked);
+
   return (
-    <span className={`${styles.row}${dimmed ? ` ${styles.dimmed}` : ""}`}>
+    <span className={classNames.join(" ")}>
       <span className={styles.topRow}>
         <Badge status={issueToBadgeStatus(issue.status)} />
         {jobSummaries && jobSummaries.length > 0 && (
@@ -50,6 +56,11 @@ export function IssueRow({ record, dimmed, jobs, onJobClick }: IssueRowProps) {
         )}
         <span className={styles.id}>{record.issue_id}</span>
         {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
+        {blockedDep && (
+          <span className={styles.blockedLabel} title={`Blocked by ${blockedDep.issue_id}`}>
+            blocked by {blockedDep.issue_id}
+          </span>
+        )}
       </span>
       <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
     </span>

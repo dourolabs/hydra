@@ -30,6 +30,21 @@
   opacity: 0.4;
 }
 
+.blocked {
+  opacity: 0.55;
+}
+
+.blocked.dimmed {
+  opacity: 0.3;
+}
+
+.blockedLabel {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  font-style: italic;
+}
+
 .jobIndicator {
   display: inline-flex;
   align-items: center;
