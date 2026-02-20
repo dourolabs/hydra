@@ -2,10 +2,12 @@ import { useState, useMemo } from "react";
 import { Spinner, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
 import { useIssues } from "../features/issues/useIssues";
+import { useAllJobs } from "../features/jobs/useAllJobs";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { SplitLayout } from "../layout/SplitLayout";
 import { InboxList } from "../features/dashboard/InboxList";
+import { WatchingTree, useWatchingCount } from "../features/dashboard/WatchingTree";
 import { DetailPanel, DetailPanelEmpty } from "../features/dashboard/DetailPanel";
 import styles from "./DashboardPage.module.css";
 
@@ -19,6 +21,7 @@ function isInbox(record: IssueVersionRecord, username: string): boolean {
 export function DashboardPage() {
   const { user } = useAuth();
   const { data: issues, isLoading } = useIssues();
+  const { data: jobsByIssue } = useAllJobs();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("inbox");
 
@@ -39,12 +42,14 @@ export function DashboardPage() {
     [issues, selectedId],
   );
 
+  const watchingCount = useWatchingCount(issues);
+
   const tabs = useMemo(
     () => [
       { id: "inbox", label: `Inbox (${inboxIssues.length})` },
-      { id: "watching", label: "Watching" },
+      { id: "watching", label: `Watching (${watchingCount})` },
     ],
-    [inboxIssues.length],
+    [inboxIssues.length, watchingCount],
   );
 
   if (isLoading) {
@@ -71,7 +76,12 @@ export function DashboardPage() {
         />
       )}
       {activeTab === "watching" && (
-        <p className={styles.placeholder}>Watching tab coming soon.</p>
+        <WatchingTree
+          issues={issues ?? []}
+          jobsByIssue={jobsByIssue ?? new Map()}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+        />
       )}
     </div>
   );
