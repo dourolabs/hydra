@@ -1,22 +1,7 @@
-import {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  useCallback,
-  type ReactNode,
-} from "react";
-import { type WhoAmIResponse, fetchMe, login as apiLogin, logout as apiLogout } from "../../api/auth";
-
-interface AuthState {
-  user: WhoAmIResponse | null;
-  loading: boolean;
-  error: string | null;
-  login: (token: string) => Promise<void>;
-  logout: () => Promise<void>;
-}
-
-const AuthContext = createContext<AuthState | null>(null);
+import { useState, useEffect, useCallback, type ReactNode } from "react";
+import type { WhoAmIResponse } from "@metis/api";
+import { fetchMe, login as apiLogin, logout as apiLogout } from "../../api/auth";
+import { AuthContext } from "./auth-state";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<WhoAmIResponse | null>(null);
@@ -52,12 +37,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-export function useAuth(): AuthState {
-  const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error("useAuth must be used within AuthProvider");
-  }
-  return ctx;
 }

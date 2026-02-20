@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { stream } from "hono/streaming";
 import { config } from "./config.js";
+import { logger } from "./logger.js";
 
 export const sse = new Hono();
 
@@ -16,6 +17,7 @@ export const sse = new Hono();
 sse.get("/events", async (c) => {
   const token = getCookie(c, config.cookieName);
   if (!token) {
+    logger.debug("sse: missing auth cookie");
     return c.json({ error: "not authenticated" }, 401);
   }
 
@@ -34,9 +36,22 @@ sse.get("/events", async (c) => {
     headers["Last-Event-ID"] = lastEventId;
   }
 
-  const upstreamResp = await fetch(targetUrl, { headers });
+  let upstreamResp: Response;
+  try {
+    upstreamResp = await fetch(targetUrl, { headers });
+  } catch (err) {
+    logger.error("sse: upstream fetch failed", {
+      url: targetUrl,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return c.json({ error: "upstream unreachable" }, 502);
+  }
 
   if (!upstreamResp.ok) {
+    logger.error("sse: upstream non-2xx response", {
+      url: targetUrl,
+      status: upstreamResp.status,
+    });
     return c.json(
       { error: `upstream error: ${upstreamResp.status}` },
       upstreamResp.status as 500,
@@ -44,8 +59,11 @@ sse.get("/events", async (c) => {
   }
 
   if (!upstreamResp.body) {
+    logger.error("sse: upstream returned no body", { url: targetUrl });
     return c.json({ error: "no upstream body" }, 502);
   }
+
+  logger.debug("sse: connection established", { url: targetUrl });
 
   c.header("Content-Type", "text/event-stream");
   c.header("Cache-Control", "no-cache");

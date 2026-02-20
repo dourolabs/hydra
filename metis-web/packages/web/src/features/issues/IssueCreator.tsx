@@ -3,9 +3,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, Textarea, Select } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
 import type { RepositoryRecord } from "@metis/api";
-import { createIssue } from "../../api/issues";
-import { useRepositories } from "../../api/repositories";
-import { useAuth } from "../auth/AuthContext";
+import { apiClient } from "../../api/client";
+import { useRepositories } from "../../hooks/useRepositories";
+import { useAuth } from "../auth/useAuth";
 import { useToast } from "../toast/ToastContext";
 import { actorDisplayName } from "../../api/auth";
 import styles from "./IssueCreator.module.css";
@@ -38,7 +38,21 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
   const { data: repos } = useRepositories();
 
   const mutation = useMutation({
-    mutationFn: createIssue,
+    mutationFn: (params: { description: string; creator: string; assignee?: string; repoName?: string }) =>
+      apiClient.createIssue({
+        issue: {
+          type: "task",
+          description: params.description,
+          creator: params.creator,
+          progress: "",
+          status: "open",
+          dependencies: [],
+          patches: [],
+          ...(params.assignee && { assignee: params.assignee }),
+          ...(params.repoName && { job_settings: { repo_name: params.repoName } }),
+        },
+        job_id: null,
+      }),
     onSuccess: (data) => {
       setDescription("");
       setAssignee("");

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Button, Input } from "@metis/ui";
-import { useAuth } from "./AuthContext";
+import { useAuth } from "./useAuth";
 import styles from "./LoginForm.module.css";
 
 export function LoginForm() {
