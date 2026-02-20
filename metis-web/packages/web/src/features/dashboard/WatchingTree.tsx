@@ -9,7 +9,7 @@ import {
 } from "../issues/useIssues";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
-import { containsAssignedOpen } from "./watchingUtils";
+import { isNodeActive, pruneTree } from "./watchingUtils";
 import styles from "./WatchingTree.module.css";
 
 interface WatchingTreeProps {
@@ -17,7 +17,6 @@ interface WatchingTreeProps {
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
-  username: string;
 }
 
 interface SubtreeSummary {
@@ -26,10 +25,9 @@ interface SubtreeSummary {
   closed: number;
 }
 
-const TERMINAL_STATUSES = new Set(["closed", "failed", "dropped", "rejected"]);
-
 function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
   const summary: SubtreeSummary = { open: 0, inProgress: 0, closed: 0 };
+  const TERMINAL_STATUSES = new Set(["closed", "failed", "dropped", "rejected"]);
 
   function walk(n: IssueTreeNode) {
     for (const child of n.children) {
@@ -49,20 +47,18 @@ function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
   return summary;
 }
 
-function collectHighlightedChildren(node: IssueTreeNode, username: string): IssueTreeNode[] {
+function collectActiveChildren(
+  node: IssueTreeNode,
+  jobsByIssue: Map<string, JobVersionRecord[]>,
+): IssueTreeNode[] {
   const result: IssueTreeNode[] = [];
   const seen = new Set<string>();
 
   function walk(n: IssueTreeNode) {
     for (const child of n.children) {
-      if (!seen.has(child.id)) {
-        if (
-          child.issue.issue.status === "in-progress" ||
-          (username && child.issue.issue.assignee === username && child.issue.issue.status === "open")
-        ) {
-          seen.add(child.id);
-          result.push(child);
-        }
+      if (!seen.has(child.id) && isNodeActive(child, jobsByIssue)) {
+        seen.add(child.id);
+        result.push(child);
       }
       walk(child);
     }
@@ -92,7 +88,6 @@ function formatSummary(summary: SubtreeSummary): string {
 
 function TreeNodeRow({
   node,
-  depth,
   jobsByIssue,
   selectedId,
   onSelect,
@@ -102,7 +97,6 @@ function TreeNodeRow({
   hasChildren,
 }: {
   node: IssueTreeNode;
-  depth: number;
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
@@ -125,7 +119,6 @@ function TreeNodeRow({
   return (
     <button
       className={`${styles.node}${active ? ` ${styles.active}` : ""}`}
-      style={{ paddingLeft: `${depth * 16 + 12}px` }}
       onClick={() => onSelect(node.id)}
       type="button"
     >
@@ -164,22 +157,22 @@ function RootTreeNode({
   selectedId,
   onSelect,
   onJobClick,
-  username,
 }: {
   node: IssueTreeNode;
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
   onJobClick: (issueId: string, jobId: string) => void;
-  username: string;
 }) {
   const [expanded, setExpanded] = useState(false);
 
   const summary = useMemo(() => summarizeSubtree(node), [node]);
-  const highlightedChildren = useMemo(
-    () => collectHighlightedChildren(node, username),
-    [node, username],
+  const activeChildren = useMemo(
+    () => collectActiveChildren(node, jobsByIssue),
+    [node, jobsByIssue],
   );
+  // Pruned tree for expanded rendering (excludes terminal-only branches)
+  const prunedNode = useMemo(() => pruneTree(node, jobsByIssue), [node, jobsByIssue]);
   const summaryText = formatSummary(summary);
   const totalChildren = summary.open + summary.inProgress + summary.closed;
 
@@ -189,7 +182,6 @@ function RootTreeNode({
     <li className={styles.rootItem}>
       <TreeNodeRow
         node={node}
-        depth={0}
         jobsByIssue={jobsByIssue}
         selectedId={selectedId}
         onSelect={onSelect}
@@ -201,13 +193,12 @@ function RootTreeNode({
       {summaryText && (
         <div className={styles.summary}>{summaryText}</div>
       )}
-      {!expanded && highlightedChildren.length > 0 && (
+      {!expanded && activeChildren.length > 0 && (
         <div className={styles.inProgressSection}>
-          {highlightedChildren.map((child) => (
+          {activeChildren.map((child) => (
             <TreeNodeRow
               key={child.id}
               node={child}
-              depth={1}
               jobsByIssue={jobsByIssue}
               selectedId={selectedId}
               onSelect={onSelect}
@@ -219,10 +210,9 @@ function RootTreeNode({
           ))}
         </div>
       )}
-      {expanded && (
+      {expanded && prunedNode && (
         <ChildNodes
-          nodes={node.children}
-          depth={1}
+          nodes={prunedNode.children}
           jobsByIssue={jobsByIssue}
           selectedId={selectedId}
           onSelect={onSelect}
@@ -235,14 +225,12 @@ function RootTreeNode({
 
 function ChildNodes({
   nodes,
-  depth,
   jobsByIssue,
   selectedId,
   onSelect,
   onJobClick,
 }: {
   nodes: IssueTreeNode[];
-  depth: number;
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
@@ -271,7 +259,6 @@ function ChildNodes({
           <div key={child.id}>
             <TreeNodeRow
               node={child}
-              depth={depth}
               jobsByIssue={jobsByIssue}
               selectedId={selectedId}
               onSelect={onSelect}
@@ -283,7 +270,6 @@ function ChildNodes({
             {isExpanded && hasGrandchildren && (
               <ChildNodes
                 nodes={child.children}
-                depth={depth + 1}
                 jobsByIssue={jobsByIssue}
                 selectedId={selectedId}
                 onSelect={onSelect}
@@ -302,7 +288,6 @@ export function WatchingTree({
   jobsByIssue,
   selectedId,
   onSelect,
-  username,
 }: WatchingTreeProps) {
   const navigate = useNavigate();
 
@@ -315,24 +300,10 @@ export function WatchingTree({
 
   const watchingRoots = useMemo(() => {
     const tree = buildIssueTree(issues);
-
-    if (!username) {
-      return tree.filter((node) => {
-        const status = node.issue.issue.status;
-        return status === "open" || status === "in-progress";
-      });
-    }
-
-    // Display the union of:
-    // 1. In-progress root trees
-    // 2. Root trees that contain open issues assigned to the user
-    return tree.filter((root) => {
-      return (
-        root.issue.issue.status === "in-progress" ||
-        containsAssignedOpen(root, username)
-      );
-    });
-  }, [issues, username]);
+    // Keep full (unpruned) roots so that summarizeSubtree sees all children.
+    // Use pruneTree only to decide whether the root has any active nodes.
+    return tree.filter((root) => pruneTree(root, jobsByIssue) !== null);
+  }, [issues, jobsByIssue]);
 
   if (watchingRoots.length === 0) {
     return <p className={styles.empty}>No issues being watched.</p>;
@@ -348,10 +319,8 @@ export function WatchingTree({
           selectedId={selectedId}
           onSelect={onSelect}
           onJobClick={handleJobClick}
-          username={username}
         />
       ))}
     </ul>
   );
 }
-
