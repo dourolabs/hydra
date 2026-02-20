@@ -1,8 +1,6 @@
 import type { JobVersionRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 
-const TERMINAL_STATUSES = new Set(["closed", "failed", "dropped", "rejected"]);
-
 /**
  * A node is "active" if it is open/in-progress or has a running/pending job.
  */
