@@ -5,8 +5,6 @@ members = [
     "metis-common",
     "metis-build-cache",
     "metis-s3",
-    "metis-component-library",
-    "metis-ui",
 ]
 resolver = "2"
 

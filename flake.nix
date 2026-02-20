@@ -16,7 +16,6 @@
   }: let
     rust-stable = {rust-bin}: rust-bin.stable.latest.default.override {
       extensions = ["rust-src" "rustfmt" "clippy" "rust-analyzer"];
-      targets = ["wasm32-unknown-unknown"];
     };
 
     dev-shell = {
@@ -29,9 +28,6 @@
       kind,
       coreutils,
       gnugrep,
-      dioxus-cli,
-      wasm-bindgen-cli,
-      binaryen,
       k9s,
       flyctl
     }:
@@ -48,9 +44,6 @@
           coreutils
           gnugrep
           k9s
-          dioxus-cli
-          wasm-bindgen-cli
-          binaryen
           flyctl
         ];
       };
