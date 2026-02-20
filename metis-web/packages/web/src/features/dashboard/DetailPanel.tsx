@@ -2,11 +2,13 @@ import { useState, useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar, Badge, Button, MarkdownViewer, Select, Spinner, Textarea } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
-import type { IssueVersionRecord } from "@metis/api";
+import type { IssueVersionRecord, PatchVersionRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
-import { issueToBadgeStatus } from "../../utils/statusMapping";
+import { issueToBadgeStatus, patchToBadgeStatus } from "../../utils/statusMapping";
 import { useDocumentByPath } from "../documents/useDocumentByPath";
+import { usePatchesByIssue } from "../patches/usePatchesByIssue";
 import { useToast } from "../toast/useToast";
+import { DiffViewer } from "./DiffViewer";
 import styles from "./DetailPanel.module.css";
 
 /** Regex to detect document paths in issue text. */
@@ -51,6 +53,9 @@ export function DetailPanel({ record }: DetailPanelProps) {
     [issue.description, issue.progress],
   );
   const { data: docRecord, isLoading: docLoading } = useDocumentByPath(docPath);
+
+  const patchIds = issue.patches ?? [];
+  const { data: patches, isLoading: patchesLoading } = usePatchesByIssue(patchIds);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -110,6 +115,17 @@ export function DetailPanel({ record }: DetailPanelProps) {
         </div>
       )}
 
+      {/* Patch previews */}
+      {patchIds.length > 0 && (
+        <div className={styles.section}>
+          <h3 className={styles.sectionTitle}>Patches</h3>
+          {patchesLoading && <Spinner size="sm" />}
+          {patches.map((patchRecord) => (
+            <PatchPreview key={patchRecord.patch_id} record={patchRecord} />
+          ))}
+        </div>
+      )}
+
       {/* Action form */}
       <div className={styles.actionForm}>
         <div className={styles.formDivider} />
@@ -134,6 +150,46 @@ export function DetailPanel({ record }: DetailPanelProps) {
           {mutation.isPending ? "Submitting..." : "Submit Response"}
         </Button>
       </div>
+    </div>
+  );
+}
+
+function PatchPreview({ record }: { record: PatchVersionRecord }) {
+  const { patch } = record;
+
+  return (
+    <div className={styles.patchCard}>
+      <div className={styles.patchHeader}>
+        <span className={styles.patchId}>{record.patch_id}</span>
+        <Badge status={patchToBadgeStatus(patch.status)} />
+      </div>
+      <p className={styles.patchTitle}>{patch.title}</p>
+
+      {patch.github?.url && (
+        <a
+          href={patch.github.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={styles.ghLink}
+        >
+          {patch.github.owner}/{patch.github.repo}#{String(patch.github.number)} ↗
+        </a>
+      )}
+
+      {patch.reviews.length > 0 && (
+        <div className={styles.patchReviews}>
+          {patch.reviews.map((review, i) => (
+            <span key={i} className={styles.patchReviewChip}>
+              <Avatar name={review.author} size="sm" />
+              {review.author}
+              {" \u2014 "}
+              {review.is_approved ? "approved" : "changes requested"}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {patch.diff && <DiffViewer diff={patch.diff} />}
     </div>
   );
 }
