@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import type { BadgeStatus } from "@metis/ui";
 import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@metis/ui";
 import type { PatchVersionRecord } from "@metis/api";
-import { patchToBadgeStatus } from "../../utils/statusMapping";
+import { patchToBadgeStatus, ciToBadgeStatus } from "../../utils/statusMapping";
+import { formatTimestamp } from "../../utils/time";
 import { PatchActivity } from "./PatchActivity";
 import styles from "./PatchDetail.module.css";
 
@@ -16,19 +16,6 @@ const TABS = [
   { id: "reviews", label: "Reviews" },
   { id: "activity", label: "Activity" },
 ];
-
-function ciStateBadge(state: string): BadgeStatus {
-  switch (state) {
-    case "Success":
-      return "closed";
-    case "Failed":
-      return "failed";
-    case "Pending":
-      return "in-progress";
-    default:
-      return "open";
-  }
-}
 
 export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
   const [activeTab, setActiveTab] = useState("reviews");
@@ -57,7 +44,7 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
         <div className={styles.metaItem}>
           <span className={styles.metaLabel}>Updated</span>
           <span className={styles.metaValue}>
-            {new Date(record.timestamp).toLocaleString()}
+            {formatTimestamp(record.timestamp)}
           </span>
         </div>
         {patch.branch_name && (
@@ -126,7 +113,7 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
             {patch.github.ci && (
               <div className={styles.ghRow}>
                 <span className={styles.ghLabel}>CI</span>
-                <Badge status={ciStateBadge(patch.github.ci.state)} />
+                <Badge status={ciToBadgeStatus(patch.github.ci.state)} />
                 <span className={styles.ciState}>{patch.github.ci.state}</span>
                 {patch.github.ci.failure && (
                   <span className={styles.ciFailure}>
@@ -212,7 +199,7 @@ function ReviewsList({ reviews }: ReviewsListProps) {
             />
             {review.submitted_at && (
               <span className={styles.reviewTime}>
-                {new Date(review.submitted_at).toLocaleString()}
+                {formatTimestamp(review.submitted_at)}
               </span>
             )}
           </div>

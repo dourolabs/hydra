@@ -42,3 +42,17 @@ export function patchToBadgeStatus(status: string): BadgeStatus {
   const s = mapped[status];
   return s ?? "open";
 }
+
+/** Map a GitHub CI state string to a BadgeStatus. */
+export function ciToBadgeStatus(state: string): BadgeStatus {
+  switch (state) {
+    case "Success":
+      return "closed";
+    case "Failed":
+      return "failed";
+    case "Pending":
+      return "in-progress";
+    default:
+      return "open";
+  }
+}
