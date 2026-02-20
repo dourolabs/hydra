@@ -30,7 +30,7 @@ auth.post("/login", async (c) => {
 
   setCookie(c, config.cookieName, token, {
     httpOnly: true,
-    secure: true,
+    secure: config.cookieSecure,
     sameSite: "Strict",
     path: "/",
   });
@@ -43,7 +43,7 @@ auth.post("/login", async (c) => {
  * Clears the auth cookie.
  */
 auth.post("/logout", (c) => {
-  deleteCookie(c, config.cookieName, { path: "/" });
+  deleteCookie(c, config.cookieName, { path: "/", secure: config.cookieSecure });
   return c.json({ ok: true });
 });
 
