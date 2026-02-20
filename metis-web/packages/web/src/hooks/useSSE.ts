@@ -5,8 +5,11 @@ import type {
   IssueVersionRecord,
   JobVersionRecord,
   PatchVersionRecord,
+  DocumentVersionRecord,
   ListIssuesResponse,
   ListJobsResponse,
+  ListPatchesResponse,
+  ListDocumentsResponse,
 } from "@metis/api";
 
 export type SSEConnectionState = "connecting" | "connected" | "disconnected";
@@ -20,6 +23,9 @@ const ENTITY_EVENT_TYPES = [
   "patch_deleted",
   "job_created",
   "job_updated",
+  "document_created",
+  "document_updated",
+  "document_deleted",
 ] as const;
 
 const MAX_BACKOFF_MS = 30_000;
@@ -51,7 +57,11 @@ export function useSSE(): SSEConnectionState {
         queryClient.invalidateQueries({ queryKey: ["jobs"] });
         queryClient.invalidateQueries({ queryKey: ["allJobs"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
+        queryClient.invalidateQueries({ queryKey: ["patches"] });
         queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
+      } else if (entity_type === "document" || eventType.startsWith("document_")) {
+        queryClient.invalidateQueries({ queryKey: ["documents"] });
+        queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
       }
     },
     [queryClient],
@@ -82,19 +92,14 @@ export function useSSE(): SSEConnectionState {
         } else {
           const record = entity as unknown as IssueVersionRecord;
           // Update individual issue cache with version guard
-          queryClient.setQueryData<IssueVersionRecord>(
-            ["issue", entity_id],
-            (old) => {
-              if (old && old.version > record.version) return old;
-              return record;
-            },
-          );
+          queryClient.setQueryData<IssueVersionRecord>(["issue", entity_id], (old) => {
+            if (old && old.version > record.version) return old;
+            return record;
+          });
           // Update the issues list cache
           queryClient.setQueryData<ListIssuesResponse>(["issues"], (old) => {
             if (!old) return old;
-            const idx = old.issues.findIndex(
-              (i) => i.issue_id === entity_id,
-            );
+            const idx = old.issues.findIndex((i) => i.issue_id === entity_id);
             if (idx >= 0) {
               if (old.issues[idx].version > record.version) return old;
               const updated = [...old.issues];
@@ -114,22 +119,29 @@ export function useSSE(): SSEConnectionState {
         const spawnedFrom = record.task?.spawned_from;
 
         // Update individual job cache
-        queryClient.setQueryData<JobVersionRecord>(
-          ["job", entity_id],
-          (old) => {
-            if (old && old.version > record.version) return old;
-            return record;
-          },
-        );
+        queryClient.setQueryData<JobVersionRecord>(["job", entity_id], (old) => {
+          if (old && old.version > record.version) return old;
+          return record;
+        });
 
         // Update the allJobs cache used by the dashboard job status indicators
-        queryClient.setQueryData<ListJobsResponse>(
-          ["allJobs"],
-          (old) => {
+        queryClient.setQueryData<ListJobsResponse>(["allJobs"], (old) => {
+          if (!old) return old;
+          const idx = old.jobs.findIndex((j) => j.job_id === entity_id);
+          if (idx >= 0) {
+            if (old.jobs[idx].version > record.version) return old;
+            const updated = [...old.jobs];
+            updated[idx] = record;
+            return { jobs: updated };
+          }
+          return { jobs: [...old.jobs, record] };
+        });
+
+        if (spawnedFrom) {
+          // Update the jobs-by-issue list cache
+          queryClient.setQueryData<ListJobsResponse>(["jobs", spawnedFrom], (old) => {
             if (!old) return old;
-            const idx = old.jobs.findIndex(
-              (j) => j.job_id === entity_id,
-            );
+            const idx = old.jobs.findIndex((j) => j.job_id === entity_id);
             if (idx >= 0) {
               if (old.jobs[idx].version > record.version) return old;
               const updated = [...old.jobs];
@@ -137,27 +149,7 @@ export function useSSE(): SSEConnectionState {
               return { jobs: updated };
             }
             return { jobs: [...old.jobs, record] };
-          },
-        );
-
-        if (spawnedFrom) {
-          // Update the jobs-by-issue list cache
-          queryClient.setQueryData<ListJobsResponse>(
-            ["jobs", spawnedFrom],
-            (old) => {
-              if (!old) return old;
-              const idx = old.jobs.findIndex(
-                (j) => j.job_id === entity_id,
-              );
-              if (idx >= 0) {
-                if (old.jobs[idx].version > record.version) return old;
-                const updated = [...old.jobs];
-                updated[idx] = record;
-                return { jobs: updated };
-              }
-              return { jobs: [...old.jobs, record] };
-            },
-          );
+          });
         } else {
           // No spawned_from — fall back to broad invalidation
           queryClient.invalidateQueries({ queryKey: ["jobs"] });
@@ -165,15 +157,56 @@ export function useSSE(): SSEConnectionState {
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         if (eventType === "patch_deleted") {
           queryClient.removeQueries({ queryKey: ["patch", entity_id] });
+          queryClient.setQueryData<ListPatchesResponse>(["patches"], (old) => {
+            if (!old) return old;
+            return {
+              patches: old.patches.filter((p) => p.patch_id !== entity_id),
+            };
+          });
         } else {
           const record = entity as unknown as PatchVersionRecord;
-          queryClient.setQueryData<PatchVersionRecord>(
-            ["patch", entity_id],
-            (old) => {
-              if (old && old.version > record.version) return old;
-              return record;
-            },
-          );
+          queryClient.setQueryData<PatchVersionRecord>(["patch", entity_id], (old) => {
+            if (old && old.version > record.version) return old;
+            return record;
+          });
+          queryClient.setQueryData<ListPatchesResponse>(["patches"], (old) => {
+            if (!old) return old;
+            const idx = old.patches.findIndex((p) => p.patch_id === entity_id);
+            if (idx >= 0) {
+              if (old.patches[idx].version > record.version) return old;
+              const updated = [...old.patches];
+              updated[idx] = record;
+              return { patches: updated };
+            }
+            return { patches: [...old.patches, record] };
+          });
+        }
+      } else if (entity_type === "document" || eventType.startsWith("document_")) {
+        if (eventType === "document_deleted") {
+          queryClient.removeQueries({ queryKey: ["document", entity_id] });
+          queryClient.setQueryData<ListDocumentsResponse>(["documents"], (old) => {
+            if (!old) return old;
+            return {
+              documents: old.documents.filter((d) => d.document_id !== entity_id),
+            };
+          });
+        } else {
+          const record = entity as unknown as DocumentVersionRecord;
+          queryClient.setQueryData<DocumentVersionRecord>(["document", entity_id], (old) => {
+            if (old && old.version > record.version) return old;
+            return record;
+          });
+          queryClient.setQueryData<ListDocumentsResponse>(["documents"], (old) => {
+            if (!old) return old;
+            const idx = old.documents.findIndex((d) => d.document_id === entity_id);
+            if (idx >= 0) {
+              if (old.documents[idx].version > record.version) return old;
+              const updated = [...old.documents];
+              updated[idx] = record;
+              return { documents: updated };
+            }
+            return { documents: [...old.documents, record] };
+          });
         }
       }
     },
@@ -185,6 +218,9 @@ export function useSSE(): SSEConnectionState {
     queryClient.invalidateQueries({ queryKey: ["jobs"] });
     queryClient.invalidateQueries({ queryKey: ["allJobs"] });
     queryClient.invalidateQueries({ queryKey: ["patch"] });
+    queryClient.invalidateQueries({ queryKey: ["patches"] });
+    queryClient.invalidateQueries({ queryKey: ["documents"] });
+    queryClient.invalidateQueries({ queryKey: ["document"] });
   }, [queryClient]);
 
   const connect = useCallback(() => {
@@ -196,9 +232,7 @@ export function useSSE(): SSEConnectionState {
 
     setState("connecting");
 
-    const es = new EventSource(
-      "/api/v1/events?types=issues,jobs,patches",
-    );
+    const es = new EventSource("/api/v1/events?types=issues,jobs,patches,documents");
     esRef.current = es;
 
     es.onopen = () => {
@@ -239,10 +273,7 @@ export function useSSE(): SSEConnectionState {
       setState("disconnected");
 
       // Reconnect with exponential backoff
-      const delay = Math.min(
-        BASE_BACKOFF_MS * 2 ** retriesRef.current,
-        MAX_BACKOFF_MS,
-      );
+      const delay = Math.min(BASE_BACKOFF_MS * 2 ** retriesRef.current, MAX_BACKOFF_MS);
       retriesRef.current += 1;
       timerRef.current = setTimeout(connect, delay);
     };
