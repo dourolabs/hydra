@@ -7,8 +7,10 @@ import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { SplitLayout } from "../layout/SplitLayout";
 import { InboxList } from "../features/dashboard/InboxList";
-import { WatchingTree, useWatchingCount } from "../features/dashboard/WatchingTree";
+import { WatchingTree } from "../features/dashboard/WatchingTree";
+import { useWatchingCount } from "../features/dashboard/useWatchingCount";
 import { DetailPanel, DetailPanelEmpty } from "../features/dashboard/DetailPanel";
+import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import styles from "./DashboardPage.module.css";
 
 function isInbox(record: IssueVersionRecord, username: string): boolean {
@@ -24,6 +26,7 @@ export function DashboardPage() {
   const { data: jobsByIssue } = useAllJobs();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("inbox");
+  const [createModalOpen, setCreateModalOpen] = useState(false);
 
   const username = user ? actorDisplayName(user.actor) : "";
 
@@ -36,6 +39,15 @@ export function DashboardPage() {
           new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
       );
   }, [issues, username]);
+
+  const assignees = useMemo(() => {
+    if (!issues) return [];
+    const set = new Set<string>();
+    for (const record of issues) {
+      if (record.issue.assignee) set.add(record.issue.assignee);
+    }
+    return Array.from(set).sort();
+  }, [issues]);
 
   const selectedRecord = useMemo(
     () => issues?.find((i) => i.issue_id === selectedId) ?? null,
@@ -84,6 +96,13 @@ export function DashboardPage() {
           username={username}
         />
       )}
+      <button
+        type="button"
+        className={styles.createButton}
+        onClick={() => setCreateModalOpen(true)}
+      >
+        + Create Issue
+      </button>
     </div>
   );
 
@@ -96,6 +115,11 @@ export function DashboardPage() {
   return (
     <div className={styles.page}>
       <SplitLayout left={leftPane} right={rightPane} leftWidth={40} />
+      <IssueCreateModal
+        open={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        assignees={assignees}
+      />
     </div>
   );
 }

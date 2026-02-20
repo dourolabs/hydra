@@ -83,3 +83,4 @@ Run from the `metis-web/` directory:
 - **SSE** via `useSSE()` hook (`packages/web/src/hooks/useSSE.ts`) for real-time entity updates. Automatically invalidates React Query caches on server events.
 - **Dark terminal theme** — black background, green accent. Respect existing theme tokens.
 - **Check `utils/`** before writing new utility functions to avoid duplication.
+- **Do not export hooks and components from the same file.** Mixing component exports and hook exports in a single module breaks React Fast Refresh (HMR). Place hooks in their own `use<Name>.ts` file next to the component.

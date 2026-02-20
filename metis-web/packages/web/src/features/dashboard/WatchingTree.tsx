@@ -81,6 +81,13 @@ function formatSummary(summary: SubtreeSummary): string {
   return parts.join(", ");
 }
 
+function containsAssignedOpen(node: IssueTreeNode, username: string): boolean {
+  if (node.issue.issue.assignee === username && node.issue.issue.status === "open") {
+    return true;
+  }
+  return node.children.some((child) => containsAssignedOpen(child, username));
+}
+
 function TreeNodeRow({
   node,
   depth,
@@ -277,30 +284,23 @@ export function WatchingTree({
 }: WatchingTreeProps) {
   const watchingRoots = useMemo(() => {
     const tree = buildIssueTree(issues);
-    const roots = tree.filter((node) => {
-      const status = node.issue.issue.status;
-      return status === "open" || status === "in-progress";
+
+    if (!username) {
+      return tree.filter((node) => {
+        const status = node.issue.issue.status;
+        return status === "open" || status === "in-progress";
+      });
+    }
+
+    // Display the union of:
+    // 1. In-progress root trees
+    // 2. Root trees that contain open issues assigned to the user
+    return tree.filter((root) => {
+      return (
+        root.issue.issue.status === "in-progress" ||
+        containsAssignedOpen(root, username)
+      );
     });
-
-    // Also include open issues assigned to the logged-in user
-    if (!username) return roots;
-
-    const rootIds = new Set(roots.map((n) => n.id));
-    const assignedNodes: IssueTreeNode[] = issues
-      .filter(
-        (i) =>
-          i.issue.assignee === username &&
-          i.issue.status === "open" &&
-          !rootIds.has(i.issue_id),
-      )
-      .map((i) => ({
-        id: i.issue_id,
-        issue: i,
-        children: [],
-        defaultExpanded: true,
-      }));
-
-    return [...roots, ...assignedNodes];
   }, [issues, username]);
 
   if (watchingRoots.length === 0) {
@@ -322,25 +322,3 @@ export function WatchingTree({
   );
 }
 
-export function useWatchingCount(issues: IssueVersionRecord[] | undefined, username: string): number {
-  return useMemo(() => {
-    if (!issues) return 0;
-    const tree = buildIssueTree(issues);
-    const roots = tree.filter((node) => {
-      const status = node.issue.issue.status;
-      return status === "open" || status === "in-progress";
-    });
-
-    if (!username) return roots.length;
-
-    const rootIds = new Set(roots.map((n) => n.id));
-    const assignedCount = issues.filter(
-      (i) =>
-        i.issue.assignee === username &&
-        i.issue.status === "open" &&
-        !rootIds.has(i.issue_id),
-    ).length;
-
-    return roots.length + assignedCount;
-  }, [issues, username]);
-}
