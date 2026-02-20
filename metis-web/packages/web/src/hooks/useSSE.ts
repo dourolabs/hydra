@@ -49,6 +49,7 @@ export function useSSE(): SSEConnectionState {
         queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
       } else if (entity_type === "job" || eventType.startsWith("job_")) {
         queryClient.invalidateQueries({ queryKey: ["jobs"] });
+        queryClient.invalidateQueries({ queryKey: ["allJobs"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
       }
@@ -121,6 +122,24 @@ export function useSSE(): SSEConnectionState {
           },
         );
 
+        // Update the allJobs cache used by the dashboard job status indicators
+        queryClient.setQueryData<ListJobsResponse>(
+          ["allJobs"],
+          (old) => {
+            if (!old) return old;
+            const idx = old.jobs.findIndex(
+              (j) => j.job_id === entity_id,
+            );
+            if (idx >= 0) {
+              if (old.jobs[idx].version > record.version) return old;
+              const updated = [...old.jobs];
+              updated[idx] = record;
+              return { jobs: updated };
+            }
+            return { jobs: [...old.jobs, record] };
+          },
+        );
+
         if (spawnedFrom) {
           // Update the jobs-by-issue list cache
           queryClient.setQueryData<ListJobsResponse>(
@@ -164,6 +183,7 @@ export function useSSE(): SSEConnectionState {
   const invalidateAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["issues"] });
     queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    queryClient.invalidateQueries({ queryKey: ["allJobs"] });
     queryClient.invalidateQueries({ queryKey: ["patch"] });
   }, [queryClient]);
 

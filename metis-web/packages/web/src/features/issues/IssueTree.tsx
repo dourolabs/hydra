@@ -1,8 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { TreeView } from "@metis/ui";
 import type { TreeNode } from "@metis/ui";
-import type { IssueVersionRecord } from "@metis/api";
+import type { IssueVersionRecord, JobVersionRecord } from "@metis/api";
 import { IssueRow } from "./IssueRow";
 import { type IssueTreeNode, buildIssueTree } from "./useIssues";
 
@@ -10,6 +10,8 @@ interface IssueTreeProps {
   issues: IssueVersionRecord[];
   /** When provided, only show branches containing these issue IDs. Non-matching ancestors are dimmed. */
   matchingIds?: Set<string>;
+  /** Jobs grouped by issue ID, used to render job status indicators. */
+  jobsByIssue?: Map<string, JobVersionRecord[]>;
   className?: string;
 }
 
@@ -26,7 +28,12 @@ function hasMatchingDescendant(node: IssueTreeNode, matchingIds: Set<string>): b
  * Convert IssueTreeNodes into TreeNodes with IssueRow labels.
  * When matchingIds is provided, prune branches without matches and dim non-matching ancestors.
  */
-function toTreeNodes(nodes: IssueTreeNode[], matchingIds?: Set<string>): TreeNode[] {
+function toTreeNodes(
+  nodes: IssueTreeNode[],
+  matchingIds: Set<string> | undefined,
+  jobsByIssue: Map<string, JobVersionRecord[]> | undefined,
+  onJobClick: (issueId: string, jobId: string) => void,
+): TreeNode[] {
   const result: TreeNode[] = [];
 
   for (const node of nodes) {
@@ -35,13 +42,14 @@ function toTreeNodes(nodes: IssueTreeNode[], matchingIds?: Set<string>): TreeNod
     }
 
     const dimmed = matchingIds ? !matchingIds.has(node.id) : false;
+    const jobs = jobsByIssue?.get(node.id);
 
     result.push({
       id: node.id,
-      label: <IssueRow record={node.issue} dimmed={dimmed} />,
+      label: <IssueRow record={node.issue} dimmed={dimmed} jobs={jobs} onJobClick={onJobClick} />,
       children:
         node.children.length > 0
-          ? toTreeNodes(node.children, matchingIds)
+          ? toTreeNodes(node.children, matchingIds, jobsByIssue, onJobClick)
           : undefined,
       defaultExpanded: node.defaultExpanded,
     });
@@ -50,13 +58,20 @@ function toTreeNodes(nodes: IssueTreeNode[], matchingIds?: Set<string>): TreeNod
   return result;
 }
 
-export function IssueTree({ issues, matchingIds, className }: IssueTreeProps) {
+export function IssueTree({ issues, matchingIds, jobsByIssue, className }: IssueTreeProps) {
   const navigate = useNavigate();
+
+  const handleJobClick = useCallback(
+    (issueId: string, jobId: string) => {
+      navigate(`/issues/${issueId}/jobs/${jobId}/logs`);
+    },
+    [navigate],
+  );
 
   const tree = useMemo(() => {
     const issueNodes = buildIssueTree(issues);
-    return toTreeNodes(issueNodes, matchingIds);
-  }, [issues, matchingIds]);
+    return toTreeNodes(issueNodes, matchingIds, jobsByIssue, handleJobClick);
+  }, [issues, matchingIds, jobsByIssue, handleJobClick]);
 
   const handleNodeClick = (id: string) => {
     navigate(`/issues/${id}`);

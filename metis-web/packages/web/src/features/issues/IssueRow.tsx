@@ -1,5 +1,7 @@
-import { Avatar, Badge } from "@metis/ui";
-import type { IssueVersionRecord } from "@metis/api";
+import { useCallback } from "react";
+import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
+import type { JobSummary } from "@metis/ui";
+import type { IssueVersionRecord, JobVersionRecord } from "@metis/api";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import styles from "./IssueRow.module.css";
@@ -7,16 +9,47 @@ import styles from "./IssueRow.module.css";
 interface IssueRowProps {
   record: IssueVersionRecord;
   dimmed?: boolean;
+  jobs?: JobVersionRecord[];
+  onJobClick?: (issueId: string, jobId: string) => void;
 }
 
-export function IssueRow({ record, dimmed }: IssueRowProps) {
+function toJobSummary(record: JobVersionRecord): JobSummary {
+  const status = record.task.status === "unknown" ? "created" : record.task.status;
+  return {
+    jobId: record.job_id,
+    status,
+    startTime: record.task.start_time,
+    endTime: record.task.end_time,
+  };
+}
+
+export function IssueRow({ record, dimmed, jobs, onJobClick }: IssueRowProps) {
   const { issue } = record;
+
+  const handleJobClick = useCallback(
+    (jobId: string) => {
+      onJobClick?.(record.issue_id, jobId);
+    },
+    [onJobClick, record.issue_id],
+  );
+
+  const jobSummaries = jobs?.map(toJobSummary);
+
   return (
     <span className={`${styles.row}${dimmed ? ` ${styles.dimmed}` : ""}`}>
       <Badge status={issueToBadgeStatus(issue.status)} />
       <span className={styles.id}>{record.issue_id}</span>
       {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
       <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
+      {jobSummaries && jobSummaries.length > 0 && (
+        <span
+          className={styles.jobIndicator}
+          onClick={(e) => e.stopPropagation()}
+          role="presentation"
+        >
+          <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
+        </span>
+      )}
     </span>
   );
 }
