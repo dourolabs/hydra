@@ -1,13 +1,7 @@
 import { useMemo } from "react";
 import type { IssueVersionRecord } from "@metis/api";
-import { buildIssueTree, type IssueTreeNode } from "../issues/useIssues";
-
-function containsAssignedOpen(node: IssueTreeNode, username: string): boolean {
-  if (node.issue.issue.assignee === username && node.issue.issue.status === "open") {
-    return true;
-  }
-  return node.children.some((child) => containsAssignedOpen(child, username));
-}
+import { buildIssueTree } from "../issues/useIssues";
+import { containsAssignedOpen } from "./watchingUtils";
 
 export function useWatchingCount(issues: IssueVersionRecord[] | undefined, username: string): number {
   return useMemo(() => {
