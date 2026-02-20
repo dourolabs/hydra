@@ -1,14 +1,12 @@
-.detail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
+.detail { composes: detail from '../detail.module.css'; }
+.header { composes: header from '../detail.module.css'; }
+.meta { composes: meta from '../detail.module.css'; }
+.metaItem { composes: metaItem from '../detail.module.css'; }
+.metaLabel { composes: metaLabel from '../detail.module.css'; }
+.metaValue { composes: metaValue from '../detail.module.css'; }
+.sectionTitle { composes: sectionTitle from '../detail.module.css'; }
+.sectionBody { composes: sectionBody from '../detail.module.css'; }
+.empty { composes: empty from '../detail.module.css'; }
 
 .issueId {
   color: var(--color-accent);
@@ -22,48 +20,4 @@
   font-size: var(--font-size-sm);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-
-.meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-6);
-}
-
-.metaItem {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.metaLabel {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 600;
-}
-
-.metaValue {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-}
-
-.sectionTitle {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-}
-
-.sectionBody {
-  padding: var(--space-4);
-}
-
-.empty {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  margin: 0;
 }
