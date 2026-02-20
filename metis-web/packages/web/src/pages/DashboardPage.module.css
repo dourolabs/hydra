@@ -9,7 +9,7 @@
 .center {
   display: flex;
   justify-content: center;
-  padding: var(--space-8);
+  padding: var(--space-6);
 }
 
 .error {
@@ -22,4 +22,293 @@
   color: var(--color-text-secondary);
   padding: var(--space-4);
   margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+/* Section headers */
+.sectionHeader {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.count {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
+}
+
+/* Action Required cards */
+.cardList {
+  display: flex;
+  flex-direction: column;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.card:last-child {
+  border-bottom: none;
+}
+
+.cardTop {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.cardType {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.cardDesc {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.cardBottom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.cardId {
+  color: var(--color-accent);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.cardTime {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.cardActions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cardLink {
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.cardLink:hover {
+  text-decoration: underline;
+}
+
+.quickReviewBtn {
+  background: none;
+  border: 1px solid var(--color-border);
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.quickReviewBtn:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-accent);
+}
+
+/* Running Jobs list */
+.jobList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.jobRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+}
+
+.jobRow:last-child {
+  border-bottom: none;
+}
+
+.runningDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex-shrink: 0;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.jobId {
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.jobIssueLink {
+  color: var(--color-accent);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.jobIssueLink:hover {
+  text-decoration: underline;
+}
+
+.jobPrompt {
+  color: var(--color-text-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jobRuntime {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.jobLogLink {
+  color: var(--color-accent-dim);
+  text-decoration: none;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.jobLogLink:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+/* In Progress Issues list */
+.issueList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.issueRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+}
+
+.issueRow:last-child {
+  border-bottom: none;
+}
+
+.issueId {
+  color: var(--color-accent);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.issueId:hover {
+  text-decoration: underline;
+}
+
+.issueDesc {
+  color: var(--color-text-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issueTime {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+/* Quick Review slide-over content */
+.reviewContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.reviewSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.reviewSectionTitle {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.reviewEmpty {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  margin: 0;
+}
+
+.actionForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }

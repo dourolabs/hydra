@@ -3,6 +3,7 @@ import { Spinner } from "@metis/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { useSSE } from "../hooks/useSSE";
 import { NavBar } from "./NavBar";
+import { TabBar } from "./TabBar";
 import styles from "./AppLayout.module.css";
 
 export function AppLayout() {
@@ -24,6 +25,7 @@ export function AppLayout() {
   return (
     <div className={styles.layout}>
       <NavBar connectionState={sseState} />
+      <TabBar />
       <main className={styles.main}>
         <Outlet />
       </main>

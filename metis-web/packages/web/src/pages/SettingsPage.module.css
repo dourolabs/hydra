@@ -1,0 +1,19 @@
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.header {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.placeholder {
+  color: var(--color-text-secondary);
+  padding: var(--space-4);
+  margin: 0;
+}
