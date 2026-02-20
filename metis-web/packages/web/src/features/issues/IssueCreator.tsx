@@ -5,6 +5,7 @@ import type { SelectOption } from "@metis/ui";
 import type { RepositoryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
+import { useFormDraft } from "../../hooks/useFormDraft";
 import { useAuth } from "../auth/useAuth";
 import { useToast } from "../toast/useToast";
 import { actorDisplayName } from "../../api/auth";
@@ -29,9 +30,9 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
   const { addToast } = useToast();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
-  const [description, setDescription] = useState("");
-  const [assignee, setAssignee] = useState("");
-  const [repoName, setRepoName] = useState("");
+  const [description, setDescription, clearDescriptionDraft] = useFormDraft("metis:draft:issue-creator:description", "");
+  const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft("metis:draft:issue-creator:assignee", "");
+  const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft("metis:draft:issue-creator:repoName", "");
   const [showOptions, setShowOptions] = useState(false);
 
   const queryClient = useQueryClient();
@@ -57,6 +58,9 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
       setDescription("");
       setAssignee("");
       setRepoName("");
+      clearDescriptionDraft();
+      clearAssigneeDraft();
+      clearRepoNameDraft();
       queryClient.invalidateQueries({ queryKey: ["issues"] });
       addToast(`Issue ${data.issue_id} created`, "success");
     },
