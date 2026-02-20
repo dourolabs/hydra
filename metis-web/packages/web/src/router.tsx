@@ -4,6 +4,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { IssueDetailPage } from "./pages/IssueDetailPage";
 import { JobLogPage } from "./pages/JobLogPage";
+import { PatchDetailPage } from "./pages/PatchDetailPage";
 
 export const router = createBrowserRouter([
   {
@@ -25,6 +26,10 @@ export const router = createBrowserRouter([
       {
         path: "issues/:issueId/jobs/:jobId/logs",
         element: <JobLogPage />,
+      },
+      {
+        path: "patches/:patchId",
+        element: <PatchDetailPage />,
       },
     ],
   },

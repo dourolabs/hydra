@@ -20,6 +20,11 @@
   font-weight: 600;
   font-family: var(--font-family-mono);
   white-space: nowrap;
+  text-decoration: none;
+}
+
+.id:hover {
+  text-decoration: underline;
 }
 
 .title {

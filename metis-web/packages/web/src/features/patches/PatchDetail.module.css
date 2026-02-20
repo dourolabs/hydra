@@ -1,0 +1,169 @@
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.patchId {
+  color: var(--color-accent);
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  font-family: var(--font-family-mono);
+}
+
+.title {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  margin: 0;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}
+
+.metaItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.metaLabel {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.metaValue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.metaValueMono {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family-mono);
+}
+
+.sectionTitle {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.sectionBody {
+  padding: var(--space-4);
+}
+
+/* GitHub PR section */
+.ghRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) 0;
+}
+
+.ghLabel {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  min-width: 40px;
+}
+
+.ghLink {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.ghLink:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.ciState {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.ciFailure {
+  color: var(--color-status-failed);
+  font-size: var(--font-size-xs);
+}
+
+/* Linked issues */
+.issueLink {
+  color: var(--color-accent);
+  text-decoration: none;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.issueLink:hover {
+  text-decoration: underline;
+}
+
+/* Reviews */
+.reviewList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.reviewItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+.reviewHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.reviewAuthor {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.reviewTime {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  margin-left: auto;
+}
+
+.reviewBody {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.empty {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  margin: 0;
+}
