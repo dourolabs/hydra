@@ -1,8 +1,6 @@
 import type { ActorIdentity, WhoAmIResponse } from "@metis/api";
 import { apiFetch } from "./client";
 
-export type { ActorIdentity, WhoAmIResponse };
-
 /** Extract a display name from any actor identity. */
 export function actorDisplayName(actor: ActorIdentity): string {
   return actor.type === "user" ? actor.username : actor.task_id;

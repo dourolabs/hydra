@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { LogViewer, Spinner } from "@metis/ui";
 import { useJobLogs } from "./useJobLogs";
-import { streamJobLogs } from "../../api/jobs";
 import styles from "./JobLogViewer.module.css";
 
 interface JobLogViewerProps {
@@ -42,7 +41,9 @@ export function JobLogViewer({ jobId, status }: JobLogViewerProps) {
       return;
     }
 
-    const es = streamJobLogs(jobId);
+    const es = new EventSource(
+      `/api/v1/jobs/${encodeURIComponent(jobId)}/logs?watch=true`,
+    );
     eventSourceRef.current = es;
 
     es.onopen = () => {

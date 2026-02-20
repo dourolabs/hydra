@@ -6,7 +6,8 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { type WhoAmIResponse, fetchMe, login as apiLogin, logout as apiLogout } from "../../api/auth";
+import type { WhoAmIResponse } from "@metis/api";
+import { fetchMe, login as apiLogin, logout as apiLogout } from "../../api/auth";
 
 interface AuthState {
   user: WhoAmIResponse | null;
