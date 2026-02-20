@@ -27,7 +27,9 @@ export function NavBar({ connectionState }: NavBarProps) {
           title={`SSE: ${CONNECTION_LABELS[connectionState]}`}
         >
           <span className={styles.dot} />
-          {CONNECTION_LABELS[connectionState]}
+          <span className={styles.connectionLabel}>
+            {CONNECTION_LABELS[connectionState]}
+          </span>
         </span>
       </div>
       {user && displayName && (
