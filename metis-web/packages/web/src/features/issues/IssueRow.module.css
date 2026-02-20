@@ -1,8 +1,9 @@
 .row {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--space-2);
   font-size: var(--font-size-sm);
+  width: 100%;
   min-width: 0;
 }
 
@@ -13,6 +14,8 @@
 }
 
 .desc {
+  flex: 1;
+  min-width: 0;
   color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
