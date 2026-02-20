@@ -52,9 +52,11 @@ function PatchRow({ record }: PatchRowProps) {
   return (
     <li>
       <Link to={`/patches/${record.patch_id}`} className={styles.patchRow}>
-        <span className={styles.patchId}>{record.patch_id}</span>
-        <Badge status={patchToBadgeStatus(patch.status)} />
         <span className={styles.patchTitle}>{patch.title}</span>
+        <div className={styles.patchStatus}>
+          <Badge status={patchToBadgeStatus(patch.status)} />
+          <span className={styles.patchId}>{record.patch_id}</span>
+        </div>
         <div className={styles.patchMeta}>
           {patch.branch_name && <span className={styles.branch}>{patch.branch_name}</span>}
           {patch.service_repo_name && (
