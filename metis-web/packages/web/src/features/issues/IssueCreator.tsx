@@ -5,7 +5,7 @@ import type { SelectOption } from "@metis/ui";
 import type { RepositoryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../auth/useAuth";
 import { actorDisplayName } from "../../api/auth";
 import styles from "./IssueCreator.module.css";
 

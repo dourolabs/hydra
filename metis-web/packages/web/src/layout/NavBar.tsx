@@ -1,5 +1,5 @@
 import { Avatar, Button } from "@metis/ui";
-import { useAuth } from "../features/auth/AuthContext";
+import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import styles from "./NavBar.module.css";
