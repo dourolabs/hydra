@@ -98,7 +98,10 @@ export function IssueDetail({ record }: IssueDetailProps) {
           )}
           {activeTab === "jobs" && <JobList issueId={record.issue_id} />}
           {activeTab === "patches" && (
-            <PatchList patchIds={issue.patches ?? []} />
+            <PatchList
+              patchIds={issue.patches ?? []}
+              issueId={record.issue_id}
+            />
           )}
           {activeTab === "todo" && (
             <IssueTodoList items={issue.todo_list ?? []} />
