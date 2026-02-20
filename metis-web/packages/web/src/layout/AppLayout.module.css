@@ -14,8 +14,13 @@
 }
 
 @media (max-width: 768px) {
+  .layout {
+    flex-direction: column;
+  }
+
   .main {
     padding: var(--space-3);
+    padding-bottom: 64px;
   }
 }
 

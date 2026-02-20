@@ -143,3 +143,61 @@
   width: 16px;
   height: 16px;
 }
+
+@media (max-width: 768px) {
+  .sidebar {
+    flex-direction: row;
+    width: 100%;
+    min-height: auto;
+    height: 56px;
+    border-right: none;
+    border-top: 1px solid var(--color-border);
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    align-items: center;
+    justify-content: space-around;
+  }
+
+  .top {
+    flex-direction: row;
+    padding-top: 0;
+    flex: 1;
+    justify-content: space-around;
+  }
+
+  .bottom {
+    flex-direction: row;
+    margin-top: 0;
+    padding-bottom: 0;
+    gap: var(--space-1);
+    padding-right: var(--space-1);
+  }
+
+  .logo {
+    margin-bottom: 0;
+    width: 44px;
+    height: 44px;
+  }
+
+  .navItem {
+    width: 44px;
+    height: 44px;
+  }
+
+  .connectionIndicator {
+    width: 32px;
+    height: 44px;
+  }
+
+  .userSection {
+    flex-direction: row;
+  }
+
+  .logoutButton {
+    width: 32px;
+    height: 44px;
+  }
+}

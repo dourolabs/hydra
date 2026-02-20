@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Spinner, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
 import { useIssues } from "../features/issues/useIssues";
@@ -27,6 +27,10 @@ export function DashboardPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("inbox");
   const [createModalOpen, setCreateModalOpen] = useState(false);
+
+  const handleMobileBack = useCallback(() => {
+    setSelectedId(null);
+  }, []);
 
   const username = user ? actorDisplayName(user.actor) : "";
 
@@ -114,7 +118,13 @@ export function DashboardPage() {
 
   return (
     <div className={styles.page}>
-      <SplitLayout left={leftPane} right={rightPane} leftWidth={40} />
+      <SplitLayout
+        left={leftPane}
+        right={rightPane}
+        leftWidth={40}
+        mobileDetailVisible={selectedId !== null}
+        onMobileBack={handleMobileBack}
+      />
       <IssueCreateModal
         open={createModalOpen}
         onClose={() => setCreateModalOpen(false)}
