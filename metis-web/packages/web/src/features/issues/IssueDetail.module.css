@@ -67,3 +67,78 @@
   font-size: var(--font-size-sm);
   margin: 0;
 }
+
+/* Editable field styles */
+
+.editableField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px var(--space-2);
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.editableField:hover {
+  border-color: var(--color-border);
+  background-color: var(--color-bg-secondary);
+}
+
+.editableField:hover .editIcon {
+  opacity: 1;
+}
+
+.editIcon {
+  opacity: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  transition: opacity 0.15s;
+}
+
+.editableDropdown {
+  min-width: 140px;
+}
+
+.editableInput {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 200px;
+}
+
+.editableActions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.saveBtn,
+.cancelBtn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 2px var(--space-3);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  color: var(--color-text-primary);
+  transition: background-color 0.15s;
+}
+
+.saveBtn:hover {
+  background-color: var(--color-accent);
+  color: var(--color-bg-primary);
+  border-color: var(--color-accent);
+}
+
+.cancelBtn:hover {
+  background-color: var(--color-bg-secondary);
+}
+
+.unset {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
