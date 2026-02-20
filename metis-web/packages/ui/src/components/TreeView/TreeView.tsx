@@ -38,13 +38,13 @@ function TreeNodeItem({ node, depth, onNodeClick }: TreeNodeItemProps) {
     <li className={styles.nodeItem}>
       <div
         className={styles.nodeRow}
-        style={{ paddingLeft: `${depth * 20}px` }}
+        style={{ paddingLeft: `calc(${depth} * var(--tree-indent))` }}
         onClick={handleClick}
         role="treeitem"
         aria-expanded={hasChildren ? expanded : undefined}
       >
         {Array.from({ length: depth }).map((_, i) => (
-          <span key={i} className={styles.indentGuide} style={{ left: `${i * 20 + 10}px` }} />
+          <span key={i} className={styles.indentGuide} style={{ left: `calc(${i} * var(--tree-indent) + var(--tree-indent) / 2)` }} />
         ))}
         <button
           className={[styles.chevron, !hasChildren && styles.hidden].filter(Boolean).join(" ")}

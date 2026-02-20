@@ -1,8 +1,10 @@
 .tree {
+  --tree-indent: 20px;
   list-style: none;
   padding: 0;
   margin: 0;
   font-family: var(--font-family-mono);
+  overflow: hidden;
 }
 
 .nodeItem {
@@ -18,6 +20,7 @@
   cursor: pointer;
   border-radius: var(--radius-sm);
   transition: background-color var(--transition-fast);
+  overflow: hidden;
 }
 
 .nodeRow:hover {
@@ -69,4 +72,10 @@
   list-style: none;
   padding: 0;
   margin: 0;
+}
+
+@media (max-width: 768px) {
+  .tree {
+    --tree-indent: 16px;
+  }
 }
