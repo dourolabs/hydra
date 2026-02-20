@@ -26,3 +26,72 @@
   min-width: 0;
   overflow-y: auto;
 }
+
+.backButton {
+  display: none;
+}
+
+.mobileDetailVisible .left {
+  display: flex;
+}
+
+.mobileDetailVisible .right {
+  display: flex;
+}
+
+@media (max-width: 768px) {
+  .container {
+    flex-direction: column;
+  }
+
+  .left {
+    flex: 1 1 auto !important;
+    overflow-y: auto;
+  }
+
+  .divider {
+    display: none;
+  }
+
+  .right {
+    flex: 1 1 auto;
+    overflow-y: auto;
+  }
+
+  .mobileDetailVisible .left {
+    display: none;
+  }
+
+  .mobileDetailVisible .right {
+    display: flex;
+  }
+
+  .container:not(.mobileDetailVisible) .right {
+    display: none;
+  }
+
+  .backButton {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    border: none;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    font-family: var(--font-family-mono);
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+  }
+
+  .backButton:hover {
+    color: var(--color-text-primary);
+    background: var(--color-bg-tertiary);
+  }
+
+  .backIcon {
+    width: 16px;
+    height: 16px;
+  }
+}

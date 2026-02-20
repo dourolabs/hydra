@@ -60,3 +60,13 @@
   color: var(--color-accent-bright);
   background-color: rgba(0, 204, 102, 0.14);
 }
+
+@media (max-width: 768px) {
+  .page {
+    height: calc(100vh - 56px - var(--space-6));
+  }
+
+  .center {
+    height: calc(100vh - 56px - var(--space-6));
+  }
+}
