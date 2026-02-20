@@ -50,10 +50,10 @@
   width: calc(100% - var(--space-6));
   margin: auto var(--space-3) var(--space-3);
   padding: var(--space-2) var(--space-3);
-  background: none;
-  border: 1px dashed var(--color-border);
+  background-color: rgba(0, 204, 102, 0.08);
+  border: 1px solid var(--color-accent-dim);
   border-radius: var(--radius-md);
-  color: var(--color-text-secondary);
+  color: var(--color-accent);
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
   cursor: pointer;
@@ -65,7 +65,7 @@
 }
 
 .createButton:hover {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-  background-color: rgba(0, 204, 102, 0.05);
+  border-color: var(--color-accent-bright);
+  color: var(--color-accent-bright);
+  background-color: rgba(0, 204, 102, 0.14);
 }
