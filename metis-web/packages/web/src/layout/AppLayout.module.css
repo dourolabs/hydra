@@ -1,14 +1,14 @@
 .layout {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-height: 100vh;
   background: var(--color-bg-primary);
 }
 
 .main {
   flex: 1;
-  padding: var(--space-6);
   overflow-y: auto;
+  min-width: 0;
 }
 
 .loading {

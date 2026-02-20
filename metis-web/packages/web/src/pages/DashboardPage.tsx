@@ -1,137 +1,147 @@
-import { useMemo } from "react";
-import { Panel, Spinner } from "@metis/ui";
-import type { IssueVersionRecord } from "@metis/api";
-import { useIssues } from "../features/issues/useIssues";
-import { useIssueFilters } from "../features/issues/useIssueFilters";
-import { IssueTree } from "../features/issues/IssueTree";
-import { IssueFilters } from "../features/issues/IssueFilters";
-import { IssueCreator } from "../features/issues/IssueCreator";
-import type { IssueFilterValues, SortOption } from "../features/issues/useIssueFilters";
+import { useState, useMemo } from "react";
+import { Badge, Spinner, Tabs } from "@metis/ui";
+import type { IssueVersionRecord, JobVersionRecord } from "@metis/api";
+import { useAuth } from "../features/auth/useAuth";
+import { actorDisplayName } from "../api/auth";
+import { useMyAssignedIssues } from "../features/issues/useMyAssignedIssues";
+import { useInProgressIssues } from "../features/issues/useInProgressIssues";
+import { useRunningJobs } from "../features/jobs/useRunningJobs";
+import { issueToBadgeStatus } from "../utils/statusMapping";
+import { descriptionSnippet } from "../utils/text";
+import { getRuntime } from "../utils/time";
+import { DetailPanel } from "../components/DetailPanel";
+import { QuickCreate } from "../components/QuickCreate";
 import styles from "./DashboardPage.module.css";
 
-const STATUS_ORDER: Record<string, number> = {
-  open: 0,
-  "in-progress": 1,
-  blocked: 2,
-  failed: 3,
-  closed: 4,
-  dropped: 5,
-  rejected: 6,
-};
+const TABS = [
+  { id: "inbox", label: "Inbox" },
+  { id: "watching", label: "Watching" },
+];
 
-function issueMatchesText(record: IssueVersionRecord, q: string): boolean {
-  const lower = q.toLowerCase();
-  const desc = record.issue.description?.toLowerCase() ?? "";
-  const progress = record.issue.progress?.toLowerCase() ?? "";
-  const id = record.issue_id.toLowerCase();
-  return desc.includes(lower) || progress.includes(lower) || id.includes(lower);
-}
-
-function issueMatchesFilter(record: IssueVersionRecord, statuses: string[], assignee: string, type: string, q: string): boolean {
-  if (statuses.length > 0 && !statuses.includes(record.issue.status)) return false;
-  if (assignee && record.issue.assignee !== assignee) return false;
-  if (type && record.issue.type !== type) return false;
-  if (q && !issueMatchesText(record, q)) return false;
-  return true;
-}
-
-/** Return the set of issue IDs that directly match the current filters (including search text). */
-function getMatchingIds(issues: IssueVersionRecord[], filters: IssueFilterValues): Set<string> {
-  const ids = new Set<string>();
-  for (const record of issues) {
-    if (issueMatchesFilter(record, filters.statuses, filters.assignee, filters.type, filters.q)) {
-      ids.add(record.issue_id);
-    }
-  }
-  return ids;
-}
-
-function sortIssues(issues: IssueVersionRecord[], sort: SortOption): IssueVersionRecord[] {
-  const sorted = [...issues];
-
-  switch (sort) {
-    case "newest":
-      sorted.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      break;
-    case "oldest":
-      sorted.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      break;
-    case "updated":
-      sorted.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      break;
-    case "status":
-      sorted.sort((a, b) => (STATUS_ORDER[a.issue.status] ?? 99) - (STATUS_ORDER[b.issue.status] ?? 99));
-      break;
-  }
-
-  return sorted;
-}
-
-function extractAssignees(issues: IssueVersionRecord[]): string[] {
-  const set = new Set<string>();
-  for (const record of issues) {
-    if (record.issue.assignee) set.add(record.issue.assignee);
-  }
-  return Array.from(set).sort();
-}
-
-/** Check whether any filter (including search) is actively set. */
-function hasActiveFilters(filters: IssueFilterValues): boolean {
-  return filters.statuses.length > 0 || filters.assignee !== "" || filters.type !== "" || filters.q !== "";
+function relativeTime(timestamp: string): string {
+  const now = Date.now();
+  const then = new Date(timestamp).getTime();
+  const diffMs = now - then;
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return "just now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  return `${diffDay}d ago`;
 }
 
 export function DashboardPage() {
-  const { filters, setFilters } = useIssueFilters();
-  const { data: issues, isLoading, error } = useIssues();
+  const { user } = useAuth();
+  const currentUsername = user ? actorDisplayName(user.actor) : "";
 
-  const assignees = useMemo(() => (issues ? extractAssignees(issues) : []), [issues]);
+  const [activeTab, setActiveTab] = useState("inbox");
+  const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
 
-  const sortedIssues = useMemo(() => {
-    if (!issues) return [];
-    return sortIssues(issues, filters.sort);
-  }, [issues, filters.sort]);
+  const { data: assignedIssues, isLoading: assignedLoading } = useMyAssignedIssues(currentUsername);
+  const { data: inProgressIssues, isLoading: inProgressLoading } = useInProgressIssues();
+  const { data: runningJobs } = useRunningJobs();
 
-  const matchingIds = useMemo(
-    () => (issues ? getMatchingIds(issues, filters) : new Set<string>()),
-    [issues, filters],
-  );
+  // Build a map of issue_id -> running jobs
+  const jobsByIssue = useMemo(() => {
+    const map = new Map<string, JobVersionRecord[]>();
+    if (runningJobs) {
+      for (const job of runningJobs) {
+        const issueId = job.task.spawned_from;
+        if (issueId) {
+          const existing = map.get(issueId) ?? [];
+          existing.push(job);
+          map.set(issueId, existing);
+        }
+      }
+    }
+    return map;
+  }, [runningJobs]);
 
-  const active = hasActiveFilters(filters);
+  // Determine which list to show
+  const currentList = activeTab === "inbox" ? assignedIssues : inProgressIssues;
+  const isLoading = activeTab === "inbox" ? assignedLoading : inProgressLoading;
+
+  // Find the selected record
+  const selectedRecord = useMemo(() => {
+    if (!selectedIssueId) return null;
+    const found = assignedIssues?.find((r: IssueVersionRecord) => r.issue_id === selectedIssueId)
+      ?? inProgressIssues?.find((r: IssueVersionRecord) => r.issue_id === selectedIssueId);
+    return found ?? null;
+  }, [selectedIssueId, assignedIssues, inProgressIssues]);
 
   return (
     <div className={styles.page}>
-      <IssueCreator assignees={assignees} />
-      <Panel
-        header={
-          <IssueFilters
-            filters={filters}
-            assignees={assignees}
-            onFilterChange={setFilters}
-          />
-        }
-      >
-        {isLoading && (
-          <div className={styles.center}>
-            <Spinner size="md" />
+      {/* Left pane */}
+      <div className={styles.leftPane}>
+        <div className={styles.leftHeader}>
+          <Tabs tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab} />
+        </div>
+        <div className={styles.listContent}>
+          {isLoading && (
+            <div className={styles.center}>
+              <Spinner size="sm" />
+            </div>
+          )}
+          {!isLoading && currentList && currentList.length === 0 && (
+            <p className={styles.empty}>
+              {activeTab === "inbox"
+                ? "No assigned items."
+                : "No in-progress issues."}
+            </p>
+          )}
+          {currentList && currentList.map((record: IssueVersionRecord) => {
+            const isSelected = record.issue_id === selectedIssueId;
+            const jobs = jobsByIssue.get(record.issue_id);
+            const hasRunningJob = !!jobs && jobs.length > 0;
+
+            return (
+              <button
+                key={record.issue_id}
+                className={`${styles.listItem} ${isSelected ? styles.selected : ""}`}
+                onClick={() => setSelectedIssueId(record.issue_id)}
+              >
+                <div className={styles.itemHeader}>
+                  {activeTab === "watching" && hasRunningJob && (
+                    <span className={styles.runningIndicator} title="Job running" />
+                  )}
+                  {activeTab === "inbox" && (
+                    <span className={styles.unreadDot} />
+                  )}
+                  <span className={styles.itemDesc}>
+                    {descriptionSnippet(record.issue.description, 60)}
+                  </span>
+                </div>
+                <div className={styles.itemMeta}>
+                  <span className={styles.itemId}>{record.issue_id}</span>
+                  <Badge status={issueToBadgeStatus(record.issue.status)} />
+                  {activeTab === "watching" && hasRunningJob && jobs && (
+                    <span className={styles.runtime}>
+                      {getRuntime(jobs[0].task.start_time, null)}
+                    </span>
+                  )}
+                  {activeTab === "inbox" && (
+                    <span className={styles.timestamp}>{relativeTime(record.timestamp)}</span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <QuickCreate />
+      </div>
+
+      {/* Right pane */}
+      <div className={styles.rightPane}>
+        {selectedRecord ? (
+          <DetailPanel record={selectedRecord} />
+        ) : (
+          <div className={styles.emptyDetail}>
+            <p className={styles.emptyDetailText}>Select an item to view details</p>
           </div>
         )}
-        {error && (
-          <p className={styles.error}>Failed to load issues: {(error as Error).message}</p>
-        )}
-        {issues && (sortedIssues.length === 0 || (active && matchingIds.size === 0)) && (
-          <p className={styles.empty}>
-            {filters.q
-              ? `No issues matching "${filters.q}".`
-              : "No issues found."}
-          </p>
-        )}
-        {sortedIssues.length > 0 && (!active || matchingIds.size > 0) && (
-          <IssueTree
-            issues={sortedIssues}
-            matchingIds={active ? matchingIds : undefined}
-          />
-        )}
-      </Panel>
+      </div>
     </div>
   );
 }
