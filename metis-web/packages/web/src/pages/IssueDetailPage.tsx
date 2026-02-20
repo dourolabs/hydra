@@ -1,8 +1,9 @@
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
 import { useIssue } from "../features/issues/useIssue";
 import { IssueDetail } from "../features/issues/IssueDetail";
 import { ApiError } from "../api/client";
+import { Breadcrumbs } from "../layout/Breadcrumbs";
 import styles from "./IssueDetailPage.module.css";
 
 export function IssueDetailPage() {
@@ -11,9 +12,10 @@ export function IssueDetailPage() {
 
   return (
     <div className={styles.page}>
-      <Link to="/issues" className={styles.back}>
-        &larr; Back to issues
-      </Link>
+      <Breadcrumbs
+        items={[{ label: "Issues", to: "/issues" }]}
+        current={`Issue ${issueId}`}
+      />
 
       {isLoading && (
         <div className={styles.center}>

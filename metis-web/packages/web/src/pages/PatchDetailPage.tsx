@@ -1,8 +1,9 @@
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
 import { usePatch } from "../features/patches/usePatch";
 import { PatchDetail } from "../features/patches/PatchDetail";
 import { ApiError } from "../api/client";
+import { Breadcrumbs, type BreadcrumbItem } from "../layout/Breadcrumbs";
 import styles from "./PatchDetailPage.module.css";
 
 export function PatchDetailPage() {
@@ -11,16 +12,16 @@ export function PatchDetailPage() {
   const issueId = searchParams.get("issueId");
   const { data: record, isLoading, error } = usePatch(patchId ?? "");
 
-  const backTo = issueId ? `/issues/${issueId}` : "/";
-  const backLabel = issueId
-    ? `\u2190 Back to ${issueId}`
-    : "\u2190 Back to dashboard";
+  const breadcrumbItems: BreadcrumbItem[] = issueId
+    ? [
+        { label: "Issues", to: "/issues" },
+        { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
+      ]
+    : [{ label: "Patches", to: "/patches" }];
 
   return (
     <div className={styles.page}>
-      <Link to={backTo} className={styles.back}>
-        {backLabel}
-      </Link>
+      <Breadcrumbs items={breadcrumbItems} current={`Patch ${patchId}`} />
 
       {isLoading && (
         <div className={styles.center}>

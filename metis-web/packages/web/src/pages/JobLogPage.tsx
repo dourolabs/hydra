@@ -5,6 +5,7 @@ import { getRuntime } from "../utils/time";
 import { useJob } from "../features/jobs/useJob";
 import { JobLogViewer } from "../features/jobs/JobLogViewer";
 import { ApiError } from "../api/client";
+import { Breadcrumbs } from "../layout/Breadcrumbs";
 import styles from "./JobLogPage.module.css";
 
 export function JobLogPage() {
@@ -16,9 +17,13 @@ export function JobLogPage() {
 
   return (
     <div className={styles.page}>
-      <Link to={`/issues/${issueId}`} className={styles.back}>
-        &larr; Back to issue
-      </Link>
+      <Breadcrumbs
+        items={[
+          { label: "Issues", to: "/issues" },
+          { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
+        ]}
+        current={`Job ${jobId}`}
+      />
 
       {isLoading && (
         <div className={styles.center}>
