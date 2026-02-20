@@ -1,12 +1,7 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { Toast } from "@metis/ui";
 import type { ToastVariant } from "@metis/ui";
+import { ToastContext } from "./toast-state";
 import styles from "./ToastContainer.module.css";
 
 interface ToastItem {
@@ -15,12 +10,6 @@ interface ToastItem {
   variant: ToastVariant;
   duration: number;
 }
-
-interface ToastContextValue {
-  addToast: (message: string, variant?: ToastVariant, duration?: number) => void;
-}
-
-const ToastContext = createContext<ToastContextValue | null>(null);
 
 let nextId = 0;
 
@@ -55,12 +44,4 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       </div>
     </ToastContext.Provider>
   );
-}
-
-export function useToast(): ToastContextValue {
-  const ctx = useContext(ToastContext);
-  if (!ctx) {
-    throw new Error("useToast must be used within ToastProvider");
-  }
-  return ctx;
 }

@@ -6,7 +6,7 @@ import type { RepositoryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
 import { useAuth } from "../auth/useAuth";
-import { useToast } from "../toast/ToastContext";
+import { useToast } from "../toast/useToast";
 import { actorDisplayName } from "../../api/auth";
 import styles from "./IssueCreator.module.css";
 
