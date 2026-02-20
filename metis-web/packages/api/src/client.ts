@@ -149,9 +149,9 @@ export class MetisApiClient {
     return this.post("/v1/jobs", request);
   }
 
-  /** GET /v1/jobs/ */
+  /** GET /v1/jobs */
   listJobs(query?: Partial<SearchJobsQuery>): Promise<ListJobsResponse> {
-    return this.get("/v1/jobs/", query as Record<string, unknown>);
+    return this.get("/v1/jobs", query as Record<string, unknown>);
   }
 
   /** GET /v1/jobs/:jobId */
