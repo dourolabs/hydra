@@ -38,9 +38,6 @@ export function IssueRow({ record, dimmed, jobs, onJobClick }: IssueRowProps) {
   return (
     <span className={`${styles.row}${dimmed ? ` ${styles.dimmed}` : ""}`}>
       <Badge status={issueToBadgeStatus(issue.status)} />
-      <span className={styles.id}>{record.issue_id}</span>
-      {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
-      <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
       {jobSummaries && jobSummaries.length > 0 && (
         <span
           className={styles.jobIndicator}
@@ -50,6 +47,9 @@ export function IssueRow({ record, dimmed, jobs, onJobClick }: IssueRowProps) {
           <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
         </span>
       )}
+      <span className={styles.id}>{record.issue_id}</span>
+      {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
+      <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
     </span>
   );
 }
