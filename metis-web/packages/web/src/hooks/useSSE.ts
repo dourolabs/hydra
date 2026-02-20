@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type {
   EntityEventData,
   IssueVersionRecord,
@@ -30,6 +30,86 @@ const ENTITY_EVENT_TYPES = [
 
 const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 1_000;
+
+// ---------------------------------------------------------------------------
+// Cache-update helpers — eliminate repeated version-guard & list-upsert logic
+// ---------------------------------------------------------------------------
+
+interface VersionedRecord {
+  version: number | bigint;
+}
+
+/** Version-guarded set on an individual entity cache key. */
+function setVersioned<T extends VersionedRecord>(
+  qc: QueryClient,
+  key: readonly unknown[],
+  record: T,
+) {
+  qc.setQueryData<T>(key, (old) => {
+    if (old && old.version > record.version) return old;
+    return record;
+  });
+}
+
+/**
+ * Version-guarded upsert into an array within a list-response cache entry.
+ * Updates in place (with version guard) if the entity already exists, or
+ * appends to cover newly-created entities.
+ */
+function upsertInList<TResp, TItem extends VersionedRecord>(
+  qc: QueryClient,
+  key: readonly unknown[],
+  getItems: (resp: TResp) => TItem[],
+  wrapItems: (items: TItem[]) => TResp,
+  getId: (item: TItem) => string,
+  entityId: string,
+  record: TItem,
+) {
+  qc.setQueryData<TResp>(key, (old) => {
+    if (!old) return old;
+    const arr = getItems(old);
+    const idx = arr.findIndex((a) => getId(a) === entityId);
+    if (idx >= 0) {
+      if (arr[idx].version > record.version) return old;
+      const updated = [...arr];
+      updated[idx] = record;
+      return wrapItems(updated);
+    }
+    return wrapItems([...arr, record]);
+  });
+}
+
+/** Remove an entity from an array within a list-response cache entry. */
+function removeFromList<TResp, TItem>(
+  qc: QueryClient,
+  key: readonly unknown[],
+  getItems: (resp: TResp) => TItem[],
+  wrapItems: (items: TItem[]) => TResp,
+  getId: (item: TItem) => string,
+  entityId: string,
+) {
+  qc.setQueryData<TResp>(key, (old) => {
+    if (!old) return old;
+    return wrapItems(getItems(old).filter((a) => getId(a) !== entityId));
+  });
+}
+
+// Entity-specific accessors for the list-response shapes
+const issueList = (r: ListIssuesResponse) => r.issues;
+const wrapIssues = (items: IssueVersionRecord[]): ListIssuesResponse => ({ issues: items });
+const issueRecordId = (r: IssueVersionRecord) => r.issue_id;
+
+const jobList = (r: ListJobsResponse) => r.jobs;
+const wrapJobs = (items: JobVersionRecord[]): ListJobsResponse => ({ jobs: items });
+const jobRecordId = (r: JobVersionRecord) => r.job_id;
+
+const patchList = (r: ListPatchesResponse) => r.patches;
+const wrapPatches = (items: PatchVersionRecord[]): ListPatchesResponse => ({ patches: items });
+const patchRecordId = (r: PatchVersionRecord) => r.patch_id;
+
+const docList = (r: ListDocumentsResponse) => r.documents;
+const wrapDocs = (items: DocumentVersionRecord[]): ListDocumentsResponse => ({ documents: items });
+const docRecordId = (r: DocumentVersionRecord) => r.document_id;
 
 /**
  * SSE hook that connects to the BFF /api/v1/events endpoint, listens for
@@ -80,133 +160,43 @@ export function useSSE(): SSEConnectionState {
 
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         if (eventType === "issue_deleted") {
-          // removeQueries with prefix matching removes both ["issue", id]
-          // and ["issue", id, "versions"]
           queryClient.removeQueries({ queryKey: ["issue", entity_id] });
-          queryClient.setQueryData<ListIssuesResponse>(["issues"], (old) => {
-            if (!old) return old;
-            return {
-              issues: old.issues.filter((i) => i.issue_id !== entity_id),
-            };
-          });
+          removeFromList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id);
         } else {
           const record = entity as unknown as IssueVersionRecord;
-          // Update individual issue cache with version guard
-          queryClient.setQueryData<IssueVersionRecord>(["issue", entity_id], (old) => {
-            if (old && old.version > record.version) return old;
-            return record;
-          });
-          // Update the issues list cache
-          queryClient.setQueryData<ListIssuesResponse>(["issues"], (old) => {
-            if (!old) return old;
-            const idx = old.issues.findIndex((i) => i.issue_id === entity_id);
-            if (idx >= 0) {
-              if (old.issues[idx].version > record.version) return old;
-              const updated = [...old.issues];
-              updated[idx] = record;
-              return { issues: updated };
-            }
-            // Entry not in list — append (covers created events and missed creates)
-            return { issues: [...old.issues, record] };
-          });
-          // Invalidate the version history since we only have the latest version
-          queryClient.invalidateQueries({
-            queryKey: ["issue", entity_id, "versions"],
-          });
+          setVersioned(queryClient, ["issue", entity_id], record);
+          upsertInList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id, record);
+          queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
         }
       } else if (entity_type === "job" || eventType.startsWith("job_")) {
         const record = entity as unknown as JobVersionRecord;
         const spawnedFrom = record.task?.spawned_from;
 
-        // Update individual job cache
-        queryClient.setQueryData<JobVersionRecord>(["job", entity_id], (old) => {
-          if (old && old.version > record.version) return old;
-          return record;
-        });
-
-        // Update the allJobs cache used by the dashboard job status indicators
-        queryClient.setQueryData<ListJobsResponse>(["allJobs"], (old) => {
-          if (!old) return old;
-          const idx = old.jobs.findIndex((j) => j.job_id === entity_id);
-          if (idx >= 0) {
-            if (old.jobs[idx].version > record.version) return old;
-            const updated = [...old.jobs];
-            updated[idx] = record;
-            return { jobs: updated };
-          }
-          return { jobs: [...old.jobs, record] };
-        });
+        setVersioned(queryClient, ["job", entity_id], record);
+        upsertInList(queryClient, ["allJobs"], jobList, wrapJobs, jobRecordId, entity_id, record);
 
         if (spawnedFrom) {
-          // Update the jobs-by-issue list cache
-          queryClient.setQueryData<ListJobsResponse>(["jobs", spawnedFrom], (old) => {
-            if (!old) return old;
-            const idx = old.jobs.findIndex((j) => j.job_id === entity_id);
-            if (idx >= 0) {
-              if (old.jobs[idx].version > record.version) return old;
-              const updated = [...old.jobs];
-              updated[idx] = record;
-              return { jobs: updated };
-            }
-            return { jobs: [...old.jobs, record] };
-          });
+          upsertInList(queryClient, ["jobs", spawnedFrom], jobList, wrapJobs, jobRecordId, entity_id, record);
         } else {
-          // No spawned_from — fall back to broad invalidation
           queryClient.invalidateQueries({ queryKey: ["jobs"] });
         }
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         if (eventType === "patch_deleted") {
           queryClient.removeQueries({ queryKey: ["patch", entity_id] });
-          queryClient.setQueryData<ListPatchesResponse>(["patches"], (old) => {
-            if (!old) return old;
-            return {
-              patches: old.patches.filter((p) => p.patch_id !== entity_id),
-            };
-          });
+          removeFromList(queryClient, ["patches"], patchList, wrapPatches, patchRecordId, entity_id);
         } else {
           const record = entity as unknown as PatchVersionRecord;
-          queryClient.setQueryData<PatchVersionRecord>(["patch", entity_id], (old) => {
-            if (old && old.version > record.version) return old;
-            return record;
-          });
-          queryClient.setQueryData<ListPatchesResponse>(["patches"], (old) => {
-            if (!old) return old;
-            const idx = old.patches.findIndex((p) => p.patch_id === entity_id);
-            if (idx >= 0) {
-              if (old.patches[idx].version > record.version) return old;
-              const updated = [...old.patches];
-              updated[idx] = record;
-              return { patches: updated };
-            }
-            return { patches: [...old.patches, record] };
-          });
+          setVersioned(queryClient, ["patch", entity_id], record);
+          upsertInList(queryClient, ["patches"], patchList, wrapPatches, patchRecordId, entity_id, record);
         }
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
         if (eventType === "document_deleted") {
           queryClient.removeQueries({ queryKey: ["document", entity_id] });
-          queryClient.setQueryData<ListDocumentsResponse>(["documents"], (old) => {
-            if (!old) return old;
-            return {
-              documents: old.documents.filter((d) => d.document_id !== entity_id),
-            };
-          });
+          removeFromList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id);
         } else {
           const record = entity as unknown as DocumentVersionRecord;
-          queryClient.setQueryData<DocumentVersionRecord>(["document", entity_id], (old) => {
-            if (old && old.version > record.version) return old;
-            return record;
-          });
-          queryClient.setQueryData<ListDocumentsResponse>(["documents"], (old) => {
-            if (!old) return old;
-            const idx = old.documents.findIndex((d) => d.document_id === entity_id);
-            if (idx >= 0) {
-              if (old.documents[idx].version > record.version) return old;
-              const updated = [...old.documents];
-              updated[idx] = record;
-              return { documents: updated };
-            }
-            return { documents: [...old.documents, record] };
-          });
+          setVersioned(queryClient, ["document", entity_id], record);
+          upsertInList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id, record);
         }
       }
     },
