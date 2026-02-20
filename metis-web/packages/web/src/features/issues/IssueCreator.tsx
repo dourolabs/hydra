@@ -6,6 +6,7 @@ import type { RepositoryRecord } from "@metis/api";
 import { createIssue } from "../../api/issues";
 import { useRepositories } from "../../api/repositories";
 import { useAuth } from "../auth/AuthContext";
+import { useToast } from "../toast/ToastContext";
 import { actorDisplayName } from "../../api/auth";
 import styles from "./IssueCreator.module.css";
 
@@ -25,6 +26,7 @@ interface IssueCreatorProps {
 
 export function IssueCreator({ assignees }: IssueCreatorProps) {
   const { user } = useAuth();
+  const { addToast } = useToast();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
   const [description, setDescription] = useState("");
@@ -37,11 +39,18 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
 
   const mutation = useMutation({
     mutationFn: createIssue,
-    onSuccess: () => {
+    onSuccess: (data) => {
       setDescription("");
       setAssignee("");
       setRepoName("");
       queryClient.invalidateQueries({ queryKey: ["issues"] });
+      addToast(`Issue ${data.issue_id} created`, "success");
+    },
+    onError: (err) => {
+      addToast(
+        err instanceof Error ? err.message : "Failed to create issue",
+        "error",
+      );
     },
   });
 
@@ -102,11 +111,6 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
         >
           {showOptions ? "Hide options" : "Options"}
         </button>
-        {mutation.error && (
-          <span className={styles.error}>
-            {mutation.error instanceof Error ? mutation.error.message : "Failed to create issue"}
-          </span>
-        )}
         <Button
           variant="primary"
           size="sm"
