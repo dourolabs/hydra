@@ -28,6 +28,18 @@ impl IssueStatus {
             IssueStatus::Failed => "failed",
         }
     }
+
+    /// Returns true if this status represents a terminal state
+    /// (Closed, Dropped, Rejected, or Failed).
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            IssueStatus::Closed
+                | IssueStatus::Dropped
+                | IssueStatus::Rejected
+                | IssueStatus::Failed
+        )
+    }
 }
 
 impl fmt::Display for IssueStatus {

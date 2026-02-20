@@ -706,6 +706,36 @@ mod tests {
             .await
             .unwrap();
 
+        // Add a closed child -- should NOT be overwritten to Dropped
+        let closed_child_issue = issue_with_status(
+            "closed_child",
+            IssueStatus::Closed,
+            vec![child_dependency.clone()],
+        );
+        let (closed_child_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(closed_child_issue.clone().into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Add a failed child -- should NOT be overwritten to Dropped
+        let failed_child_issue = issue_with_status(
+            "failed_child",
+            IssueStatus::Failed,
+            vec![child_dependency.clone()],
+        );
+        let (failed_child_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(failed_child_issue.clone().into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
         let (parent_task_id, child_task_id, grandchild_task_id) = {
             let store = state.store.as_ref();
             let (parent_task_id, _) = store
@@ -748,6 +778,7 @@ mod tests {
 
         {
             let store = state.store.as_ref();
+            // Open children should be dropped
             assert_eq!(
                 store.get_issue(&child_id, false).await.unwrap().item.status,
                 IssueStatus::Dropped
@@ -760,6 +791,25 @@ mod tests {
                     .item
                     .status,
                 IssueStatus::Dropped
+            );
+            // Terminal-state children should retain their original status
+            assert_eq!(
+                store
+                    .get_issue(&closed_child_id, false)
+                    .await
+                    .unwrap()
+                    .item
+                    .status,
+                IssueStatus::Closed
+            );
+            assert_eq!(
+                store
+                    .get_issue(&failed_child_id, false)
+                    .await
+                    .unwrap()
+                    .item
+                    .status,
+                IssueStatus::Failed
             );
         }
 
