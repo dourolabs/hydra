@@ -1,0 +1,13 @@
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.placeholder {
+  color: var(--color-text-secondary);
+  padding: var(--space-4);
+  margin: 0;
+}

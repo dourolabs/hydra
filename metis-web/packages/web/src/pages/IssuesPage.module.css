@@ -1,0 +1,31 @@
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+@media (max-width: 768px) {
+  .page {
+    max-width: 100%;
+  }
+}
+
+.center {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-8);
+}
+
+.error {
+  color: var(--color-status-failed);
+  padding: var(--space-4);
+  margin: 0;
+}
+
+.empty {
+  color: var(--color-text-secondary);
+  padding: var(--space-4);
+  margin: 0;
+}

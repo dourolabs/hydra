@@ -11,8 +11,8 @@ export function IssueDetailPage() {
 
   return (
     <div className={styles.page}>
-      <Link to="/" className={styles.back}>
-        &larr; Back to dashboard
+      <Link to="/issues" className={styles.back}>
+        &larr; Back to issues
       </Link>
 
       {isLoading && (
