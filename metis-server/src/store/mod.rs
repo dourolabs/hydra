@@ -22,7 +22,6 @@ use std::collections::{HashMap, HashSet};
 mod issue_graph;
 mod memory_store;
 pub mod migration;
-pub mod postgres;
 pub mod postgres_v2;
 
 pub use crate::domain::jobs::Task;

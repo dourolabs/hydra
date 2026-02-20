@@ -18,13 +18,11 @@ mod test;
 
 use crate::app::{AppState, ServiceState};
 use crate::background::{AgentQueue, start_background_scheduler};
-use crate::config::StoreVersion;
 use crate::config::{AppConfig, GithubAppSection, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
 use crate::store::{
     MemoryStore, Store, migration,
-    postgres::{self, PostgresStore},
-    postgres_v2::PostgresStoreV2,
+    postgres_v2::{self, PostgresStoreV2},
 };
 use anyhow::Context;
 use axum::{
@@ -33,8 +31,7 @@ use axum::{
 };
 use jsonwebtoken::EncodingKey;
 use metis_common::constants::{
-    ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_CONFIG, ENV_METIS_STORE_VERSION,
-    ENV_OPENAI_API_KEY,
+    ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_CONFIG, ENV_OPENAI_API_KEY,
 };
 use octocrab::Octocrab;
 use serde_json::json;
@@ -243,48 +240,32 @@ pub async fn run() -> anyhow::Result<()> {
     // Build Kubernetes client
     let kube_client = build_kube_client(&app_config.kubernetes).await?;
 
-    // Resolve store version from environment or config (env takes precedence)
-    let store_version = env::var(ENV_METIS_STORE_VERSION)
-        .ok()
-        .and_then(|v| v.parse::<StoreVersion>().ok())
-        .unwrap_or(app_config.database.store_version);
-
-    let postgres_pool = postgres::init_pool(&app_config.database).await?;
+    let postgres_pool = postgres_v2::init_pool(&app_config.database).await?;
     if let Some(pool) = &postgres_pool {
-        postgres::run_migrations(pool).await?;
-        postgres::migrate_payloads(pool).await?;
-        info!("connected to Postgres, applied migrations, and migrated payloads");
+        postgres_v2::run_migrations(pool).await?;
+        info!("connected to Postgres and applied migrations");
     } else {
         info!("no Postgres database configured; using in-memory store");
     }
 
     let store: Arc<dyn Store> = match postgres_pool.clone() {
         Some(pool) => {
-            match store_version {
-                StoreVersion::V1 => {
-                    info!(store_version = %store_version, "using v1 (JSONB) store");
-                    Arc::new(PostgresStore::new(pool))
-                }
-                StoreVersion::V2 => {
-                    info!(store_version = %store_version, "using v2 (column-based) store");
-                    // Run migration from v1 to v2 before starting with v2 store
-                    let migration_result = migration::migrate_v1_to_v2(&pool).await?;
-                    if migration_result.total() > 0 {
-                        info!(
-                            total = migration_result.total(),
-                            issues = migration_result.issues_migrated,
-                            patches = migration_result.patches_migrated,
-                            tasks = migration_result.tasks_migrated,
-                            users = migration_result.users_migrated,
-                            actors = migration_result.actors_migrated,
-                            repositories = migration_result.repositories_migrated,
-                            documents = migration_result.documents_migrated,
-                            "migrated data from v1 to v2 tables"
-                        );
-                    }
-                    Arc::new(PostgresStoreV2::new(pool))
-                }
+            // Run migration from v1 to v2 in case there is unmigrated data
+            let migration_result = migration::migrate_v1_to_v2(&pool).await?;
+            if migration_result.total() > 0 {
+                info!(
+                    total = migration_result.total(),
+                    issues = migration_result.issues_migrated,
+                    patches = migration_result.patches_migrated,
+                    tasks = migration_result.tasks_migrated,
+                    users = migration_result.users_migrated,
+                    actors = migration_result.actors_migrated,
+                    repositories = migration_result.repositories_migrated,
+                    documents = migration_result.documents_migrated,
+                    "migrated data from v1 to v2 tables"
+                );
             }
+            Arc::new(PostgresStoreV2::new(pool))
         }
         None => Arc::new(MemoryStore::new()),
     };

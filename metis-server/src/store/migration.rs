@@ -3,7 +3,7 @@
 //! This module provides a one-off migration function that reads all versions of all objects
 //! from the v1 tables and writes them to the v2 tables, preserving complete history.
 
-use crate::store::postgres::PgStorePool;
+use crate::store::postgres_v2::PgStorePool;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -983,7 +983,7 @@ mod tests {
     use crate::domain::actors::ActorRef;
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
     use crate::domain::users::Username;
-    use crate::store::postgres::{PgStorePool, PostgresStore};
+    use crate::store::postgres_v2::PgStorePool;
     use crate::store::postgres_v2::PostgresStoreV2;
     use crate::store::{ReadOnlyStore, Store};
     use metis_common::api::v1::issues::SearchIssuesQuery;
@@ -1010,45 +1010,6 @@ mod tests {
         // Empty database should complete without errors
         let result = migrate_v1_to_v2(&pool).await.unwrap();
         assert_eq!(result.total(), 0);
-    }
-
-    #[sqlx::test(migrations = "./migrations")]
-    #[ignore]
-    async fn migration_transfers_data_from_v1_to_v2(pool: PgStorePool) {
-        // Create data in v1 store
-        let v1_store = PostgresStore::new(pool.clone());
-        let issue = Issue {
-            issue_type: IssueType::Task,
-            description: "Test issue for migration".to_string(),
-            creator: Username::from("test-user"),
-            progress: "In progress".to_string(),
-            status: IssueStatus::Open,
-            assignee: Some("assignee".to_string()),
-            job_settings: Default::default(),
-            todo_list: vec![],
-            dependencies: vec![],
-            patches: vec![],
-            deleted: false,
-        };
-        let actor = ActorRef::System {
-            worker_name: "migration-test".into(),
-            on_behalf_of: None,
-        };
-        let (issue_id, _) = v1_store.add_issue(issue.clone(), &actor).await.unwrap();
-
-        // Run migration
-        let result = migrate_v1_to_v2(&pool).await.unwrap();
-        assert_eq!(result.issues_migrated, 1);
-        assert!(result.total() >= 1);
-
-        // Verify data is readable from v2 store
-        let v2_store = PostgresStoreV2::new(pool.clone());
-        let migrated_issue = v2_store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(migrated_issue.item.description, issue.description);
-        assert_eq!(migrated_issue.item.creator, issue.creator);
-        assert_eq!(migrated_issue.item.progress, issue.progress);
-        assert_eq!(migrated_issue.item.status, issue.status);
-        assert_eq!(migrated_issue.item.assignee, issue.assignee);
     }
 
     #[sqlx::test(migrations = "./migrations")]

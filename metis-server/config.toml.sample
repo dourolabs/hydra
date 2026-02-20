@@ -42,10 +42,6 @@ min_connections = 1
 connect_timeout_secs = 5
 # Idle timeout (seconds) before reclaiming a connection; set to 0 to disable.
 idle_timeout_secs = 300
-# Store version: "v1" uses JSONB payloads (default for backward compatibility),
-# "v2" uses column-based tables. When switching from v1 to v2, data is migrated
-# automatically on startup. Can be overridden by the METIS_STORE_VERSION env var.
-store_version = "v1"
 
 [build_cache]
 # Optional build cache storage configuration for worker runs.
