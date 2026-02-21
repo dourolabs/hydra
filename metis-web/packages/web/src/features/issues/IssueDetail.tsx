@@ -8,6 +8,7 @@ import { IssueChildren } from "./IssueChildren";
 import { IssueActivity } from "./IssueActivity";
 import { JobList } from "../jobs/JobList";
 import { PatchList } from "../patches/PatchList";
+import { IssueSettings } from "./IssueSettings";
 import styles from "./IssueDetail.module.css";
 
 interface IssueDetailProps {
@@ -20,6 +21,7 @@ const TABS = [
   { id: "patches", label: "Patches" },
   { id: "todo", label: "Todo" },
   { id: "activity", label: "Activity" },
+  { id: "settings", label: "Settings" },
 ];
 
 export function IssueDetail({ record }: IssueDetailProps) {
@@ -109,6 +111,9 @@ export function IssueDetail({ record }: IssueDetailProps) {
           )}
           {activeTab === "activity" && (
             <IssueActivity issueId={record.issue_id} />
+          )}
+          {activeTab === "settings" && (
+            <IssueSettings jobSettings={issue.job_settings} />
           )}
         </div>
       </Panel>
