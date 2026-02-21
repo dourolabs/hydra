@@ -30,11 +30,8 @@
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-4);
-  cursor: pointer;
   border-bottom: 1px solid var(--color-border);
   transition: background-color 0.1s;
-  text-decoration: none;
-  color: inherit;
 }
 
 .docRow:last-child {
@@ -43,6 +40,27 @@
 
 .docRow:hover {
   background-color: var(--color-bg-tertiary);
+}
+
+.docRowLink {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.deleteButton {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.docRow:hover .deleteButton {
+  opacity: 1;
 }
 
 .docTitle {
@@ -148,12 +166,57 @@
   gap: var(--space-3);
 }
 
+/* Delete document modal */
+.deleteModalContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.deleteMessage {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  margin: 0;
+}
+
+.deleteDocTitle {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  margin: 0;
+}
+
+.deleteDocPath {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  margin: 0;
+}
+
+.deleteActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   .docRow {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .docRowLink {
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-1);
+  }
+
+  .deleteButton {
+    opacity: 1;
   }
 
   .docTitle {
