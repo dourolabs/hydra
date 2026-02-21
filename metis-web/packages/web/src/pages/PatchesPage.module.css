@@ -4,7 +4,6 @@
 .empty { composes: empty from './page.module.css'; }
 
 .sectionTitle {
-  composes: pageTitle from './page.module.css';
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   font-weight: 600;
