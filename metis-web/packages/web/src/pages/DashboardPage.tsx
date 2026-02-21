@@ -1,4 +1,5 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Spinner, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
 import { useIssues } from "../features/issues/useIssues";
@@ -24,13 +25,46 @@ export function DashboardPage() {
   const { user } = useAuth();
   const { data: issues, isLoading } = useIssues();
   const { data: jobsByIssue } = useAllJobs();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("inbox");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedId = searchParams.get("selected");
+  const activeTab = searchParams.get("tab") ?? "inbox";
   const [createModalOpen, setCreateModalOpen] = useState(false);
+
+  const setSelectedId = useCallback(
+    (id: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (id) {
+            next.set("selected", id);
+          } else {
+            next.delete("selected");
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const setActiveTab = useCallback(
+    (tab: string) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("tab", tab);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const handleMobileBack = useCallback(() => {
     setSelectedId(null);
-  }, []);
+  }, [setSelectedId]);
 
   const username = user ? actorDisplayName(user.actor) : "";
 
@@ -57,6 +91,12 @@ export function DashboardPage() {
     () => issues?.find((i) => i.issue_id === selectedId) ?? null,
     [issues, selectedId],
   );
+
+  useEffect(() => {
+    if (selectedId && issues && !selectedRecord) {
+      setSelectedId(null);
+    }
+  }, [selectedId, issues, selectedRecord, setSelectedId]);
 
   const watchingCount = useWatchingCount(issues, jobsByIssue);
 
