@@ -5,11 +5,12 @@ export interface PanelProps {
   header?: ReactNode;
   children: ReactNode;
   scrollable?: boolean;
+  interactive?: boolean;
   className?: string;
 }
 
-export function Panel({ header, children, scrollable = false, className }: PanelProps) {
-  const cls = [styles.panel, className].filter(Boolean).join(" ");
+export function Panel({ header, children, scrollable = false, interactive = false, className }: PanelProps) {
+  const cls = [styles.panel, interactive && styles.interactive, className].filter(Boolean).join(" ");
 
   return (
     <div className={cls}>

@@ -38,11 +38,15 @@
   text-decoration: none;
   border-radius: var(--radius-md);
   margin-bottom: var(--space-2);
-  transition: background var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    text-shadow var(--transition-fast);
+  text-shadow: 0 0 10px rgba(0, 204, 102, 0.3);
 }
 
 .logo:hover {
   background: var(--color-bg-tertiary);
+  text-shadow: 0 0 20px rgba(0, 204, 102, 0.5);
 }
 
 .navItem {
@@ -54,7 +58,10 @@
   border-radius: var(--radius-md);
   color: var(--color-text-tertiary);
   text-decoration: none;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .navItem:hover {
@@ -65,6 +72,7 @@
 .navItem.active {
   background: rgba(0, 204, 102, 0.15);
   color: var(--color-accent);
+  box-shadow: 0 0 8px rgba(0, 204, 102, 0.15);
 }
 
 .navIcon {

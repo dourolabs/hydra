@@ -11,7 +11,8 @@
   transition:
     background-color var(--transition-fast),
     border-color var(--transition-fast),
-    color var(--transition-fast);
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
   white-space: nowrap;
 }
 
@@ -30,6 +31,9 @@
 .primary:hover:not(:disabled) {
   background-color: var(--color-accent-bright);
   border-color: var(--color-accent-bright);
+  box-shadow:
+    0 0 16px rgba(0, 204, 102, 0.3),
+    0 0 4px rgba(0, 204, 102, 0.2);
 }
 
 .secondary {

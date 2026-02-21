@@ -29,7 +29,9 @@
 .input:focus {
   outline: none;
   border-color: var(--color-border-focus);
-  box-shadow: 0 0 0 2px rgba(0, 204, 102, 0.15);
+  box-shadow:
+    0 0 0 3px rgba(0, 204, 102, 0.15),
+    0 0 8px rgba(0, 204, 102, 0.1);
 }
 
 .input.error {
