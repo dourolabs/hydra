@@ -132,7 +132,7 @@ export function DemoApp() {
   const [selectVal, setSelectVal] = useState("open");
   const [activeTab, setActiveTab] = useState("buttons");
   const [modalOpen, setModalOpen] = useState(false);
-  const [buttonVariant, setButtonVariant] = useState<"primary" | "secondary" | "ghost">("primary");
+  const [buttonVariant, setButtonVariant] = useState<"primary" | "secondary" | "ghost" | "danger">("primary");
   const [buttonSize, setButtonSize] = useState<"sm" | "md" | "lg">("md");
   const [toasts, setToasts] = useState<{ id: number; variant: ToastVariant; message: string }[]>([]);
   const [toastCounter, setToastCounter] = useState(0);
@@ -166,9 +166,10 @@ export function DemoApp() {
                 { value: "primary", label: "Primary" },
                 { value: "secondary", label: "Secondary" },
                 { value: "ghost", label: "Ghost" },
+                { value: "danger", label: "Danger" },
               ]}
               onChange={(e) =>
-                setButtonVariant(e.target.value as "primary" | "secondary" | "ghost")
+                setButtonVariant(e.target.value as "primary" | "secondary" | "ghost" | "danger")
               }
             />
             <Select
@@ -194,6 +195,7 @@ export function DemoApp() {
             <Button variant="primary">Primary</Button>
             <Button variant="secondary">Secondary</Button>
             <Button variant="ghost">Ghost</Button>
+            <Button variant="danger">Danger</Button>
           </div>
         </section>
 
