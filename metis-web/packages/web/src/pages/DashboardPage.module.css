@@ -1,5 +1,6 @@
 .page {
   height: calc(100vh - var(--space-12));
+  height: calc(100dvh - var(--space-12));
   display: flex;
   flex-direction: column;
 }
@@ -9,6 +10,7 @@
   justify-content: center;
   align-items: center;
   height: calc(100vh - var(--space-12));
+  height: calc(100dvh - var(--space-12));
 }
 
 .leftPane {
@@ -64,9 +66,11 @@
 @media (max-width: 768px) {
   .page {
     height: calc(100vh - 56px - var(--space-6));
+    height: calc(100dvh - 56px - var(--space-6));
   }
 
   .center {
     height: calc(100vh - 56px - var(--space-6));
+    height: calc(100dvh - 56px - var(--space-6));
   }
 }

@@ -164,7 +164,9 @@
     width: 95vw;
     max-width: 95vw;
     height: 85vh;
+    height: 85dvh;
     max-height: 85vh;
+    max-height: 85dvh;
   }
 
   .createFields {
