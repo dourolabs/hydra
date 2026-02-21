@@ -31,6 +31,7 @@ function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
 
   function walk(n: IssueTreeNode) {
     for (const child of n.children) {
+      if (child.hardBlocked) continue;
       const status = child.issue.issue.status;
       if (status === "in-progress") {
         summary.inProgress++;
@@ -56,6 +57,7 @@ function collectActiveChildren(
 
   function walk(n: IssueTreeNode) {
     for (const child of n.children) {
+      if (child.hardBlocked) continue;
       if (!seen.has(child.id) && isNodeActive(child, jobsByIssue)) {
         seen.add(child.id);
         result.push(child);
@@ -116,9 +118,13 @@ function TreeNodeRow({
     [onJobClick, node.id],
   );
 
+  const classNames = [styles.node];
+  if (active) classNames.push(styles.active);
+  if (node.blocked) classNames.push(styles.blocked);
+
   return (
     <button
-      className={`${styles.node}${active ? ` ${styles.active}` : ""}`}
+      className={classNames.join(" ")}
       onClick={() => onSelect(node.id)}
       type="button"
     >
@@ -147,6 +153,9 @@ function TreeNodeRow({
       <span className={styles.desc}>
         {descriptionSnippet(node.issue.issue.description, 50)}
       </span>
+      {node.blocked && node.blockedBy.length > 0 && (
+        <span className={styles.blockedBy}>blocked by {node.blockedBy.join(", ")}</span>
+      )}
     </button>
   );
 }
@@ -250,11 +259,13 @@ function ChildNodes({
     });
   }, []);
 
+  const visibleNodes = nodes.filter((child) => !child.hardBlocked);
+
   return (
     <div className={styles.children}>
-      {nodes.map((child) => {
+      {visibleNodes.map((child) => {
         const isExpanded = expandedSet.has(child.id);
-        const hasGrandchildren = child.children.length > 0;
+        const hasGrandchildren = child.children.filter((c) => !c.hardBlocked).length > 0;
         return (
           <div key={child.id}>
             <TreeNodeRow
@@ -302,7 +313,8 @@ export function WatchingTree({
     const tree = buildIssueTree(issues);
     // Keep full (unpruned) roots so that summarizeSubtree sees all children.
     // Use pruneTree only to decide whether the root has any active nodes.
-    return tree.filter((root) => pruneTree(root, jobsByIssue) !== null);
+    // Hide hard-blocked root issues entirely.
+    return tree.filter((root) => !root.hardBlocked && pruneTree(root, jobsByIssue) !== null);
   }, [issues, jobsByIssue]);
 
   if (watchingRoots.length === 0) {

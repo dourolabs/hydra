@@ -9,6 +9,8 @@ import styles from "./IssueRow.module.css";
 interface IssueRowProps {
   record: IssueVersionRecord;
   dimmed?: boolean;
+  blocked?: boolean;
+  blockedBy?: string[];
   jobs?: JobVersionRecord[];
   onJobClick?: (issueId: string, jobId: string) => void;
 }
@@ -23,7 +25,7 @@ function toJobSummary(record: JobVersionRecord): JobSummary {
   };
 }
 
-export function IssueRow({ record, dimmed, jobs, onJobClick }: IssueRowProps) {
+export function IssueRow({ record, dimmed, blocked, blockedBy, jobs, onJobClick }: IssueRowProps) {
   const { issue } = record;
 
   const handleJobClick = useCallback(
@@ -35,8 +37,12 @@ export function IssueRow({ record, dimmed, jobs, onJobClick }: IssueRowProps) {
 
   const jobSummaries = jobs?.map(toJobSummary);
 
+  const classNames = [styles.row];
+  if (dimmed) classNames.push(styles.dimmed);
+  if (blocked) classNames.push(styles.blocked);
+
   return (
-    <span className={`${styles.row}${dimmed ? ` ${styles.dimmed}` : ""}`}>
+    <span className={classNames.join(" ")}>
       <span className={styles.topRow}>
         <Badge status={issueToBadgeStatus(issue.status)} />
         {jobSummaries && jobSummaries.length > 0 && (
@@ -52,6 +58,9 @@ export function IssueRow({ record, dimmed, jobs, onJobClick }: IssueRowProps) {
         {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
       </span>
       <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
+      {blocked && blockedBy && blockedBy.length > 0 && (
+        <span className={styles.blockedBy}>blocked by {blockedBy.join(", ")}</span>
+      )}
     </span>
   );
 }
