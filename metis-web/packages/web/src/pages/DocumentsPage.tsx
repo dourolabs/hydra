@@ -108,11 +108,30 @@ interface DocumentRowProps {
 }
 
 function DocumentRow({ doc }: DocumentRowProps) {
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const { addToast } = useToast();
+  const queryClient = useQueryClient();
+
+  const deleteMutation = useMutation({
+    mutationFn: () => apiClient.deleteDocument(doc.document_id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      addToast("Document deleted", "success");
+      setDeleteOpen(false);
+    },
+    onError: (err) => {
+      addToast(
+        err instanceof Error ? err.message : "Failed to delete document",
+        "error",
+      );
+    },
+  });
+
   return (
-    <li>
+    <li className={styles.docRow}>
       <Link
         to={`/documents/${doc.document_id}`}
-        className={styles.docRow}
+        className={styles.docRowLink}
       >
         <span className={styles.docTitle}>{getDocumentDisplayTitle(doc)}</span>
         <div className={styles.docMeta}>
@@ -120,7 +139,61 @@ function DocumentRow({ doc }: DocumentRowProps) {
           <span className={styles.docTime}>{formatRelativeTime(doc.timestamp)}</span>
         </div>
       </Link>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={styles.deleteButton}
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          setDeleteOpen(true);
+        }}
+        aria-label="Delete document"
+      >
+        Delete
+      </Button>
+      <DocumentDeleteModal
+        open={deleteOpen}
+        onClose={() => {
+          if (!deleteMutation.isPending) setDeleteOpen(false);
+        }}
+        onConfirm={() => deleteMutation.mutate()}
+        isPending={deleteMutation.isPending}
+        doc={doc}
+      />
     </li>
+  );
+}
+
+interface DocumentDeleteModalProps {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  isPending: boolean;
+  doc: DocumentVersionRecord;
+}
+
+function DocumentDeleteModal({ open, onClose, onConfirm, isPending, doc }: DocumentDeleteModalProps) {
+  return (
+    <Modal open={open} onClose={onClose} title="Delete Document">
+      <div className={styles.deleteModalContent}>
+        <p className={styles.deleteMessage}>
+          Are you sure you want to delete this document?
+        </p>
+        <p className={styles.deleteDocTitle}>{getDocumentDisplayTitle(doc)}</p>
+        {doc.document.path && (
+          <p className={styles.deleteDocPath}>{doc.document.path}</p>
+        )}
+        <div className={styles.deleteActions}>
+          <Button variant="secondary" size="md" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button variant="danger" size="md" onClick={onConfirm} disabled={isPending}>
+            {isPending ? "Deleting..." : "Delete"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
