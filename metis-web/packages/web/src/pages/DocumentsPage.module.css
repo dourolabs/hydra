@@ -47,6 +47,7 @@
 
 .docTitle {
   color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
   font-weight: 500;
   flex: 1;
   min-width: 0;
@@ -153,6 +154,10 @@
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-1);
+  }
+
+  .docTitle {
+    white-space: normal;
   }
 
   .docMeta {
