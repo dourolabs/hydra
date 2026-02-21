@@ -26,6 +26,7 @@ const STATUS_OPTIONS: SelectOption[] = [
   { value: "closed", label: "Closed" },
   { value: "failed", label: "Failed" },
   { value: "rejected", label: "Rejected" },
+  { value: "dropped", label: "Dropped" },
 ];
 
 interface DetailPanelProps {
