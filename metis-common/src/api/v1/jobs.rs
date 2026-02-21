@@ -294,6 +294,81 @@ impl CreateJobResponse {
     }
 }
 
+/// Lightweight summary of a job/task for list views.
+///
+/// Excludes `context`, `image`, `model`, `env_vars`, `cpu_limit`,
+/// `memory_limit`, `secrets`, and `last_message`.
+/// The `prompt` field is truncated to the first 100 characters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct JobSummary {
+    pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawned_from: Option<IssueId>,
+    pub creator: Username,
+    #[serde(default = "default_status")]
+    pub status: Status,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<TaskError>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_time: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<DateTime<Utc>>,
+}
+
+impl From<&Task> for JobSummary {
+    fn from(task: &Task) -> Self {
+        let prompt = if task.prompt.len() > 100 {
+            task.prompt.chars().take(100).collect()
+        } else {
+            task.prompt.clone()
+        };
+        JobSummary {
+            prompt,
+            spawned_from: task.spawned_from.clone(),
+            creator: task.creator.clone(),
+            status: task.status,
+            error: task.error.clone(),
+            deleted: task.deleted,
+            creation_time: task.creation_time,
+            start_time: task.start_time,
+            end_time: task.end_time,
+        }
+    }
+}
+
+/// Summary-level version record for job list responses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct JobSummaryRecord {
+    pub job_id: TaskId,
+    pub version: VersionNumber,
+    pub timestamp: DateTime<Utc>,
+    pub task: JobSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<ActorRef>,
+}
+
+impl From<&JobVersionRecord> for JobSummaryRecord {
+    fn from(record: &JobVersionRecord) -> Self {
+        JobSummaryRecord {
+            job_id: record.job_id.clone(),
+            version: record.version,
+            timestamp: record.timestamp,
+            task: JobSummary::from(&record.task),
+            actor: record.actor.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -525,5 +600,85 @@ mod tests {
 
         // Short prompt should be preserved as-is
         assert_eq!(record.task.prompt, short_prompt);
+    }
+
+    fn make_test_task(prompt: &str) -> Task {
+        Task::new(
+            prompt.to_string(),
+            BundleSpec::None,
+            Some(IssueId::new()),
+            Username::from("alice"),
+            Some("worker:latest".to_string()),
+            Some("claude-3".to_string()),
+            HashMap::from([("KEY".to_string(), "val".to_string())]),
+            Some("500m".to_string()),
+            Some("1Gi".to_string()),
+            Some(vec!["secret".to_string()]),
+            Status::Running,
+            Some("last message text".to_string()),
+            None,
+            false,
+            Some(chrono::Utc::now()),
+            Some(chrono::Utc::now()),
+            None,
+        )
+    }
+
+    #[test]
+    fn job_summary_truncates_long_prompt() {
+        let long_prompt = "x".repeat(500);
+        let task = make_test_task(&long_prompt);
+        let summary = JobSummary::from(&task);
+        assert_eq!(summary.prompt.len(), 100);
+        assert!(summary.prompt.chars().all(|c| c == 'x'));
+    }
+
+    #[test]
+    fn job_summary_preserves_short_prompt() {
+        let task = make_test_task("short prompt");
+        let summary = JobSummary::from(&task);
+        assert_eq!(summary.prompt, "short prompt");
+    }
+
+    #[test]
+    fn job_summary_excludes_heavy_fields() {
+        let task = make_test_task("test prompt");
+        let summary = JobSummary::from(&task);
+        let value = serde_json::to_value(&summary).unwrap();
+        assert!(value.get("context").is_none());
+        assert!(value.get("image").is_none());
+        assert!(value.get("model").is_none());
+        assert!(value.get("env_vars").is_none());
+        assert!(value.get("cpu_limit").is_none());
+        assert!(value.get("memory_limit").is_none());
+        assert!(value.get("secrets").is_none());
+        assert!(value.get("last_message").is_none());
+    }
+
+    #[test]
+    fn job_summary_maps_all_fields() {
+        let task = make_test_task("my prompt");
+        let summary = JobSummary::from(&task);
+        assert_eq!(summary.prompt, "my prompt");
+        assert!(summary.spawned_from.is_some());
+        assert_eq!(summary.creator, Username::from("alice"));
+        assert_eq!(summary.status, Status::Running);
+        assert!(summary.error.is_none());
+        assert!(!summary.deleted);
+        assert!(summary.creation_time.is_some());
+        assert!(summary.start_time.is_some());
+        assert!(summary.end_time.is_none());
+    }
+
+    #[test]
+    fn job_summary_record_from_version_record() {
+        let task = make_test_task("record test");
+        let task_id = crate::TaskId::new();
+        let record = JobVersionRecord::new(task_id.clone(), 7, chrono::Utc::now(), task, None);
+        let summary_record = JobSummaryRecord::from(&record);
+        assert_eq!(summary_record.job_id, task_id);
+        assert_eq!(summary_record.version, 7);
+        assert_eq!(summary_record.task.prompt, "record test");
+        assert_eq!(summary_record.actor, None);
     }
 }

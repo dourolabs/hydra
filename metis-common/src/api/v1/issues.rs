@@ -683,6 +683,81 @@ impl SearchIssuesQuery {
     }
 }
 
+/// Lightweight summary of an issue for list views.
+///
+/// Excludes `progress`, `job_settings`, and the full `description` body.
+/// The `description` field is truncated to the first line (max 200 chars).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct IssueSummary {
+    #[serde(rename = "type")]
+    pub issue_type: IssueType,
+    pub description: String,
+    pub creator: Username,
+    #[serde(default)]
+    pub status: IssueStatus,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub assignee: Option<String>,
+    #[serde(default)]
+    pub dependencies: Vec<IssueDependency>,
+    #[serde(default)]
+    pub patches: Vec<PatchId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub todo_list: Vec<TodoItem>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
+}
+
+impl From<&Issue> for IssueSummary {
+    fn from(issue: &Issue) -> Self {
+        let first_line = issue.description.lines().next().unwrap_or("");
+        let truncated = if first_line.len() > 200 {
+            first_line.chars().take(200).collect()
+        } else {
+            first_line.to_string()
+        };
+        IssueSummary {
+            issue_type: issue.issue_type,
+            description: truncated,
+            creator: issue.creator.clone(),
+            status: issue.status,
+            assignee: issue.assignee.clone(),
+            dependencies: issue.dependencies.clone(),
+            patches: issue.patches.clone(),
+            todo_list: issue.todo_list.clone(),
+            deleted: issue.deleted,
+        }
+    }
+}
+
+/// Summary-level version record for issue list responses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct IssueSummaryRecord {
+    pub issue_id: IssueId,
+    pub version: VersionNumber,
+    pub timestamp: DateTime<Utc>,
+    pub issue: IssueSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<ActorRef>,
+}
+
+impl From<&IssueVersionRecord> for IssueSummaryRecord {
+    fn from(record: &IssueVersionRecord) -> Self {
+        IssueSummaryRecord {
+            issue_id: record.issue_id.clone(),
+            version: record.version,
+            timestamp: record.timestamp,
+            issue: IssueSummary::from(&record.issue),
+            actor: record.actor.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -942,5 +1017,95 @@ mod tests {
         let record: IssueVersionRecord =
             serde_json::from_str(json).expect("should deserialize without actor");
         assert_eq!(record.actor, None);
+    }
+
+    fn make_test_issue(description: &str) -> Issue {
+        Issue {
+            issue_type: IssueType::Task,
+            description: description.to_string(),
+            creator: Username::from("alice"),
+            progress: "some progress text".to_string(),
+            status: IssueStatus::InProgress,
+            assignee: Some("bob".to_string()),
+            job_settings: JobSettings {
+                repo_name: Some(RepoName::from_str("org/repo").unwrap()),
+                ..Default::default()
+            },
+            todo_list: vec![TodoItem {
+                description: "do something".to_string(),
+                is_done: false,
+            }],
+            dependencies: vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                issue_id("i-parent"),
+            )],
+            patches: vec!["p-abcd".parse().unwrap()],
+            deleted: false,
+        }
+    }
+
+    #[test]
+    fn issue_summary_truncates_description_to_first_line() {
+        let issue = make_test_issue("First line\nSecond line\nThird line");
+        let summary = IssueSummary::from(&issue);
+        assert_eq!(summary.description, "First line");
+    }
+
+    #[test]
+    fn issue_summary_truncates_long_first_line() {
+        let long_line = "a".repeat(300);
+        let issue = make_test_issue(&long_line);
+        let summary = IssueSummary::from(&issue);
+        assert_eq!(summary.description.len(), 200);
+        assert!(summary.description.chars().all(|c| c == 'a'));
+    }
+
+    #[test]
+    fn issue_summary_preserves_short_description() {
+        let issue = make_test_issue("short desc");
+        let summary = IssueSummary::from(&issue);
+        assert_eq!(summary.description, "short desc");
+    }
+
+    #[test]
+    fn issue_summary_excludes_progress_and_job_settings() {
+        let issue = make_test_issue("test issue");
+        let summary = IssueSummary::from(&issue);
+        let value = serde_json::to_value(&summary).unwrap();
+        assert!(value.get("progress").is_none());
+        assert!(value.get("job_settings").is_none());
+    }
+
+    #[test]
+    fn issue_summary_maps_all_fields() {
+        let issue = make_test_issue("desc");
+        let summary = IssueSummary::from(&issue);
+        assert_eq!(summary.issue_type, IssueType::Task);
+        assert_eq!(summary.creator, Username::from("alice"));
+        assert_eq!(summary.status, IssueStatus::InProgress);
+        assert_eq!(summary.assignee.as_deref(), Some("bob"));
+        assert_eq!(summary.dependencies.len(), 1);
+        assert_eq!(summary.patches.len(), 1);
+        assert_eq!(summary.todo_list.len(), 1);
+        assert!(!summary.deleted);
+    }
+
+    #[test]
+    fn issue_summary_record_from_version_record() {
+        let issue = make_test_issue("multi\nline\ndesc");
+        let record =
+            IssueVersionRecord::new(issue_id("i-test"), 3, chrono::Utc::now(), issue, None);
+        let summary_record = IssueSummaryRecord::from(&record);
+        assert_eq!(summary_record.issue_id, issue_id("i-test"));
+        assert_eq!(summary_record.version, 3);
+        assert_eq!(summary_record.issue.description, "multi");
+        assert_eq!(summary_record.actor, None);
+    }
+
+    #[test]
+    fn issue_summary_handles_empty_description() {
+        let issue = make_test_issue("");
+        let summary = IssueSummary::from(&issue);
+        assert_eq!(summary.description, "");
     }
 }
