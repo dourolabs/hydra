@@ -24,6 +24,10 @@
   --color-status-blocked: #cc66ff;
   --color-status-rejected: #ff8800;
 
+  /* Danger (red - destructive actions) */
+  --color-danger: #cc3333;
+  --color-danger-bright: #ff4444;
+
   /* Border */
   --color-border: #222222;
   --color-border-focus: #00cc66;
