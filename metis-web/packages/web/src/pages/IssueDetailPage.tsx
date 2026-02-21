@@ -1,19 +1,26 @@
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
 import { useIssue } from "../features/issues/useIssue";
 import { IssueDetail } from "../features/issues/IssueDetail";
 import { ApiError } from "../api/client";
-import { Breadcrumbs } from "../layout/Breadcrumbs";
+import { Breadcrumbs, type BreadcrumbItem } from "../layout/Breadcrumbs";
 import styles from "./IssueDetailPage.module.css";
 
 export function IssueDetailPage() {
   const { issueId } = useParams<{ issueId: string }>();
+  const [searchParams] = useSearchParams();
+  const fromDashboard = searchParams.get("from") === "dashboard";
+  const tab = searchParams.get("tab");
   const { data: record, isLoading, error } = useIssue(issueId ?? "");
+
+  const breadcrumbItems: BreadcrumbItem[] = fromDashboard
+    ? [{ label: "Dashboard", to: `/?selected=${issueId}${tab ? `&tab=${tab}` : ""}` }]
+    : [{ label: "Issues", to: "/issues" }];
 
   return (
     <div className={styles.page}>
       <Breadcrumbs
-        items={[{ label: "Issues", to: "/issues" }]}
+        items={breadcrumbItems}
         current={`Issue ${issueId}`}
       />
 

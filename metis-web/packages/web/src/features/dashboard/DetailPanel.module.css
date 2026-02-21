@@ -21,6 +21,18 @@
   font-weight: 600;
 }
 
+.issueIdLink {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-lg);
+  color: var(--color-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.issueIdLink:hover {
+  text-decoration: underline;
+}
+
 .type {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
@@ -59,6 +71,18 @@
   font-size: var(--font-size-xs);
   font-family: var(--font-family-mono);
   margin: 0;
+}
+
+.docPathLink {
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  text-decoration: none;
+  display: block;
+}
+
+.docPathLink:hover {
+  text-decoration: underline;
 }
 
 .docPreview {
@@ -105,6 +129,18 @@
   font-size: var(--font-size-xs);
   color: var(--color-accent);
   font-weight: 600;
+}
+
+.patchIdLink {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.patchIdLink:hover {
+  text-decoration: underline;
 }
 
 .patchTitle {

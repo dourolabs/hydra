@@ -1,5 +1,4 @@
 .page { composes: page from './page.module.css'; }
-.back { composes: back from './page.module.css'; }
 .center { composes: center from './page.module.css'; }
 .errorContainer { composes: errorContainer from './page.module.css'; }
 .error { composes: error from './page.module.css'; }

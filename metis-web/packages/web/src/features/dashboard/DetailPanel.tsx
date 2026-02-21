@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar, Badge, Button, MarkdownViewer, Select, Spinner, Textarea } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
@@ -54,6 +55,9 @@ export function DetailPanel({ record }: DetailPanelProps) {
   );
   const { data: docRecord, isLoading: docLoading } = useDocumentByPath(docPath);
 
+  const [searchParams] = useSearchParams();
+  const activeTab = searchParams.get("tab") ?? "inbox";
+
   const patchIds = issue.patches ?? [];
   const { data: patches, isLoading: patchesLoading } = usePatchesByIssue(patchIds);
 
@@ -80,7 +84,7 @@ export function DetailPanel({ record }: DetailPanelProps) {
     <div className={styles.panel}>
       {/* Header */}
       <div className={styles.header}>
-        <span className={styles.issueId}>{issueId}</span>
+        <Link to={`/issues/${issueId}?from=dashboard&tab=${activeTab}`} className={styles.issueIdLink}>{issueId}</Link>
         <Badge status={issueToBadgeStatus(issue.status)} />
         <span className={styles.type}>{issue.type}</span>
         {issue.assignee && (
@@ -105,7 +109,11 @@ export function DetailPanel({ record }: DetailPanelProps) {
       {docPath && (
         <div className={styles.section}>
           <h3 className={styles.sectionTitle}>Document Preview</h3>
-          <p className={styles.docPath}>{docPath}</p>
+          {docRecord ? (
+            <Link to={`/documents/${docRecord.document_id}?from=dashboard&issueId=${issueId}`} className={styles.docPathLink}>{docPath}</Link>
+          ) : (
+            <p className={styles.docPath}>{docPath}</p>
+          )}
           {docLoading && <Spinner size="sm" />}
           {docRecord && (
             <div className={styles.docPreview}>
@@ -121,7 +129,7 @@ export function DetailPanel({ record }: DetailPanelProps) {
           <h3 className={styles.sectionTitle}>Patches</h3>
           {patchesLoading && <Spinner size="sm" />}
           {patches.map((patchRecord) => (
-            <PatchPreview key={patchRecord.patch_id} record={patchRecord} />
+            <PatchPreview key={patchRecord.patch_id} record={patchRecord} issueId={issueId} />
           ))}
         </div>
       )}
@@ -154,13 +162,13 @@ export function DetailPanel({ record }: DetailPanelProps) {
   );
 }
 
-function PatchPreview({ record }: { record: PatchVersionRecord }) {
+function PatchPreview({ record, issueId }: { record: PatchVersionRecord; issueId: string }) {
   const { patch } = record;
 
   return (
     <div className={styles.patchCard}>
       <div className={styles.patchHeader}>
-        <span className={styles.patchId}>{record.patch_id}</span>
+        <Link to={`/patches/${record.patch_id}?from=dashboard&issueId=${issueId}`} className={styles.patchIdLink}>{record.patch_id}</Link>
         <Badge status={patchToBadgeStatus(patch.status)} />
       </div>
       <p className={styles.patchTitle}>{patch.title}</p>
