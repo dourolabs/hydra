@@ -10,14 +10,23 @@ export function PatchDetailPage() {
   const { patchId } = useParams<{ patchId: string }>();
   const [searchParams] = useSearchParams();
   const issueId = searchParams.get("issueId");
+  const fromDashboard = searchParams.get("from") === "dashboard";
   const { data: record, isLoading, error } = usePatch(patchId ?? "");
 
-  const breadcrumbItems: BreadcrumbItem[] = issueId
-    ? [
-        { label: "Issues", to: "/issues" },
-        { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
-      ]
-    : [{ label: "Patches", to: "/patches" }];
+  let breadcrumbItems: BreadcrumbItem[];
+  if (fromDashboard && issueId) {
+    breadcrumbItems = [
+      { label: "Dashboard", to: `/?selected=${issueId}` },
+      { label: `Issue ${issueId}`, to: `/issues/${issueId}?from=dashboard` },
+    ];
+  } else if (issueId) {
+    breadcrumbItems = [
+      { label: "Issues", to: "/issues" },
+      { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
+    ];
+  } else {
+    breadcrumbItems = [{ label: "Patches", to: "/patches" }];
+  }
 
   return (
     <div className={styles.page}>

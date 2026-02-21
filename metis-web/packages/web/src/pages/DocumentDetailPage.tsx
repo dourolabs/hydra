@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Spinner, Button, Textarea, MarkdownViewer } from "@metis/ui";
 import type { DocumentVersionRecord } from "@metis/api";
@@ -7,17 +7,27 @@ import { apiClient, ApiError } from "../api/client";
 import { useDocument } from "../features/documents/useDocument";
 import { useToast } from "../features/toast/useToast";
 import { formatRelativeTime } from "../utils/time";
+import { Breadcrumbs, type BreadcrumbItem } from "../layout/Breadcrumbs";
 import styles from "./DocumentDetailPage.module.css";
 
 export function DocumentDetailPage() {
   const { documentId } = useParams<{ documentId: string }>();
+  const [searchParams] = useSearchParams();
+  const fromDashboard = searchParams.get("from") === "dashboard";
+  const issueId = searchParams.get("issueId");
   const { data: record, isLoading, error } = useDocument(documentId ?? "");
+
+  const displayTitle = record
+    ? (record.document.title || record.document.path || record.document_id)
+    : `Document ${documentId}`;
+
+  const breadcrumbItems: BreadcrumbItem[] = fromDashboard && issueId
+    ? [{ label: "Dashboard", to: `/?selected=${issueId}` }]
+    : [{ label: "Documents", to: "/documents" }];
 
   return (
     <div className={styles.page}>
-      <Link to="/documents" className={styles.back}>
-        &larr; Back to documents
-      </Link>
+      <Breadcrumbs items={breadcrumbItems} current={displayTitle} />
 
       {isLoading && (
         <div className={styles.center}>
