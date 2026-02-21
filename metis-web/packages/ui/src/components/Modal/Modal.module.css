@@ -13,9 +13,10 @@
   background-color: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  min-width: 400px;
+  min-width: min(400px, calc(100vw - 2rem));
   max-width: 640px;
   max-height: 80vh;
+  max-height: 80dvh;
   display: flex;
   flex-direction: column;
   animation: slideIn var(--transition-normal);
