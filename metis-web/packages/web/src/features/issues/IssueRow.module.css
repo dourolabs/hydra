@@ -30,6 +30,17 @@
   opacity: 0.4;
 }
 
+.blocked {
+  opacity: 0.5;
+}
+
+.blockedBy {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
 .jobIndicator {
   display: inline-flex;
   align-items: center;
