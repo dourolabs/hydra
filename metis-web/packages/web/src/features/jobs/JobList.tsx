@@ -46,7 +46,12 @@ export function JobList({ issueId }: JobListProps) {
               <Badge status={jobToBadgeStatus(record.task.status)} />
             </td>
             <td className={styles.td}>
-              <span className={styles.jobId}>{record.job_id}</span>
+              <Link
+                to={`/issues/${issueId}/jobs/${record.job_id}/logs`}
+                className={styles.jobId}
+              >
+                {record.job_id}
+              </Link>
             </td>
             <td className={styles.td}>
               <span className={styles.time}>
