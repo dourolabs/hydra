@@ -1,10 +1,11 @@
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Modal, Button, Textarea, Select } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
 import type { IssueType, RepositoryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
+import { useFormDraft } from "../../hooks/useFormDraft";
 import { useAuth } from "../auth/useAuth";
 import { useToast } from "../toast/useToast";
 import { actorDisplayName } from "../../api/auth";
@@ -46,17 +47,21 @@ export function IssueCreateModal({
   const { data: repos } = useRepositories();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
-  const [description, setDescription] = useState("");
-  const [issueType, setIssueType] = useState<IssueType>("task");
-  const [assignee, setAssignee] = useState("");
-  const [repoName, setRepoName] = useState("");
+  const [description, setDescription, clearDescriptionDraft] = useFormDraft("metis:draft:issue-create-modal:description", "");
+  const [issueType, setIssueType, clearIssueTypeDraft] = useFormDraft<IssueType>("metis:draft:issue-create-modal:issueType", "task");
+  const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft("metis:draft:issue-create-modal:assignee", "");
+  const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft("metis:draft:issue-create-modal:repoName", "");
 
   const resetForm = useCallback(() => {
     setDescription("");
     setIssueType("task");
     setAssignee("");
     setRepoName("");
-  }, []);
+    clearDescriptionDraft();
+    clearIssueTypeDraft();
+    clearAssigneeDraft();
+    clearRepoNameDraft();
+  }, [setDescription, setIssueType, setAssignee, setRepoName, clearDescriptionDraft, clearIssueTypeDraft, clearAssigneeDraft, clearRepoNameDraft]);
 
   const mutation = useMutation({
     mutationFn: (params: {
