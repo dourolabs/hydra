@@ -2,3 +2,36 @@
 .center { composes: center from './page.module.css'; }
 .error { composes: error from './page.module.css'; }
 .empty { composes: empty from './page.module.css'; }
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Staggered entry animation for top-level tree items */
+.page [role="tree"] > li {
+  animation: slideUp 200ms ease-out both;
+}
+
+.page [role="tree"] > li:nth-child(1) { animation-delay: 0ms; }
+.page [role="tree"] > li:nth-child(2) { animation-delay: 30ms; }
+.page [role="tree"] > li:nth-child(3) { animation-delay: 60ms; }
+.page [role="tree"] > li:nth-child(4) { animation-delay: 90ms; }
+.page [role="tree"] > li:nth-child(5) { animation-delay: 120ms; }
+.page [role="tree"] > li:nth-child(6) { animation-delay: 150ms; }
+.page [role="tree"] > li:nth-child(7) { animation-delay: 180ms; }
+.page [role="tree"] > li:nth-child(8) { animation-delay: 210ms; }
+.page [role="tree"] > li:nth-child(9) { animation-delay: 240ms; }
+.page [role="tree"] > li:nth-child(10) { animation-delay: 270ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .page [role="tree"] > li {
+    animation: none;
+  }
+}

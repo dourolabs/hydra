@@ -12,6 +12,22 @@
   padding: var(--space-6);
   overflow-y: auto;
   min-width: 0;
+  animation: fadeIn 200ms ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main {
+    animation: none;
+  }
 }
 
 @media (max-width: 768px) {

@@ -10,6 +10,7 @@
 }
 
 .sectionTitle {
+  composes: pageTitle from './page.module.css';
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   font-weight: 600;
@@ -25,6 +26,17 @@
   flex-direction: column;
 }
 
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .docRow {
   display: flex;
   align-items: center;
@@ -32,7 +44,19 @@
   padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--color-border);
   transition: background-color 0.1s;
+  animation: slideUp 200ms ease-out both;
 }
+
+.docRow:nth-child(1) { animation-delay: 0ms; }
+.docRow:nth-child(2) { animation-delay: 30ms; }
+.docRow:nth-child(3) { animation-delay: 60ms; }
+.docRow:nth-child(4) { animation-delay: 90ms; }
+.docRow:nth-child(5) { animation-delay: 120ms; }
+.docRow:nth-child(6) { animation-delay: 150ms; }
+.docRow:nth-child(7) { animation-delay: 180ms; }
+.docRow:nth-child(8) { animation-delay: 210ms; }
+.docRow:nth-child(9) { animation-delay: 240ms; }
+.docRow:nth-child(10) { animation-delay: 270ms; }
 
 .docRow:last-child {
   border-bottom: none;
@@ -199,6 +223,12 @@
   gap: var(--space-3);
   padding-top: var(--space-3);
   border-top: 1px solid var(--color-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .docRow {
+    animation: none;
+  }
 }
 
 /* Mobile responsive */

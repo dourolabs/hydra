@@ -4,9 +4,21 @@
 .empty { composes: empty from './page.module.css'; }
 
 .sectionTitle {
+  composes: pageTitle from './page.module.css';
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   font-weight: 600;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .patchList {
@@ -16,6 +28,21 @@
   display: flex;
   flex-direction: column;
 }
+
+.patchList > li {
+  animation: slideUp 200ms ease-out both;
+}
+
+.patchList > li:nth-child(1) { animation-delay: 0ms; }
+.patchList > li:nth-child(2) { animation-delay: 30ms; }
+.patchList > li:nth-child(3) { animation-delay: 60ms; }
+.patchList > li:nth-child(4) { animation-delay: 90ms; }
+.patchList > li:nth-child(5) { animation-delay: 120ms; }
+.patchList > li:nth-child(6) { animation-delay: 150ms; }
+.patchList > li:nth-child(7) { animation-delay: 180ms; }
+.patchList > li:nth-child(8) { animation-delay: 210ms; }
+.patchList > li:nth-child(9) { animation-delay: 240ms; }
+.patchList > li:nth-child(10) { animation-delay: 270ms; }
 
 .patchRow {
   display: flex;
@@ -94,6 +121,12 @@
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
   white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .patchList > li {
+    animation: none;
+  }
 }
 
 /* Mobile card layout */
