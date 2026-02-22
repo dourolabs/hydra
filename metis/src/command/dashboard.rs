@@ -15,7 +15,7 @@ use metis_common::{
     api::v1::events::{EventsQuery, SseEventType},
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueSummaryRecord, IssueType,
-        JobSettings, SearchIssuesQuery, UpsertIssueRequest,
+        IssueVersionRecord, JobSettings, SearchIssuesQuery, UpsertIssueRequest,
     },
     jobs::{JobSummaryRecord, SearchJobsQuery},
     patches::{GithubPr, PatchVersionRecord},
@@ -840,7 +840,7 @@ async fn handle_sse_event(
             };
             match client.get_issue(&issue_id, false).await {
                 Ok(api_record) => {
-                    if let Some(record) = issue_to_record(IssueSummaryRecord::from(&api_record)) {
+                    if let Some(record) = issue_version_to_record(api_record) {
                         let mut record = record;
                         record.version = Some(entity.version);
                         apply_issue_update(state, record)
@@ -3109,6 +3109,22 @@ fn issue_to_record(record: IssueSummaryRecord) -> Option<IssueRecord> {
         description: issue.description,
         creator: issue.creator,
         progress: String::new(),
+        status: issue.status,
+        assignee: issue.assignee,
+        dependencies: issue.dependencies,
+        patches: issue.patches,
+        version: None,
+    })
+}
+
+fn issue_version_to_record(record: IssueVersionRecord) -> Option<IssueRecord> {
+    let issue = record.issue;
+    Some(IssueRecord {
+        id: record.issue_id,
+        issue_type: issue.issue_type,
+        description: issue.description,
+        creator: issue.creator,
+        progress: issue.progress,
         status: issue.status,
         assignee: issue.assignee,
         dependencies: issue.dependencies,
@@ -6531,5 +6547,61 @@ mod tests {
             state.issue_index.get(&issue_id("i-remove-reinsert")),
             Some(&0)
         );
+    }
+
+    #[test]
+    fn issue_version_to_record_preserves_progress() {
+        let version_record = IssueVersionRecord::new(
+            issue_id("i-progress"),
+            1,
+            Utc::now(),
+            Issue::new(
+                IssueType::Task,
+                "test issue".to_string(),
+                Username::from("alice"),
+                "Investigating root cause".to_string(),
+                IssueStatus::InProgress,
+                Some("bob".to_string()),
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+            ),
+            None,
+        );
+
+        let record = issue_version_to_record(version_record).expect("should produce a record");
+        assert_eq!(record.id, issue_id("i-progress"));
+        assert_eq!(record.progress, "Investigating root cause");
+        assert_eq!(record.status, IssueStatus::InProgress);
+        assert_eq!(record.assignee, Some("bob".to_string()));
+    }
+
+    #[test]
+    fn issue_to_record_summary_has_empty_progress() {
+        let summary_record = IssueSummaryRecord::new(
+            issue_id("i-summary"),
+            1,
+            Utc::now(),
+            metis_common::issues::IssueSummary::from(&Issue::new(
+                IssueType::Task,
+                "test issue".to_string(),
+                Username::from("alice"),
+                "Some progress text".to_string(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+            )),
+            None,
+        );
+
+        let record = issue_to_record(summary_record).expect("should produce a record");
+        assert_eq!(record.id, issue_id("i-summary"));
+        assert_eq!(record.progress, "");
     }
 }
