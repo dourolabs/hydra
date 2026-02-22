@@ -209,11 +209,7 @@ fn write_issue_fields_pretty(fields: &IssueDisplayFields, writer: &mut impl Writ
         fields.issue_id, fields.issue_type, fields.status
     )?;
     writeln!(writer, "Creator: {}", fields.creator)?;
-    writeln!(
-        writer,
-        "Assignee: {}",
-        fields.assignee.unwrap_or("-")
-    )?;
+    writeln!(writer, "Assignee: {}", fields.assignee.unwrap_or("-"))?;
     writeln!(writer, "Description:")?;
     if fields.description.trim().is_empty() {
         writeln!(writer, "  -")?;
