@@ -20,15 +20,15 @@ pub struct CascadeIssueStatusAutomation {
 }
 
 impl CascadeIssueStatusAutomation {
-    pub fn new(params: Option<&toml::Value>) -> Result<Self, String> {
+    pub fn new(params: Option<&serde_yaml_ng::Value>) -> Result<Self, String> {
         let trigger_statuses = if let Some(params) = params {
-            let table = params
-                .as_table()
-                .ok_or("cascade_issue_status params must be a table")?;
-            if let Some(statuses) = table.get("trigger_statuses") {
+            let mapping = params
+                .as_mapping()
+                .ok_or("cascade_issue_status params must be a mapping")?;
+            if let Some(statuses) = mapping.get("trigger_statuses") {
                 let arr = statuses
-                    .as_array()
-                    .ok_or("trigger_statuses must be an array")?;
+                    .as_sequence()
+                    .ok_or("trigger_statuses must be a sequence")?;
                 let mut result = Vec::new();
                 for v in arr {
                     let s = v
@@ -712,12 +712,8 @@ mod tests {
 
     #[tokio::test]
     async fn custom_trigger_statuses_from_config() {
-        let mut table = toml::map::Map::new();
-        table.insert(
-            "trigger_statuses".to_string(),
-            toml::Value::Array(vec![toml::Value::String("closed".to_string())]),
-        );
-        let params = toml::Value::Table(table);
+        let params: serde_yaml_ng::Value =
+            serde_yaml_ng::from_str("trigger_statuses:\n  - closed").unwrap();
 
         let automation = CascadeIssueStatusAutomation::new(Some(&params)).unwrap();
         assert_eq!(automation.trigger_statuses, vec![IssueStatus::Closed]);

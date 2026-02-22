@@ -19,7 +19,7 @@ const AUTOMATION_NAME: &str = "close_merge_request_issues";
 pub struct CloseMergeRequestIssuesAutomation;
 
 impl CloseMergeRequestIssuesAutomation {
-    pub fn new(_params: Option<&toml::Value>) -> Result<Self, String> {
+    pub fn new(_params: Option<&serde_yaml_ng::Value>) -> Result<Self, String> {
         Ok(Self)
     }
 }

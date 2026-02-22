@@ -42,7 +42,7 @@ impl AppConfig {
                 resolved_path.display()
             )
         })?;
-        let config: Self = toml::from_str(&contents)
+        let config: Self = serde_yaml_ng::from_str(&contents)
             .with_context(|| format!("Invalid configuration in '{}'", resolved_path.display()))?;
         config
             .validate()
@@ -673,14 +673,14 @@ mod tests {
     #[test]
     fn config_requires_github_app_private_key() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.toml");
+        let path = temp_dir.path().join("config.yaml");
         fs::write(
             &path,
             r#"
-[github_app]
-app_id = 1
-client_id = "client-id"
-client_secret = "client-secret"
+github_app:
+  app_id: 1
+  client_id: "client-id"
+  client_secret: "client-secret"
 "#,
         )?;
 
@@ -693,34 +693,33 @@ client_secret = "client-secret"
     #[test]
     fn config_allows_empty_allowed_orgs() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.toml");
+        let path = temp_dir.path().join("config.yaml");
         fs::write(
             &path,
             r#"
-[metis]
-allowed_orgs = []
+metis:
+  allowed_orgs: []
 
-[job]
-default_image = "metis-worker:latest"
-cpu_limit = "500m"
-memory_limit = "1Gi"
-cpu_request = "500m"
-memory_request = "1Gi"
+job:
+  default_image: "metis-worker:latest"
+  cpu_limit: "500m"
+  memory_limit: "1Gi"
+  cpu_request: "500m"
+  memory_request: "1Gi"
 
-[github_app]
-app_id = 1
-client_id = "client-id"
-client_secret = "client-secret"
-api_base_url = "https://api.github.com"
-oauth_base_url = "https://github.com"
-private_key = "private-key"
+github_app:
+  app_id: 1
+  client_id: "client-id"
+  client_secret: "client-secret"
+  api_base_url: "https://api.github.com"
+  oauth_base_url: "https://github.com"
+  private_key: "private-key"
 
-[background]
-assignment_agent = "agent-a"
-
-[[background.agent_queues]]
-name = "agent-a"
-prompt = "prompt"
+background:
+  assignment_agent: "agent-a"
+  agent_queues:
+    - name: "agent-a"
+      prompt: "prompt"
 "#,
         )?;
 
@@ -733,34 +732,33 @@ prompt = "prompt"
     #[test]
     fn config_rejects_blank_allowed_orgs() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.toml");
+        let path = temp_dir.path().join("config.yaml");
         fs::write(
             &path,
             r#"
-[metis]
-allowed_orgs = [" ", ""]
+metis:
+  allowed_orgs: [" ", ""]
 
-[job]
-default_image = "metis-worker:latest"
-cpu_limit = "500m"
-memory_limit = "1Gi"
-cpu_request = "500m"
-memory_request = "1Gi"
+job:
+  default_image: "metis-worker:latest"
+  cpu_limit: "500m"
+  memory_limit: "1Gi"
+  cpu_request: "500m"
+  memory_request: "1Gi"
 
-[github_app]
-app_id = 1
-client_id = "client-id"
-client_secret = "client-secret"
-api_base_url = "https://api.github.com"
-oauth_base_url = "https://github.com"
-private_key = "private-key"
+github_app:
+  app_id: 1
+  client_id: "client-id"
+  client_secret: "client-secret"
+  api_base_url: "https://api.github.com"
+  oauth_base_url: "https://github.com"
+  private_key: "private-key"
 
-[background]
-assignment_agent = "agent-a"
-
-[[background.agent_queues]]
-name = "agent-a"
-prompt = "prompt"
+background:
+  assignment_agent: "agent-a"
+  agent_queues:
+    - name: "agent-a"
+      prompt: "prompt"
 "#,
         )?;
 
@@ -776,30 +774,29 @@ prompt = "prompt"
     #[test]
     fn config_requires_assignment_agent() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.toml");
+        let path = temp_dir.path().join("config.yaml");
         fs::write(
             &path,
             r#"
-[job]
-default_image = "metis-worker:latest"
-cpu_limit = "500m"
-memory_limit = "1Gi"
-cpu_request = "500m"
-memory_request = "1Gi"
+job:
+  default_image: "metis-worker:latest"
+  cpu_limit: "500m"
+  memory_limit: "1Gi"
+  cpu_request: "500m"
+  memory_request: "1Gi"
 
-[github_app]
-app_id = 1
-client_id = "client-id"
-client_secret = "client-secret"
-api_base_url = "https://api.github.com"
-oauth_base_url = "https://github.com"
-private_key = "private-key"
+github_app:
+  app_id: 1
+  client_id: "client-id"
+  client_secret: "client-secret"
+  api_base_url: "https://api.github.com"
+  oauth_base_url: "https://github.com"
+  private_key: "private-key"
 
-[background]
-
-[[background.agent_queues]]
-name = "agent-a"
-prompt = "prompt"
+background:
+  agent_queues:
+    - name: "agent-a"
+      prompt: "prompt"
 "#,
         )?;
 
@@ -815,31 +812,30 @@ prompt = "prompt"
     #[test]
     fn config_rejects_unknown_assignment_agent() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.toml");
+        let path = temp_dir.path().join("config.yaml");
         fs::write(
             &path,
             r#"
-[job]
-default_image = "metis-worker:latest"
-cpu_limit = "500m"
-memory_limit = "1Gi"
-cpu_request = "500m"
-memory_request = "1Gi"
+job:
+  default_image: "metis-worker:latest"
+  cpu_limit: "500m"
+  memory_limit: "1Gi"
+  cpu_request: "500m"
+  memory_request: "1Gi"
 
-[github_app]
-app_id = 1
-client_id = "client-id"
-client_secret = "client-secret"
-api_base_url = "https://api.github.com"
-oauth_base_url = "https://github.com"
-private_key = "private-key"
+github_app:
+  app_id: 1
+  client_id: "client-id"
+  client_secret: "client-secret"
+  api_base_url: "https://api.github.com"
+  oauth_base_url: "https://github.com"
+  private_key: "private-key"
 
-[background]
-assignment_agent = "agent-b"
-
-[[background.agent_queues]]
-name = "agent-a"
-prompt = "prompt"
+background:
+  assignment_agent: "agent-b"
+  agent_queues:
+    - name: "agent-a"
+      prompt: "prompt"
 "#,
         )?;
 
