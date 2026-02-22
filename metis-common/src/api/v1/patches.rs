@@ -551,11 +551,11 @@ impl From<&PatchVersionRecord> for PatchSummaryRecord {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ListPatchesResponse {
-    pub patches: Vec<PatchVersionRecord>,
+    pub patches: Vec<PatchSummaryRecord>,
 }
 
 impl ListPatchesResponse {
-    pub fn new(patches: Vec<PatchVersionRecord>) -> Self {
+    pub fn new(patches: Vec<PatchSummaryRecord>) -> Self {
         Self { patches }
     }
 }

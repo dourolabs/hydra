@@ -282,7 +282,8 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
     // The test actor is a task worker whose creator is "test-creator", so the
     // route handler populates patch.creator from Actor.creator.
     expected_patch.creator = "test-creator".into();
-    assert_eq!(patch_results.patches[0].patch, expected_patch);
+    let expected_summary = metis_common::api::v1::patches::PatchSummary::from(&expected_patch);
+    assert_eq!(patch_results.patches[0].patch, expected_summary);
     Ok(())
 }
 
