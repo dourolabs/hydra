@@ -1240,7 +1240,7 @@ mod tests {
         });
         server.mock(|when, then| {
             when.method(GET)
-                .path(format!("/v1/documents/{}", document_id));
+                .path(format!("/v1/documents/{document_id}"));
             then.status(200).json_body_obj(&record);
         });
         let client = mock_client(&server);
@@ -1384,7 +1384,7 @@ mod tests {
             then.status(200).json_body_obj(&response);
         });
         server.mock(|when, then| {
-            when.method(GET).path(format!("/v1/documents/{}", doc_id));
+            when.method(GET).path(format!("/v1/documents/{doc_id}"));
             then.status(200).json_body_obj(&record);
         });
         let client = mock_client(&server);
@@ -1460,8 +1460,7 @@ mod tests {
             then.status(200).json_body_obj(&response);
         });
         server.mock(|when, then| {
-            when.method(GET)
-                .path(format!("/v1/documents/{}", pathed_id));
+            when.method(GET).path(format!("/v1/documents/{pathed_id}"));
             then.status(200).json_body_obj(&pathed);
         });
         let client = mock_client(&server);
@@ -1504,7 +1503,7 @@ mod tests {
             then.status(200).json_body_obj(&response);
         });
         server.mock(|when, then| {
-            when.method(GET).path(format!("/v1/documents/{}", doc_id));
+            when.method(GET).path(format!("/v1/documents/{doc_id}"));
             then.status(200).json_body_obj(&record);
         });
         let client = mock_client(&server);
@@ -1579,12 +1578,11 @@ mod tests {
             then.status(200).json_body_obj(&response);
         });
         server.mock(|when, then| {
-            when.method(GET).path(format!("/v1/documents/{}", doc_id));
+            when.method(GET).path(format!("/v1/documents/{doc_id}"));
             then.status(200).json_body_obj(&record);
         });
         server.mock(|when, then| {
-            when.method(GET)
-                .path(format!("/v1/documents/{}", removed_id));
+            when.method(GET).path(format!("/v1/documents/{removed_id}"));
             then.status(200).json_body_obj(&removed_record);
         });
         let client = mock_client(&server);
@@ -2248,7 +2246,7 @@ mod tests {
             then.status(200).json_body_obj(&response);
         });
         server.mock(|when, then| {
-            when.method(GET).path(format!("/v1/documents/{}", doc_id));
+            when.method(GET).path(format!("/v1/documents/{doc_id}"));
             then.status(200).json_body_obj(&record);
         });
         let client = mock_client(&server);
