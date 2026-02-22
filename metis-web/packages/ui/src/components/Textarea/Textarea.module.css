@@ -46,3 +46,10 @@
   font-size: var(--font-size-xs);
   color: var(--color-status-failed);
 }
+
+/* Prevent iOS Safari auto-zoom on textarea focus */
+@media (max-width: 768px) {
+  .textarea {
+    font-size: 16px;
+  }
+}

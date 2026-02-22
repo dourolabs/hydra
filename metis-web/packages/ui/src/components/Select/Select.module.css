@@ -50,3 +50,10 @@
   pointer-events: none;
   font-size: var(--font-size-sm);
 }
+
+/* Prevent iOS Safari auto-zoom on select focus */
+@media (max-width: 768px) {
+  .select {
+    font-size: 16px;
+  }
+}

@@ -46,3 +46,10 @@
   font-size: var(--font-size-xs);
   color: var(--color-status-failed);
 }
+
+/* Prevent iOS Safari auto-zoom on input focus */
+@media (max-width: 768px) {
+  .input {
+    font-size: 16px;
+  }
+}
