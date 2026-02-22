@@ -208,11 +208,11 @@ impl From<&DocumentVersionRecord> for DocumentSummaryRecord {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ListDocumentsResponse {
-    pub documents: Vec<DocumentVersionRecord>,
+    pub documents: Vec<DocumentSummaryRecord>,
 }
 
 impl ListDocumentsResponse {
-    pub fn new(documents: Vec<DocumentVersionRecord>) -> Self {
+    pub fn new(documents: Vec<DocumentSummaryRecord>) -> Self {
         Self { documents }
     }
 }

@@ -10,15 +10,15 @@ use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
 use metis_common::{
     api::v1::{
-        documents::DocumentVersionRecord,
+        documents::{DocumentSummaryRecord, DocumentVersionRecord},
         error::ApiError,
         events::{
             EntityEventData, EventsQuery, HeartbeatEventData, LAST_EVENT_ID_HEADER,
             ResyncEventData, SnapshotEventData, SseEventType,
         },
-        issues::IssueVersionRecord,
-        jobs::JobVersionRecord,
-        patches::PatchVersionRecord,
+        issues::{IssueSummaryRecord, IssueVersionRecord},
+        jobs::{JobSummaryRecord, JobVersionRecord},
+        patches::{PatchSummaryRecord, PatchVersionRecord},
     },
     ids::{DocumentId, IssueId, PatchId, TaskId},
 };
@@ -305,8 +305,9 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
     }
 }
 
-/// Serializes the `new` entity from a `MutationPayload` into a version record
-/// JSON value matching the shape returned by the corresponding GET endpoint.
+/// Serializes the `new` entity from a `MutationPayload` into a summary record
+/// JSON value. SSE events emit summary records (not full entities) to keep
+/// payloads small and consistent with list endpoint responses.
 async fn serialize_entity(
     payload: &Arc<MutationPayload>,
     entity_id: &str,
@@ -324,7 +325,8 @@ async fn serialize_entity(
                 api_issue,
                 Some(payload.actor().clone()),
             );
-            serde_json::to_value(record).ok()?
+            let summary = IssueSummaryRecord::from(&record);
+            serde_json::to_value(summary).ok()?
         }
         MutationPayload::Patch { new, .. } => {
             let api_patch: metis_common::api::v1::patches::Patch = new.clone().into();
@@ -335,7 +337,8 @@ async fn serialize_entity(
                 api_patch,
                 Some(payload.actor().clone()),
             );
-            serde_json::to_value(record).ok()?
+            let summary = PatchSummaryRecord::from(&record);
+            serde_json::to_value(summary).ok()?
         }
         MutationPayload::Job { new, .. } => {
             let task_id: TaskId = entity_id.parse().ok()?;
@@ -352,7 +355,8 @@ async fn serialize_entity(
                 api_task,
                 Some(payload.actor().clone()),
             );
-            serde_json::to_value(record).ok()?
+            let summary = JobSummaryRecord::from(&record);
+            serde_json::to_value(summary).ok()?
         }
         MutationPayload::Document { new, .. } => {
             let api_doc: metis_common::api::v1::documents::Document = new.clone().into();
@@ -363,7 +367,8 @@ async fn serialize_entity(
                 api_doc,
                 Some(payload.actor().clone()),
             );
-            serde_json::to_value(record).ok()?
+            let summary = DocumentSummaryRecord::from(&record);
+            serde_json::to_value(summary).ok()?
         }
     };
     Some(value)
@@ -669,7 +674,7 @@ mod tests {
         let entity = data.entity.expect("entity should be present");
         let obj = entity.as_object().expect("entity should be a JSON object");
 
-        // Verify the entity has the shape of an IssueVersionRecord.
+        // Verify the entity has the shape of an IssueSummaryRecord.
         assert_eq!(
             obj.get("issue_id").unwrap().as_str().unwrap(),
             issue_id.to_string()
@@ -677,7 +682,7 @@ mod tests {
         assert_eq!(obj.get("version").unwrap().as_u64().unwrap(), 1);
         assert!(obj.contains_key("timestamp"));
 
-        // Verify the nested issue data.
+        // Verify the nested issue summary data.
         let issue_obj = obj.get("issue").expect("should contain issue field");
         assert_eq!(
             issue_obj.get("description").unwrap().as_str().unwrap(),

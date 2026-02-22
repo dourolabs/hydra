@@ -763,11 +763,11 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ListIssuesResponse {
-    pub issues: Vec<IssueVersionRecord>,
+    pub issues: Vec<IssueSummaryRecord>,
 }
 
 impl ListIssuesResponse {
-    pub fn new(issues: Vec<IssueVersionRecord>) -> Self {
+    pub fn new(issues: Vec<IssueSummaryRecord>) -> Self {
         Self { issues }
     }
 }

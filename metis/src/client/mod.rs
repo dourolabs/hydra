@@ -978,11 +978,14 @@ impl MetisClient {
         );
         let response = self.list_documents(&query).await?;
 
-        response
+        let summary = response
             .documents
             .into_iter()
             .next()
-            .ok_or_else(|| anyhow!("document with path '{path}' not found"))
+            .ok_or_else(|| anyhow!("document with path '{path}' not found"))?;
+
+        self.get_document(&summary.document_id, include_deleted)
+            .await
     }
 
     /// Call `GET /v1/documents` to list documents.

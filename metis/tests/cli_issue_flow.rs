@@ -49,13 +49,17 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     user.cli(&["issues", "list"]).await?;
 
     // Verify the created issue inherited job settings from the parent.
+    // The list endpoint returns summary records without job_settings,
+    // so we find the issue ID from the list and fetch the full record.
     let issues = user.list_issues().await?.issues;
-    let created = issues
+    let created_summary = issues
         .iter()
         .find(|issue| issue.issue.description == description)
         .ok_or_else(|| anyhow!("expected issue to be created"))?;
 
-    assert_eq!(created.issue.status, IssueStatus::Open);
+    assert_eq!(created_summary.issue.status, IssueStatus::Open);
+
+    let created = user.get_issue(&created_summary.issue_id).await?;
     assert_eq!(
         created.issue.job_settings.repo_name,
         Some(metis_common::RepoName::from_str("acme/cli-flow").unwrap())

@@ -335,7 +335,8 @@ export class MetisApiClient {
   }
 
   /**
-   * Fetch a document by its exact path using the list endpoint with path_is_exact=true.
+   * Fetch a document by its exact path using the list endpoint with path_is_exact=true,
+   * then fetch the full document record by ID.
    * Mirrors the Rust client's `get_document_by_path` approach.
    */
   async getDocumentByPath(
@@ -350,11 +351,11 @@ export class MetisApiClient {
       include_deleted: includeDeleted ?? null,
     };
     const response = await this.listDocuments(query);
-    const doc = response.documents[0];
-    if (!doc) {
+    const summary = response.documents[0];
+    if (!summary) {
       throw new ApiError(404, `document with path '${path}' not found`);
     }
-    return doc;
+    return this.getDocument(summary.document_id, includeDeleted);
   }
 
   /** GET /v1/documents */

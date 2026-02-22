@@ -87,7 +87,7 @@ mod tests {
     };
     use chrono::Utc;
     use httpmock::prelude::*;
-    use metis_common::jobs::{JobVersionRecord, ListJobsResponse, Task};
+    use metis_common::jobs::{JobSummaryRecord, JobVersionRecord, ListJobsResponse, Task};
     use metis_common::task_status::Status;
     use metis_common::users::Username;
     use reqwest::Client as HttpClient;
@@ -103,8 +103,8 @@ mod tests {
         ids::issue_id(value)
     }
 
-    fn job_record(id: &str) -> JobVersionRecord {
-        JobVersionRecord::new(
+    fn job_record(id: &str) -> JobSummaryRecord {
+        let record = JobVersionRecord::new(
             task_id(id),
             0,
             Utc::now(),
@@ -128,7 +128,8 @@ mod tests {
                 None,
             ),
             None,
-        )
+        );
+        JobSummaryRecord::from(&record)
     }
 
     #[tokio::test]

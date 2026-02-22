@@ -1,4 +1,4 @@
-import type { IssueVersionRecord, IssueStatus } from "@metis/api";
+import type { IssueSummaryRecord, IssueStatus } from "@metis/api";
 
 export interface BlockedStatus {
   blocked: boolean;
@@ -25,8 +25,8 @@ const HARD_BLOCKED_STATUSES: ReadonlySet<IssueStatus> = new Set([
  *   a subset of blocked.
  */
 export function computeBlockedStatus(
-  record: IssueVersionRecord,
-  issueMap: Map<string, IssueVersionRecord>,
+  record: IssueSummaryRecord,
+  issueMap: Map<string, IssueSummaryRecord>,
 ): BlockedStatus {
   const blockedBy: string[] = [];
   const hardBlockedBy: string[] = [];

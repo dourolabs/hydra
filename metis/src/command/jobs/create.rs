@@ -247,7 +247,10 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::Mock;
     use metis_common::{
-        jobs::{BundleSpec, CreateJobResponse, JobVersionRecord, ListJobsResponse, Task},
+        jobs::{
+            BundleSpec, CreateJobResponse, JobSummaryRecord, JobVersionRecord, ListJobsResponse,
+            Task,
+        },
         task_status::{Status, TaskError},
         users::Username,
     };
@@ -341,10 +344,8 @@ mod tests {
         });
         let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
-        let completed_jobs = ListJobsResponse::new(vec![job_record_with_status(
-            job_id.as_ref(),
-            Status::Complete,
-            None,
+        let completed_jobs = ListJobsResponse::new(vec![JobSummaryRecord::from(
+            &job_record_with_status(job_id.as_ref(), Status::Complete, None),
         )]);
         let list_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/jobs");

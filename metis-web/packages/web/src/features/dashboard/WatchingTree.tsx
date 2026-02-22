@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge, JobStatusIndicator } from "@metis/ui";
 import type { JobSummary } from "@metis/ui";
-import type { IssueVersionRecord, JobVersionRecord } from "@metis/api";
+import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import {
   buildIssueTree,
   type IssueTreeNode,
@@ -13,8 +13,8 @@ import { isNodeActive, pruneTree } from "./watchingUtils";
 import styles from "./WatchingTree.module.css";
 
 interface WatchingTreeProps {
-  issues: IssueVersionRecord[];
-  jobsByIssue: Map<string, JobVersionRecord[]>;
+  issues: IssueSummaryRecord[];
+  jobsByIssue: Map<string, JobSummaryRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
 }
@@ -50,7 +50,7 @@ function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
 
 function collectActiveChildren(
   node: IssueTreeNode,
-  jobsByIssue: Map<string, JobVersionRecord[]>,
+  jobsByIssue: Map<string, JobSummaryRecord[]>,
 ): IssueTreeNode[] {
   const result: IssueTreeNode[] = [];
   const seen = new Set<string>();
@@ -70,7 +70,7 @@ function collectActiveChildren(
   return result;
 }
 
-function toJobSummary(record: JobVersionRecord): JobSummary {
+function toJobSummary(record: JobSummaryRecord): JobSummary {
   const status = record.task.status === "unknown" ? "created" : record.task.status;
   return {
     jobId: record.job_id,
@@ -99,7 +99,7 @@ function TreeNodeRow({
   hasChildren,
 }: {
   node: IssueTreeNode;
-  jobsByIssue: Map<string, JobVersionRecord[]>;
+  jobsByIssue: Map<string, JobSummaryRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
   onJobClick: (issueId: string, jobId: string) => void;
@@ -168,7 +168,7 @@ function RootTreeNode({
   onJobClick,
 }: {
   node: IssueTreeNode;
-  jobsByIssue: Map<string, JobVersionRecord[]>;
+  jobsByIssue: Map<string, JobSummaryRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
   onJobClick: (issueId: string, jobId: string) => void;
@@ -240,7 +240,7 @@ function ChildNodes({
   onJobClick,
 }: {
   nodes: IssueTreeNode[];
-  jobsByIssue: Map<string, JobVersionRecord[]>;
+  jobsByIssue: Map<string, JobSummaryRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
   onJobClick: (issueId: string, jobId: string) => void;

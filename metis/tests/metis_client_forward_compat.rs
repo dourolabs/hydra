@@ -55,7 +55,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let issue_record_for_list = issue_record_body.clone();
     let patch_record_body = forward_patch_json(&patch_id, &repo_name, &job_id, now);
     let patch_record_for_get = patch_record_body.clone();
-    let patch_record_for_list = patch_record_body.clone();
+    let patch_summary_for_list = forward_patch_summary_json(&patch_id, &repo_name, &job_id, now);
     let document_id = DocumentId::new();
     let document_record_body = forward_document_json(&document_id, &job_id);
     let document_record_for_get = document_record_body.clone();
@@ -257,11 +257,11 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         then.status(200).json_body(patch_record_for_get_clone);
     });
 
-    let patch_record_for_list_clone = patch_record_for_list.clone();
+    let patch_summary_for_list_clone = patch_summary_for_list.clone();
     server.mock(move |when, then| {
         when.method(GET).path("/v1/patches");
         then.status(200)
-            .json_body(json!({ "patches": [patch_record_for_list_clone], "extra": "list" }));
+            .json_body(json!({ "patches": [patch_summary_for_list_clone], "extra": "list" }));
     });
 
     let document_id_for_create_clone = document_id_for_create.clone();
@@ -415,7 +415,9 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let jobs = client.list_jobs(&SearchJobsQuery::default()).await?;
     let listed_job = jobs.jobs.first().expect("job from list");
-    assert!(matches!(listed_job.task.context, BundleSpec::Unknown));
+    // The list endpoint returns JobSummaryRecord, which does not carry
+    // the context field. Verify it is still accessible as a summary.
+    assert_eq!(listed_job.task.prompt, "future job");
 
     let fetched_job = client.get_job(&job_id).await?;
     assert!(matches!(fetched_job.task.context, BundleSpec::Unknown));
@@ -720,6 +722,48 @@ fn forward_patch_json(
             "reviews": [
                 { "contents": "looks ok", "is_approved": true, "author": "reviewer", "submitted_at": now, "confidence": "medium" }
             ],
+            "service_repo_name": repo_name,
+            "github": {
+                "owner": "dourolabs",
+                "repo": "metis",
+                "number": 1,
+                "head_ref": "future-head",
+                "base_ref": "main",
+                "url": "https://example.com/pr/1",
+                "ci": {
+                    "state": "flaky",
+                    "failure": {
+                        "name": "lint",
+                        "summary": "lint failed",
+                        "details_url": "https://example.com/lint",
+                        "retry_after": 30
+                    },
+                    "extra": true
+                },
+                "unexpected": "field"
+            },
+            "bonus": "field"
+        }
+    })
+}
+
+fn forward_patch_summary_json(
+    patch_id: &PatchId,
+    repo_name: &RepoName,
+    job_id: &TaskId,
+    now: DateTime<Utc>,
+) -> Value {
+    json!({
+        "patch_id": patch_id,
+        "version": 0,
+        "timestamp": now,
+        "patch": {
+            "title": "future patch",
+            "status": "stale",
+            "is_automatic_backup": false,
+            "created_by": job_id,
+            "creator": "test-creator",
+            "review_summary": { "count": 1, "approved": true },
             "service_repo_name": repo_name,
             "github": {
                 "owner": "dourolabs",

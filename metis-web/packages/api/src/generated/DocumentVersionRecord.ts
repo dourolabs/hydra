@@ -3,4 +3,10 @@ import type { ActorRef } from "./ActorRef";
 import type { Document } from "./Document";
 import type { DocumentId } from "./DocumentId";
 
-export type DocumentVersionRecord = { document_id: DocumentId, version: bigint, timestamp: string, document: Document, actor?: ActorRef | null, };
+export type DocumentVersionRecord = {
+  document_id: DocumentId;
+  version: bigint;
+  timestamp: string;
+  document: Document;
+  actor?: ActorRef | null;
+};

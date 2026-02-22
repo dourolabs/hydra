@@ -5,10 +5,10 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::ValueEnum;
 use metis_common::{
     agents::AgentRecord,
-    documents::DocumentVersionRecord,
-    issues::{Issue, IssueVersionRecord},
-    jobs::{JobVersionRecord, Task},
-    patches::{PatchStatus, PatchVersionRecord},
+    documents::{DocumentSummaryRecord, DocumentVersionRecord},
+    issues::{Issue, IssueSummaryRecord, IssueVersionRecord},
+    jobs::{JobSummary, JobSummaryRecord, JobVersionRecord, Task},
+    patches::{PatchStatus, PatchSummaryRecord, PatchVersionRecord},
     repositories::RepositoryRecord,
     task_status::{Status, TaskError},
     whoami::ActorIdentity,
@@ -131,6 +131,193 @@ pub fn render_document_records(
         ResolvedOutputFormat::Jsonl => render_document_records_jsonl(documents, writer),
         ResolvedOutputFormat::Pretty => {
             render_document_records_pretty(documents, full_output, writer)
+        }
+    }
+}
+
+// --- Summary record render functions (for list commands) ---
+
+pub fn render_issue_summary_records(
+    format: ResolvedOutputFormat,
+    issues: &[IssueSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            for issue in issues {
+                serde_json::to_writer(&mut *writer, issue)?;
+                writer.write_all(b"\n")?;
+            }
+            writer.flush()?;
+            Ok(())
+        }
+        ResolvedOutputFormat::Pretty => {
+            for (index, issue_record) in issues.iter().enumerate() {
+                let issue = &issue_record.issue;
+                writeln!(
+                    writer,
+                    "Issue {} ({}, {})",
+                    issue_record.issue_id, issue.issue_type, issue.status
+                )?;
+                writeln!(writer, "Creator: {}", issue.creator.as_ref())?;
+                writeln!(
+                    writer,
+                    "Assignee: {}",
+                    issue.assignee.as_deref().unwrap_or("-")
+                )?;
+                writeln!(writer, "Description:")?;
+                if issue.description.trim().is_empty() {
+                    writeln!(writer, "  -")?;
+                } else {
+                    for line in issue.description.lines() {
+                        writeln!(writer, "  {line}")?;
+                    }
+                }
+                if issue.dependencies.is_empty() {
+                    writeln!(writer, "Dependencies: none")?;
+                } else {
+                    writeln!(writer, "Dependencies:")?;
+                    for dependency in &issue.dependencies {
+                        writeln!(
+                            writer,
+                            "  - {} {}",
+                            dependency.dependency_type, dependency.issue_id
+                        )?;
+                    }
+                }
+                if index + 1 < issues.len() {
+                    writeln!(writer)?;
+                }
+            }
+            writer.flush()?;
+            Ok(())
+        }
+    }
+}
+
+pub fn render_patch_summary_records(
+    format: ResolvedOutputFormat,
+    patches: &[PatchSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            for patch in patches {
+                serde_json::to_writer(&mut *writer, patch)?;
+                writer.write_all(b"\n")?;
+            }
+            writer.flush()?;
+            Ok(())
+        }
+        ResolvedOutputFormat::Pretty => {
+            for record in patches {
+                let status = format_patch_status(record.patch.status);
+                writeln!(
+                    writer,
+                    "Patch {} [{}]: {}",
+                    record.patch_id, status, record.patch.title
+                )?;
+                writeln!(
+                    writer,
+                    "Repository: {}",
+                    record.patch.service_repo_name.as_str()
+                )?;
+                writeln!(writer)?;
+            }
+            writer.flush()?;
+            Ok(())
+        }
+    }
+}
+
+pub fn render_job_summary_records(
+    format: ResolvedOutputFormat,
+    jobs: &[JobSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            for job in jobs {
+                serde_json::to_writer(&mut *writer, job)?;
+                writer.write_all(b"\n")?;
+            }
+            writer.flush()?;
+            Ok(())
+        }
+        ResolvedOutputFormat::Pretty => {
+            if jobs.is_empty() {
+                writeln!(writer, "No Metis jobs found.")?;
+                writer.flush()?;
+                return Ok(());
+            }
+            let terminal_width = current_terminal_width();
+            let (plain_header, colored_header) = header_row();
+            writeln!(writer, "{colored_header}")?;
+            writeln!(writer, "{}", "-".repeat(plain_header.len()))?;
+            let now = Utc::now();
+            for job in jobs {
+                let status_display = format_status(&job.task.status);
+                let runtime = format_runtime_summary(&job.task, now).unwrap_or_else(|| "-".into());
+                let notes = job_summary_note(job).unwrap_or_else(|| "-".into());
+                let cells = job_row_cells(job.job_id.as_ref(), status_display, &runtime);
+                let plain_prefix = job_row_prefix(&cells);
+                let colored_prefix = colored_job_row_prefix(&cells, &job.task.status);
+                for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
+                    .into_iter()
+                    .enumerate()
+                {
+                    if index == 0 {
+                        let note_body = line.strip_prefix(&plain_prefix).unwrap_or(&line);
+                        writeln!(writer, "{colored_prefix}{note_body}")?;
+                    } else {
+                        writeln!(writer, "{line}")?;
+                    }
+                }
+            }
+            writer.flush()?;
+            Ok(())
+        }
+    }
+}
+
+pub fn render_document_summary_records(
+    format: ResolvedOutputFormat,
+    documents: &[DocumentSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            for document in documents {
+                serde_json::to_writer(&mut *writer, document)?;
+                writer.write_all(b"\n")?;
+            }
+            writer.flush()?;
+            Ok(())
+        }
+        ResolvedOutputFormat::Pretty => {
+            if documents.is_empty() {
+                writeln!(writer, "No documents found.")?;
+                writer.flush()?;
+                return Ok(());
+            }
+            for (index, record) in documents.iter().enumerate() {
+                writeln!(writer, "Document {}", record.document_id)?;
+                writeln!(writer, "Title: {}", record.document.title)?;
+                let path = record.document.path.as_deref().unwrap_or("-");
+                writeln!(writer, "Path: {path}")?;
+                let created_by = record
+                    .document
+                    .created_by
+                    .as_ref()
+                    .map(|id| id.as_ref())
+                    .unwrap_or("-");
+                writeln!(writer, "Created by: {created_by}")?;
+                if index + 1 < documents.len() {
+                    writeln!(writer)?;
+                }
+            }
+            writer.flush()?;
+            Ok(())
         }
     }
 }
@@ -563,6 +750,44 @@ fn format_status(status: &Status) -> &'static str {
 
 fn job_note(job: &JobVersionRecord) -> Option<String> {
     job.task.error.as_ref().map(format_task_error)
+}
+
+fn job_summary_note(job: &JobSummaryRecord) -> Option<String> {
+    job.task.error.as_ref().map(format_task_error)
+}
+
+pub(crate) fn format_runtime_summary(task: &JobSummary, now: DateTime<Utc>) -> Option<String> {
+    match task.status {
+        Status::Running => {
+            let started = task.start_time.or(task.creation_time)?;
+            let duration = if now < started {
+                ChronoDuration::zero()
+            } else {
+                now - started
+            };
+            Some(format_duration(duration))
+        }
+        Status::Pending | Status::Created => {
+            let created = task.creation_time?;
+            let duration = if now < created {
+                ChronoDuration::zero()
+            } else {
+                now - created
+            };
+            Some(format_duration(duration))
+        }
+        Status::Complete | Status::Failed => {
+            let started = task.start_time.or(task.creation_time)?;
+            let ended = task.end_time?;
+            let duration = if ended < started {
+                ChronoDuration::zero()
+            } else {
+                ended - started
+            };
+            Some(format_duration(duration))
+        }
+        _ => None,
+    }
 }
 
 fn format_task_error(error: &TaskError) -> String {

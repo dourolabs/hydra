@@ -1,14 +1,17 @@
 use crate::{
     client::MetisClientInterface,
-    command::output::{render_document_records, CommandContext, ResolvedOutputFormat},
+    command::output::{
+        render_document_records, render_document_summary_records, CommandContext,
+        ResolvedOutputFormat,
+    },
 };
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::{
     constants::{ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ID},
     documents::{
-        Document as DocumentPayload, DocumentVersionRecord, SearchDocumentsQuery,
-        UpsertDocumentRequest,
+        Document as DocumentPayload, DocumentSummaryRecord, DocumentVersionRecord,
+        SearchDocumentsQuery, UpsertDocumentRequest,
     },
     versioning::VersionNumber,
     DocumentId, RelativeVersionNumber, TaskId,
@@ -172,9 +175,8 @@ pub async fn run(
 ) -> Result<()> {
     match command {
         DocumentsCommand::List(args) => {
-            let full_output = args.full;
             let documents = list_documents(client, args).await?;
-            write_documents_output(context.output_format, &documents, full_output)?;
+            write_documents_summary_output(context.output_format, &documents)?;
         }
         DocumentsCommand::Get {
             id_or_path,
@@ -209,6 +211,18 @@ pub async fn run(
         }
     }
 
+    Ok(())
+}
+
+fn write_documents_summary_output(
+    format: ResolvedOutputFormat,
+    documents: &[DocumentSummaryRecord],
+) -> Result<()> {
+    let mut stdout = io::stdout();
+    let mut buffer = Vec::new();
+    render_document_summary_records(format, documents, &mut buffer)?;
+    stdout.write_all(&buffer)?;
+    stdout.flush()?;
     Ok(())
 }
 
@@ -304,7 +318,7 @@ async fn resolve_document_id(
 async fn list_documents(
     client: &dyn MetisClientInterface,
     args: DocumentsListArgs,
-) -> Result<Vec<DocumentVersionRecord>> {
+) -> Result<Vec<DocumentSummaryRecord>> {
     let include_deleted = if args.include_deleted {
         Some(true)
     } else {
@@ -491,7 +505,7 @@ pub async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -
         .context("failed to list documents")?;
 
     // Filter to only documents with a path
-    let pathed_documents: Vec<&DocumentVersionRecord> = response
+    let pathed_documents: Vec<&DocumentSummaryRecord> = response
         .documents
         .iter()
         .filter(|d| d.document.path.is_some())
@@ -509,20 +523,18 @@ pub async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -
 
         server_paths.insert(relative_path.to_string());
 
-        let content_hash = compute_content_hash(&record.document.body_markdown);
-
-        // Check if we can skip this document (incremental sync)
+        // Check if we can skip this document (incremental sync via version comparison)
         if let Some(ref manifest) = existing_manifest {
             if let Some(existing_entry) = manifest.documents.get(relative_path) {
-                if existing_entry.content_hash == content_hash
+                if existing_entry.version == record.version
                     && existing_entry.document_id == record.document_id
                 {
-                    // Content unchanged, skip download
+                    // Version unchanged, skip download
                     new_entries.insert(
                         relative_path.to_string(),
                         SyncManifestEntry {
                             document_id: record.document_id.clone(),
-                            content_hash,
+                            content_hash: existing_entry.content_hash.clone(),
                             version: record.version,
                         },
                     );
@@ -532,13 +544,22 @@ pub async fn sync_documents(client: &dyn MetisClientInterface, args: SyncArgs) -
             }
         }
 
+        // Fetch full document to get body content
+        let full_record = client
+            .get_document(&record.document_id, false)
+            .await
+            .with_context(|| {
+                format!("failed to fetch document '{}' for sync", record.document_id)
+            })?;
+        let content_hash = compute_content_hash(&full_record.document.body_markdown);
+
         // Write file to disk
         let file_path = directory.join(relative_path);
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory '{}'", parent.display()))?;
         }
-        fs::write(&file_path, &record.document.body_markdown)
+        fs::write(&file_path, &full_record.document.body_markdown)
             .with_context(|| format!("failed to write file '{}'", file_path.display()))?;
 
         new_entries.insert(
@@ -963,7 +984,9 @@ mod tests {
     #[tokio::test]
     async fn list_documents_supports_filters() {
         let document_id = DocumentId::new();
-        let response = ListDocumentsResponse::new(vec![sample_document_record(&document_id)]);
+        let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(
+            &sample_document_record(&document_id),
+        )]);
         let server = MockServer::start();
         let list_mock = server.mock(|when, then| {
             when.method(GET)
@@ -1204,7 +1227,7 @@ mod tests {
         let document_id = DocumentId::new();
         let path = "docs/runbook.md";
         let record = sample_document_record(&document_id);
-        let response = ListDocumentsResponse::new(vec![record.clone()]);
+        let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&record)]);
         let server = MockServer::start();
         let list_mock = server.mock(|when, then| {
             when.method(GET)
@@ -1212,6 +1235,11 @@ mod tests {
                 .query_param("path_prefix", path)
                 .query_param("path_is_exact", "true");
             then.status(200).json_body_obj(&response);
+        });
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{document_id}"));
+            then.status(200).json_body_obj(&record);
         });
         let client = mock_client(&server);
 
@@ -1221,6 +1249,7 @@ mod tests {
 
         assert_eq!(result.document_id, document_id);
         list_mock.assert();
+        get_mock.assert();
     }
 
     #[tokio::test]
@@ -1346,12 +1375,18 @@ mod tests {
         )
         .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
-        let response = ListDocumentsResponse::new(vec![record]);
+        let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&record)]);
 
         let server = MockServer::start();
         let list_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
             then.status(200).json_body_obj(&response);
+        });
+        let doc_id_for_get = doc_id.clone();
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{doc_id_for_get}").as_str());
+            then.status(200).json_body_obj(&record);
         });
         let client = mock_client(&server);
 
@@ -1415,12 +1450,21 @@ mod tests {
             .unwrap(),
             None,
         );
-        let response = ListDocumentsResponse::new(vec![pathed, unpathed]);
+        let response = ListDocumentsResponse::new(vec![
+            DocumentSummaryRecord::from(&pathed),
+            DocumentSummaryRecord::from(&unpathed),
+        ]);
 
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
             then.status(200).json_body_obj(&response);
+        });
+        let pathed_id_for_get = pathed_id.clone();
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{pathed_id_for_get}").as_str());
+            then.status(200).json_body_obj(&pathed);
         });
         let client = mock_client(&server);
 
@@ -1454,12 +1498,18 @@ mod tests {
         )
         .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
-        let response = ListDocumentsResponse::new(vec![record]);
+        let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&record)]);
 
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
             then.status(200).json_body_obj(&response);
+        });
+        let doc_id_for_get = doc_id.clone();
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{doc_id_for_get}").as_str());
+            then.status(200).json_body_obj(&record);
         });
         let client = mock_client(&server);
 
@@ -1523,11 +1573,26 @@ mod tests {
             DocumentVersionRecord::new(removed_id.clone(), 0, Utc::now(), removed_doc, None);
 
         // First sync with both documents
-        let response = ListDocumentsResponse::new(vec![record.clone(), removed_record]);
+        let response = ListDocumentsResponse::new(vec![
+            DocumentSummaryRecord::from(&record),
+            DocumentSummaryRecord::from(&removed_record),
+        ]);
         let server = MockServer::start();
         let mut mock1 = server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
             then.status(200).json_body_obj(&response);
+        });
+        let doc_id_for_get = doc_id.clone();
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{doc_id_for_get}").as_str());
+            then.status(200).json_body_obj(&record);
+        });
+        let removed_id_for_get = removed_id.clone();
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{removed_id_for_get}").as_str());
+            then.status(200).json_body_obj(&removed_record);
         });
         let client = mock_client(&server);
 
@@ -1547,7 +1612,22 @@ mod tests {
         assert!(dir.path().join("docs/remove.md").exists());
 
         // Second sync with only one document and --clean
-        let response2 = ListDocumentsResponse::new(vec![record]);
+        // Re-create the keep record since it was moved into the mock closure above
+        let keep_record = DocumentVersionRecord::new(
+            doc_id.clone(),
+            0,
+            Utc::now(),
+            DocumentPayload::new(
+                "Keep".to_string(),
+                "keep body".to_string(),
+                Some("docs/keep.md".to_string()),
+                None,
+                false,
+            )
+            .unwrap(),
+            None,
+        );
+        let response2 = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&keep_record)]);
         mock1.delete();
         let mock2 = server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
@@ -1582,8 +1662,8 @@ mod tests {
             false,
         )
         .unwrap();
-        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None);
-        let response = ListDocumentsResponse::new(vec![record]);
+        let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
+        let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&record)]);
 
         let server = MockServer::start();
         let list_mock = server.mock(|when, then| {
@@ -1591,6 +1671,11 @@ mod tests {
                 .path("/v1/documents")
                 .query_param("path_prefix", "/playbooks");
             then.status(200).json_body_obj(&response);
+        });
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{doc_id}").as_str());
+            then.status(200).json_body_obj(&record);
         });
         let client = mock_client(&server);
 
@@ -1623,13 +1708,18 @@ mod tests {
             false,
         )
         .unwrap();
-        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None);
-        let response = ListDocumentsResponse::new(vec![record]);
+        let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
+        let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&record)]);
 
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
             then.status(200).json_body_obj(&response);
+        });
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{doc_id}").as_str());
+            then.status(200).json_body_obj(&record);
         });
         let client = mock_client(&server);
 
@@ -1728,7 +1818,8 @@ mod tests {
             .unwrap(),
             None,
         );
-        let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
+        let list_response =
+            ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&server_record)]);
         server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
             then.status(200).json_body_obj(&list_response);
@@ -1813,7 +1904,8 @@ mod tests {
             .unwrap(),
             None,
         );
-        let list_response = ListDocumentsResponse::new(vec![list_record]);
+        let list_response =
+            ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&list_record)]);
         server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
             then.status(200).json_body_obj(&list_response);
@@ -1943,7 +2035,8 @@ mod tests {
             .unwrap(),
             None,
         );
-        let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
+        let list_response =
+            ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&server_record)]);
         server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
             then.status(200).json_body_obj(&list_response);
@@ -2020,7 +2113,8 @@ mod tests {
             .unwrap(),
             None,
         );
-        let list_response = ListDocumentsResponse::new(vec![server_record.clone()]);
+        let list_response =
+            ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&server_record)]);
         server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
             then.status(200).json_body_obj(&list_response);
@@ -2104,7 +2198,8 @@ mod tests {
             .unwrap(),
             None,
         );
-        let list_response = ListDocumentsResponse::new(vec![server_record]);
+        let list_response =
+            ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&server_record)]);
         server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
             then.status(200).json_body_obj(&list_response);
@@ -2167,12 +2262,17 @@ mod tests {
         )
         .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 5, Utc::now(), document, None);
-        let response = ListDocumentsResponse::new(vec![record]);
+        let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&record)]);
 
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET).path("/v1/documents");
             then.status(200).json_body_obj(&response);
+        });
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{doc_id}").as_str());
+            then.status(200).json_body_obj(&record);
         });
         let client = mock_client(&server);
 

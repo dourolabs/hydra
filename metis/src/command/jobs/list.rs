@@ -1,10 +1,10 @@
 use crate::{
     client::MetisClientInterface,
-    command::output::{render_job_records, CommandContext, ResolvedOutputFormat},
+    command::output::{render_job_summary_records, CommandContext, ResolvedOutputFormat},
 };
 use anyhow::Result;
 use metis_common::{
-    jobs::{JobVersionRecord, SearchJobsQuery},
+    jobs::{JobSummaryRecord, SearchJobsQuery},
     IssueId,
 };
 use std::io::{self, Write};
@@ -24,7 +24,7 @@ pub async fn run(
     let (jobs, truncated) = truncate_jobs(response.jobs, limit);
 
     let mut buffer = Vec::new();
-    render_job_records(context.output_format, &jobs, &mut buffer)?;
+    render_job_summary_records(context.output_format, &jobs, &mut buffer)?;
     io::stdout().write_all(&buffer)?;
     io::stdout().flush()?;
 
@@ -36,9 +36,9 @@ pub async fn run(
 }
 
 pub(crate) fn truncate_jobs(
-    jobs: Vec<JobVersionRecord>,
+    jobs: Vec<JobSummaryRecord>,
     limit: usize,
-) -> (Vec<JobVersionRecord>, bool) {
+) -> (Vec<JobSummaryRecord>, bool) {
     if jobs.len() <= limit {
         return (jobs, false);
     }
@@ -56,7 +56,9 @@ mod tests {
     };
     use chrono::Utc;
     use httpmock::prelude::*;
-    use metis_common::jobs::{BundleSpec, ListJobsResponse, Task};
+    use metis_common::jobs::{
+        BundleSpec, JobSummaryRecord, JobVersionRecord, ListJobsResponse, Task,
+    };
     use metis_common::task_status::Status;
     use metis_common::users::Username;
     use std::collections::HashMap;
@@ -70,8 +72,8 @@ mod tests {
         }
     }
 
-    fn sample_job(id: &str) -> JobVersionRecord {
-        JobVersionRecord::new(
+    fn sample_job(id: &str) -> JobSummaryRecord {
+        let record = JobVersionRecord::new(
             task_id(id),
             0,
             Utc::now(),
@@ -95,7 +97,8 @@ mod tests {
                 None,
             ),
             None,
-        )
+        );
+        JobSummaryRecord::from(&record)
     }
 
     #[test]
@@ -116,7 +119,7 @@ mod tests {
 
     #[test]
     fn truncate_jobs_limits_to_requested_count() {
-        let jobs: Vec<JobVersionRecord> = (0..12)
+        let jobs: Vec<JobSummaryRecord> = (0..12)
             .map(|idx| sample_job(&format!("t-job-{idx}")))
             .collect();
 

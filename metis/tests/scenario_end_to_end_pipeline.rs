@@ -2,8 +2,8 @@ mod harness;
 
 use anyhow::{Context, Result};
 use harness::{
-    find_children_of, find_issue_by_description, merge_patch, test_patch_workflow_config,
-    IssueAssertions,
+    find_summary_children_of, find_summary_issue_by_description, merge_patch,
+    test_patch_workflow_config, IssueAssertions, IssueAssertionsSummaryChildren,
 };
 use metis_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
@@ -58,7 +58,7 @@ async fn full_end_to_end_pipeline() -> Result<()> {
 
     // Find the child issue created by PM.
     let all_issues = user.list_issues().await?;
-    let swe_issue = find_issue_by_description(&all_issues.issues, "Implement settings UI")
+    let swe_issue = find_summary_issue_by_description(&all_issues.issues, "Implement settings UI")
         .context("expected PM to create a child issue for SWE")?;
     let swe_issue_id = swe_issue.issue_id.clone();
 
@@ -96,14 +96,14 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     let swe_issue_record = user.get_issue(&swe_issue_id).await?;
 
     // ReviewRequest should be a child of SWE's issue.
-    swe_issue_record.assert_has_child_with_status(
+    swe_issue_record.assert_has_child_with_status_summary(
         &all_issues.issues,
         "Review request for patch",
         IssueStatus::Open,
     );
 
     // MergeRequest should be a child of SWE's issue.
-    swe_issue_record.assert_has_child_with_status(
+    swe_issue_record.assert_has_child_with_status_summary(
         &all_issues.issues,
         "Review patch",
         IssueStatus::Open,
@@ -125,7 +125,7 @@ async fn full_end_to_end_pipeline() -> Result<()> {
     assert_eq!(merge_request.issue.assignee.as_deref(), Some("merger"));
 
     // Verify the workflow issues are children of SWE's issue, NOT the parent.
-    let swe_children = find_children_of(&all_issues.issues, &swe_issue_id);
+    let swe_children = find_summary_children_of(&all_issues.issues, &swe_issue_id);
     assert!(
         swe_children
             .iter()

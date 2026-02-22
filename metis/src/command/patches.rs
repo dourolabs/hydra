@@ -8,8 +8,8 @@ use metis_common::{
     issues::{IssueId, UpsertIssueRequest},
     jobs::BundleSpec,
     patches::{
-        Patch, PatchStatus, PatchVersionRecord, Review, SearchPatchesQuery, UpsertPatchRequest,
-        UpsertPatchResponse,
+        Patch, PatchStatus, PatchSummaryRecord, PatchVersionRecord, Review, SearchPatchesQuery,
+        UpsertPatchRequest, UpsertPatchResponse,
     },
     repositories::SearchRepositoriesQuery,
     review_utils::{find_last_commit_range_change_timestamp, has_approved_non_dismissed_review},
@@ -29,7 +29,9 @@ use crate::git::{
 };
 use crate::{
     client::MetisClientInterface,
-    command::output::{render_patch_records, CommandContext, ResolvedOutputFormat},
+    command::output::{
+        render_patch_records, render_patch_summary_records, CommandContext, ResolvedOutputFormat,
+    },
 };
 #[derive(Subcommand, Debug)]
 pub enum PatchesCommand {
@@ -402,7 +404,7 @@ async fn list_patches_with_writer(
 
     let patches = fetch_patches(client, query, include_deleted).await?;
 
-    render_patch_records(output_format, &patches, writer)?;
+    render_patch_summary_records(output_format, &patches, writer)?;
 
     Ok(())
 }
@@ -434,7 +436,7 @@ async fn fetch_patches(
     client: &dyn MetisClientInterface,
     query: Option<String>,
     include_deleted: bool,
-) -> Result<Vec<PatchVersionRecord>> {
+) -> Result<Vec<PatchSummaryRecord>> {
     let include_deleted_opt = if include_deleted { Some(true) } else { None };
     let response = client
         .list_patches(&SearchPatchesQuery::new(

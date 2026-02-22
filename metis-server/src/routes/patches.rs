@@ -207,16 +207,17 @@ pub async fn list_patches(
         .await
         .map_err(|err| map_patch_error(err, None))?;
 
-    let records: Vec<v1::patches::PatchVersionRecord> = patches
+    let records: Vec<v1::patches::PatchSummaryRecord> = patches
         .into_iter()
         .map(|(id, versioned)| {
-            v1::patches::PatchVersionRecord::new(
+            let record = v1::patches::PatchVersionRecord::new(
                 id,
                 versioned.version,
                 versioned.timestamp,
                 versioned.item.into(),
                 versioned.actor,
-            )
+            );
+            v1::patches::PatchSummaryRecord::from(&record)
         })
         .collect();
 

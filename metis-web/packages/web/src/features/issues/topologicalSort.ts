@@ -1,4 +1,4 @@
-import type { IssueVersionRecord } from "@metis/api";
+import type { IssueSummaryRecord } from "@metis/api";
 
 /**
  * Topologically sort sibling issues by blocked-on dependencies using Kahn's algorithm.
@@ -10,8 +10,8 @@ import type { IssueVersionRecord } from "@metis/api";
  * Cycles are handled gracefully: remaining nodes are appended in input order.
  */
 export function topologicalSort(
-  issues: IssueVersionRecord[],
-): IssueVersionRecord[] {
+  issues: IssueSummaryRecord[],
+): IssueSummaryRecord[] {
   if (issues.length <= 1) return issues;
 
   const siblingIds = new Set(issues.map((i) => i.issue_id));
@@ -47,7 +47,7 @@ export function topologicalSort(
     }
   }
 
-  const result: IssueVersionRecord[] = [];
+  const result: IssueSummaryRecord[] = [];
   while (queue.length > 0) {
     const id = queue.shift()!;
     result.push(issues[indexMap.get(id)!]);

@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Spinner, Tabs } from "@metis/ui";
-import type { IssueVersionRecord } from "@metis/api";
+import type { IssueSummaryRecord } from "@metis/api";
 import { useIssues } from "../features/issues/useIssues";
 import { computeBlockedStatus } from "../features/issues/blockedStatus";
 import { topologicalSort } from "../features/issues/topologicalSort";
@@ -16,7 +16,7 @@ import { DetailPanel, DetailPanelEmpty } from "../features/dashboard/DetailPanel
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import styles from "./DashboardPage.module.css";
 
-function isInbox(record: IssueVersionRecord, username: string): boolean {
+function isInbox(record: IssueSummaryRecord, username: string): boolean {
   return (
     record.issue.assignee === username &&
     (record.issue.status === "open" || record.issue.status === "in-progress")
@@ -72,7 +72,7 @@ export function DashboardPage() {
 
   const inboxIssues = useMemo(() => {
     if (!issues) return [];
-    const issueMap = new Map<string, IssueVersionRecord>();
+    const issueMap = new Map<string, IssueSummaryRecord>();
     for (const record of issues) {
       issueMap.set(record.issue_id, record);
     }

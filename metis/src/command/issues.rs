@@ -1,6 +1,8 @@
 use crate::{
     client::MetisClientInterface,
-    command::output::{render_issue_records, CommandContext, ResolvedOutputFormat},
+    command::output::{
+        render_issue_records, render_issue_summary_records, CommandContext, ResolvedOutputFormat,
+    },
 };
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -11,11 +13,11 @@ use metis_common::{
     constants::ENV_METIS_ISSUE_ID,
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
-        IssueGraphSelector, IssueGraphWildcard, IssueId, IssueStatus, IssueType,
-        IssueVersionRecord, JobSettings, ReplaceTodoListRequest, SearchIssuesQuery,
+        IssueGraphSelector, IssueGraphWildcard, IssueId, IssueStatus, IssueSummaryRecord,
+        IssueType, IssueVersionRecord, JobSettings, ReplaceTodoListRequest, SearchIssuesQuery,
         SetTodoItemStatusRequest, TodoItem, UpsertIssueRequest,
     },
-    jobs::{JobVersionRecord, SearchJobsQuery, Task},
+    jobs::{JobSummaryRecord, SearchJobsQuery, Task},
     patches::{PatchStatus, PatchVersionRecord, Review},
     task_status::Status,
     users::Username,
@@ -346,18 +348,30 @@ pub async fn run(
             graph_filters,
             include_deleted,
         } => {
-            let issues = fetch_issues(
-                client,
-                id,
-                r#type,
-                status,
-                assignee,
-                query,
-                graph_filters,
-                include_deleted,
-            )
-            .await?;
-            write_issue_records(context.output_format, &issues)?;
+            if let Some(issue_id) = id {
+                let record = fetch_single_issue(
+                    client,
+                    &issue_id,
+                    r#type,
+                    status,
+                    assignee,
+                    include_deleted,
+                )
+                .await?;
+                write_issue_records(context.output_format, &[record])?;
+            } else {
+                let issues = fetch_issues_list(
+                    client,
+                    r#type,
+                    status,
+                    assignee,
+                    query,
+                    graph_filters,
+                    include_deleted,
+                )
+                .await?;
+                write_issue_summary_records(context.output_format, &issues)?;
+            }
             Ok(())
         }
         IssueCommands::Create {
@@ -994,7 +1008,15 @@ async fn fetch_child_issues(
         .await
         .with_context(|| format!("failed to fetch children for issue '{issue_id}'"))?;
 
-    Ok(response.issues)
+    let mut children = Vec::with_capacity(response.issues.len());
+    for summary in &response.issues {
+        let full = client
+            .get_issue(&summary.issue_id, false)
+            .await
+            .with_context(|| format!("failed to fetch child issue '{}'", summary.issue_id))?;
+        children.push(full);
+    }
+    Ok(children)
 }
 
 async fn issues_with_patches(
@@ -1144,7 +1166,7 @@ async fn fetch_job_versions(
 async fn fetch_jobs_for_issue(
     client: &dyn MetisClientInterface,
     issue_id: &IssueId,
-) -> Result<Vec<JobVersionRecord>> {
+) -> Result<Vec<JobSummaryRecord>> {
     let response = client
         .list_jobs(&SearchJobsQuery::new(
             None,
@@ -1214,45 +1236,51 @@ async fn resolve_issue(
     }
 }
 
-async fn fetch_issues(
+async fn fetch_single_issue(
     client: &dyn MetisClientInterface,
-    id: Option<IssueId>,
+    issue_id: &IssueId,
+    issue_type: Option<IssueType>,
+    status: Option<IssueStatus>,
+    assignee: Option<String>,
+    include_deleted: bool,
+) -> Result<IssueVersionRecord> {
+    let record = client
+        .get_issue(issue_id, include_deleted)
+        .await
+        .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
+
+    if let Some(expected_type) = issue_type {
+        if record.issue.issue_type != expected_type {
+            bail!("Issue '{issue_id}' does not match the requested type.");
+        }
+    }
+    if let Some(expected_status) = status {
+        if record.issue.status != expected_status {
+            bail!("Issue '{issue_id}' does not match the requested status.");
+        }
+    }
+    if let Some(expected_assignee) = assignee {
+        let trimmed_assignee = expected_assignee.trim();
+        if trimmed_assignee.is_empty() {
+            bail!("Assignee filter must not be empty.");
+        }
+        match record.issue.assignee.as_deref() {
+            Some(current) if current.eq_ignore_ascii_case(trimmed_assignee) => {}
+            _ => bail!("Issue '{issue_id}' is not assigned to {trimmed_assignee}."),
+        }
+    }
+    Ok(record)
+}
+
+async fn fetch_issues_list(
+    client: &dyn MetisClientInterface,
     issue_type: Option<IssueType>,
     status: Option<IssueStatus>,
     assignee: Option<String>,
     query: Option<String>,
     graph_filters: Vec<IssueGraphFilter>,
     include_deleted: bool,
-) -> Result<Vec<IssueVersionRecord>> {
-    if let Some(issue_id) = id {
-        let record = client
-            .get_issue(&issue_id, include_deleted)
-            .await
-            .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
-
-        if let Some(expected_type) = issue_type {
-            if record.issue.issue_type != expected_type {
-                bail!("Issue '{issue_id}' does not match the requested type.");
-            }
-        }
-        if let Some(expected_status) = status {
-            if record.issue.status != expected_status {
-                bail!("Issue '{issue_id}' does not match the requested status.");
-            }
-        }
-        if let Some(expected_assignee) = assignee {
-            let trimmed_assignee = expected_assignee.trim();
-            if trimmed_assignee.is_empty() {
-                bail!("Assignee filter must not be empty.");
-            }
-            match record.issue.assignee.as_deref() {
-                Some(current) if current.eq_ignore_ascii_case(trimmed_assignee) => {}
-                _ => bail!("Issue '{issue_id}' is not assigned to {trimmed_assignee}."),
-            }
-        }
-        return Ok(vec![record]);
-    }
-
+) -> Result<Vec<IssueSummaryRecord>> {
     let trimmed_assignee = match assignee {
         Some(value) => {
             let trimmed = value.trim();
@@ -1853,6 +1881,17 @@ fn render_todo_list(
 fn write_issue_records(format: ResolvedOutputFormat, issues: &[IssueVersionRecord]) -> Result<()> {
     let mut buffer = Vec::new();
     render_issue_records(format, issues, &mut buffer)?;
+    io::stdout().write_all(&buffer)?;
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn write_issue_summary_records(
+    format: ResolvedOutputFormat,
+    issues: &[IssueSummaryRecord],
+) -> Result<()> {
+    let mut buffer = Vec::new();
+    render_issue_summary_records(format, issues, &mut buffer)?;
     io::stdout().write_all(&buffer)?;
     io::stdout().flush()?;
     Ok(())
@@ -2563,10 +2602,10 @@ mod tests {
     use chrono::{Duration, TimeZone, Utc};
     use httpmock::prelude::*;
     use metis_common::issues::{
-        AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueVersionRecord,
-        JobSettings, ListIssueVersionsResponse, ListIssuesResponse, ReplaceTodoListRequest,
-        SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
-        UpsertIssueResponse,
+        AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueSummaryRecord,
+        IssueVersionRecord, JobSettings, ListIssueVersionsResponse, ListIssuesResponse,
+        ReplaceTodoListRequest, SetTodoItemStatusRequest, TodoItem, TodoListResponse,
+        UpsertIssueRequest, UpsertIssueResponse,
     };
     use metis_common::{
         jobs::{BundleSpec, ListJobsResponse, Task},
@@ -2664,7 +2703,7 @@ mod tests {
     async fn list_issues_filters_by_query_and_prints_jsonl() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let issues_response = ListIssuesResponse::new(vec![IssueVersionRecord::new(
+        let record = IssueVersionRecord::new(
             issue_id("i-1"),
             0,
             Utc::now(),
@@ -2682,7 +2721,8 @@ mod tests {
                 false,
             ),
             None,
-        )]);
+        );
+        let issues_response = ListIssuesResponse::new(vec![IssueSummaryRecord::from(&record)]);
         let list_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/issues")
@@ -2692,9 +2732,8 @@ mod tests {
             then.status(200).json_body_obj(&issues_response);
         });
 
-        let issues = fetch_issues(
+        let issues = fetch_issues_list(
             &client,
-            None,
             Some(IssueType::Bug),
             Some(IssueStatus::Open),
             None,
@@ -2709,7 +2748,7 @@ mod tests {
         assert_eq!(list_mock.hits(), 1);
 
         let mut output = Vec::new();
-        render_issue_records(ResolvedOutputFormat::Jsonl, &issues, &mut output).unwrap();
+        render_issue_summary_records(ResolvedOutputFormat::Jsonl, &issues, &mut output).unwrap();
         let output = String::from_utf8(output).unwrap();
         let first_id = issue_id("i-1").to_string();
         let second_id = issue_id("i-2").to_string();
@@ -2747,14 +2786,12 @@ mod tests {
             then.status(200).json_body_obj(&issue_record);
         });
 
-        let issues = fetch_issues(
+        let result = fetch_single_issue(
             &client,
-            Some(issue_id.clone()),
+            &issue_id,
             Some(IssueType::Task),
             Some(IssueStatus::InProgress),
             None,
-            None,
-            Vec::new(),
             false,
         )
         .await
@@ -2762,15 +2799,14 @@ mod tests {
 
         get_mock.assert();
         assert_eq!(get_mock.hits(), 1);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].issue_id, issue_id);
+        assert_eq!(result.issue_id, issue_id);
     }
 
     #[tokio::test]
     async fn list_issues_filters_by_assignee() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let issues_response = ListIssuesResponse::new(vec![IssueVersionRecord::new(
+        let record = IssueVersionRecord::new(
             issue_id("i-7"),
             0,
             Utc::now(),
@@ -2788,7 +2824,8 @@ mod tests {
                 false,
             ),
             None,
-        )]);
+        );
+        let issues_response = ListIssuesResponse::new(vec![IssueSummaryRecord::from(&record)]);
         let list_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/issues")
@@ -2796,9 +2833,8 @@ mod tests {
             then.status(200).json_body_obj(&issues_response);
         });
 
-        let issues = fetch_issues(
+        let issues = fetch_issues_list(
             &client,
-            None,
             None,
             None,
             Some("OWNER-A".into()),
@@ -2836,18 +2872,9 @@ mod tests {
                 .json_body_obj(&ListIssuesResponse::new(vec![]));
         });
 
-        let _ = fetch_issues(
-            &client,
-            None,
-            None,
-            None,
-            None,
-            None,
-            filters.clone(),
-            false,
-        )
-        .await
-        .unwrap();
+        let _ = fetch_issues_list(&client, None, None, None, None, filters.clone(), false)
+            .await
+            .unwrap();
 
         list_mock.assert();
         assert_eq!(list_mock.hits(), 1);
@@ -2916,12 +2943,19 @@ mod tests {
         )
         .unwrap()
         .to_string();
+        let child_issue_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{}", child_issue.issue_id).as_str());
+            then.status(200).json_body_obj(&child_issue);
+        });
         let list_children_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/issues")
                 .query_param("graph", graph_query.as_str());
             then.status(200)
-                .json_body_obj(&ListIssuesResponse::new(vec![child_issue.clone()]));
+                .json_body_obj(&ListIssuesResponse::new(vec![IssueSummaryRecord::from(
+                    &child_issue,
+                )]));
         });
         let root_patch_record = PatchVersionRecord::new(
             root_patch_id.clone(),
@@ -3091,6 +3125,7 @@ mod tests {
 
         root_issue_mock.assert();
         parent_issue_mock.assert();
+        child_issue_mock.assert();
         list_children_mock.assert();
         root_patch_mock.assert();
         parent_patch_mock.assert();
@@ -3104,6 +3139,7 @@ mod tests {
         list_jobs_mock.assert();
         assert_eq!(root_issue_mock.hits(), 1);
         assert_eq!(parent_issue_mock.hits(), 1);
+        assert_eq!(child_issue_mock.hits(), 1);
         assert_eq!(list_children_mock.hits(), 1);
         assert_eq!(root_patch_mock.hits(), 1);
         assert_eq!(parent_patch_mock.hits(), 1);

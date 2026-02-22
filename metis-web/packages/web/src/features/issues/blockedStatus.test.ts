@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import type { IssueVersionRecord } from "@metis/api";
+import type { IssueSummaryRecord } from "@metis/api";
 import { computeBlockedStatus } from "./blockedStatus";
 
 function makeRecord(
   id: string,
   status: string,
   dependencies: Array<{ type: string; issue_id: string }> = [],
-): IssueVersionRecord {
+): IssueSummaryRecord {
   return {
     issue_id: id,
     version: BigInt(1),
@@ -15,18 +15,17 @@ function makeRecord(
       type: "task",
       description: "",
       creator: "test",
-      progress: "",
-      status: status as IssueVersionRecord["issue"]["status"],
-      dependencies: dependencies as IssueVersionRecord["issue"]["dependencies"],
+      status: status as IssueSummaryRecord["issue"]["status"],
+      dependencies: dependencies as IssueSummaryRecord["issue"]["dependencies"],
       patches: [],
     },
   };
 }
 
 function buildMap(
-  records: IssueVersionRecord[],
-): Map<string, IssueVersionRecord> {
-  const map = new Map<string, IssueVersionRecord>();
+  records: IssueSummaryRecord[],
+): Map<string, IssueSummaryRecord> {
+  const map = new Map<string, IssueSummaryRecord>();
   for (const r of records) {
     map.set(r.issue_id, r);
   }

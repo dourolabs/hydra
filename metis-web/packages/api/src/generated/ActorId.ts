@@ -2,4 +2,4 @@
 import type { TaskId } from "./TaskId";
 import type { Username } from "./Username";
 
-export type ActorId = { "Username": Username } | { "Task": TaskId };
+export type ActorId = { Username: Username } | { Task: TaskId };

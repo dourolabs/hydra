@@ -2,8 +2,8 @@ mod harness;
 
 use anyhow::{Context, Result};
 use harness::{
-    find_children_of, find_issue_by_description, merge_patch, test_job_settings,
-    test_patch_workflow_config, IssueAssertions, PatchAssertions,
+    find_summary_children_of, find_summary_issue_by_description, merge_patch, test_job_settings,
+    test_patch_workflow_config, IssueAssertions, IssueAssertionsSummaryChildren, PatchAssertions,
 };
 use metis_common::{
     issues::{IssueStatus, IssueType},
@@ -82,7 +82,7 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
 
     // Find child 1's ID by listing issues.
     let all_issues = user.list_issues().await?;
-    let child1 = find_issue_by_description(&all_issues.issues, "theme toggle")
+    let child1 = find_summary_issue_by_description(&all_issues.issues, "theme toggle")
         .context("child 1 should exist")?;
     let child1_id = child1.issue_id.clone();
 
@@ -114,8 +114,16 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     parent.assert_status(IssueStatus::InProgress);
 
     let all_issues = user.list_issues().await?;
-    parent.assert_has_child_with_status(&all_issues.issues, "theme toggle", IssueStatus::Open);
-    parent.assert_has_child_with_status(&all_issues.issues, "CSS variables", IssueStatus::Open);
+    parent.assert_has_child_with_status_summary(
+        &all_issues.issues,
+        "theme toggle",
+        IssueStatus::Open,
+    );
+    parent.assert_has_child_with_status_summary(
+        &all_issues.issues,
+        "CSS variables",
+        IssueStatus::Open,
+    );
 
     // Verify child 2 has blocked-on child 1.
     let child2 = user.get_issue(&child2_id).await?;
@@ -162,7 +170,7 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
     let all_issues = user.list_issues().await?;
 
     // Find the ReviewRequest and MergeRequest issues.
-    let child1_children = find_children_of(&all_issues.issues, &child1_id);
+    let child1_children = find_summary_children_of(&all_issues.issues, &child1_id);
 
     assert!(
         child1_children.len() >= 2,
@@ -273,7 +281,7 @@ async fn planning_agent_creates_sub_issues_with_patch_workflow() -> Result<()> {
 
     // Verify patch_workflow fired on child 2 as well.
     let all_issues = user.list_issues().await?;
-    let child2_children = find_children_of(&all_issues.issues, &child2_id);
+    let child2_children = find_summary_children_of(&all_issues.issues, &child2_id);
 
     let review_request2 = child2_children
         .iter()
@@ -418,7 +426,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
 
     // Find child 1's ID.
     let all_issues = user.list_issues().await?;
-    let child1 = find_issue_by_description(&all_issues.issues, "Redis cache")
+    let child1 = find_summary_issue_by_description(&all_issues.issues, "Redis cache")
         .context("child 1 should exist")?;
     let child1_id = child1.issue_id.clone();
 
@@ -505,7 +513,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
 
     // Find the new child issue.
     let all_issues = user.list_issues().await?;
-    let child3 = find_issue_by_description(&all_issues.issues, "Memcached")
+    let child3 = find_summary_issue_by_description(&all_issues.issues, "Memcached")
         .context("replacement child should exist")?;
     let child3_id = child3.issue_id.clone();
 
@@ -570,12 +578,16 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
 
     // Verify the parent has the correct children structure.
     let all_issues = user.list_issues().await?;
-    parent_final.assert_has_child_with_status(
+    parent_final.assert_has_child_with_status_summary(
         &all_issues.issues,
         "Redis cache",
         IssueStatus::Failed,
     );
-    parent_final.assert_has_child_with_status(&all_issues.issues, "Memcached", IssueStatus::Closed);
+    parent_final.assert_has_child_with_status_summary(
+        &all_issues.issues,
+        "Memcached",
+        IssueStatus::Closed,
+    );
 
     Ok(())
 }
@@ -645,7 +657,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
 
     // Find child 1's ID.
     let all_issues = user.list_issues().await?;
-    let child1 = find_issue_by_description(&all_issues.issues, "Elasticsearch")
+    let child1 = find_summary_issue_by_description(&all_issues.issues, "Elasticsearch")
         .context("child 1 should exist")?;
     let child1_id = child1.issue_id.clone();
 
@@ -733,7 +745,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
 
     // Find the replacement child issue.
     let all_issues = user.list_issues().await?;
-    let child3 = find_issue_by_description(&all_issues.issues, "SQLite FTS5")
+    let child3 = find_summary_issue_by_description(&all_issues.issues, "SQLite FTS5")
         .context("replacement child should exist")?;
     let child3_id = child3.issue_id.clone();
 
@@ -798,17 +810,17 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
 
     // Verify children structure.
     let all_issues = user.list_issues().await?;
-    parent_final.assert_has_child_with_status(
+    parent_final.assert_has_child_with_status_summary(
         &all_issues.issues,
         "Elasticsearch",
         IssueStatus::Rejected,
     );
-    parent_final.assert_has_child_with_status(
+    parent_final.assert_has_child_with_status_summary(
         &all_issues.issues,
         "search result ranking",
         IssueStatus::Dropped,
     );
-    parent_final.assert_has_child_with_status(
+    parent_final.assert_has_child_with_status_summary(
         &all_issues.issues,
         "SQLite FTS5",
         IssueStatus::Closed,

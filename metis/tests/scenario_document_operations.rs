@@ -1,7 +1,7 @@
 mod harness;
 
 use anyhow::Result;
-use harness::IssueAssertions;
+use harness::IssueAssertionsSummaryChildren;
 use metis_common::issues::IssueStatus;
 use std::str::FromStr;
 
@@ -55,11 +55,20 @@ async fn document_operations_through_worker() -> Result<()> {
         !docs.documents.is_empty(),
         "expected at least one document matching 'feature X'"
     );
-    let doc = &docs.documents[0];
-    assert_eq!(doc.document.title, "Design for feature X");
-    assert!(doc.document.body_markdown.contains("Initial design draft"));
-    assert_eq!(doc.document.path.as_deref(), Some("/designs/feature-x.md"));
-    let doc_id = doc.document_id.clone();
+    let doc_summary = &docs.documents[0];
+    assert_eq!(doc_summary.document.title, "Design for feature X");
+    assert_eq!(
+        doc_summary.document.path.as_deref(),
+        Some("/designs/feature-x.md")
+    );
+    let doc_id = doc_summary.document_id.clone();
+    // The list endpoint returns summary records without body_markdown,
+    // so fetch the full record to verify body content.
+    let full_doc = client.get_document(&doc_id, false).await?;
+    assert!(full_doc
+        .document
+        .body_markdown
+        .contains("Initial design draft"));
 
     // Phase 2: PM worker updates the document with revised content.
     let phase2_issue = user.create_issue("phase2 doc worker").await?;
@@ -115,7 +124,7 @@ async fn document_operations_through_worker() -> Result<()> {
         .find(|i| i.issue_id == parent_id)
         .expect("parent issue should exist");
 
-    parent.assert_has_child_with_status(
+    parent.assert_has_child_with_status_summary(
         &issues.issues,
         "Review design document",
         IssueStatus::Open,

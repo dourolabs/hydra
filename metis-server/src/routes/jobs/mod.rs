@@ -82,7 +82,7 @@ pub async fn list_jobs(
         ApiError::internal(format!("Failed to fetch status logs: {err}"))
     })?;
 
-    // Build job records with timing fields, sorted by version timestamp
+    // Build job records with timing fields, convert to summary records
     let mut records: Vec<v1::jobs::JobVersionRecord> = tasks
         .into_iter()
         .map(|(task_id, versioned_task)| {
@@ -105,11 +105,10 @@ pub async fn list_jobs(
     // Sort by version timestamp, most recent first
     records.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
-    for record in &mut records {
-        record.strip_large_fields();
-    }
-
-    let summaries = records;
+    let summaries: Vec<v1::jobs::JobSummaryRecord> = records
+        .iter()
+        .map(v1::jobs::JobSummaryRecord::from)
+        .collect();
 
     info!(
         namespace = %namespace,
