@@ -3,10 +3,11 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar, Badge, Button, MarkdownViewer, Select, Spinner, Textarea } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
-import type { IssueVersionRecord, PatchVersionRecord } from "@metis/api";
+import type { PatchVersionRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { issueToBadgeStatus, patchToBadgeStatus } from "../../utils/statusMapping";
 import { useDocumentByPath } from "../documents/useDocumentByPath";
+import { useIssue } from "../issues/useIssue";
 import { usePatchesByIssue } from "../patches/usePatchesByIssue";
 import { useToast } from "../toast/useToast";
 import { DiffViewer } from "./DiffViewer";
@@ -30,44 +31,50 @@ const STATUS_OPTIONS: SelectOption[] = [
 ];
 
 interface DetailPanelProps {
-  record: IssueVersionRecord;
+  issueId: string;
 }
 
-export function DetailPanel({ record }: DetailPanelProps) {
-  const { issue } = record;
+export function DetailPanel({ issueId }: DetailPanelProps) {
+  const { data: record, isLoading: recordLoading } = useIssue(issueId);
+  const issue = record?.issue;
   const { addToast } = useToast();
   const queryClient = useQueryClient();
 
-  const [status, setStatus] = useState(issue.status);
-  const [progress, setProgress] = useState(issue.progress);
+  const [status, setStatus] = useState(issue?.status ?? "open");
+  const [progress, setProgress] = useState(issue?.progress ?? "");
 
-  // Reset form when selected issue changes
-  const issueId = record.issue_id;
+  // Reset form when selected issue or its data changes
   const [prevIssueId, setPrevIssueId] = useState(issueId);
-  if (issueId !== prevIssueId) {
+  const [prevVersion, setPrevVersion] = useState(record?.version);
+  if (issueId !== prevIssueId || (record && record.version !== prevVersion)) {
     setPrevIssueId(issueId);
-    setStatus(issue.status);
-    setProgress(issue.progress);
+    setPrevVersion(record?.version);
+    if (issue) {
+      setStatus(issue.status);
+      setProgress(issue.progress);
+    }
   }
 
   const docPath = useMemo(
-    () => extractDocumentPath(issue.description + "\n" + issue.progress),
-    [issue.description, issue.progress],
+    () => issue ? extractDocumentPath(issue.description + "\n" + issue.progress) : null,
+    [issue],
   );
   const { data: docRecord, isLoading: docLoading } = useDocumentByPath(docPath);
 
   const [searchParams] = useSearchParams();
   const activeTab = searchParams.get("tab") ?? "inbox";
 
-  const patchIds = issue.patches ?? [];
+  const patchIds = issue?.patches ?? [];
   const { data: patches, isLoading: patchesLoading } = usePatchesByIssue(patchIds);
 
   const mutation = useMutation({
-    mutationFn: () =>
-      apiClient.updateIssue(issueId, {
+    mutationFn: () => {
+      if (!issue) throw new Error("Issue not loaded");
+      return apiClient.updateIssue(issueId, {
         issue: { ...issue, status, progress },
         job_id: null,
-      }),
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["issues"] });
       queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
@@ -80,6 +87,19 @@ export function DetailPanel({ record }: DetailPanelProps) {
       );
     },
   });
+
+  if (recordLoading || !issue) {
+    return (
+      <div className={styles.panel}>
+        <div className={styles.header}>
+          <span className={styles.issueIdLink}>{issueId}</span>
+        </div>
+        <div className={styles.section}>
+          <Spinner size="sm" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.panel}>

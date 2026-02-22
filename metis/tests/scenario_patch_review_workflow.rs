@@ -1,7 +1,9 @@
 mod harness;
 
 use anyhow::Result;
-use harness::{test_job_settings_full, test_patch_workflow_config, IssueAssertions};
+use harness::{
+    test_job_settings_full, test_patch_workflow_config, IssueAssertions, IssueSummaryAssertions,
+};
 use metis_common::{
     issues::{IssueStatus, IssueType},
     patches::{PatchStatus, SearchPatchesQuery, UpsertPatchRequest},

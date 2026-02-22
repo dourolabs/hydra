@@ -1,7 +1,7 @@
 mod harness;
 
 use anyhow::Result;
-use harness::{find_children_of, test_job_settings, TestHarness};
+use harness::{find_summary_children_of, test_job_settings, TestHarness};
 use metis_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
     task_status::Status,
@@ -70,7 +70,7 @@ async fn multi_repo_workflow() -> Result<()> {
 
     // Find the child issues created by PM.
     let all_issues = user.list_issues().await?;
-    let children = find_children_of(&all_issues.issues, &parent_id);
+    let children = find_summary_children_of(&all_issues.issues, &parent_id);
     let child1 = children
         .iter()
         .find(|i| {
@@ -129,7 +129,7 @@ async fn multi_repo_workflow() -> Result<()> {
     // The patch_workflow automation may have created child issues (e.g. MergeRequest)
     // on child 1 when the patch was created. Close them before closing child 1.
     let all_issues = user.list_issues().await?;
-    for issue in find_children_of(&all_issues.issues, &child1_id) {
+    for issue in find_summary_children_of(&all_issues.issues, &child1_id) {
         if issue.issue.status == IssueStatus::Open {
             user.update_issue_status(&issue.issue_id, IssueStatus::Closed)
                 .await?;

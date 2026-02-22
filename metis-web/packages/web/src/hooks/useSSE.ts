@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type {
   EntityEventData,
-  IssueVersionRecord,
+  IssueSummaryRecord,
   JobSummaryRecord,
   PatchSummaryRecord,
   DocumentVersionRecord,
@@ -96,8 +96,8 @@ function removeFromList<TResp, TItem>(
 
 // Entity-specific accessors for the list-response shapes
 const issueList = (r: ListIssuesResponse) => r.issues;
-const wrapIssues = (items: IssueVersionRecord[]): ListIssuesResponse => ({ issues: items });
-const issueRecordId = (r: IssueVersionRecord) => r.issue_id;
+const wrapIssues = (items: IssueSummaryRecord[]): ListIssuesResponse => ({ issues: items });
+const issueRecordId = (r: IssueSummaryRecord) => r.issue_id;
 
 const jobList = (r: ListJobsResponse) => r.jobs;
 const wrapJobs = (items: JobSummaryRecord[]): ListJobsResponse => ({ jobs: items });
@@ -163,8 +163,8 @@ export function useSSE(): SSEConnectionState {
           queryClient.removeQueries({ queryKey: ["issue", entity_id] });
           removeFromList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id);
         } else {
-          const record = entity as unknown as IssueVersionRecord;
-          setVersioned(queryClient, ["issue", entity_id], record);
+          const record = entity as unknown as IssueSummaryRecord;
+          queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
           upsertInList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id, record);
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
         }

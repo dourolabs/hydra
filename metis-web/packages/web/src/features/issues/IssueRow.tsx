@@ -1,13 +1,13 @@
 import { useCallback } from "react";
 import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
 import type { JobSummary } from "@metis/ui";
-import type { IssueVersionRecord, JobSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import styles from "./IssueRow.module.css";
 
 interface IssueRowProps {
-  record: IssueVersionRecord;
+  record: IssueSummaryRecord;
   dimmed?: boolean;
   blocked?: boolean;
   blockedBy?: string[];

@@ -1,7 +1,7 @@
 mod harness;
 
 use anyhow::Result;
-use harness::{find_children_of, test_job_settings, JobAssertions, TestHarness};
+use harness::{find_summary_children_of, test_job_settings, JobAssertions, TestHarness};
 use metis_common::{
     issues::{IssueStatus, IssueType, JobSettings},
     jobs::BundleSpec,
@@ -137,13 +137,15 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
 
     // Find the child issue created by PM.
     let all_issues = user.list_issues().await?;
-    let children = find_children_of(&all_issues.issues, &parent_id);
-    let child = children
+    let children = find_summary_children_of(&all_issues.issues, &parent_id);
+    let child_summary = children
         .iter()
         .find(|i| i.issue.description.contains("Implement child feature"))
         .expect("PM should have created a child issue");
 
     // Verify the child issue has repo job settings.
+    // IssueSummary doesn't include job_settings, so fetch the full record.
+    let child = user.get_issue(&child_summary.issue_id).await?;
     assert_eq!(
         child.issue.job_settings.repo_name,
         Some(repo.clone()),
@@ -169,7 +171,7 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
     }
 
     // Verify METIS_ISSUE_ID is set to the child issue ID.
-    child_job.assert_env_var("METIS_ISSUE_ID", child.issue_id.as_ref());
+    child_job.assert_env_var("METIS_ISSUE_ID", child_summary.issue_id.as_ref());
 
     Ok(())
 }

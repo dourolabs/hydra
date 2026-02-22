@@ -1,10 +1,10 @@
 import { useMemo } from "react";
-import type { IssueVersionRecord, JobSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import { buildIssueTree } from "../issues/useIssues";
 import { pruneTree } from "./watchingUtils";
 
 export function useWatchingCount(
-  issues: IssueVersionRecord[] | undefined,
+  issues: IssueSummaryRecord[] | undefined,
   jobsByIssue: Map<string, JobSummaryRecord[]> | undefined,
 ): number {
   return useMemo(() => {

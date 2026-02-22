@@ -16,7 +16,7 @@ use metis_common::{
             EntityEventData, EventsQuery, HeartbeatEventData, LAST_EVENT_ID_HEADER,
             ResyncEventData, SnapshotEventData, SseEventType,
         },
-        issues::IssueVersionRecord,
+        issues::{IssueSummary, IssueSummaryRecord},
         jobs::JobVersionRecord,
         patches::PatchVersionRecord,
     },
@@ -317,11 +317,12 @@ async fn serialize_entity(
     let value = match payload.as_ref() {
         MutationPayload::Issue { new, .. } => {
             let api_issue: metis_common::api::v1::issues::Issue = new.clone().into();
-            let record = IssueVersionRecord::new(
+            let summary = IssueSummary::from(&api_issue);
+            let record = IssueSummaryRecord::new(
                 entity_id.parse().ok()?,
                 version,
                 timestamp,
-                api_issue,
+                summary,
                 Some(payload.actor().clone()),
             );
             serde_json::to_value(record).ok()?

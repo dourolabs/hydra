@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge, JobStatusIndicator } from "@metis/ui";
 import type { JobSummary } from "@metis/ui";
-import type { IssueVersionRecord, JobSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import {
   buildIssueTree,
   type IssueTreeNode,
@@ -13,7 +13,7 @@ import { isNodeActive, pruneTree } from "./watchingUtils";
 import styles from "./WatchingTree.module.css";
 
 interface WatchingTreeProps {
-  issues: IssueVersionRecord[];
+  issues: IssueSummaryRecord[];
   jobsByIssue: Map<string, JobSummaryRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;

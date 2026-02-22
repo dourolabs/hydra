@@ -6,7 +6,7 @@ use clap::ValueEnum;
 use metis_common::{
     agents::AgentRecord,
     documents::DocumentVersionRecord,
-    issues::{Issue, IssueVersionRecord},
+    issues::{Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord},
     jobs::{JobSummary, JobSummaryRecord, JobVersionRecord, Task},
     patches::{PatchStatus, PatchSummaryRecord, PatchVersionRecord},
     repositories::RepositoryRecord,
@@ -74,6 +74,17 @@ pub fn render_issue_records(
     match format {
         ResolvedOutputFormat::Jsonl => render_issue_records_jsonl(issues, writer),
         ResolvedOutputFormat::Pretty => render_issue_records_pretty(issues, writer),
+    }
+}
+
+pub fn render_issue_summary_records(
+    format: ResolvedOutputFormat,
+    issues: &[IssueSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => render_issue_summary_records_jsonl(issues, writer),
+        ResolvedOutputFormat::Pretty => render_issue_summary_records_pretty(issues, writer),
     }
 }
 
@@ -217,6 +228,70 @@ fn render_issue_records_pretty(
             writeln!(writer, "  -")?;
         } else {
             for line in progress.lines() {
+                writeln!(writer, "  {line}")?;
+            }
+        }
+
+        if dependencies.is_empty() {
+            writeln!(writer, "Dependencies: none")?;
+        } else {
+            writeln!(writer, "Dependencies:")?;
+            for dependency in dependencies {
+                writeln!(
+                    writer,
+                    "  - {} {}",
+                    dependency.dependency_type, dependency.issue_id
+                )?;
+            }
+        }
+
+        if index + 1 < issues.len() {
+            writeln!(writer)?;
+        }
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn render_issue_summary_records_jsonl(
+    issues: &[IssueSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    for issue in issues {
+        serde_json::to_writer(&mut *writer, issue)?;
+        writer.write_all(b"\n")?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn render_issue_summary_records_pretty(
+    issues: &[IssueSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    for (index, issue_record) in issues.iter().enumerate() {
+        let IssueSummary {
+            issue_type,
+            description,
+            creator,
+            status,
+            assignee,
+            dependencies,
+            ..
+        } = &issue_record.issue;
+
+        writeln!(
+            writer,
+            "Issue {} ({issue_type}, {status})",
+            issue_record.issue_id
+        )?;
+        writeln!(writer, "Creator: {}", creator.as_ref())?;
+        writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
+        writeln!(writer, "Description:")?;
+        if description.trim().is_empty() {
+            writeln!(writer, "  -")?;
+        } else {
+            for line in description.lines() {
                 writeln!(writer, "  {line}")?;
             }
         }

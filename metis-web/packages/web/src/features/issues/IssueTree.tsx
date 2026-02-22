@@ -2,12 +2,12 @@ import { useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { TreeView } from "@metis/ui";
 import type { TreeNode } from "@metis/ui";
-import type { IssueVersionRecord, JobSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import { IssueRow } from "./IssueRow";
 import { type IssueTreeNode, buildIssueTree } from "./useIssues";
 
 interface IssueTreeProps {
-  issues: IssueVersionRecord[];
+  issues: IssueSummaryRecord[];
   /** When provided, only show branches containing these issue IDs. Non-matching ancestors are dimmed. */
   matchingIds?: Set<string>;
   /** Jobs grouped by issue ID, used to render job status indicators. */

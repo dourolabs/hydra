@@ -2,7 +2,8 @@ mod harness;
 
 use anyhow::Result;
 use harness::{
-    find_children_of, find_issue_by_description, test_all_orderings, IssueAssertions, Step,
+    find_issue_summary_by_description, find_summary_children_of, test_all_orderings,
+    IssueSummaryAssertions, Step,
 };
 use metis_common::issues::IssueStatus;
 
@@ -12,7 +13,7 @@ async fn find_or_create_issue(
     description: &str,
 ) -> Result<metis_common::IssueId> {
     let issues = user.list_issues().await?;
-    if let Some(existing) = find_issue_by_description(&issues.issues, description) {
+    if let Some(existing) = find_issue_summary_by_description(&issues.issues, description) {
         Ok(existing.issue_id.clone())
     } else {
         user.create_issue(description).await
@@ -74,7 +75,7 @@ async fn concurrent_child_creation_and_parent_update_all_orderings() -> Result<(
                 let issues = user.list_issues().await?;
 
                 // Find the parent issue.
-                let parent = find_issue_by_description(&issues.issues, "concurrent parent")
+                let parent = find_issue_summary_by_description(&issues.issues, "concurrent parent")
                     .expect("parent issue should exist");
 
                 // Verify parent is in-progress.
@@ -93,7 +94,8 @@ async fn concurrent_child_creation_and_parent_update_all_orderings() -> Result<(
                 );
 
                 // Verify exactly 2 children (no duplicates).
-                let children_count = find_children_of(&issues.issues, &parent.issue_id).len();
+                let children_count =
+                    find_summary_children_of(&issues.issues, &parent.issue_id).len();
                 assert_eq!(
                     children_count, 2,
                     "expected exactly 2 children, got {children_count}"

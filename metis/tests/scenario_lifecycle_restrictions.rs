@@ -1,7 +1,7 @@
 mod harness;
 
 use anyhow::Result;
-use harness::find_issue_by_description;
+use harness::find_issue_summary_by_description;
 use std::str::FromStr;
 
 /// Scenario 7a: Cannot close an issue with open children.
@@ -54,8 +54,8 @@ async fn cannot_close_issue_with_open_children() -> Result<()> {
 
     // List children of the parent to find the child ID.
     let issues = user.list_issues().await?;
-    let child =
-        find_issue_by_description(&issues.issues, "open child").expect("child issue should exist");
+    let child = find_issue_summary_by_description(&issues.issues, "open child")
+        .expect("child issue should exist");
     let child_id = child.issue_id.clone();
 
     harness
@@ -138,7 +138,7 @@ async fn cannot_close_issue_with_incomplete_todos() -> Result<()> {
 
     // Find the target issue.
     let issues = user.list_issues().await?;
-    let target = find_issue_by_description(&issues.issues, "issue with todos")
+    let target = find_issue_summary_by_description(&issues.issues, "issue with todos")
         .expect("target issue should exist");
     let target_id = target.issue_id.clone();
 
@@ -203,10 +203,10 @@ async fn cannot_close_issue_with_open_blockers() -> Result<()> {
 
     // Find the issues we created.
     let issues = user.list_issues().await?;
-    let blocker =
-        find_issue_by_description(&issues.issues, "blocker A").expect("blocker issue should exist");
-    let blocked =
-        find_issue_by_description(&issues.issues, "blocked B").expect("blocked issue should exist");
+    let blocker = find_issue_summary_by_description(&issues.issues, "blocker A")
+        .expect("blocker issue should exist");
+    let blocked = find_issue_summary_by_description(&issues.issues, "blocked B")
+        .expect("blocked issue should exist");
     let blocker_id = blocker.issue_id.clone();
     let blocked_id = blocked.issue_id.clone();
 
@@ -275,13 +275,19 @@ async fn failed_blocker_allows_closure() -> Result<()> {
 
     // Verify final states.
     let issues = user.list_issues().await?;
-    let blocker =
-        find_issue_by_description(&issues.issues, "blocker A").expect("blocker issue should exist");
-    let blocked =
-        find_issue_by_description(&issues.issues, "blocked B").expect("blocked issue should exist");
+    let blocker = find_issue_summary_by_description(&issues.issues, "blocker A")
+        .expect("blocker issue should exist");
+    let blocked = find_issue_summary_by_description(&issues.issues, "blocked B")
+        .expect("blocked issue should exist");
 
-    harness::IssueAssertions::assert_status(blocker, metis_common::issues::IssueStatus::Failed);
-    harness::IssueAssertions::assert_status(blocked, metis_common::issues::IssueStatus::Closed);
+    harness::IssueSummaryAssertions::assert_status(
+        blocker,
+        metis_common::issues::IssueStatus::Failed,
+    );
+    harness::IssueSummaryAssertions::assert_status(
+        blocked,
+        metis_common::issues::IssueStatus::Closed,
+    );
 
     Ok(())
 }
