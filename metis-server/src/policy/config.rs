@@ -1,14 +1,14 @@
 use serde::Deserialize;
 
 /// A single policy entry in the config, consisting of a name and optional
-/// parameters (as raw TOML values for the policy constructor to interpret).
+/// parameters (as raw YAML values for the policy constructor to interpret).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum PolicyEntry {
     /// Just the policy name with no params.
     Name(String),
     /// A policy with name and parameters.
-    WithParams { name: String, params: toml::Value },
+    WithParams { name: String, params: serde_yaml_ng::Value },
 }
 
 impl PolicyEntry {
@@ -21,7 +21,7 @@ impl PolicyEntry {
     }
 
     /// Returns the policy parameters, if any.
-    pub fn params(&self) -> Option<&toml::Value> {
+    pub fn params(&self) -> Option<&serde_yaml_ng::Value> {
         match self {
             PolicyEntry::Name(_) => None,
             PolicyEntry::WithParams { params, .. } => Some(params),
@@ -37,8 +37,8 @@ pub struct PolicyList {
     pub automations: Vec<PolicyEntry>,
 }
 
-/// Top-level policy configuration, deserializable from the `[policies]`
-/// section of the server TOML config.
+/// Top-level policy configuration, deserializable from the `policies`
+/// section of the server YAML config.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct PolicyConfig {

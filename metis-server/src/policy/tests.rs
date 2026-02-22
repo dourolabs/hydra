@@ -500,7 +500,7 @@ fn registry_build_with_params() {
     registry.register_restriction("parameterized", |params| {
         // Verify the params are passed through
         let params = params.ok_or("expected params")?;
-        let table = params.as_table().ok_or("expected table")?;
+        let table = params.as_mapping().ok_or("expected mapping")?;
         if !table.contains_key("threshold") {
             return Err("missing 'threshold' param".to_string());
         }
@@ -512,9 +512,12 @@ fn registry_build_with_params() {
             restrictions: vec![PolicyEntry::WithParams {
                 name: "parameterized".to_string(),
                 params: {
-                    let mut table = toml::map::Map::new();
-                    table.insert("threshold".to_string(), toml::Value::Integer(5));
-                    toml::Value::Table(table)
+                    let mut map = serde_yaml_ng::Mapping::new();
+                    map.insert(
+                        serde_yaml_ng::Value::String("threshold".to_string()),
+                        serde_yaml_ng::Value::Number(5.into()),
+                    );
+                    serde_yaml_ng::Value::Mapping(map)
                 },
             }],
             automations: Vec::new(),
@@ -530,13 +533,16 @@ fn registry_build_with_params() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn policy_config_deserializes_from_toml() {
-    let toml_str = r#"
-        restrictions = ["issue_lifecycle_validation", "task_state_machine"]
-        automations = ["cascade_issue_status"]
+fn policy_config_deserializes_from_yaml() {
+    let yaml_str = r#"
+        restrictions:
+          - issue_lifecycle_validation
+          - task_state_machine
+        automations:
+          - cascade_issue_status
     "#;
 
-    let config: PolicyConfig = toml::from_str(toml_str).expect("should deserialize");
+    let config: PolicyConfig = serde_yaml_ng::from_str(yaml_str).expect("should deserialize");
     assert_eq!(config.global.restrictions.len(), 2);
     assert_eq!(
         config.global.restrictions[0].name(),
@@ -549,21 +555,22 @@ fn policy_config_deserializes_from_toml() {
 
 #[test]
 fn policy_config_deserializes_with_params() {
-    let toml_str = r#"
-        restrictions = []
-
-        [[automations]]
-        name = "cascade_issue_status"
-        [automations.params]
-        statuses = ["dropped", "failed"]
+    let yaml_str = r#"
+        restrictions: []
+        automations:
+          - name: cascade_issue_status
+            params:
+              statuses:
+                - dropped
+                - failed
     "#;
 
-    let config: PolicyConfig = toml::from_str(toml_str).expect("should deserialize");
+    let config: PolicyConfig = serde_yaml_ng::from_str(yaml_str).expect("should deserialize");
     assert_eq!(config.global.automations.len(), 1);
     let entry = &config.global.automations[0];
     assert_eq!(entry.name(), "cascade_issue_status");
     let params = entry.params().expect("should have params");
-    let table = params.as_table().expect("params should be a table");
+    let table = params.as_mapping().expect("params should be a mapping");
     assert!(table.contains_key("statuses"));
 }
 
@@ -574,45 +581,45 @@ fn policy_config_default_is_empty() {
     assert!(config.global.automations.is_empty());
 }
 
-/// Exact structure from service3.yaml: [policies] with [[policies.automations]] and
-/// [policies.automations.params] for patch_workflow. Ensures merge_request.assignee
+/// Exact structure from service config YAML: policies with automations and
+/// params for patch_workflow. Ensures merge_request.assignee
 /// is deserialized and passed through to the automation.
 #[test]
 fn policy_config_deserializes_patch_workflow_params_under_policies_section() {
-    let toml_str = r#"
-        [metis]
-        namespace = "default"
-        [job]
-        default_image = "x"
-        [database]
-        url = "postgres://localhost/db"
-        [github_app]
-        app_id = 1
-        client_id = "c"
-        client_secret = "s"
-        private_key = "k"
-        [background]
-        assignment_agent = "swe"
-        [[background.agent_queues]]
-        name = "swe"
-        prompt = "p"
+    let yaml_str = r#"
+metis:
+  namespace: default
+job:
+  default_image: x
+database:
+  url: "postgres://localhost/db"
+github_app:
+  app_id: 1
+  client_id: c
+  client_secret: s
+  private_key: k
+background:
+  assignment_agent: swe
+  agent_queues:
+    - name: swe
+      prompt: p
 
-        [policies]
-        restrictions = ["issue_lifecycle_validation"]
-        [[policies.automations]]
-        name = "cascade_issue_status"
-        params = {}
-        [[policies.automations]]
-        name = "patch_workflow"
-        [policies.automations.params]
-        merge_request = { assignee = "$patch_creator" }
-        [[policies.automations]]
-        name = "github_pr_sync"
-        params = {}
+policies:
+  restrictions:
+    - issue_lifecycle_validation
+  automations:
+    - name: cascade_issue_status
+      params: {}
+    - name: patch_workflow
+      params:
+        merge_request:
+          assignee: "$patch_creator"
+    - name: github_pr_sync
+      params: {}
     "#;
 
     let config: crate::config::AppConfig =
-        toml::from_str(toml_str).expect("full config with [policies] should deserialize");
+        serde_yaml_ng::from_str(yaml_str).expect("full config with policies should deserialize");
     let policies = config.policies.expect("policies should be present");
     let patch_workflow_entry = policies
         .global
@@ -623,11 +630,11 @@ fn policy_config_deserializes_patch_workflow_params_under_policies_section() {
     let params = patch_workflow_entry
         .params()
         .expect("patch_workflow should have params");
-    let table = params.as_table().expect("params should be a table");
+    let table = params.as_mapping().expect("params should be a mapping");
     let merge_request = table
         .get("merge_request")
-        .and_then(|v| v.as_table())
-        .expect("params.merge_request should be a table");
+        .and_then(|v| v.as_mapping())
+        .expect("params.merge_request should be a mapping");
     let assignee = merge_request
         .get("assignee")
         .and_then(|v| v.as_str())
@@ -942,13 +949,16 @@ fn parameterized_policy_builds_with_custom_params() {
             automations: vec![PolicyEntry::WithParams {
                 name: "cascade_issue_status".to_string(),
                 params: {
-                    let mut table = toml::map::Map::new();
-                    let statuses = toml::Value::Array(vec![
-                        toml::Value::String("dropped".to_string()),
-                        toml::Value::String("failed".to_string()),
+                    let mut map = serde_yaml_ng::Mapping::new();
+                    let statuses = serde_yaml_ng::Value::Sequence(vec![
+                        serde_yaml_ng::Value::String("dropped".to_string()),
+                        serde_yaml_ng::Value::String("failed".to_string()),
                     ]);
-                    table.insert("trigger_statuses".to_string(), statuses);
-                    toml::Value::Table(table)
+                    map.insert(
+                        serde_yaml_ng::Value::String("trigger_statuses".to_string()),
+                        statuses,
+                    );
+                    serde_yaml_ng::Value::Mapping(map)
                 },
             }],
         },
@@ -1007,7 +1017,7 @@ fn invalid_params_produce_error_during_validation() {
             restrictions: vec![],
             automations: vec![PolicyEntry::WithParams {
                 name: "cascade_issue_status".to_string(),
-                params: toml::Value::String("invalid".to_string()),
+                params: serde_yaml_ng::Value::String("invalid".to_string()),
             }],
         },
     };
@@ -1016,40 +1026,42 @@ fn invalid_params_produce_error_during_validation() {
     assert!(result.is_err(), "validation should error on invalid params");
 }
 
-/// Test: TOML deserialization of a full config with policies section works.
+/// Test: YAML deserialization of a full config with policies section works.
 #[test]
-fn full_toml_config_with_policies_deserializes() {
-    let toml_str = r#"
-        [metis]
-        namespace = "default"
-        allowed_orgs = []
+fn full_yaml_config_with_policies_deserializes() {
+    let yaml_str = r#"
+metis:
+  namespace: default
+  allowed_orgs: []
 
-        [job]
-        default_image = "metis-worker:latest"
+job:
+  default_image: "metis-worker:latest"
 
-        [database]
-        url = "postgres://localhost/test"
+database:
+  url: "postgres://localhost/test"
 
-        [github_app]
-        app_id = 1
-        client_id = "test"
-        client_secret = "test"
-        private_key = "test"
+github_app:
+  app_id: 1
+  client_id: test
+  client_secret: test
+  private_key: test
 
-        [background]
-        assignment_agent = "swe"
+background:
+  assignment_agent: swe
+  agent_queues:
+    - name: swe
+      prompt: test
 
-        [[background.agent_queues]]
-        name = "swe"
-        prompt = "test"
-
-        [policies]
-        restrictions = ["issue_lifecycle_validation", "task_state_machine"]
-        automations = ["cascade_issue_status"]
+policies:
+  restrictions:
+    - issue_lifecycle_validation
+    - task_state_machine
+  automations:
+    - cascade_issue_status
     "#;
 
     let config: crate::config::AppConfig =
-        toml::from_str(toml_str).expect("should deserialize full config with policies");
+        serde_yaml_ng::from_str(yaml_str).expect("should deserialize full config with policies");
 
     let policies = config.policies.expect("policies should be present");
     assert_eq!(policies.global.restrictions.len(), 2);
@@ -1115,37 +1127,36 @@ async fn restriction_can_read_actor_from_context() {
     assert!(violation.message.contains("test_worker"));
 }
 
-/// Test: Config without [policies] section deserializes with policies = None.
+/// Test: Config without policies key deserializes with policies = None.
 #[test]
 fn config_without_policies_deserializes_as_none() {
-    let toml_str = r#"
-        [metis]
-        namespace = "default"
+    let yaml_str = r#"
+metis:
+  namespace: default
 
-        [job]
-        default_image = "metis-worker:latest"
+job:
+  default_image: "metis-worker:latest"
 
-        [database]
-        url = "postgres://localhost/test"
+database:
+  url: "postgres://localhost/test"
 
-        [github_app]
-        app_id = 1
-        client_id = "test"
-        client_secret = "test"
-        private_key = "test"
+github_app:
+  app_id: 1
+  client_id: test
+  client_secret: test
+  private_key: test
 
-        [background]
-        assignment_agent = "swe"
-
-        [[background.agent_queues]]
-        name = "swe"
-        prompt = "test"
+background:
+  assignment_agent: swe
+  agent_queues:
+    - name: swe
+      prompt: test
     "#;
 
     let config: crate::config::AppConfig =
-        toml::from_str(toml_str).expect("should deserialize config without policies");
+        serde_yaml_ng::from_str(yaml_str).expect("should deserialize config without policies");
     assert!(
         config.policies.is_none(),
-        "absent [policies] section should deserialize as None"
+        "absent policies key should deserialize as None"
     );
 }

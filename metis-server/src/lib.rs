@@ -225,7 +225,7 @@ pub async fn run() -> anyhow::Result<()> {
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "{ENV_OPENAI_API_KEY} is not set. Provide it via the environment or config.toml."
+                "{ENV_OPENAI_API_KEY} is not set. Provide it via the environment or config.yaml."
             )
         })?;
     let anthropic_api_key = env::var(ENV_ANTHROPIC_API_KEY)
@@ -305,7 +305,7 @@ async fn health_check() -> Json<serde_json::Value> {
 pub fn config_path() -> PathBuf {
     std::env::var(ENV_METIS_CONFIG)
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("config.toml"))
+        .unwrap_or_else(|_| PathBuf::from("config.yaml"))
 }
 
 fn build_agents(config: &AppConfig) -> Arc<RwLock<Vec<Arc<AgentQueue>>>> {

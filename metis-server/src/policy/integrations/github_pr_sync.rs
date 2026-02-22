@@ -25,7 +25,7 @@ const AUTOMATION_NAME: &str = "github_pr_sync";
 pub struct GithubPrSyncAutomation;
 
 impl GithubPrSyncAutomation {
-    pub fn new(_params: Option<&toml::Value>) -> Result<Self, String> {
+    pub fn new(_params: Option<&serde_yaml_ng::Value>) -> Result<Self, String> {
         Ok(Self)
     }
 }

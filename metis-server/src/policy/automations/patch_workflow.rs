@@ -52,11 +52,9 @@ pub struct PatchWorkflowAutomation {
 }
 
 impl PatchWorkflowAutomation {
-    pub fn new(params: Option<&toml::Value>) -> Result<Self, String> {
+    pub fn new(params: Option<&serde_yaml_ng::Value>) -> Result<Self, String> {
         let config = if let Some(params) = params {
-            params
-                .clone()
-                .try_into::<PatchWorkflowConfig>()
+            serde_yaml_ng::from_value::<PatchWorkflowConfig>(params.clone())
                 .map_err(|e| format!("invalid patch_workflow params: {e}"))?
         } else {
             // Default: create a MergeRequest issue with no assignee (backward-compatible)
@@ -833,14 +831,18 @@ mod tests {
     // ---- New tests for patch_workflow-specific functionality ----
 
     #[test]
-    fn config_deserializes_from_toml() {
-        let toml_str = r#"
-            merge_request = { assignee = "$patch_creator" }
-            [repos."dourolabs/metis"]
-            review_requests = [{ assignee = "jayantk" }]
-            merge_request = { assignee = "swe" }
+    fn config_deserializes_from_yaml() {
+        let yaml_str = r#"
+merge_request:
+  assignee: "$patch_creator"
+repos:
+  dourolabs/metis:
+    review_requests:
+      - assignee: jayantk
+    merge_request:
+      assignee: swe
         "#;
-        let config: PatchWorkflowConfig = toml::from_str(toml_str).unwrap();
+        let config: PatchWorkflowConfig = serde_yaml_ng::from_str(yaml_str).unwrap();
         assert!(config.review_requests.is_empty());
         assert_eq!(
             config.merge_request.as_ref().unwrap().assignee,
@@ -858,8 +860,8 @@ mod tests {
 
     #[test]
     fn config_empty_deserializes_to_defaults() {
-        let toml_str = "";
-        let config: PatchWorkflowConfig = toml::from_str(toml_str).unwrap();
+        let yaml_str = "{}";
+        let config: PatchWorkflowConfig = serde_yaml_ng::from_str(yaml_str).unwrap();
         assert!(config.review_requests.is_empty());
         assert!(config.merge_request.is_none());
         assert!(config.repos.is_empty());
@@ -997,12 +999,11 @@ mod tests {
         };
 
         // Configure with review requests only (no merge request)
-        let params: toml::Value = toml::from_str(
+        let params: serde_yaml_ng::Value = serde_yaml_ng::from_str(
             r#"
-            review_requests = [
-                { assignee = "reviewer-a" },
-                { assignee = "reviewer-b" }
-            ]
+review_requests:
+  - assignee: reviewer-a
+  - assignee: reviewer-b
             "#,
         )
         .unwrap();
@@ -1069,10 +1070,12 @@ mod tests {
         };
 
         // Configure with both review requests and merge request
-        let params: toml::Value = toml::from_str(
+        let params: serde_yaml_ng::Value = serde_yaml_ng::from_str(
             r#"
-            review_requests = [{ assignee = "reviewer-a" }]
-            merge_request = { assignee = "merger" }
+review_requests:
+  - assignee: reviewer-a
+merge_request:
+  assignee: merger
             "#,
         )
         .unwrap();
@@ -1146,9 +1149,10 @@ mod tests {
             payload,
         };
 
-        let params: toml::Value = toml::from_str(
+        let params: serde_yaml_ng::Value = serde_yaml_ng::from_str(
             r#"
-            merge_request = { assignee = "$patch_creator" }
+merge_request:
+  assignee: "$patch_creator"
             "#,
         )
         .unwrap();
@@ -1204,12 +1208,16 @@ mod tests {
         };
 
         // Configure with per-repo override for "test/repo"
-        let params: toml::Value = toml::from_str(
+        let params: serde_yaml_ng::Value = serde_yaml_ng::from_str(
             r#"
-            merge_request = { assignee = "global-merger" }
-            [repos."test/repo"]
-            review_requests = [{ assignee = "repo-reviewer" }]
-            merge_request = { assignee = "repo-merger" }
+merge_request:
+  assignee: global-merger
+repos:
+  test/repo:
+    review_requests:
+      - assignee: repo-reviewer
+    merge_request:
+      assignee: repo-merger
             "#,
         )
         .unwrap();
@@ -1269,9 +1277,10 @@ mod tests {
             payload,
         };
 
-        let params: toml::Value = toml::from_str(
+        let params: serde_yaml_ng::Value = serde_yaml_ng::from_str(
             r#"
-            merge_request = { assignee = "configured-reviewer" }
+merge_request:
+  assignee: configured-reviewer
             "#,
         )
         .unwrap();
