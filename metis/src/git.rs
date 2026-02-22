@@ -494,6 +494,50 @@ pub fn checkout_branch(repo_root: &Path, branch: &str) -> Result<()> {
     Ok(())
 }
 
+/// Return the current HEAD commit OID as a hex string.
+pub fn head_oid(repo_root: &Path) -> Result<String> {
+    let repo = repo_for_path(repo_root)?;
+    let head = repo.head().context("failed to resolve HEAD")?;
+    let oid = head
+        .target()
+        .ok_or_else(|| anyhow!("HEAD does not point to a commit"))?;
+    Ok(oid.to_string())
+}
+
+/// Hard-reset the current branch to a specific commit (given as a rev string,
+/// e.g. a SHA hex or ref name). This updates both HEAD and the working tree.
+pub fn reset_hard(repo_root: &Path, rev: &str) -> Result<()> {
+    let repo = repo_for_path(repo_root)?;
+    let target = repo
+        .revparse_single(rev)
+        .with_context(|| format!("failed to resolve '{rev}' for reset"))?;
+    let target_commit = target
+        .peel_to_commit()
+        .with_context(|| format!("failed to peel '{rev}' to a commit"))?;
+    repo.reset(target_commit.as_object(), git2::ResetType::Hard, None)
+        .context("failed to hard-reset to target commit")?;
+    Ok(())
+}
+
+/// Update the named local branch to point at the current HEAD commit.
+///
+/// This is useful after a git2 rebase, which moves HEAD but may not always
+/// update the branch ref that was checked out before the rebase.
+pub fn update_branch_to_head(repo_root: &Path, branch: &str) -> Result<()> {
+    let repo = repo_for_path(repo_root)?;
+    let head_oid = repo
+        .head()
+        .context("failed to resolve HEAD")?
+        .target()
+        .ok_or_else(|| anyhow!("HEAD does not point to a commit"))?;
+    let head_commit = repo
+        .find_commit(head_oid)
+        .context("failed to find HEAD commit")?;
+    repo.branch(branch, &head_commit, true)
+        .context("failed to update branch ref to HEAD")?;
+    Ok(())
+}
+
 /// Rebase the current branch onto a target reference (e.g. "origin/main").
 ///
 /// Returns `Ok(())` on success. Returns an error if conflicts are encountered
@@ -573,7 +617,7 @@ pub fn push_to_ref(
             if !force && err.code() == ErrorCode::NotFastForward {
                 anyhow!(
                     "failed to push to origin/{remote_ref}: not a fast-forward. \
-                     The base branch may have been updated. Fetch and retry."
+                     The base branch was updated by a concurrent push."
                 )
             } else {
                 anyhow!(err).context(format!("failed to push to origin/{remote_ref}"))

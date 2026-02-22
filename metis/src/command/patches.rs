@@ -23,9 +23,10 @@ use crate::git;
 use crate::git::{
     apply_patch, checkout_branch as git_checkout_branch, current_branch,
     diff_commit_range as git_diff_commit_range, fetch_remote as git_fetch_remote,
-    has_uncommitted_changes as git_has_uncommitted_changes, push_branch, push_to_ref,
-    rebase_onto as git_rebase_onto,
+    has_uncommitted_changes as git_has_uncommitted_changes, head_oid as git_head_oid, push_branch,
+    push_to_ref, rebase_onto as git_rebase_onto, reset_hard as git_reset_hard,
     resolve_commit_range_from_merge_base as git_resolve_commit_range_from_merge_base,
+    update_branch_to_head as git_update_branch_to_head,
 };
 use crate::{
     client::MetisClientInterface,
@@ -749,35 +750,86 @@ async fn merge_patch(
         }
     };
 
-    // 6. Rebase the patch branch onto origin/<base>.
+    // 6. Rebase and push with retry loop to handle concurrent pushes.
+    //
+    // Between rebase and push, another concurrent merge can advance
+    // origin/main, causing a NotFastForward push error. We retry the
+    // fetch-rebase-push sequence up to MAX_MERGE_ATTEMPTS times.
+    //
+    // Before each retry we hard-reset the branch back to its original
+    // (pre-rebase) state so that the subsequent rebase starts cleanly.
+    const MAX_MERGE_ATTEMPTS: u32 = 3;
     let onto_ref = format!("origin/{base_branch}");
-    if let Err(err) = git_rebase_onto(&repo_root, &onto_ref) {
-        restore_branch(&repo_root, &original_branch);
-        bail!(
-            "Error: failed to rebase patch {patch_id} onto {base_branch}.\n\n\
-             The patch branch \"{branch_name}\" has conflicts with \"{base_branch}\". To resolve:\n\
-             1. Rebase your changes onto {base_branch} locally: git rebase origin/{base_branch}\n\
-             2. Resolve any conflicts\n\
-             3. Update the patch: metis patches update {patch_id}\n\
-             4. Try merging again: metis patches merge {patch_id}\n\n\
-             Underlying error: {err}"
-        );
+    let pre_rebase_oid = git_head_oid(&repo_root)?;
+    let mut push_succeeded = false;
+
+    for attempt in 1..=MAX_MERGE_ATTEMPTS {
+        if attempt > 1 {
+            // Reset branch to pre-rebase state so the next rebase starts fresh.
+            git_reset_hard(&repo_root, &pre_rebase_oid)?;
+            // Re-fetch to pick up any new commits pushed to origin.
+            git_fetch_remote(&repo_root, github_token.as_deref())?;
+        }
+
+        // Rebase the patch branch onto origin/<base>.
+        if let Err(err) = git_rebase_onto(&repo_root, &onto_ref) {
+            restore_branch(&repo_root, &original_branch);
+            bail!(
+                "Error: failed to rebase patch {patch_id} onto {base_branch}.\n\n\
+                 The patch branch \"{branch_name}\" has conflicts with \"{base_branch}\". To resolve:\n\
+                 1. Rebase your changes onto {base_branch} locally: git rebase origin/{base_branch}\n\
+                 2. Resolve any conflicts\n\
+                 3. Update the patch: metis patches update {patch_id}\n\
+                 4. Try merging again: metis patches merge {patch_id}\n\n\
+                 Underlying error: {err}"
+            );
+        }
+
+        // Ensure the branch ref is updated to match HEAD after the rebase.
+        // git2's rebase may not always update the named branch ref.
+        git_update_branch_to_head(&repo_root, branch_name)?;
+
+        // Push the rebased branch to the base branch on origin.
+        match push_to_ref(
+            &repo_root,
+            branch_name,
+            &base_branch,
+            github_token.as_deref(),
+            false,
+        ) {
+            Ok(()) => {
+                push_succeeded = true;
+                break;
+            }
+            Err(err) => {
+                let err_msg = format!("{err:#}");
+                if err_msg.contains("not a fast-forward") {
+                    if attempt < MAX_MERGE_ATTEMPTS {
+                        eprintln!(
+                            "Push to origin/{base_branch} failed (not a fast-forward), \
+                             retrying ({attempt}/{MAX_MERGE_ATTEMPTS})..."
+                        );
+                        continue;
+                    }
+                    // All retries exhausted — fall through to error below.
+                } else {
+                    // Non-retriable push error.
+                    restore_branch(&repo_root, &original_branch);
+                    bail!(
+                        "Error: failed to push rebased branch '{branch_name}' to origin/{base_branch}.\n\n\
+                         Underlying error: {err}"
+                    );
+                }
+            }
+        }
     }
 
-    // 7. Push the rebased branch to the base branch on origin.
-    if let Err(err) = push_to_ref(
-        &repo_root,
-        branch_name,
-        &base_branch,
-        github_token.as_deref(),
-        false,
-    ) {
+    if !push_succeeded {
         restore_branch(&repo_root, &original_branch);
         bail!(
-            "Error: failed to push rebased branch '{branch_name}' to origin/{base_branch}.\n\n\
-             The base branch may have been updated by another push. \
-             Please fetch the latest changes and retry: metis patches merge {patch_id}\n\n\
-             Underlying error: {err}"
+            "Error: failed to merge patch {patch_id} to {base_branch} after {MAX_MERGE_ATTEMPTS} attempts.\n\n\
+             The base branch was updated by concurrent pushes between each rebase and push attempt.\n\
+             Please retry: metis patches merge {patch_id}"
         );
     }
 
