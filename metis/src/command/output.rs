@@ -8,7 +8,7 @@ use metis_common::{
     documents::DocumentVersionRecord,
     issues::{Issue, IssueVersionRecord},
     jobs::{JobSummary, JobSummaryRecord, JobVersionRecord, Task},
-    patches::{PatchStatus, PatchVersionRecord},
+    patches::{PatchStatus, PatchSummaryRecord, PatchVersionRecord},
     repositories::RepositoryRecord,
     task_status::{Status, TaskError},
     whoami::ActorIdentity,
@@ -85,6 +85,17 @@ pub fn render_patch_records(
     match format {
         ResolvedOutputFormat::Jsonl => render_patch_records_jsonl(patches, writer),
         ResolvedOutputFormat::Pretty => render_patch_records_pretty(patches, writer),
+    }
+}
+
+pub fn render_patch_summary_records(
+    format: ResolvedOutputFormat,
+    patches: &[PatchSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => render_patch_summary_records_jsonl(patches, writer),
+        ResolvedOutputFormat::Pretty => render_patch_summary_records_pretty(patches, writer),
     }
 }
 
@@ -306,6 +317,44 @@ fn extract_patch_status(record: &PatchVersionRecord) -> PatchStatus {
 
 fn extract_patch_description(record: &PatchVersionRecord) -> &str {
     record.patch.description.as_str()
+}
+
+fn render_patch_summary_records_jsonl(
+    patches: &[PatchSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    for patch in patches {
+        serde_json::to_writer(&mut *writer, patch)?;
+        writer.write_all(b"\n")?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn render_patch_summary_records_pretty(
+    patches: &[PatchSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    for record in patches {
+        writeln!(
+            writer,
+            "Patch {} [{}]: {}",
+            record.patch_id,
+            format_patch_status(record.patch.status),
+            record.patch.title
+        )?;
+        writeln!(
+            writer,
+            "Repository: {}",
+            record.patch.service_repo_name.as_str()
+        )?;
+        if let Some(ref branch) = record.patch.branch_name {
+            writeln!(writer, "Branch: {branch}")?;
+        }
+        writeln!(writer)?;
+    }
+    writer.flush()?;
+    Ok(())
 }
 
 fn format_patch_status(status: PatchStatus) -> &'static str {

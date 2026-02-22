@@ -4,7 +4,7 @@ import type {
   EntityEventData,
   IssueVersionRecord,
   JobSummaryRecord,
-  PatchVersionRecord,
+  PatchSummaryRecord,
   DocumentVersionRecord,
   ListIssuesResponse,
   ListJobsResponse,
@@ -104,8 +104,8 @@ const wrapJobs = (items: JobSummaryRecord[]): ListJobsResponse => ({ jobs: items
 const jobRecordId = (r: JobSummaryRecord) => r.job_id;
 
 const patchList = (r: ListPatchesResponse) => r.patches;
-const wrapPatches = (items: PatchVersionRecord[]): ListPatchesResponse => ({ patches: items });
-const patchRecordId = (r: PatchVersionRecord) => r.patch_id;
+const wrapPatches = (items: PatchSummaryRecord[]): ListPatchesResponse => ({ patches: items });
+const patchRecordId = (r: PatchSummaryRecord) => r.patch_id;
 
 const docList = (r: ListDocumentsResponse) => r.documents;
 const wrapDocs = (items: DocumentVersionRecord[]): ListDocumentsResponse => ({ documents: items });
@@ -186,9 +186,11 @@ export function useSSE(): SSEConnectionState {
           queryClient.removeQueries({ queryKey: ["patch", entity_id] });
           removeFromList(queryClient, ["patches"], patchList, wrapPatches, patchRecordId, entity_id);
         } else {
-          const record = entity as unknown as PatchVersionRecord;
-          setVersioned(queryClient, ["patch", entity_id], record);
+          const record = entity as unknown as PatchSummaryRecord;
+          // SSE now carries summary records — update list cache directly
           upsertInList(queryClient, ["patches"], patchList, wrapPatches, patchRecordId, entity_id, record);
+          // Detail cache uses full PatchVersionRecord; invalidate so it refetches
+          queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
         }
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
         if (eventType === "document_deleted") {

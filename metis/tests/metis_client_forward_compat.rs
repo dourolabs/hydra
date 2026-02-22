@@ -55,7 +55,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let issue_record_for_list = issue_record_body.clone();
     let patch_record_body = forward_patch_json(&patch_id, &repo_name, &job_id, now);
     let patch_record_for_get = patch_record_body.clone();
-    let patch_record_for_list = patch_record_body.clone();
+    let patch_summary_record = forward_patch_summary_json(&patch_id, &repo_name, &job_id);
     let document_id = DocumentId::new();
     let document_record_body = forward_document_json(&document_id, &job_id);
     let document_record_for_get = document_record_body.clone();
@@ -257,11 +257,11 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         then.status(200).json_body(patch_record_for_get_clone);
     });
 
-    let patch_record_for_list_clone = patch_record_for_list.clone();
+    let patch_summary_record_clone = patch_summary_record.clone();
     server.mock(move |when, then| {
         when.method(GET).path("/v1/patches");
         then.status(200)
-            .json_body(json!({ "patches": [patch_record_for_list_clone], "extra": "list" }));
+            .json_body(json!({ "patches": [patch_summary_record_clone], "extra": "list" }));
     });
 
     let document_id_for_create_clone = document_id_for_create.clone();
@@ -721,6 +721,43 @@ fn forward_patch_json(
             "reviews": [
                 { "contents": "looks ok", "is_approved": true, "author": "reviewer", "submitted_at": now, "confidence": "medium" }
             ],
+            "service_repo_name": repo_name,
+            "github": {
+                "owner": "dourolabs",
+                "repo": "metis",
+                "number": 1,
+                "head_ref": "future-head",
+                "base_ref": "main",
+                "url": "https://example.com/pr/1",
+                "ci": {
+                    "state": "flaky",
+                    "failure": {
+                        "name": "lint",
+                        "summary": "lint failed",
+                        "details_url": "https://example.com/lint",
+                        "retry_after": 30
+                    },
+                    "extra": true
+                },
+                "unexpected": "field"
+            },
+            "bonus": "field"
+        }
+    })
+}
+
+fn forward_patch_summary_json(patch_id: &PatchId, repo_name: &RepoName, job_id: &TaskId) -> Value {
+    json!({
+        "patch_id": patch_id,
+        "version": 0,
+        "timestamp": Utc::now(),
+        "patch": {
+            "title": "future patch",
+            "status": "stale",
+            "is_automatic_backup": false,
+            "created_by": job_id,
+            "creator": "test-creator",
+            "review_summary": { "count": 1, "approved": true },
             "service_repo_name": repo_name,
             "github": {
                 "owner": "dourolabs",

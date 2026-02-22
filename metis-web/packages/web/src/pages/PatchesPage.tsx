@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { Badge, Panel, Spinner } from "@metis/ui";
-import type { PatchVersionRecord } from "@metis/api";
+import type { PatchSummaryRecord } from "@metis/api";
 import { usePatches } from "../features/patches/usePatches";
 import { patchToBadgeStatus } from "../utils/statusMapping";
 import { formatRelativeTime } from "../utils/time";
@@ -43,7 +43,7 @@ export function PatchesPage() {
 }
 
 interface PatchRowProps {
-  record: PatchVersionRecord;
+  record: PatchSummaryRecord;
 }
 
 function PatchRow({ record }: PatchRowProps) {

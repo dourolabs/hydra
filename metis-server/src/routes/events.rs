@@ -328,14 +328,16 @@ async fn serialize_entity(
         }
         MutationPayload::Patch { new, .. } => {
             let api_patch: metis_common::api::v1::patches::Patch = new.clone().into();
-            let record = PatchVersionRecord::new(
+            let full_record = PatchVersionRecord::new(
                 entity_id.parse().ok()?,
                 version,
                 timestamp,
                 api_patch,
                 Some(payload.actor().clone()),
             );
-            serde_json::to_value(record).ok()?
+            let summary_record =
+                metis_common::api::v1::patches::PatchSummaryRecord::from(&full_record);
+            serde_json::to_value(summary_record).ok()?
         }
         MutationPayload::Job { new, .. } => {
             let task_id: TaskId = entity_id.parse().ok()?;
