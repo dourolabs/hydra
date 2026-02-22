@@ -8,6 +8,7 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use metis_common::api::v1::activity::{ActivityFeedResponse, SearchActivityQuery};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
@@ -351,6 +352,12 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError>;
+
+    /// Returns a paginated global activity feed across all entity types.
+    async fn get_activity_feed(
+        &self,
+        query: &SearchActivityQuery,
+    ) -> Result<ActivityFeedResponse, StoreError>;
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.

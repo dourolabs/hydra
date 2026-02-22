@@ -314,6 +314,125 @@ impl MemoryStore {
 
         Ok(())
     }
+
+    fn get_base_deleted(&self, entity_type: &str, entity_id: &str, version: u64) -> bool {
+        match entity_type {
+            "issue" => {
+                if let Some(entry) = self.issues.iter().find(|e| e.key().as_ref() == entity_id) {
+                    entry
+                        .value()
+                        .iter()
+                        .find(|v| v.version == version)
+                        .is_some_and(|v| v.item.deleted)
+                } else {
+                    false
+                }
+            }
+            "patch" => {
+                if let Some(entry) = self.patches.iter().find(|e| e.key().as_ref() == entity_id) {
+                    entry
+                        .value()
+                        .iter()
+                        .find(|v| v.version == version)
+                        .is_some_and(|v| v.item.deleted)
+                } else {
+                    false
+                }
+            }
+            "job" => {
+                if let Some(entry) = self.tasks.iter().find(|e| e.key().as_ref() == entity_id) {
+                    entry
+                        .value()
+                        .iter()
+                        .find(|v| v.version == version)
+                        .is_some_and(|v| v.item.deleted)
+                } else {
+                    false
+                }
+            }
+            "document" => {
+                if let Some(entry) =
+                    self.documents.iter().find(|e| e.key().as_ref() == entity_id)
+                {
+                    entry
+                        .value()
+                        .iter()
+                        .find(|v| v.version == version)
+                        .is_some_and(|v| v.item.deleted)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn get_base_json(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        version: u64,
+    ) -> Option<serde_json::Value> {
+        match entity_type {
+            "issue" => {
+                let entry = self.issues.iter().find(|e| e.key().as_ref() == entity_id)?;
+                let v = entry.value().iter().find(|v| v.version == version)?;
+                let issue: metis_common::api::v1::issues::Issue = v.item.clone().into();
+                let id = entry.key().clone();
+                let record = metis_common::api::v1::issues::IssueVersionRecord::new(
+                    id,
+                    v.version,
+                    v.timestamp,
+                    issue,
+                    v.actor.clone(),
+                );
+                serde_json::to_value(record).ok()
+            }
+            "patch" => {
+                let entry = self.patches.iter().find(|e| e.key().as_ref() == entity_id)?;
+                let v = entry.value().iter().find(|v| v.version == version)?;
+                let patch: metis_common::api::v1::patches::Patch = v.item.clone().into();
+                let id = entry.key().clone();
+                let record = metis_common::api::v1::patches::PatchVersionRecord::new(
+                    id,
+                    v.version,
+                    v.timestamp,
+                    patch,
+                    v.actor.clone(),
+                );
+                serde_json::to_value(record).ok()
+            }
+            "job" => {
+                let entry = self.tasks.iter().find(|e| e.key().as_ref() == entity_id)?;
+                let v = entry.value().iter().find(|v| v.version == version)?;
+                let task: metis_common::api::v1::jobs::Task = v.item.clone().into();
+                let id = entry.key().clone();
+                let record = metis_common::api::v1::jobs::JobVersionRecord::new(
+                    id,
+                    v.version,
+                    v.timestamp,
+                    task,
+                    v.actor.clone(),
+                );
+                serde_json::to_value(record).ok()
+            }
+            "document" => {
+                let entry = self.documents.iter().find(|e| e.key().as_ref() == entity_id)?;
+                let v = entry.value().iter().find(|v| v.version == version)?;
+                let doc: metis_common::api::v1::documents::Document = v.item.clone().into();
+                let id = entry.key().clone();
+                let record = metis_common::api::v1::documents::DocumentVersionRecord::new(
+                    id,
+                    v.version,
+                    v.timestamp,
+                    doc,
+                    v.actor.clone(),
+                );
+                serde_json::to_value(record).ok()
+            }
+            _ => None,
+        }
+    }
 }
 
 impl Default for MemoryStore {
@@ -866,6 +985,273 @@ impl ReadOnlyStore for MemoryStore {
 
         users.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
         Ok(users)
+    }
+
+    async fn get_activity_feed(
+        &self,
+        query: &metis_common::api::v1::activity::SearchActivityQuery,
+    ) -> Result<metis_common::api::v1::activity::ActivityFeedResponse, StoreError> {
+        use metis_common::api::v1::activity::{
+            ActivityCursor, ActivityFeedItem, ActivityFeedResponse,
+        };
+        use metis_common::api::v1::events::{EntityEventData, SseEventType};
+
+        let limit = query.limit.unwrap_or(50).clamp(1, 200) as usize;
+        let cursor = query.cursor.as_deref().and_then(ActivityCursor::decode);
+
+        let entity_types: Vec<&str> = match query.entity_types.as_deref() {
+            Some(types) => types.split(',').map(|s| s.trim()).collect(),
+            None => vec!["issues", "patches", "jobs", "documents"],
+        };
+
+        // Collect all version entries across all entity types into a unified list
+        struct VersionEntry {
+            entity_type: String,
+            entity_id: String,
+            version: u64,
+            timestamp: chrono::DateTime<chrono::Utc>,
+            deleted: bool,
+            actor: Option<metis_common::actor_ref::ActorRef>,
+            entity_json: Option<serde_json::Value>,
+        }
+
+        let mut all_entries: Vec<VersionEntry> = Vec::new();
+
+        if entity_types.contains(&"issues") {
+            for entry in self.issues.iter() {
+                let id = entry.key().clone();
+                for v in entry.value().iter() {
+                    let issue: metis_common::api::v1::issues::Issue = v.item.clone().into();
+                    let record = metis_common::api::v1::issues::IssueVersionRecord::new(
+                        id.clone(),
+                        v.version,
+                        v.timestamp,
+                        issue,
+                        v.actor.clone(),
+                    );
+                    all_entries.push(VersionEntry {
+                        entity_type: "issue".to_string(),
+                        entity_id: id.as_ref().to_string(),
+                        version: v.version,
+                        timestamp: v.timestamp,
+                        deleted: v.item.deleted,
+                        actor: v.actor.clone(),
+                        entity_json: serde_json::to_value(record).ok(),
+                    });
+                }
+            }
+        }
+
+        if entity_types.contains(&"patches") {
+            for entry in self.patches.iter() {
+                let id = entry.key().clone();
+                for v in entry.value().iter() {
+                    let patch: metis_common::api::v1::patches::Patch = v.item.clone().into();
+                    let record = metis_common::api::v1::patches::PatchVersionRecord::new(
+                        id.clone(),
+                        v.version,
+                        v.timestamp,
+                        patch,
+                        v.actor.clone(),
+                    );
+                    all_entries.push(VersionEntry {
+                        entity_type: "patch".to_string(),
+                        entity_id: id.as_ref().to_string(),
+                        version: v.version,
+                        timestamp: v.timestamp,
+                        deleted: v.item.deleted,
+                        actor: v.actor.clone(),
+                        entity_json: serde_json::to_value(record).ok(),
+                    });
+                }
+            }
+        }
+
+        if entity_types.contains(&"jobs") {
+            for entry in self.tasks.iter() {
+                let id = entry.key().clone();
+                for v in entry.value().iter() {
+                    let task: metis_common::api::v1::jobs::Task = v.item.clone().into();
+                    let record = metis_common::api::v1::jobs::JobVersionRecord::new(
+                        id.clone(),
+                        v.version,
+                        v.timestamp,
+                        task,
+                        v.actor.clone(),
+                    );
+                    all_entries.push(VersionEntry {
+                        entity_type: "job".to_string(),
+                        entity_id: id.as_ref().to_string(),
+                        version: v.version,
+                        timestamp: v.timestamp,
+                        deleted: v.item.deleted,
+                        actor: v.actor.clone(),
+                        entity_json: serde_json::to_value(record).ok(),
+                    });
+                }
+            }
+        }
+
+        if entity_types.contains(&"documents") {
+            for entry in self.documents.iter() {
+                let id = entry.key().clone();
+                for v in entry.value().iter() {
+                    let doc: metis_common::api::v1::documents::Document = v.item.clone().into();
+                    let record = metis_common::api::v1::documents::DocumentVersionRecord::new(
+                        id.clone(),
+                        v.version,
+                        v.timestamp,
+                        doc,
+                        v.actor.clone(),
+                    );
+                    all_entries.push(VersionEntry {
+                        entity_type: "document".to_string(),
+                        entity_id: id.as_ref().to_string(),
+                        version: v.version,
+                        timestamp: v.timestamp,
+                        deleted: v.item.deleted,
+                        actor: v.actor.clone(),
+                        entity_json: serde_json::to_value(record).ok(),
+                    });
+                }
+            }
+        }
+
+        // Apply filters
+        if let Some(ref start_time) = query.start_time {
+            all_entries.retain(|e| e.timestamp >= *start_time);
+        }
+        if let Some(ref end_time) = query.end_time {
+            all_entries.retain(|e| e.timestamp < *end_time);
+        }
+        if let Some(ref actor_filter) = query.actor {
+            all_entries.retain(|e| {
+                e.actor.as_ref().is_some_and(|a| {
+                    let json = serde_json::to_string(a).unwrap_or_default();
+                    json.contains(actor_filter)
+                })
+            });
+        }
+
+        // Sort by (timestamp DESC, id DESC, version DESC)
+        all_entries.sort_by(|a, b| {
+            b.timestamp
+                .cmp(&a.timestamp)
+                .then(b.entity_id.cmp(&a.entity_id))
+                .then(b.version.cmp(&a.version))
+        });
+
+        // Apply cursor
+        if let Some(ref cursor) = cursor {
+            let cursor_pos = all_entries.iter().position(|e| {
+                (e.timestamp, e.entity_id.as_str(), e.version)
+                    < (cursor.ts, cursor.id.as_str(), cursor.v)
+            });
+            if let Some(pos) = cursor_pos {
+                all_entries = all_entries.split_off(pos);
+            } else {
+                all_entries.clear();
+            }
+        }
+
+        let has_more = all_entries.len() > limit;
+        all_entries.truncate(limit);
+
+        let mut events: Vec<ActivityFeedItem> = Vec::new();
+        let mut base_objects: HashMap<String, serde_json::Value> = HashMap::new();
+
+        for entry in &all_entries {
+            // Determine event type
+            let event_type = if entry.version == 1 {
+                match entry.entity_type.as_str() {
+                    "issue" => SseEventType::IssueCreated,
+                    "patch" => SseEventType::PatchCreated,
+                    "job" => SseEventType::JobCreated,
+                    "document" => SseEventType::DocumentCreated,
+                    _ => continue,
+                }
+            } else if entry.deleted {
+                // Look up the previous version to check if it was also deleted
+                let base_deleted = self.get_base_deleted(
+                    &entry.entity_type,
+                    &entry.entity_id,
+                    entry.version - 1,
+                );
+                if !base_deleted {
+                    match entry.entity_type.as_str() {
+                        "issue" => SseEventType::IssueDeleted,
+                        "patch" => SseEventType::PatchDeleted,
+                        "document" => SseEventType::DocumentDeleted,
+                        "job" => SseEventType::JobUpdated,
+                        _ => continue,
+                    }
+                } else {
+                    match entry.entity_type.as_str() {
+                        "issue" => SseEventType::IssueUpdated,
+                        "patch" => SseEventType::PatchUpdated,
+                        "job" => SseEventType::JobUpdated,
+                        "document" => SseEventType::DocumentUpdated,
+                        _ => continue,
+                    }
+                }
+            } else {
+                match entry.entity_type.as_str() {
+                    "issue" => SseEventType::IssueUpdated,
+                    "patch" => SseEventType::PatchUpdated,
+                    "job" => SseEventType::JobUpdated,
+                    "document" => SseEventType::DocumentUpdated,
+                    _ => continue,
+                }
+            };
+
+            events.push(ActivityFeedItem {
+                event_type,
+                data: EntityEventData {
+                    entity_type: entry.entity_type.clone(),
+                    entity_id: entry.entity_id.clone(),
+                    version: entry.version,
+                    timestamp: entry.timestamp,
+                    entity: entry.entity_json.clone(),
+                },
+            });
+
+            // Fetch and add base objects for version > 1
+            if entry.version > 1 {
+                let base_json = self.get_base_json(
+                    &entry.entity_type,
+                    &entry.entity_id,
+                    entry.version - 1,
+                );
+                if let Some(json) = base_json {
+                    let map_key = format!(
+                        "{}:{}:{}",
+                        entry.entity_type,
+                        entry.entity_id,
+                        entry.version - 1
+                    );
+                    base_objects.insert(map_key, json);
+                }
+            }
+        }
+
+        let next_cursor = if has_more {
+            all_entries.last().map(|last| {
+                ActivityCursor {
+                    ts: last.timestamp,
+                    id: last.entity_id.clone(),
+                    v: last.version,
+                }
+                .encode()
+            })
+        } else {
+            None
+        };
+
+        Ok(ActivityFeedResponse {
+            events,
+            base_objects,
+            next_cursor,
+        })
     }
 }
 

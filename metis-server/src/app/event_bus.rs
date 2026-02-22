@@ -942,6 +942,13 @@ impl ReadOnlyStore for StoreWithEvents {
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         self.inner.list_users(query).await
     }
+
+    async fn get_activity_feed(
+        &self,
+        query: &metis_common::api::v1::activity::SearchActivityQuery,
+    ) -> Result<metis_common::api::v1::activity::ActivityFeedResponse, StoreError> {
+        self.inner.get_activity_feed(query).await
+    }
 }
 
 #[cfg(test)]

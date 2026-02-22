@@ -1,5 +1,6 @@
 use metis_common::{RelativeVersionNumber, VersionNumber, api::v1::ApiError};
 
+pub mod activity;
 pub mod agents;
 pub mod auth;
 pub mod documents;

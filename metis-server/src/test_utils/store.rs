@@ -205,6 +205,13 @@ impl ReadOnlyStore for FailingStore {
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         fail()
     }
+
+    async fn get_activity_feed(
+        &self,
+        _query: &metis_common::api::v1::activity::SearchActivityQuery,
+    ) -> Result<metis_common::api::v1::activity::ActivityFeedResponse, StoreError> {
+        fail()
+    }
 }
 
 #[async_trait]
