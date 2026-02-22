@@ -138,14 +138,12 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
     // Find the child issue created by PM.
     let all_issues = user.list_issues().await?;
     let children = find_children_of(&all_issues.issues, &parent_id);
-    let child_summary = children
+    let child = children
         .iter()
         .find(|i| i.issue.description.contains("Implement child feature"))
         .expect("PM should have created a child issue");
 
-    // Fetch the full issue record to verify job_settings inheritance
-    // (job_settings are not included in the list summary response).
-    let child = user.get_issue(&child_summary.issue_id).await?;
+    // Verify the child issue has repo job settings.
     assert_eq!(
         child.issue.job_settings.repo_name,
         Some(repo.clone()),

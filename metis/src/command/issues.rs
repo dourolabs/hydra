@@ -994,7 +994,7 @@ async fn fetch_child_issues(
         .await
         .with_context(|| format!("failed to fetch children for issue '{issue_id}'"))?;
 
-    Ok(response.issues.into_iter().map(Into::into).collect())
+    Ok(response.issues)
 }
 
 async fn issues_with_patches(
@@ -1274,7 +1274,7 @@ async fn fetch_issues(
     });
 
     let include_deleted_opt = if include_deleted { Some(true) } else { None };
-    let issues: Vec<IssueVersionRecord> = client
+    let issues = client
         .list_issues(&SearchIssuesQuery::new(
             issue_type,
             status,
@@ -1285,10 +1285,7 @@ async fn fetch_issues(
         ))
         .await
         .context("failed to list issues")?
-        .issues
-        .into_iter()
-        .map(Into::into)
-        .collect();
+        .issues;
 
     for issue in &issues {
         if let Some(expected_type) = issue_type {
@@ -2566,10 +2563,10 @@ mod tests {
     use chrono::{Duration, TimeZone, Utc};
     use httpmock::prelude::*;
     use metis_common::issues::{
-        AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueSummaryRecord,
-        IssueVersionRecord, JobSettings, ListIssueVersionsResponse, ListIssuesResponse,
-        ReplaceTodoListRequest, SetTodoItemStatusRequest, TodoItem, TodoListResponse,
-        UpsertIssueRequest, UpsertIssueResponse,
+        AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueVersionRecord,
+        JobSettings, ListIssueVersionsResponse, ListIssuesResponse, ReplaceTodoListRequest,
+        SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
+        UpsertIssueResponse,
     };
     use metis_common::{
         jobs::{BundleSpec, ListJobsResponse, Task},
@@ -2667,26 +2664,25 @@ mod tests {
     async fn list_issues_filters_by_query_and_prints_jsonl() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let issues_response =
-            ListIssuesResponse::new(vec![IssueSummaryRecord::from(&IssueVersionRecord::new(
-                issue_id("i-1"),
-                0,
-                Utc::now(),
-                Issue::new(
-                    IssueType::Bug,
-                    "First issue".into(),
-                    empty_user(),
-                    String::new(),
-                    IssueStatus::Open,
-                    None,
-                    None,
-                    Vec::new(),
-                    vec![],
-                    Vec::new(),
-                    false,
-                ),
+        let issues_response = ListIssuesResponse::new(vec![IssueVersionRecord::new(
+            issue_id("i-1"),
+            0,
+            Utc::now(),
+            Issue::new(
+                IssueType::Bug,
+                "First issue".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
                 None,
-            ))]);
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+                false,
+            ),
+            None,
+        )]);
         let list_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/issues")
@@ -2774,26 +2770,25 @@ mod tests {
     async fn list_issues_filters_by_assignee() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let issues_response =
-            ListIssuesResponse::new(vec![IssueSummaryRecord::from(&IssueVersionRecord::new(
-                issue_id("i-7"),
-                0,
-                Utc::now(),
-                Issue::new(
-                    IssueType::Task,
-                    "Edge case bug".into(),
-                    empty_user(),
-                    String::new(),
-                    IssueStatus::Open,
-                    Some("owner-a".into()),
-                    None,
-                    Vec::new(),
-                    vec![],
-                    Vec::new(),
-                    false,
-                ),
+        let issues_response = ListIssuesResponse::new(vec![IssueVersionRecord::new(
+            issue_id("i-7"),
+            0,
+            Utc::now(),
+            Issue::new(
+                IssueType::Task,
+                "Edge case bug".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                Some("owner-a".into()),
                 None,
-            ))]);
+                Vec::new(),
+                vec![],
+                Vec::new(),
+                false,
+            ),
+            None,
+        )]);
         let list_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/issues")
@@ -2926,9 +2921,7 @@ mod tests {
                 .path("/v1/issues")
                 .query_param("graph", graph_query.as_str());
             then.status(200)
-                .json_body_obj(&ListIssuesResponse::new(vec![IssueSummaryRecord::from(
-                    &child_issue,
-                )]));
+                .json_body_obj(&ListIssuesResponse::new(vec![child_issue.clone()]));
         });
         let root_patch_record = PatchVersionRecord::new(
             root_patch_id.clone(),

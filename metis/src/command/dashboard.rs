@@ -14,9 +14,8 @@ use futures::StreamExt;
 use metis_common::{
     api::v1::events::{EventsQuery, SseEventType},
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus,
-        IssueSummaryRecord as ApiIssueRecord, IssueType, JobSettings, SearchIssuesQuery,
-        UpsertIssueRequest,
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
+        IssueVersionRecord as ApiIssueRecord, JobSettings, SearchIssuesQuery, UpsertIssueRequest,
     },
     jobs::{JobSummaryRecord, SearchJobsQuery},
     patches::{GithubPr, PatchVersionRecord},
@@ -841,7 +840,7 @@ async fn handle_sse_event(
             };
             match client.get_issue(&issue_id, false).await {
                 Ok(api_record) => {
-                    if let Some(record) = issue_to_record(ApiIssueRecord::from(&api_record)) {
+                    if let Some(record) = issue_to_record(api_record) {
                         let mut record = record;
                         record.version = Some(entity.version);
                         apply_issue_update(state, record)
@@ -3109,7 +3108,7 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
         issue_type: issue.issue_type,
         description: issue.description,
         creator: issue.creator,
-        progress: String::new(),
+        progress: issue.progress,
         status: issue.status,
         assignee: issue.assignee,
         dependencies: issue.dependencies,
