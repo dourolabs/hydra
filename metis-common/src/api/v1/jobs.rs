@@ -374,11 +374,11 @@ impl From<&JobVersionRecord> for JobSummaryRecord {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ListJobsResponse {
-    pub jobs: Vec<JobVersionRecord>,
+    pub jobs: Vec<JobSummaryRecord>,
 }
 
 impl ListJobsResponse {
-    pub fn new(jobs: Vec<JobVersionRecord>) -> Self {
+    pub fn new(jobs: Vec<JobSummaryRecord>) -> Self {
         Self { jobs }
     }
 }
@@ -411,19 +411,6 @@ impl JobVersionRecord {
             task,
             actor,
         }
-    }
-
-    /// Clears large fields that are unnecessary for list responses.
-    ///
-    /// Specifically: truncates `task.prompt` to the first 100 characters
-    /// and sets `task.last_message` to `None`.
-    pub fn strip_large_fields(&mut self) {
-        if self.task.prompt.len() > 100 {
-            let truncated: String = self.task.prompt.chars().take(100).collect();
-            self.task.prompt = truncated;
-        }
-
-        self.task.last_message = None;
     }
 }
 
@@ -532,74 +519,6 @@ mod tests {
             params.is_empty(),
             "expected no query params for empty SearchJobsQuery"
         );
-    }
-
-    #[test]
-    fn strip_large_fields_clears_prompt_and_last_message() {
-        let long_prompt = "x".repeat(500);
-        let task = Task::new(
-            long_prompt,
-            BundleSpec::None,
-            None,
-            Username::from("test-creator"),
-            None,
-            None,
-            HashMap::new(),
-            None,
-            None,
-            None,
-            Status::Complete,
-            Some("very large output".to_string()),
-            None,
-            false,
-            None,
-            None,
-            None,
-        );
-
-        let task_id = crate::TaskId::new();
-        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task, None);
-
-        record.strip_large_fields();
-
-        // Prompt should be truncated to 100 chars
-        assert_eq!(record.task.prompt.len(), 100);
-        assert!(record.task.prompt.chars().all(|c| c == 'x'));
-
-        // last_message on task should be cleared
-        assert_eq!(record.task.last_message, None);
-    }
-
-    #[test]
-    fn strip_large_fields_preserves_short_prompt() {
-        let short_prompt = "short prompt".to_string();
-        let task = Task::new(
-            short_prompt.clone(),
-            BundleSpec::None,
-            None,
-            Username::from("test-creator"),
-            None,
-            None,
-            HashMap::new(),
-            None,
-            None,
-            None,
-            Status::Created,
-            None,
-            None,
-            false,
-            None,
-            None,
-            None,
-        );
-
-        let task_id = crate::TaskId::new();
-        let mut record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task, None);
-
-        record.strip_large_fields();
-
-        // Short prompt should be preserved as-is
-        assert_eq!(record.task.prompt, short_prompt);
     }
 
     fn make_test_task(prompt: &str) -> Task {

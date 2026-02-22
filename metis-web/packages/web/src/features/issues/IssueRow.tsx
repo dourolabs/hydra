@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
 import type { JobSummary } from "@metis/ui";
-import type { IssueVersionRecord, JobVersionRecord } from "@metis/api";
+import type { IssueVersionRecord, JobSummaryRecord } from "@metis/api";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import styles from "./IssueRow.module.css";
@@ -11,11 +11,11 @@ interface IssueRowProps {
   dimmed?: boolean;
   blocked?: boolean;
   blockedBy?: string[];
-  jobs?: JobVersionRecord[];
+  jobs?: JobSummaryRecord[];
   onJobClick?: (issueId: string, jobId: string) => void;
 }
 
-function toJobSummary(record: JobVersionRecord): JobSummary {
+function toJobSummary(record: JobSummaryRecord): JobSummary {
   const status = record.task.status === "unknown" ? "created" : record.task.status;
   return {
     jobId: record.job_id,

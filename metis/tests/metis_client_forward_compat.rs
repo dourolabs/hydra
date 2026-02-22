@@ -415,7 +415,8 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let jobs = client.list_jobs(&SearchJobsQuery::default()).await?;
     let listed_job = jobs.jobs.first().expect("job from list");
-    assert!(matches!(listed_job.task.context, BundleSpec::Unknown));
+    // Summary records do not include context; verify core summary fields.
+    assert_eq!(listed_job.job_id, job_id);
 
     let fetched_job = client.get_job(&job_id).await?;
     assert!(matches!(fetched_job.task.context, BundleSpec::Unknown));

@@ -17,7 +17,7 @@ use metis_common::{
         Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
         IssueVersionRecord as ApiIssueRecord, JobSettings, SearchIssuesQuery, UpsertIssueRequest,
     },
-    jobs::{JobVersionRecord, SearchJobsQuery},
+    jobs::{JobSummaryRecord, SearchJobsQuery},
     patches::{GithubPr, PatchVersionRecord},
     repositories::SearchRepositoriesQuery,
     task_status::{Status, TaskError},
@@ -873,8 +873,9 @@ async fn handle_sse_event(
             };
             match client.get_job(&task_id).await {
                 Ok(job_record) => {
-                    let issue_id = job_record.task.spawned_from.clone();
-                    let display = summarize_job(job_record, Utc::now());
+                    let summary = JobSummaryRecord::from(&job_record);
+                    let issue_id = summary.task.spawned_from.clone();
+                    let display = summarize_job(summary, Utc::now());
                     let job = JobDetails {
                         display,
                         issue_id,
@@ -3850,9 +3851,15 @@ fn issue_status_order(status: IssueStatus) -> usize {
     }
 }
 
-fn summarize_job(job: JobVersionRecord, now: DateTime<Utc>) -> JobDisplay {
+fn summarize_job(job: JobSummaryRecord, now: DateTime<Utc>) -> JobDisplay {
     let status = job.task.status;
-    let runtime = output::format_runtime(&job.task, now);
+    let runtime = output::format_runtime_fields(
+        job.task.status,
+        job.task.start_time,
+        job.task.creation_time,
+        job.task.end_time,
+        now,
+    );
     let last_change = job
         .task
         .end_time
@@ -3905,7 +3912,7 @@ fn compare_recent(a: Option<DateTime<Utc>>, b: Option<DateTime<Utc>>) -> Orderin
     }
 }
 
-fn note_or_error(job: &JobVersionRecord) -> String {
+fn note_or_error(job: &JobSummaryRecord) -> String {
     if let Some(error) = &job.task.error {
         return format_task_error(error);
     }
@@ -4055,7 +4062,7 @@ mod tests {
     };
     use httpmock::prelude::*;
     use metis_common::issues::UpsertIssueResponse;
-    use metis_common::jobs::{BundleSpec, Task};
+    use metis_common::jobs::BundleSpec;
     use metis_common::{RepoName, Repository, RepositoryRecord};
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
@@ -4068,7 +4075,8 @@ mod tests {
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
 
-    fn job_with_status(id: &str, status: Status, _offset_seconds: i64) -> JobVersionRecord {
+    fn job_with_status(id: &str, status: Status, _offset_seconds: i64) -> JobSummaryRecord {
+        use metis_common::jobs::{JobVersionRecord, Task};
         let error = if status == Status::Failed {
             Some(TaskError::JobEngineError {
                 reason: "boom".into(),
@@ -4076,7 +4084,7 @@ mod tests {
         } else {
             None
         };
-        JobVersionRecord::new(
+        JobSummaryRecord::from(&JobVersionRecord::new(
             task_id(id),
             0,
             Utc::now(),
@@ -4100,7 +4108,7 @@ mod tests {
                 None,
             ),
             None,
-        )
+        ))
     }
 
     fn repo_record(name: &str) -> RepositoryRecord {

@@ -7,7 +7,7 @@ use metis_common::{
     agents::AgentRecord,
     documents::DocumentVersionRecord,
     issues::{Issue, IssueVersionRecord},
-    jobs::{JobVersionRecord, Task},
+    jobs::{JobSummary, JobSummaryRecord, JobVersionRecord, Task},
     patches::{PatchStatus, PatchVersionRecord},
     repositories::RepositoryRecord,
     task_status::{Status, TaskError},
@@ -96,6 +96,17 @@ pub fn render_job_records(
     match format {
         ResolvedOutputFormat::Jsonl => render_job_records_jsonl(jobs, writer),
         ResolvedOutputFormat::Pretty => render_job_records_pretty(jobs, writer),
+    }
+}
+
+pub fn render_job_summary_records(
+    format: ResolvedOutputFormat,
+    jobs: &[JobSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => render_job_summary_records_jsonl(jobs, writer),
+        ResolvedOutputFormat::Pretty => render_job_summary_records_pretty(jobs, writer),
     }
 }
 
@@ -353,6 +364,58 @@ fn render_job_records_pretty(jobs: &[JobVersionRecord], writer: &mut impl Write)
     Ok(())
 }
 
+fn render_job_summary_records_jsonl(
+    jobs: &[JobSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    for job in jobs {
+        serde_json::to_writer(&mut *writer, job)?;
+        writer.write_all(b"\n")?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn render_job_summary_records_pretty(
+    jobs: &[JobSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    if jobs.is_empty() {
+        writeln!(writer, "No Metis jobs found.")?;
+        writer.flush()?;
+        return Ok(());
+    }
+
+    let terminal_width = current_terminal_width();
+
+    let (plain_header, colored_header) = header_row();
+    writeln!(writer, "{colored_header}")?;
+    writeln!(writer, "{}", "-".repeat(plain_header.len()))?;
+
+    let now = Utc::now();
+    for job in jobs {
+        let status_display = format_status(&job.task.status);
+        let runtime = format_summary_runtime(&job.task, now).unwrap_or_else(|| "-".into());
+        let notes = job_summary_note(job).unwrap_or_else(|| "-".into());
+        let cells = job_row_cells(job.job_id.as_ref(), status_display, &runtime);
+        let plain_prefix = job_row_prefix(&cells);
+        let colored_prefix = colored_job_row_prefix(&cells, &job.task.status);
+        for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
+            .into_iter()
+            .enumerate()
+        {
+            if index == 0 {
+                let note_body = line.strip_prefix(&plain_prefix).unwrap_or(&line);
+                writeln!(writer, "{colored_prefix}{note_body}")?;
+            } else {
+                writeln!(writer, "{line}")?;
+            }
+        }
+    }
+    writer.flush()?;
+    Ok(())
+}
+
 fn render_agent_records_jsonl(agents: &[AgentRecord], writer: &mut impl Write) -> Result<()> {
     for agent in agents {
         serde_json::to_writer(&mut *writer, agent)?;
@@ -565,6 +628,10 @@ fn job_note(job: &JobVersionRecord) -> Option<String> {
     job.task.error.as_ref().map(format_task_error)
 }
 
+fn job_summary_note(job: &JobSummaryRecord) -> Option<String> {
+    job.task.error.as_ref().map(format_task_error)
+}
+
 fn format_task_error(error: &TaskError) -> String {
     match error {
         TaskError::JobEngineError { reason } => format!("error: {reason}"),
@@ -630,10 +697,36 @@ fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize) -> Vec<Str
 }
 
 pub(crate) fn format_runtime(task: &Task, now: DateTime<Utc>) -> Option<String> {
-    match task.status {
+    format_runtime_fields(
+        task.status,
+        task.start_time,
+        task.creation_time,
+        task.end_time,
+        now,
+    )
+}
+
+fn format_summary_runtime(summary: &JobSummary, now: DateTime<Utc>) -> Option<String> {
+    format_runtime_fields(
+        summary.status,
+        summary.start_time,
+        summary.creation_time,
+        summary.end_time,
+        now,
+    )
+}
+
+pub(crate) fn format_runtime_fields(
+    status: Status,
+    start_time: Option<DateTime<Utc>>,
+    creation_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Option<String> {
+    match status {
         Status::Running => {
             // Running: elapsed = now - start_time (or creation_time as fallback)
-            let started = task.start_time.or(task.creation_time)?;
+            let started = start_time.or(creation_time)?;
             let duration = if now < started {
                 ChronoDuration::zero()
             } else {
@@ -643,7 +736,7 @@ pub(crate) fn format_runtime(task: &Task, now: DateTime<Utc>) -> Option<String> 
         }
         Status::Pending | Status::Created => {
             // Pending/Created: elapsed = now - creation_time
-            let created = task.creation_time?;
+            let created = creation_time?;
             let duration = if now < created {
                 ChronoDuration::zero()
             } else {
@@ -653,8 +746,8 @@ pub(crate) fn format_runtime(task: &Task, now: DateTime<Utc>) -> Option<String> 
         }
         Status::Complete | Status::Failed => {
             // Completed/Failed: total runtime = end_time - start_time (or creation_time)
-            let started = task.start_time.or(task.creation_time)?;
-            let ended = task.end_time?;
+            let started = start_time.or(creation_time)?;
+            let ended = end_time?;
             let duration = if ended < started {
                 ChronoDuration::zero()
             } else {
