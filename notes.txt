@@ -116,8 +116,7 @@ User has a change they want to make.
 
 
 
--- 
-Garbage below here
+## Scratch notes
 
 ## Important next steps
 
