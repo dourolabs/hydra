@@ -31,7 +31,7 @@ tempfile = "3.13"
 textwrap = { version = "0.16", features = ["terminal_size"] }
 chrono = { version = "0.4", features = ["clock"] }
 owo-colors = "4.1"
-serde_yaml = "0.9"
+serde_yaml_ng = "0.10"
 serde_json = "1.0"
 sha2 = "0.10"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
