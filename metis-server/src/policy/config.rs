@@ -8,7 +8,10 @@ pub enum PolicyEntry {
     /// Just the policy name with no params.
     Name(String),
     /// A policy with name and parameters.
-    WithParams { name: String, params: serde_yaml_ng::Value },
+    WithParams {
+        name: String,
+        params: serde_yaml_ng::Value,
+    },
 }
 
 impl PolicyEntry {

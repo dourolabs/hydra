@@ -3,8 +3,9 @@ use super::{Automation, PolicyEngine, Restriction};
 use std::collections::HashMap;
 
 /// Factory function type for creating restrictions from optional YAML params.
-pub type RestrictionFactory =
-    Box<dyn Fn(Option<&serde_yaml_ng::Value>) -> Result<Box<dyn Restriction>, String> + Send + Sync>;
+pub type RestrictionFactory = Box<
+    dyn Fn(Option<&serde_yaml_ng::Value>) -> Result<Box<dyn Restriction>, String> + Send + Sync,
+>;
 
 /// Factory function type for creating automations from optional YAML params.
 pub type AutomationFactory =
@@ -28,7 +29,10 @@ impl PolicyRegistry {
     /// Register a restriction factory under the given name.
     pub fn register_restriction<F>(&mut self, name: &str, factory: F)
     where
-        F: Fn(Option<&serde_yaml_ng::Value>) -> Result<Box<dyn Restriction>, String> + Send + Sync + 'static,
+        F: Fn(Option<&serde_yaml_ng::Value>) -> Result<Box<dyn Restriction>, String>
+            + Send
+            + Sync
+            + 'static,
     {
         self.restriction_factories
             .insert(name.to_string(), Box::new(factory));
@@ -37,7 +41,10 @@ impl PolicyRegistry {
     /// Register an automation factory under the given name.
     pub fn register_automation<F>(&mut self, name: &str, factory: F)
     where
-        F: Fn(Option<&serde_yaml_ng::Value>) -> Result<Box<dyn Automation>, String> + Send + Sync + 'static,
+        F: Fn(Option<&serde_yaml_ng::Value>) -> Result<Box<dyn Automation>, String>
+            + Send
+            + Sync
+            + 'static,
     {
         self.automation_factories
             .insert(name.to_string(), Box::new(factory));
