@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use metis_common::{
-    issues::{IssueDependencyType, IssueStatus, IssueSummaryRecord, IssueType, IssueVersionRecord},
+    issues::{CommonIssueFields, CommonIssueRecord, IssueDependencyType, IssueStatus, IssueType},
     jobs::JobVersionRecord,
     patches::{PatchStatus, PatchVersionRecord},
     task_status::Status,
@@ -16,13 +16,14 @@ use metis_common::{
 
 /// Structured assertions on issue records.
 ///
-/// Implemented on `IssueVersionRecord` so tests can write:
+/// Blanket-implemented for any type that implements [`CommonIssueRecord`],
+/// so it works with both `IssueVersionRecord` and `IssueSummaryRecord`:
 /// ```ignore
 /// let issue = user.get_issue(&id).await?;
 /// issue.assert_status(IssueStatus::Closed);
 /// issue.assert_todo_count(3);
 /// ```
-pub trait IssueAssertions {
+pub trait IssueAssertions: CommonIssueRecord {
     /// Assert the issue has the expected status.
     fn assert_status(&self, expected: IssueStatus);
 
@@ -30,20 +31,11 @@ pub trait IssueAssertions {
     /// has a description containing `desc_contains`, and has the given `status`.
     ///
     /// A child is an issue whose dependencies include a `ChildOf` edge pointing
-    /// to this issue's ID.
-    fn assert_has_child_with_status(
+    /// to this issue's ID. The `all_issues` slice can be any record type
+    /// implementing [`CommonIssueRecord`].
+    fn assert_has_child_with_status<R: CommonIssueRecord>(
         &self,
-        all_issues: &[IssueVersionRecord],
-        desc_contains: &str,
-        status: IssueStatus,
-    );
-
-    /// Like [`assert_has_child_with_status`] but accepts summary records from
-    /// `list_issues()`. Use this when the parent was fetched via `get_issue()`
-    /// but the children come from a list endpoint.
-    fn assert_has_child_with_status_in_summaries(
-        &self,
-        all_issues: &[IssueSummaryRecord],
+        all_issues: &[R],
         desc_contains: &str,
         status: IssueStatus,
     );
@@ -55,33 +47,36 @@ pub trait IssueAssertions {
     fn assert_has_patch(&self);
 }
 
-impl IssueAssertions for IssueVersionRecord {
+impl<T: CommonIssueRecord> IssueAssertions for T {
     fn assert_status(&self, expected: IssueStatus) {
         assert_eq!(
-            self.issue.status, expected,
+            self.issue().status(),
+            expected,
             "issue {}: expected status {:?}, got {:?}",
-            self.issue_id, expected, self.issue.status
+            self.issue_id(),
+            expected,
+            self.issue().status()
         );
     }
 
-    fn assert_has_child_with_status(
+    fn assert_has_child_with_status<R: CommonIssueRecord>(
         &self,
-        all_issues: &[IssueVersionRecord],
+        all_issues: &[R],
         desc_contains: &str,
         status: IssueStatus,
     ) {
-        let children: Vec<&IssueVersionRecord> = all_issues
+        let children: Vec<&R> = all_issues
             .iter()
             .filter(|issue| {
-                issue.issue.dependencies.iter().any(|dep| {
+                issue.issue().dependencies().iter().any(|dep| {
                     dep.dependency_type == IssueDependencyType::ChildOf
-                        && dep.issue_id == self.issue_id
+                        && dep.issue_id == *self.issue_id()
                 })
             })
             .collect();
 
         let matching = children.iter().find(|child| {
-            child.issue.description.contains(desc_contains) && child.issue.status == status
+            child.issue().description().contains(desc_contains) && child.issue().status() == status
         });
 
         if matching.is_none() {
@@ -90,59 +85,16 @@ impl IssueAssertions for IssueVersionRecord {
                 .map(|c| {
                     format!(
                         "  {} (status={:?}, desc={:?})",
-                        c.issue_id, c.issue.status, c.issue.description
+                        c.issue_id(),
+                        c.issue().status(),
+                        c.issue().description()
                     )
                 })
                 .collect();
             panic!(
                 "issue {}: expected a child with description containing {:?} and status {:?}, \
                  but no matching child found.\nchildren:\n{}",
-                self.issue_id,
-                desc_contains,
-                status,
-                if child_summaries.is_empty() {
-                    "  (none)".to_string()
-                } else {
-                    child_summaries.join("\n")
-                }
-            );
-        }
-    }
-
-    fn assert_has_child_with_status_in_summaries(
-        &self,
-        all_issues: &[IssueSummaryRecord],
-        desc_contains: &str,
-        status: IssueStatus,
-    ) {
-        let children: Vec<&IssueSummaryRecord> = all_issues
-            .iter()
-            .filter(|issue| {
-                issue.issue.dependencies.iter().any(|dep| {
-                    dep.dependency_type == IssueDependencyType::ChildOf
-                        && dep.issue_id == self.issue_id
-                })
-            })
-            .collect();
-
-        let matching = children.iter().find(|child| {
-            child.issue.description.contains(desc_contains) && child.issue.status == status
-        });
-
-        if matching.is_none() {
-            let child_summaries: Vec<String> = children
-                .iter()
-                .map(|c| {
-                    format!(
-                        "  {} (status={:?}, desc={:?})",
-                        c.issue_id, c.issue.status, c.issue.description
-                    )
-                })
-                .collect();
-            panic!(
-                "issue {}: expected a child with description containing {:?} and status {:?}, \
-                 but no matching child found.\nchildren:\n{}",
-                self.issue_id,
+                self.issue_id(),
                 desc_contains,
                 status,
                 if child_summaries.is_empty() {
@@ -155,117 +107,22 @@ impl IssueAssertions for IssueVersionRecord {
     }
 
     fn assert_todo_count(&self, expected: usize) {
-        let actual = self.issue.todo_list.len();
+        let actual = self.issue().todo_list().len();
         assert_eq!(
-            actual, expected,
+            actual,
+            expected,
             "issue {}: expected {} todo items, got {}",
-            self.issue_id, expected, actual
+            self.issue_id(),
+            expected,
+            actual
         );
     }
 
     fn assert_has_patch(&self) {
         assert!(
-            !self.issue.patches.is_empty(),
+            !self.issue().patches().is_empty(),
             "issue {}: expected at least one patch, but patches list is empty",
-            self.issue_id
-        );
-    }
-}
-
-// ── IssueSummaryAssertions ──────────────────────────────────────────
-
-/// Structured assertions on issue summary records (from list endpoints).
-///
-/// Mirrors [`IssueAssertions`] but works with `IssueSummaryRecord`, which
-/// excludes `progress` and `job_settings`.
-pub trait IssueSummaryAssertions {
-    /// Assert the issue has the expected status.
-    fn assert_status(&self, expected: IssueStatus);
-
-    /// Assert that at least one issue in `all_issues` is a child of this issue,
-    /// has a description containing `desc_contains`, and has the given `status`.
-    fn assert_has_child_with_status(
-        &self,
-        all_issues: &[IssueSummaryRecord],
-        desc_contains: &str,
-        status: IssueStatus,
-    );
-
-    /// Assert the issue's todo list has exactly `expected` items.
-    fn assert_todo_count(&self, expected: usize);
-
-    /// Assert the issue has at least one patch attached.
-    fn assert_has_patch(&self);
-}
-
-impl IssueSummaryAssertions for IssueSummaryRecord {
-    fn assert_status(&self, expected: IssueStatus) {
-        assert_eq!(
-            self.issue.status, expected,
-            "issue {}: expected status {:?}, got {:?}",
-            self.issue_id, expected, self.issue.status
-        );
-    }
-
-    fn assert_has_child_with_status(
-        &self,
-        all_issues: &[IssueSummaryRecord],
-        desc_contains: &str,
-        status: IssueStatus,
-    ) {
-        let children: Vec<&IssueSummaryRecord> = all_issues
-            .iter()
-            .filter(|issue| {
-                issue.issue.dependencies.iter().any(|dep| {
-                    dep.dependency_type == IssueDependencyType::ChildOf
-                        && dep.issue_id == self.issue_id
-                })
-            })
-            .collect();
-
-        let matching = children.iter().find(|child| {
-            child.issue.description.contains(desc_contains) && child.issue.status == status
-        });
-
-        if matching.is_none() {
-            let child_summaries: Vec<String> = children
-                .iter()
-                .map(|c| {
-                    format!(
-                        "  {} (status={:?}, desc={:?})",
-                        c.issue_id, c.issue.status, c.issue.description
-                    )
-                })
-                .collect();
-            panic!(
-                "issue {}: expected a child with description containing {:?} and status {:?}, \
-                 but no matching child found.\nchildren:\n{}",
-                self.issue_id,
-                desc_contains,
-                status,
-                if child_summaries.is_empty() {
-                    "  (none)".to_string()
-                } else {
-                    child_summaries.join("\n")
-                }
-            );
-        }
-    }
-
-    fn assert_todo_count(&self, expected: usize) {
-        let actual = self.issue.todo_list.len();
-        assert_eq!(
-            actual, expected,
-            "issue {}: expected {} todo items, got {}",
-            self.issue_id, expected, actual
-        );
-    }
-
-    fn assert_has_patch(&self) {
-        assert!(
-            !self.issue.patches.is_empty(),
-            "issue {}: expected at least one patch, but patches list is empty",
-            self.issue_id
+            self.issue_id()
         );
     }
 }
@@ -381,131 +238,71 @@ impl JobAssertions for JobVersionRecord {
     }
 }
 
-// ── Issue query helpers ─────────────────────────────────────────────
+// ── Generic issue query helpers ─────────────────────────────────────
 
-/// Find the first issue whose description contains `desc_contains`.
+/// Find the first issue record whose description contains `desc_contains`.
 ///
-/// Replaces the repeated pattern:
-/// ```ignore
-/// issues.iter().find(|i| i.issue.description.contains("..."))
-/// ```
-pub fn find_issue_by_description<'a>(
-    issues: &'a [IssueVersionRecord],
+/// Works with both `IssueVersionRecord` and `IssueSummaryRecord`.
+pub fn find_issue_by_description<'a, R: CommonIssueRecord>(
+    issues: &'a [R],
     desc_contains: &str,
-) -> Option<&'a IssueVersionRecord> {
+) -> Option<&'a R> {
     issues
         .iter()
-        .find(|i| i.issue.description.contains(desc_contains))
+        .find(|i| i.issue().description().contains(desc_contains))
 }
 
-/// Find all issues that are children of `parent_id` (via a `ChildOf` dependency).
-pub fn find_children_of<'a>(
-    issues: &'a [IssueVersionRecord],
+/// Find all issue records that are children of `parent_id` (via a `ChildOf` dependency).
+///
+/// Works with both `IssueVersionRecord` and `IssueSummaryRecord`.
+pub fn find_children_of<'a, R: CommonIssueRecord>(
+    issues: &'a [R],
     parent_id: &IssueId,
-) -> Vec<&'a IssueVersionRecord> {
+) -> Vec<&'a R> {
     issues
         .iter()
         .filter(|i| {
-            i.issue.dependencies.iter().any(|d| {
+            i.issue().dependencies().iter().any(|d| {
                 d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
             })
         })
         .collect()
 }
 
-/// Find all child issues of `parent_id` that match the given `issue_type`.
-pub fn find_children_by_type<'a>(
-    issues: &'a [IssueVersionRecord],
+/// Find all child issue records of `parent_id` that match the given `issue_type`.
+///
+/// Works with both `IssueVersionRecord` and `IssueSummaryRecord`.
+pub fn find_children_by_type<'a, R: CommonIssueRecord>(
+    issues: &'a [R],
     parent_id: &IssueId,
     issue_type: IssueType,
-) -> Vec<&'a IssueVersionRecord> {
+) -> Vec<&'a R> {
     issues
         .iter()
         .filter(|i| {
-            i.issue.issue_type == issue_type
-                && i.issue.dependencies.iter().any(|d| {
+            i.issue().issue_type() == issue_type
+                && i.issue().dependencies().iter().any(|d| {
                     d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
                 })
         })
         .collect()
 }
 
-/// Find all child issues of `parent_id` matching `issue_type` and `status`.
-pub fn find_children_by_type_and_status<'a>(
-    issues: &'a [IssueVersionRecord],
+/// Find all child issue records of `parent_id` matching `issue_type` and `status`.
+///
+/// Works with both `IssueVersionRecord` and `IssueSummaryRecord`.
+pub fn find_children_by_type_and_status<'a, R: CommonIssueRecord>(
+    issues: &'a [R],
     parent_id: &IssueId,
     issue_type: IssueType,
     status: IssueStatus,
-) -> Vec<&'a IssueVersionRecord> {
+) -> Vec<&'a R> {
     issues
         .iter()
         .filter(|i| {
-            i.issue.issue_type == issue_type
-                && i.issue.status == status
-                && i.issue.dependencies.iter().any(|d| {
-                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
-                })
-        })
-        .collect()
-}
-
-// ── Issue summary query helpers ──────────────────────────────────────
-
-/// Find the first issue summary whose description contains `desc_contains`.
-pub fn find_issue_summary_by_description<'a>(
-    issues: &'a [IssueSummaryRecord],
-    desc_contains: &str,
-) -> Option<&'a IssueSummaryRecord> {
-    issues
-        .iter()
-        .find(|i| i.issue.description.contains(desc_contains))
-}
-
-/// Find all issue summaries that are children of `parent_id` (via a `ChildOf` dependency).
-pub fn find_summary_children_of<'a>(
-    issues: &'a [IssueSummaryRecord],
-    parent_id: &IssueId,
-) -> Vec<&'a IssueSummaryRecord> {
-    issues
-        .iter()
-        .filter(|i| {
-            i.issue.dependencies.iter().any(|d| {
-                d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
-            })
-        })
-        .collect()
-}
-
-/// Find all child issue summaries of `parent_id` that match the given `issue_type`.
-pub fn find_summary_children_by_type<'a>(
-    issues: &'a [IssueSummaryRecord],
-    parent_id: &IssueId,
-    issue_type: IssueType,
-) -> Vec<&'a IssueSummaryRecord> {
-    issues
-        .iter()
-        .filter(|i| {
-            i.issue.issue_type == issue_type
-                && i.issue.dependencies.iter().any(|d| {
-                    d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
-                })
-        })
-        .collect()
-}
-
-/// Find all child issue summaries of `parent_id` matching `issue_type` and `status`.
-pub fn find_summary_children_by_type_and_status<'a>(
-    issues: &'a [IssueSummaryRecord],
-    parent_id: &IssueId,
-    issue_type: IssueType,
-    status: IssueStatus,
-) -> Vec<&'a IssueSummaryRecord> {
-    issues
-        .iter()
-        .filter(|i| {
-            i.issue.issue_type == issue_type
-                && i.issue.status == status
-                && i.issue.dependencies.iter().any(|d| {
+            i.issue().issue_type() == issue_type
+                && i.issue().status() == status
+                && i.issue().dependencies().iter().any(|d| {
                     d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
                 })
         })

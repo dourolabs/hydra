@@ -2,7 +2,7 @@ mod harness;
 
 use anyhow::Result;
 use harness::{
-    find_summary_children_by_type, test_job_settings, MergeRequestConfig, PatchWorkflowConfig,
+    find_children_by_type, test_job_settings, MergeRequestConfig, PatchWorkflowConfig,
     ReviewRequestConfig, TestHarness,
 };
 use metis_common::{
@@ -170,7 +170,7 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
     let all_issues = user.list_issues().await?;
 
     let review_requests =
-        find_summary_children_by_type(&all_issues.issues, &issue_id, IssueType::ReviewRequest);
+        find_children_by_type(&all_issues.issues, &issue_id, IssueType::ReviewRequest);
     assert_eq!(
         review_requests.len(),
         1,
@@ -183,7 +183,7 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
     );
 
     let merge_requests =
-        find_summary_children_by_type(&all_issues.issues, &issue_id, IssueType::MergeRequest);
+        find_children_by_type(&all_issues.issues, &issue_id, IssueType::MergeRequest);
     assert_eq!(
         merge_requests.len(),
         1,

@@ -804,6 +804,94 @@ impl ListIssueVersionsResponse {
     }
 }
 
+/// Common accessor methods for the shared fields between [`Issue`] and [`IssueSummary`].
+///
+/// Both types share `issue_type`, `description`, `status`, `dependencies`, `todo_list`,
+/// and `patches`. This trait provides a uniform interface over those fields so that
+/// test helpers and assertion logic can be written generically.
+pub trait CommonIssueFields {
+    fn issue_type(&self) -> IssueType;
+    fn description(&self) -> &str;
+    fn status(&self) -> IssueStatus;
+    fn dependencies(&self) -> &[IssueDependency];
+    fn todo_list(&self) -> &[TodoItem];
+    fn patches(&self) -> &[PatchId];
+}
+
+impl CommonIssueFields for Issue {
+    fn issue_type(&self) -> IssueType {
+        self.issue_type
+    }
+    fn description(&self) -> &str {
+        &self.description
+    }
+    fn status(&self) -> IssueStatus {
+        self.status
+    }
+    fn dependencies(&self) -> &[IssueDependency] {
+        &self.dependencies
+    }
+    fn todo_list(&self) -> &[TodoItem] {
+        &self.todo_list
+    }
+    fn patches(&self) -> &[PatchId] {
+        &self.patches
+    }
+}
+
+impl CommonIssueFields for IssueSummary {
+    fn issue_type(&self) -> IssueType {
+        self.issue_type
+    }
+    fn description(&self) -> &str {
+        &self.description
+    }
+    fn status(&self) -> IssueStatus {
+        self.status
+    }
+    fn dependencies(&self) -> &[IssueDependency] {
+        &self.dependencies
+    }
+    fn todo_list(&self) -> &[TodoItem] {
+        &self.todo_list
+    }
+    fn patches(&self) -> &[PatchId] {
+        &self.patches
+    }
+}
+
+/// Common accessor methods for issue record types ([`IssueVersionRecord`] and
+/// [`IssueSummaryRecord`]).
+///
+/// Both record types share `issue_id` and wrap an inner issue type that implements
+/// [`CommonIssueFields`]. This trait allows assertion helpers and query functions
+/// to work generically over either record type.
+pub trait CommonIssueRecord {
+    type Issue: CommonIssueFields;
+    fn issue_id(&self) -> &IssueId;
+    fn issue(&self) -> &Self::Issue;
+}
+
+impl CommonIssueRecord for IssueVersionRecord {
+    type Issue = Issue;
+    fn issue_id(&self) -> &IssueId {
+        &self.issue_id
+    }
+    fn issue(&self) -> &Issue {
+        &self.issue
+    }
+}
+
+impl CommonIssueRecord for IssueSummaryRecord {
+    type Issue = IssueSummary;
+    fn issue_id(&self) -> &IssueId {
+        &self.issue_id
+    }
+    fn issue(&self) -> &IssueSummary {
+        &self.issue
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

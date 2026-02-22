@@ -1,7 +1,7 @@
 mod harness;
 
 use anyhow::Result;
-use harness::IssueSummaryAssertions;
+use harness::IssueAssertions;
 use metis_common::issues::IssueStatus;
 use std::str::FromStr;
 
