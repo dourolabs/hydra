@@ -288,11 +288,12 @@ pub fn push_branch(
     branch: &str,
     github_token: Option<&str>,
     force: bool,
-) -> Result<()> {
-    let repo = repo_for_path(repo_root)?;
+) -> Result<(), PushError> {
+    let repo = repo_for_path(repo_root).map_err(PushError::Other)?;
     let mut remote = repo
         .find_remote("origin")
-        .context("failed to find 'origin' remote")?;
+        .context("failed to find 'origin' remote")
+        .map_err(PushError::Other)?;
     let callbacks = remote_callbacks(github_token);
     let mut push_options = PushOptions::new();
     push_options.remote_callbacks(callbacks);
@@ -306,12 +307,13 @@ pub fn push_branch(
         .push(&[refspec.as_str()], Some(&mut push_options))
         .map_err(|err| {
             if !force && err.code() == ErrorCode::NotFastForward {
-                anyhow!(
-                    "failed to push branch '{branch}' to origin: {err}\n\
-                     Hint: pass --force to force push and overwrite the remote branch."
-                )
+                PushError::NotFastForward {
+                    remote_ref: branch.to_string(),
+                }
             } else {
-                anyhow!(err).context(format!("failed to push branch '{branch}' to origin"))
+                PushError::Other(
+                    anyhow!(err).context(format!("failed to push branch '{branch}' to origin")),
+                )
             }
         })?;
 
