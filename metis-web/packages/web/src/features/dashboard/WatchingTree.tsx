@@ -132,28 +132,30 @@ function TreeNodeRow({
       onClick={() => onSelect(node.id)}
       type="button"
     >
-      <span
-        className={styles.chevron}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggle();
-        }}
-        role="button"
-        tabIndex={-1}
-      >
-        {hasChildren ? (expanded ? "\u25BE" : "\u25B8") : " "}
-      </span>
-      <Badge status={issueToBadgeStatus(node.issue.issue.status)} />
-      {jobSummaries && jobSummaries.length > 0 && (
+      <span className={styles.topRow}>
         <span
-          className={styles.jobIndicator}
-          onClick={(e) => e.stopPropagation()}
-          role="presentation"
+          className={styles.chevron}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
+          role="button"
+          tabIndex={-1}
         >
-          <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
+          {hasChildren ? (expanded ? "\u25BE" : "\u25B8") : " "}
         </span>
-      )}
-      <span className={styles.id}>{node.id}</span>
+        <Badge status={issueToBadgeStatus(node.issue.issue.status)} />
+        {jobSummaries && jobSummaries.length > 0 && (
+          <span
+            className={styles.jobIndicator}
+            onClick={(e) => e.stopPropagation()}
+            role="presentation"
+          >
+            <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
+          </span>
+        )}
+        <span className={styles.id}>{node.id}</span>
+      </span>
       <span className={styles.desc}>
         {descriptionSnippet(node.issue.issue.description, 50)}
       </span>
