@@ -17,7 +17,7 @@ coordinates background agents, and talks to Kubernetes to launch workers.
 | `metis-common` | Shared models (`MetisId`, job/log/issue/patch types, env var constants) used by both crates. |
 | `images/` | Dockerfiles for the server and worker images. |
 | `scripts/` | Helper scripts (cluster bootstrap, Docker builds, worker entrypoint). |
-| `config.toml.sample` files | Copy to `config.toml` (per crate) to override defaults. |
+| `config.toml.sample` / `config.yaml.sample` files | Copy to `config.toml` or `config.yaml` (per crate) to override defaults. |
 
 ## Prerequisites
 
@@ -76,7 +76,7 @@ commands without manual approvals.
 
 ### Server (`metis-server`)
 
-1. `cp metis-server/config.toml.sample metis-server/config.toml`.
+1. `cp metis-server/config.yaml.sample metis-server/config.yaml`.
 2. Fill in:
    - `[metis]` namespace, worker image, and server hostname.
    - `OPENAI_API_KEY` (or export the `OPENAI_API_KEY` env var at runtime).
@@ -85,9 +85,9 @@ commands without manual approvals.
    - `[[background.agent_queues]]` entries if you want autonomous queues
      that automatically create jobs based on prompts.
    - `[background.scheduler.<worker>]` blocks to adjust polling/backoff
-     intervals for background workers (see `config.toml.sample` for defaults).
+     intervals for background workers (see `config.yaml.sample` for defaults).
    - `[kubernetes]` connection info (`in_cluster`, `config_path`, etc.).
-3. Launch with `METIS_CONFIG=metis-server/config.toml cargo run -p metis-server`.
+3. Launch with `METIS_CONFIG=metis-server/config.yaml cargo run -p metis-server`.
 
 ## Local Development
 
@@ -100,7 +100,7 @@ Use the helper script to run a local Postgres container with persistent data in 
 ./scripts/dev-postgres.sh status   # shows container status and connection string
 ```
 
-By default the container listens on `localhost:5432` with database/user/password `metis`. Point `metis-server/config.toml` at it (e.g., `url = "postgres://metis:metis@localhost:5432/metis"`).
+By default the container listens on `localhost:5432` with database/user/password `metis`. Point `metis-server/config.yaml` at it (e.g., `url = "postgres://metis:metis@localhost:5432/metis"`).
 
 ### GitHub App for local development
 
@@ -114,7 +114,7 @@ Create a GitHub App for local development if you want Metis to read/write reposi
    - Contents: Read & Write
    - Pull requests: Read & Write
 3. Install the GitHub App on the Metis repository you want to operate against.
-4. Use the app credentials in your local config or environment variables per `metis-server/config.toml.sample`.
+4. Use the app credentials in your local config or environment variables per `metis-server/config.yaml.sample`.
 
 ### Running metis-server in a kind cluster
 
