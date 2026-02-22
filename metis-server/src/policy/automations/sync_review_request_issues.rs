@@ -22,7 +22,7 @@ const AUTOMATION_NAME: &str = "sync_review_request_issues";
 pub struct SyncReviewRequestIssuesAutomation;
 
 impl SyncReviewRequestIssuesAutomation {
-    pub fn new(_params: Option<&toml::Value>) -> Result<Self, String> {
+    pub fn new(_params: Option<&serde_yaml_ng::Value>) -> Result<Self, String> {
         Ok(Self)
     }
 }
