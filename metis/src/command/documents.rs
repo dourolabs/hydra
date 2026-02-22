@@ -71,10 +71,6 @@ pub struct DocumentsListArgs {
     #[arg(long = "created-by", value_name = "TASK_ID")]
     pub created_by: Option<TaskId>,
 
-    /// Show complete document body instead of truncated preview.
-    #[arg(long = "full")]
-    pub full: bool,
-
     /// Include deleted documents in the listing.
     #[arg(long = "include-deleted")]
     pub include_deleted: bool,
@@ -172,9 +168,8 @@ pub async fn run(
 ) -> Result<()> {
     match command {
         DocumentsCommand::List(args) => {
-            let full_output = args.full;
             let documents = list_documents(client, args).await?;
-            write_documents_output(context.output_format, &documents, full_output)?;
+            write_documents_output(context.output_format, &documents, false)?;
         }
         DocumentsCommand::Get {
             id_or_path,
@@ -982,7 +977,6 @@ mod tests {
                 query: Some("runbook".to_string()),
                 path_prefix: Some("docs/".to_string()),
                 created_by: Some(created_by),
-                full: false,
                 include_deleted: false,
             },
         )
