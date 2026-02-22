@@ -1,6 +1,7 @@
 # Metis Development Notes
 
 ## Kubernetes setup
+Last updated: 2026-02-22
 
 ### Prerequisites
 - Docker must be installed and the daemon running
