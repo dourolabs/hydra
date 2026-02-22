@@ -2667,8 +2667,8 @@ mod tests {
     async fn list_issues_filters_by_query_and_prints_jsonl() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let issues_response = ListIssuesResponse::new(vec![IssueSummaryRecord::from(
-            &IssueVersionRecord::new(
+        let issues_response =
+            ListIssuesResponse::new(vec![IssueSummaryRecord::from(&IssueVersionRecord::new(
                 issue_id("i-1"),
                 0,
                 Utc::now(),
@@ -2686,8 +2686,7 @@ mod tests {
                     false,
                 ),
                 None,
-            ),
-        )]);
+            ))]);
         let list_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/issues")
@@ -2775,8 +2774,8 @@ mod tests {
     async fn list_issues_filters_by_assignee() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let issues_response = ListIssuesResponse::new(vec![IssueSummaryRecord::from(
-            &IssueVersionRecord::new(
+        let issues_response =
+            ListIssuesResponse::new(vec![IssueSummaryRecord::from(&IssueVersionRecord::new(
                 issue_id("i-7"),
                 0,
                 Utc::now(),
@@ -2794,8 +2793,7 @@ mod tests {
                     false,
                 ),
                 None,
-            ),
-        )]);
+            ))]);
         let list_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/issues")

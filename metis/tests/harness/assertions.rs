@@ -5,9 +5,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use metis_common::{
-    issues::{
-        IssueDependencyType, IssueStatus, IssueSummaryRecord, IssueType, IssueVersionRecord,
-    },
+    issues::{IssueDependencyType, IssueStatus, IssueSummaryRecord, IssueType, IssueVersionRecord},
     jobs::JobVersionRecord,
     patches::{PatchStatus, PatchVersionRecord},
     task_status::Status,

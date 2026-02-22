@@ -14,8 +14,9 @@ use futures::StreamExt;
 use metis_common::{
     api::v1::events::{EventsQuery, SseEventType},
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
-        IssueSummaryRecord as ApiIssueRecord, JobSettings, SearchIssuesQuery, UpsertIssueRequest,
+        Issue, IssueDependency, IssueDependencyType, IssueStatus,
+        IssueSummaryRecord as ApiIssueRecord, IssueType, JobSettings, SearchIssuesQuery,
+        UpsertIssueRequest,
     },
     jobs::{JobVersionRecord, SearchJobsQuery},
     patches::{GithubPr, PatchVersionRecord},

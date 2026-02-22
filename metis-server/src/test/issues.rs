@@ -9,8 +9,8 @@ use metis_common::{
     IssueId, PatchId,
     api::v1::issues::{
         AddTodoItemRequest, IssueSummary, IssueVersionRecord, ListIssueVersionsResponse,
-        ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
-        SetTodoItemStatusRequest, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+        ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
+        TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
     },
 };
 use reqwest::StatusCode;
