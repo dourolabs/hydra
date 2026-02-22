@@ -351,8 +351,10 @@ impl MemoryStore {
                 }
             }
             "document" => {
-                if let Some(entry) =
-                    self.documents.iter().find(|e| e.key().as_ref() == entity_id)
+                if let Some(entry) = self
+                    .documents
+                    .iter()
+                    .find(|e| e.key().as_ref() == entity_id)
                 {
                     entry
                         .value()
@@ -389,7 +391,10 @@ impl MemoryStore {
                 serde_json::to_value(record).ok()
             }
             "patch" => {
-                let entry = self.patches.iter().find(|e| e.key().as_ref() == entity_id)?;
+                let entry = self
+                    .patches
+                    .iter()
+                    .find(|e| e.key().as_ref() == entity_id)?;
                 let v = entry.value().iter().find(|v| v.version == version)?;
                 let patch: metis_common::api::v1::patches::Patch = v.item.clone().into();
                 let id = entry.key().clone();
@@ -417,7 +422,10 @@ impl MemoryStore {
                 serde_json::to_value(record).ok()
             }
             "document" => {
-                let entry = self.documents.iter().find(|e| e.key().as_ref() == entity_id)?;
+                let entry = self
+                    .documents
+                    .iter()
+                    .find(|e| e.key().as_ref() == entity_id)?;
                 let v = entry.value().iter().find(|v| v.version == version)?;
                 let doc: metis_common::api::v1::documents::Document = v.item.clone().into();
                 let id = entry.key().clone();
@@ -992,9 +1000,9 @@ impl ReadOnlyStore for MemoryStore {
         query: &metis_common::api::v1::activity::SearchActivityQuery,
     ) -> Result<metis_common::api::v1::activity::ActivityFeedResponse, StoreError> {
         use metis_common::api::v1::activity::{
-            ActivityCursor, ActivityFeedItem, ActivityFeedResponse,
+            ActivityCursor, ActivityFeedItem, ActivityFeedResponse, classify_event_type,
         };
-        use metis_common::api::v1::events::{EntityEventData, SseEventType};
+        use metis_common::api::v1::events::EntityEventData;
 
         let limit = query.limit.unwrap_or(50).clamp(1, 200) as usize;
         let cursor = query.cursor.as_deref().and_then(ActivityCursor::decode);
@@ -1161,47 +1169,20 @@ impl ReadOnlyStore for MemoryStore {
         let mut base_objects: HashMap<String, serde_json::Value> = HashMap::new();
 
         for entry in &all_entries {
-            // Determine event type
-            let event_type = if entry.version == 1 {
-                match entry.entity_type.as_str() {
-                    "issue" => SseEventType::IssueCreated,
-                    "patch" => SseEventType::PatchCreated,
-                    "job" => SseEventType::JobCreated,
-                    "document" => SseEventType::DocumentCreated,
-                    _ => continue,
-                }
-            } else if entry.deleted {
-                // Look up the previous version to check if it was also deleted
-                let base_deleted = self.get_base_deleted(
-                    &entry.entity_type,
-                    &entry.entity_id,
-                    entry.version - 1,
-                );
-                if !base_deleted {
-                    match entry.entity_type.as_str() {
-                        "issue" => SseEventType::IssueDeleted,
-                        "patch" => SseEventType::PatchDeleted,
-                        "document" => SseEventType::DocumentDeleted,
-                        "job" => SseEventType::JobUpdated,
-                        _ => continue,
-                    }
-                } else {
-                    match entry.entity_type.as_str() {
-                        "issue" => SseEventType::IssueUpdated,
-                        "patch" => SseEventType::PatchUpdated,
-                        "job" => SseEventType::JobUpdated,
-                        "document" => SseEventType::DocumentUpdated,
-                        _ => continue,
-                    }
-                }
+            let base_deleted = if entry.version > 1 {
+                self.get_base_deleted(&entry.entity_type, &entry.entity_id, entry.version - 1)
             } else {
-                match entry.entity_type.as_str() {
-                    "issue" => SseEventType::IssueUpdated,
-                    "patch" => SseEventType::PatchUpdated,
-                    "job" => SseEventType::JobUpdated,
-                    "document" => SseEventType::DocumentUpdated,
-                    _ => continue,
-                }
+                false
+            };
+
+            let event_type = match classify_event_type(
+                &entry.entity_type,
+                entry.version,
+                entry.deleted,
+                base_deleted,
+            ) {
+                Some(et) => et,
+                None => continue,
             };
 
             events.push(ActivityFeedItem {
@@ -1217,11 +1198,8 @@ impl ReadOnlyStore for MemoryStore {
 
             // Fetch and add base objects for version > 1
             if entry.version > 1 {
-                let base_json = self.get_base_json(
-                    &entry.entity_type,
-                    &entry.entity_id,
-                    entry.version - 1,
-                );
+                let base_json =
+                    self.get_base_json(&entry.entity_type, &entry.entity_id, entry.version - 1);
                 if let Some(json) = base_json {
                     let map_key = format!(
                         "{}:{}:{}",

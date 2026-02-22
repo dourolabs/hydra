@@ -52,6 +52,63 @@ pub struct ActivityFeedResponse {
     pub next_cursor: Option<String>,
 }
 
+/// Determines the [`SseEventType`] for a given entity mutation.
+///
+/// This centralizes the event-type classification logic shared between store
+/// implementations (Postgres and in-memory):
+/// - Version 1 ⇒ `*Created`
+/// - `deleted` is true and `base_deleted` is false ⇒ `*Deleted` (first deletion)
+/// - Otherwise ⇒ `*Updated`
+///
+/// Returns `None` for unrecognized entity types.
+pub fn classify_event_type(
+    entity_type: &str,
+    version: u64,
+    deleted: bool,
+    base_deleted: bool,
+) -> Option<SseEventType> {
+    if version == 1 {
+        match entity_type {
+            "issue" => Some(SseEventType::IssueCreated),
+            "patch" => Some(SseEventType::PatchCreated),
+            "job" => Some(SseEventType::JobCreated),
+            "document" => Some(SseEventType::DocumentCreated),
+            _ => None,
+        }
+    } else if deleted && !base_deleted {
+        match entity_type {
+            "issue" => Some(SseEventType::IssueDeleted),
+            "patch" => Some(SseEventType::PatchDeleted),
+            "document" => Some(SseEventType::DocumentDeleted),
+            // Jobs don't have a "deleted" event type
+            "job" => Some(SseEventType::JobUpdated),
+            _ => None,
+        }
+    } else {
+        match entity_type {
+            "issue" => Some(SseEventType::IssueUpdated),
+            "patch" => Some(SseEventType::PatchUpdated),
+            "job" => Some(SseEventType::JobUpdated),
+            "document" => Some(SseEventType::DocumentUpdated),
+            _ => None,
+        }
+    }
+}
+
+/// Extracts the `deleted` flag from a serialized version record JSON value.
+///
+/// The deleted field is nested inside the entity-specific key (e.g., `.issue.deleted`,
+/// `.patch.deleted`, `.task.deleted`, or `.document.deleted`).
+pub fn extract_deleted_from_json(json: &serde_json::Value) -> bool {
+    json.get("issue")
+        .or(json.get("patch"))
+        .or(json.get("task"))
+        .or(json.get("document"))
+        .and_then(|entity| entity.get("deleted"))
+        .and_then(|d| d.as_bool())
+        .unwrap_or(false)
+}
+
 /// Internal cursor representation for pagination.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityCursor {

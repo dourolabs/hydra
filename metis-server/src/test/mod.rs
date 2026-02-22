@@ -1,3 +1,4 @@
+mod activity;
 pub(crate) mod agents;
 mod auth;
 pub(crate) mod common;

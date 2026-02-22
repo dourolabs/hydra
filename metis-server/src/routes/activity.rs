@@ -1,6 +1,8 @@
 use crate::app::AppState;
-use crate::store::ReadOnlyStore;
-use axum::{Json, extract::{Query, State}};
+use axum::{
+    Json,
+    extract::{Query, State},
+};
 use metis_common::api::v1::{ApiError, activity};
 use tracing::info;
 
@@ -16,8 +18,8 @@ pub async fn get_activity(
         "get_activity invoked"
     );
 
-    let store = state.store.as_ref();
-    let response = store
+    let response = state
+        .store()
         .get_activity_feed(&query)
         .await
         .map_err(|err| {

@@ -2130,9 +2130,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &metis_common::api::v1::activity::SearchActivityQuery,
     ) -> Result<metis_common::api::v1::activity::ActivityFeedResponse, StoreError> {
         use metis_common::api::v1::activity::{
-            ActivityCursor, ActivityFeedItem, ActivityFeedResponse,
+            ActivityCursor, ActivityFeedItem, ActivityFeedResponse, classify_event_type,
+            extract_deleted_from_json,
         };
-        use metis_common::api::v1::events::{EntityEventData, SseEventType};
+        use metis_common::api::v1::events::EntityEventData;
 
         let limit = query.limit.unwrap_or(50).clamp(1, 200);
         let cursor = query.cursor.as_deref().and_then(ActivityCursor::decode);
@@ -2178,9 +2179,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 conditions.push("updated_at < $2".to_string());
             }
             if cursor.is_some() {
-                conditions.push(
-                    "(updated_at, id, version_number) < ($3, $4, $5)".to_string(),
-                );
+                conditions.push("(updated_at, id, version_number) < ($3, $4, $5)".to_string());
             }
             if actor_json.is_some() {
                 conditions.push("actor @> $6".to_string());
@@ -2239,147 +2238,174 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let has_more = activity_rows.len() > limit as usize;
-        let activity_rows: Vec<_> =
-            activity_rows.into_iter().take(limit as usize).collect();
+        let activity_rows: Vec<_> = activity_rows.into_iter().take(limit as usize).collect();
 
         // Collect all (entity_type, id, version) keys we need to fetch,
         // including base objects (version N-1) for events at version > 1.
-        let mut needed_keys: Vec<(String, String, i64)> = Vec::new();
+        // Group by entity type for batched queries.
+        let mut issue_keys: Vec<(String, i64)> = Vec::new();
+        let mut patch_keys: Vec<(String, i64)> = Vec::new();
+        let mut job_keys: Vec<(String, i64)> = Vec::new();
+        let mut doc_keys: Vec<(String, i64)> = Vec::new();
+
         for row in &activity_rows {
-            needed_keys.push((row.entity_type.clone(), row.id.clone(), row.version_number));
+            let keys = match row.entity_type.as_str() {
+                "issue" => &mut issue_keys,
+                "patch" => &mut patch_keys,
+                "job" => &mut job_keys,
+                "document" => &mut doc_keys,
+                _ => continue,
+            };
+            keys.push((row.id.clone(), row.version_number));
             if row.version_number > 1 {
-                needed_keys.push((
-                    row.entity_type.clone(),
-                    row.id.clone(),
-                    row.version_number - 1,
-                ));
+                keys.push((row.id.clone(), row.version_number - 1));
             }
         }
-        needed_keys.sort();
-        needed_keys.dedup();
+        issue_keys.sort();
+        issue_keys.dedup();
+        patch_keys.sort();
+        patch_keys.dedup();
+        job_keys.sort();
+        job_keys.dedup();
+        doc_keys.sort();
+        doc_keys.dedup();
 
-        // Fetch full version records and serialize to JSON
+        // Fetch full version records in batches per entity type
         let mut entity_json_map: HashMap<(String, String, i64), Value> = HashMap::new();
 
-        for (etype, id, version) in &needed_keys {
-            let json_val = match etype.as_str() {
-                "issue" => {
-                    let sql = format!(
-                        "SELECT id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at \
-                         FROM {TABLE_ISSUES_V2} WHERE id = $1 AND version_number = $2"
-                    );
-                    let row = sqlx::query_as::<_, IssueRow>(&sql)
-                        .bind(id.as_str())
-                        .bind(*version)
-                        .fetch_optional(&self.pool)
-                        .await
-                        .map_err(map_sqlx_error)?;
-                    row.map(|r| {
-                        let issue: metis_common::api::v1::issues::Issue =
-                            self.row_to_issue(&r)?.into();
-                        let record = metis_common::api::v1::issues::IssueVersionRecord::new(
-                            IssueId::from_str(&r.id)
-                                .map_err(|e| StoreError::Internal(format!("invalid issue id: {e}")))?,
-                            VersionNumber::try_from(r.version_number)
-                                .map_err(|_| StoreError::Internal("invalid version".to_string()))?,
-                            r.created_at,
-                            issue,
-                            parse_actor_json(r.actor)?,
-                        );
-                        serde_json::to_value(record)
-                            .map_err(|e| StoreError::Internal(format!("json error: {e}")))
-                    })
-                    .transpose()?
-                }
-                "patch" => {
-                    let sql = format!(
-                        "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at \
-                         FROM {TABLE_PATCHES_V2} WHERE id = $1 AND version_number = $2"
-                    );
-                    let row = sqlx::query_as::<_, PatchRow>(&sql)
-                        .bind(id.as_str())
-                        .bind(*version)
-                        .fetch_optional(&self.pool)
-                        .await
-                        .map_err(map_sqlx_error)?;
-                    row.map(|r| {
-                        let patch: metis_common::api::v1::patches::Patch =
-                            self.row_to_patch(&r)?.into();
-                        let record = metis_common::api::v1::patches::PatchVersionRecord::new(
-                            PatchId::from_str(&r.id)
-                                .map_err(|e| StoreError::Internal(format!("invalid patch id: {e}")))?,
-                            VersionNumber::try_from(r.version_number)
-                                .map_err(|_| StoreError::Internal("invalid version".to_string()))?,
-                            r.created_at,
-                            patch,
-                            parse_actor_json(r.actor)?,
-                        );
-                        serde_json::to_value(record)
-                            .map_err(|e| StoreError::Internal(format!("json error: {e}")))
-                    })
-                    .transpose()?
-                }
-                "job" => {
-                    let sql = format!(
-                        "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets \
-                         FROM {TABLE_TASKS_V2} WHERE id = $1 AND version_number = $2"
-                    );
-                    let row = sqlx::query_as::<_, TaskRow>(&sql)
-                        .bind(id.as_str())
-                        .bind(*version)
-                        .fetch_optional(&self.pool)
-                        .await
-                        .map_err(map_sqlx_error)?;
-                    row.map(|r| {
-                        let task: metis_common::api::v1::jobs::Task =
-                            self.row_to_task(&r)?.into();
-                        let record = metis_common::api::v1::jobs::JobVersionRecord::new(
-                            TaskId::from_str(&r.id)
-                                .map_err(|e| StoreError::Internal(format!("invalid task id: {e}")))?,
-                            VersionNumber::try_from(r.version_number)
-                                .map_err(|_| StoreError::Internal("invalid version".to_string()))?,
-                            r.created_at,
-                            task,
-                            parse_actor_json(r.actor)?,
-                        );
-                        serde_json::to_value(record)
-                            .map_err(|e| StoreError::Internal(format!("json error: {e}")))
-                    })
-                    .transpose()?
-                }
-                "document" => {
-                    let sql = format!(
-                        "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at \
-                         FROM {TABLE_DOCUMENTS_V2} WHERE id = $1 AND version_number = $2"
-                    );
-                    let row = sqlx::query_as::<_, DocumentRow>(&sql)
-                        .bind(id.as_str())
-                        .bind(*version)
-                        .fetch_optional(&self.pool)
-                        .await
-                        .map_err(map_sqlx_error)?;
-                    row.map(|r| {
-                        let doc: metis_common::api::v1::documents::Document =
-                            self.row_to_document(&r)?.into();
-                        let record = metis_common::api::v1::documents::DocumentVersionRecord::new(
-                            DocumentId::from_str(&r.id)
-                                .map_err(|e| StoreError::Internal(format!("invalid doc id: {e}")))?,
-                            VersionNumber::try_from(r.version_number)
-                                .map_err(|_| StoreError::Internal("invalid version".to_string()))?,
-                            r.created_at,
-                            doc,
-                            parse_actor_json(r.actor)?,
-                        );
-                        serde_json::to_value(record)
-                            .map_err(|e| StoreError::Internal(format!("json error: {e}")))
-                    })
-                    .transpose()?
-                }
-                _ => None,
-            };
+        // Batch-fetch issues
+        if !issue_keys.is_empty() {
+            let ids: Vec<&str> = issue_keys.iter().map(|(id, _)| id.as_str()).collect();
+            let versions: Vec<i64> = issue_keys.iter().map(|(_, v)| *v).collect();
+            let sql = format!(
+                "SELECT id, version_number, issue_type, description, creator, progress, status, \
+                 assignee, job_settings, todo_list, dependencies, patches, deleted, actor, \
+                 created_at, updated_at \
+                 FROM {TABLE_ISSUES_V2} WHERE (id, version_number) IN \
+                 (SELECT UNNEST($1::text[]), UNNEST($2::bigint[]))"
+            );
+            let rows = sqlx::query_as::<_, IssueRow>(&sql)
+                .bind(&ids)
+                .bind(&versions)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+            for r in rows {
+                let issue: metis_common::api::v1::issues::Issue = self.row_to_issue(&r)?.into();
+                let record = metis_common::api::v1::issues::IssueVersionRecord::new(
+                    IssueId::from_str(&r.id)
+                        .map_err(|e| StoreError::Internal(format!("invalid issue id: {e}")))?,
+                    VersionNumber::try_from(r.version_number)
+                        .map_err(|_| StoreError::Internal("invalid version".to_string()))?,
+                    r.created_at,
+                    issue,
+                    parse_actor_json(r.actor)?,
+                );
+                let json = serde_json::to_value(record)
+                    .map_err(|e| StoreError::Internal(format!("json error: {e}")))?;
+                entity_json_map.insert(("issue".to_string(), r.id, r.version_number), json);
+            }
+        }
 
-            if let Some(val) = json_val {
-                entity_json_map.insert((etype.clone(), id.clone(), *version), val);
+        // Batch-fetch patches
+        if !patch_keys.is_empty() {
+            let ids: Vec<&str> = patch_keys.iter().map(|(id, _)| id.as_str()).collect();
+            let versions: Vec<i64> = patch_keys.iter().map(|(_, v)| *v).collect();
+            let sql = format!(
+                "SELECT id, version_number, title, description, diff, status, \
+                 is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, \
+                 branch_name, commit_range, creator, base_branch, actor, created_at, updated_at \
+                 FROM {TABLE_PATCHES_V2} WHERE (id, version_number) IN \
+                 (SELECT UNNEST($1::text[]), UNNEST($2::bigint[]))"
+            );
+            let rows = sqlx::query_as::<_, PatchRow>(&sql)
+                .bind(&ids)
+                .bind(&versions)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+            for r in rows {
+                let patch: metis_common::api::v1::patches::Patch = self.row_to_patch(&r)?.into();
+                let record = metis_common::api::v1::patches::PatchVersionRecord::new(
+                    PatchId::from_str(&r.id)
+                        .map_err(|e| StoreError::Internal(format!("invalid patch id: {e}")))?,
+                    VersionNumber::try_from(r.version_number)
+                        .map_err(|_| StoreError::Internal("invalid version".to_string()))?,
+                    r.created_at,
+                    patch,
+                    parse_actor_json(r.actor)?,
+                );
+                let json = serde_json::to_value(record)
+                    .map_err(|e| StoreError::Internal(format!("json error: {e}")))?;
+                entity_json_map.insert(("patch".to_string(), r.id, r.version_number), json);
+            }
+        }
+
+        // Batch-fetch jobs
+        if !job_keys.is_empty() {
+            let ids: Vec<&str> = job_keys.iter().map(|(id, _)| id.as_str()).collect();
+            let versions: Vec<i64> = job_keys.iter().map(|(_, v)| *v).collect();
+            let sql = format!(
+                "SELECT id, version_number, prompt, context, spawned_from, image, model, \
+                 env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, \
+                 actor, created_at, updated_at, creator, secrets \
+                 FROM {TABLE_TASKS_V2} WHERE (id, version_number) IN \
+                 (SELECT UNNEST($1::text[]), UNNEST($2::bigint[]))"
+            );
+            let rows = sqlx::query_as::<_, TaskRow>(&sql)
+                .bind(&ids)
+                .bind(&versions)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+            for r in rows {
+                let task: metis_common::api::v1::jobs::Task = self.row_to_task(&r)?.into();
+                let record = metis_common::api::v1::jobs::JobVersionRecord::new(
+                    TaskId::from_str(&r.id)
+                        .map_err(|e| StoreError::Internal(format!("invalid task id: {e}")))?,
+                    VersionNumber::try_from(r.version_number)
+                        .map_err(|_| StoreError::Internal("invalid version".to_string()))?,
+                    r.created_at,
+                    task,
+                    parse_actor_json(r.actor)?,
+                );
+                let json = serde_json::to_value(record)
+                    .map_err(|e| StoreError::Internal(format!("json error: {e}")))?;
+                entity_json_map.insert(("job".to_string(), r.id, r.version_number), json);
+            }
+        }
+
+        // Batch-fetch documents
+        if !doc_keys.is_empty() {
+            let ids: Vec<&str> = doc_keys.iter().map(|(id, _)| id.as_str()).collect();
+            let versions: Vec<i64> = doc_keys.iter().map(|(_, v)| *v).collect();
+            let sql = format!(
+                "SELECT id, version_number, title, body_markdown, path, created_by, deleted, \
+                 actor, created_at, updated_at \
+                 FROM {TABLE_DOCUMENTS_V2} WHERE (id, version_number) IN \
+                 (SELECT UNNEST($1::text[]), UNNEST($2::bigint[]))"
+            );
+            let rows = sqlx::query_as::<_, DocumentRow>(&sql)
+                .bind(&ids)
+                .bind(&versions)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+            for r in rows {
+                let doc: metis_common::api::v1::documents::Document =
+                    self.row_to_document(&r)?.into();
+                let record = metis_common::api::v1::documents::DocumentVersionRecord::new(
+                    DocumentId::from_str(&r.id)
+                        .map_err(|e| StoreError::Internal(format!("invalid doc id: {e}")))?,
+                    VersionNumber::try_from(r.version_number)
+                        .map_err(|_| StoreError::Internal("invalid version".to_string()))?,
+                    r.created_at,
+                    doc,
+                    parse_actor_json(r.actor)?,
+                );
+                let json = serde_json::to_value(record)
+                    .map_err(|e| StoreError::Internal(format!("json error: {e}")))?;
+                entity_json_map.insert(("document".to_string(), r.id, r.version_number), json);
             }
         }
 
@@ -2395,61 +2421,25 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 .get(&(row.entity_type.clone(), row.id.clone(), row.version_number))
                 .cloned();
 
-            // Determine event type based on version and deleted status
-            let event_type = if version == 1 {
-                match row.entity_type.as_str() {
-                    "issue" => SseEventType::IssueCreated,
-                    "patch" => SseEventType::PatchCreated,
-                    "job" => SseEventType::JobCreated,
-                    "document" => SseEventType::DocumentCreated,
-                    _ => continue,
-                }
-            } else if row.deleted {
-                // Check if the base object was not deleted (true deletion event)
-                let base_json = entity_json_map.get(&(
-                    row.entity_type.clone(),
-                    row.id.clone(),
-                    row.version_number - 1,
-                ));
-                let base_was_deleted = base_json
-                    .and_then(|v| {
-                        // The deleted field is nested inside the entity-specific key
-                        v.get("issue")
-                            .or(v.get("patch"))
-                            .or(v.get("task"))
-                            .or(v.get("document"))
-                    })
-                    .and_then(|entity| entity.get("deleted"))
-                    .and_then(|d| d.as_bool())
-                    .unwrap_or(false);
-
-                if !base_was_deleted {
-                    match row.entity_type.as_str() {
-                        "issue" => SseEventType::IssueDeleted,
-                        "patch" => SseEventType::PatchDeleted,
-                        "document" => SseEventType::DocumentDeleted,
-                        // Jobs don't have a "deleted" event type
-                        "job" => SseEventType::JobUpdated,
-                        _ => continue,
-                    }
-                } else {
-                    match row.entity_type.as_str() {
-                        "issue" => SseEventType::IssueUpdated,
-                        "patch" => SseEventType::PatchUpdated,
-                        "job" => SseEventType::JobUpdated,
-                        "document" => SseEventType::DocumentUpdated,
-                        _ => continue,
-                    }
-                }
+            // Determine base_deleted for event classification
+            let base_deleted = if version > 1 {
+                entity_json_map
+                    .get(&(
+                        row.entity_type.clone(),
+                        row.id.clone(),
+                        row.version_number - 1,
+                    ))
+                    .map(extract_deleted_from_json)
+                    .unwrap_or(false)
             } else {
-                match row.entity_type.as_str() {
-                    "issue" => SseEventType::IssueUpdated,
-                    "patch" => SseEventType::PatchUpdated,
-                    "job" => SseEventType::JobUpdated,
-                    "document" => SseEventType::DocumentUpdated,
-                    _ => continue,
-                }
+                false
             };
+
+            let event_type =
+                match classify_event_type(&row.entity_type, version, row.deleted, base_deleted) {
+                    Some(et) => et,
+                    None => continue,
+                };
 
             events.push(ActivityFeedItem {
                 event_type,
@@ -2470,12 +2460,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
                     row.version_number - 1,
                 );
                 if let Some(base_json) = entity_json_map.get(&base_key) {
-                    let map_key = format!(
-                        "{}:{}:{}",
-                        row.entity_type,
-                        row.id,
-                        row.version_number - 1
-                    );
+                    let map_key =
+                        format!("{}:{}:{}", row.entity_type, row.id, row.version_number - 1);
                     base_objects.insert(map_key, base_json.clone());
                 }
             }
