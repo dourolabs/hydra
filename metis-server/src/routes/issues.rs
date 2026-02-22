@@ -254,7 +254,7 @@ pub async fn list_issues(
         )
     };
 
-    let filtered: Vec<api_issues::IssueSummaryRecord> = issues
+    let filtered: Vec<api_issues::IssueVersionRecord> = issues
         .into_iter()
         .filter(|(id, _)| {
             graph_matches
@@ -262,14 +262,13 @@ pub async fn list_issues(
                 .is_none_or(|allowed| allowed.contains(id))
         })
         .map(|(id, versioned)| {
-            let full_record = api_issues::IssueVersionRecord::new(
+            api_issues::IssueVersionRecord::new(
                 id,
                 versioned.version,
                 versioned.timestamp,
                 versioned.item.into(),
                 versioned.actor,
-            );
-            api_issues::IssueSummaryRecord::from(&full_record)
+            )
         })
         .collect();
 
