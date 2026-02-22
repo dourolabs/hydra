@@ -14,8 +14,8 @@ use futures::StreamExt;
 use metis_common::{
     api::v1::events::{EventsQuery, SseEventType},
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
-        IssueVersionRecord as ApiIssueRecord, JobSettings, SearchIssuesQuery, UpsertIssueRequest,
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueSummaryRecord, IssueType,
+        JobSettings, SearchIssuesQuery, UpsertIssueRequest,
     },
     jobs::{JobSummaryRecord, SearchJobsQuery},
     patches::{GithubPr, PatchVersionRecord},
@@ -840,7 +840,7 @@ async fn handle_sse_event(
             };
             match client.get_issue(&issue_id, false).await {
                 Ok(api_record) => {
-                    if let Some(record) = issue_to_record(api_record) {
+                    if let Some(record) = issue_to_record(IssueSummaryRecord::from(&api_record)) {
                         let mut record = record;
                         record.version = Some(entity.version);
                         apply_issue_update(state, record)
@@ -3101,14 +3101,14 @@ async fn fetch_repositories(client: &dyn MetisClientInterface) -> Result<Vec<Rep
     Ok(response.repositories)
 }
 
-fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
+fn issue_to_record(record: IssueSummaryRecord) -> Option<IssueRecord> {
     let issue = record.issue;
     Some(IssueRecord {
         id: record.issue_id,
         issue_type: issue.issue_type,
         description: issue.description,
         creator: issue.creator,
-        progress: issue.progress,
+        progress: String::new(),
         status: issue.status,
         assignee: issue.assignee,
         dependencies: issue.dependencies,

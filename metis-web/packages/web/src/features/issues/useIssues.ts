@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { IssueVersionRecord } from "@metis/api";
+import type { IssueSummaryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { computeBlockedStatus } from "./blockedStatus";
 import { topologicalSort } from "./topologicalSort";
@@ -14,7 +14,7 @@ export function useIssues() {
 
 export interface IssueTreeNode {
   id: string;
-  issue: IssueVersionRecord;
+  issue: IssueSummaryRecord;
   children: IssueTreeNode[];
   defaultExpanded: boolean;
   blocked: boolean;
@@ -28,8 +28,8 @@ export interface IssueTreeNode {
  * Parent-child relationships are derived from "child-of" dependencies:
  * if issue B has dependency { type: "child-of", issue_id: A }, then B is a child of A.
  */
-export function buildIssueTree(issues: IssueVersionRecord[]): IssueTreeNode[] {
-  const issueMap = new Map<string, IssueVersionRecord>();
+export function buildIssueTree(issues: IssueSummaryRecord[]): IssueTreeNode[] {
+  const issueMap = new Map<string, IssueSummaryRecord>();
   for (const record of issues) {
     issueMap.set(record.issue_id, record);
   }
@@ -49,11 +49,11 @@ export function buildIssueTree(issues: IssueVersionRecord[]): IssueTreeNode[] {
     }
   }
 
-  function buildNode(record: IssueVersionRecord): IssueTreeNode {
+  function buildNode(record: IssueSummaryRecord): IssueTreeNode {
     const childIds = childrenMap.get(record.issue_id) ?? [];
     const childRecords = childIds
       .map((id) => issueMap.get(id))
-      .filter((i): i is IssueVersionRecord => i !== undefined);
+      .filter((i): i is IssueSummaryRecord => i !== undefined);
     const children = topologicalSort(childRecords).map(buildNode);
 
     const status = computeBlockedStatus(record, issueMap);

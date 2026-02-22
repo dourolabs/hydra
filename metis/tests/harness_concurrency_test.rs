@@ -1,7 +1,7 @@
 mod harness;
 
 use anyhow::Result;
-use harness::{concurrent, test_all_orderings, IssueAssertions, Step};
+use harness::{concurrent, test_all_orderings, IssueSummaryAssertions, Step};
 use metis_common::issues::IssueStatus;
 
 /// `test_all_orderings` with 2 steps runs exactly 2 permutations (AB, BA).

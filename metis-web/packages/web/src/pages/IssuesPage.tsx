@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Panel, Spinner } from "@metis/ui";
-import type { IssueVersionRecord } from "@metis/api";
+import type { IssueSummaryRecord } from "@metis/api";
 import { useIssues } from "../features/issues/useIssues";
 import { useIssueFilters } from "../features/issues/useIssueFilters";
 import { IssueTree } from "../features/issues/IssueTree";
@@ -21,15 +21,14 @@ const STATUS_ORDER: Record<string, number> = {
   rejected: 6,
 };
 
-function issueMatchesText(record: IssueVersionRecord, q: string): boolean {
+function issueMatchesText(record: IssueSummaryRecord, q: string): boolean {
   const lower = q.toLowerCase();
   const desc = record.issue.description?.toLowerCase() ?? "";
-  const progress = record.issue.progress?.toLowerCase() ?? "";
   const id = record.issue_id.toLowerCase();
-  return desc.includes(lower) || progress.includes(lower) || id.includes(lower);
+  return desc.includes(lower) || id.includes(lower);
 }
 
-function issueMatchesFilter(record: IssueVersionRecord, statuses: string[], assignee: string, type: string, q: string): boolean {
+function issueMatchesFilter(record: IssueSummaryRecord, statuses: string[], assignee: string, type: string, q: string): boolean {
   if (statuses.length > 0 && !statuses.includes(record.issue.status)) return false;
   if (assignee && record.issue.assignee !== assignee) return false;
   if (type && record.issue.type !== type) return false;
@@ -37,7 +36,7 @@ function issueMatchesFilter(record: IssueVersionRecord, statuses: string[], assi
   return true;
 }
 
-function getMatchingIds(issues: IssueVersionRecord[], filters: IssueFilterValues): Set<string> {
+function getMatchingIds(issues: IssueSummaryRecord[], filters: IssueFilterValues): Set<string> {
   const ids = new Set<string>();
   for (const record of issues) {
     if (issueMatchesFilter(record, filters.statuses, filters.assignee, filters.type, filters.q)) {
@@ -47,7 +46,7 @@ function getMatchingIds(issues: IssueVersionRecord[], filters: IssueFilterValues
   return ids;
 }
 
-function sortIssues(issues: IssueVersionRecord[], sort: SortOption): IssueVersionRecord[] {
+function sortIssues(issues: IssueSummaryRecord[], sort: SortOption): IssueSummaryRecord[] {
   const sorted = [...issues];
 
   switch (sort) {
@@ -68,7 +67,7 @@ function sortIssues(issues: IssueVersionRecord[], sort: SortOption): IssueVersio
   return sorted;
 }
 
-function extractAssignees(issues: IssueVersionRecord[]): string[] {
+function extractAssignees(issues: IssueSummaryRecord[]): string[] {
   const set = new Set<string>();
   for (const record of issues) {
     if (record.issue.assignee) set.add(record.issue.assignee);

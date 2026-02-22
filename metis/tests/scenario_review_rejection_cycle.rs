@@ -14,8 +14,8 @@ mod harness;
 
 use anyhow::{Context, Result};
 use harness::{
-    find_children_by_type, find_children_by_type_and_status, test_job_settings_full,
-    test_patch_workflow_config,
+    find_summary_children_by_type, find_summary_children_by_type_and_status,
+    test_job_settings_full, test_patch_workflow_config,
 };
 use metis_common::{
     issues::{IssueDependencyType, IssueStatus, IssueType},
@@ -92,9 +92,9 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     // ── Step 3: Verify patch_workflow created ReviewRequest + MergeRequest ──
     let all_issues = harness.default_user().list_issues().await?;
     let rr_children =
-        find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::ReviewRequest);
+        find_summary_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::ReviewRequest);
     let mr_children =
-        find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::MergeRequest);
+        find_summary_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::MergeRequest);
 
     assert_eq!(
         rr_children.len(),
@@ -245,13 +245,13 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
 
     // ── Step 10: Verify patch_workflow re-fires → new workflow issues ──
     let all_issues = harness.default_user().list_issues().await?;
-    let new_rr_children = find_children_by_type_and_status(
+    let new_rr_children = find_summary_children_by_type_and_status(
         &all_issues.issues,
         &swe_issue_id,
         IssueType::ReviewRequest,
         IssueStatus::Open,
     );
-    let new_mr_children = find_children_by_type_and_status(
+    let new_mr_children = find_summary_children_by_type_and_status(
         &all_issues.issues,
         &swe_issue_id,
         IssueType::MergeRequest,
@@ -345,8 +345,10 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
 
     // ── Step 17: Verify coexistence of old and new workflow issues ─
     let all_issues = harness.default_user().list_issues().await?;
-    let all_rr = find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::ReviewRequest);
-    let all_mr = find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::MergeRequest);
+    let all_rr =
+        find_summary_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::ReviewRequest);
+    let all_mr =
+        find_summary_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::MergeRequest);
 
     assert_eq!(
         all_rr.len(),

@@ -746,6 +746,24 @@ pub struct IssueSummaryRecord {
     pub actor: Option<ActorRef>,
 }
 
+impl IssueSummaryRecord {
+    pub fn new(
+        issue_id: IssueId,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        issue: IssueSummary,
+        actor: Option<ActorRef>,
+    ) -> Self {
+        Self {
+            issue_id,
+            version,
+            timestamp,
+            issue,
+            actor,
+        }
+    }
+}
+
 impl From<&IssueVersionRecord> for IssueSummaryRecord {
     fn from(record: &IssueVersionRecord) -> Self {
         IssueSummaryRecord {
@@ -763,11 +781,11 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ListIssuesResponse {
-    pub issues: Vec<IssueVersionRecord>,
+    pub issues: Vec<IssueSummaryRecord>,
 }
 
 impl ListIssuesResponse {
-    pub fn new(issues: Vec<IssueVersionRecord>) -> Self {
+    pub fn new(issues: Vec<IssueSummaryRecord>) -> Self {
         Self { issues }
     }
 }

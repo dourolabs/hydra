@@ -1,12 +1,12 @@
 import { Badge } from "@metis/ui";
-import type { IssueVersionRecord } from "@metis/api";
+import type { IssueSummaryRecord } from "@metis/api";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
 import styles from "./InboxList.module.css";
 
 interface InboxListProps {
-  issues: IssueVersionRecord[];
+  issues: IssueSummaryRecord[];
   selectedId: string | null;
   onSelect: (issueId: string) => void;
 }
