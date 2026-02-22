@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { JobVersionRecord } from "@metis/api";
+import type { JobSummaryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 
 /**
@@ -11,8 +11,8 @@ export function useAllJobs() {
   return useQuery({
     queryKey: ["allJobs"],
     queryFn: () => apiClient.listJobs(),
-    select: (data): Map<string, JobVersionRecord[]> => {
-      const map = new Map<string, JobVersionRecord[]>();
+    select: (data): Map<string, JobSummaryRecord[]> => {
+      const map = new Map<string, JobSummaryRecord[]>();
       for (const job of data.jobs) {
         const issueId = job.task.spawned_from;
         if (!issueId) continue;

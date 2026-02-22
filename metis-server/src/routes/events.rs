@@ -345,14 +345,15 @@ async fn serialize_entity(
                 api_task.start_time = log.start_time();
                 api_task.end_time = log.end_time();
             }
-            let record = JobVersionRecord::new(
+            let full_record = JobVersionRecord::new(
                 task_id,
                 version,
                 timestamp,
                 api_task,
                 Some(payload.actor().clone()),
             );
-            serde_json::to_value(record).ok()?
+            let summary_record = metis_common::api::v1::jobs::JobSummaryRecord::from(&full_record);
+            serde_json::to_value(summary_record).ok()?
         }
         MutationPayload::Document { new, .. } => {
             let api_doc: metis_common::api::v1::documents::Document = new.clone().into();

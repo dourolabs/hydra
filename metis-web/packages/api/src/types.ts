@@ -48,6 +48,8 @@ export type { IssueType } from "./generated/IssueType";
 export type { IssueVersionRecord } from "./generated/IssueVersionRecord";
 export type { JobSettings } from "./generated/JobSettings";
 export type { JobStatusUpdate } from "./generated/JobStatusUpdate";
+export type { JobSummary } from "./generated/JobSummary";
+export type { JobSummaryRecord } from "./generated/JobSummaryRecord";
 export type { JobVersionRecord } from "./generated/JobVersionRecord";
 export type { KillJobResponse } from "./generated/KillJobResponse";
 export type { ListAgentsResponse } from "./generated/ListAgentsResponse";

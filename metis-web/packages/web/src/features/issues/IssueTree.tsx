@@ -2,7 +2,7 @@ import { useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { TreeView } from "@metis/ui";
 import type { TreeNode } from "@metis/ui";
-import type { IssueVersionRecord, JobVersionRecord } from "@metis/api";
+import type { IssueVersionRecord, JobSummaryRecord } from "@metis/api";
 import { IssueRow } from "./IssueRow";
 import { type IssueTreeNode, buildIssueTree } from "./useIssues";
 
@@ -11,7 +11,7 @@ interface IssueTreeProps {
   /** When provided, only show branches containing these issue IDs. Non-matching ancestors are dimmed. */
   matchingIds?: Set<string>;
   /** Jobs grouped by issue ID, used to render job status indicators. */
-  jobsByIssue?: Map<string, JobVersionRecord[]>;
+  jobsByIssue?: Map<string, JobSummaryRecord[]>;
   /** Controlled collapse state: set of collapsed node IDs. */
   collapsedIds?: Set<string>;
   /** Called when a node's expand/collapse chevron is clicked. */
@@ -35,7 +35,7 @@ function hasMatchingDescendant(node: IssueTreeNode, matchingIds: Set<string>): b
 function toTreeNodes(
   nodes: IssueTreeNode[],
   matchingIds: Set<string> | undefined,
-  jobsByIssue: Map<string, JobVersionRecord[]> | undefined,
+  jobsByIssue: Map<string, JobSummaryRecord[]> | undefined,
   onJobClick: (issueId: string, jobId: string) => void,
 ): TreeNode[] {
   const result: TreeNode[] = [];

@@ -1,4 +1,4 @@
-import type { JobVersionRecord } from "@metis/api";
+import type { JobSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 
 /**
@@ -6,7 +6,7 @@ import type { IssueTreeNode } from "../issues/useIssues";
  */
 export function isNodeActive(
   node: IssueTreeNode,
-  jobsByIssue: Map<string, JobVersionRecord[]>,
+  jobsByIssue: Map<string, JobSummaryRecord[]>,
 ): boolean {
   const status = node.issue.issue.status;
   if (status === "open" || status === "in-progress") return true;
@@ -26,7 +26,7 @@ export function isNodeActive(
  */
 export function pruneTree(
   node: IssueTreeNode,
-  jobsByIssue: Map<string, JobVersionRecord[]>,
+  jobsByIssue: Map<string, JobSummaryRecord[]>,
 ): IssueTreeNode | null {
   const prunedChildren = node.children
     .map((child) => pruneTree(child, jobsByIssue))
@@ -44,7 +44,7 @@ export function pruneTree(
  */
 export function treeHasActiveNode(
   node: IssueTreeNode,
-  jobsByIssue: Map<string, JobVersionRecord[]>,
+  jobsByIssue: Map<string, JobSummaryRecord[]>,
 ): boolean {
   if (isNodeActive(node, jobsByIssue)) return true;
   return node.children.some((child) => treeHasActiveNode(child, jobsByIssue));

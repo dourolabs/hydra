@@ -15,7 +15,7 @@ use metis_common::{
         IssueVersionRecord, JobSettings, ReplaceTodoListRequest, SearchIssuesQuery,
         SetTodoItemStatusRequest, TodoItem, UpsertIssueRequest,
     },
-    jobs::{JobVersionRecord, SearchJobsQuery, Task},
+    jobs::{JobSummaryRecord, SearchJobsQuery, Task},
     patches::{PatchStatus, PatchVersionRecord, Review},
     task_status::Status,
     users::Username,
@@ -1144,7 +1144,7 @@ async fn fetch_job_versions(
 async fn fetch_jobs_for_issue(
     client: &dyn MetisClientInterface,
     issue_id: &IssueId,
-) -> Result<Vec<JobVersionRecord>> {
+) -> Result<Vec<JobSummaryRecord>> {
     let response = client
         .list_jobs(&SearchJobsQuery::new(
             None,

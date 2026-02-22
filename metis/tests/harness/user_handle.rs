@@ -258,7 +258,7 @@ impl UserHandle {
     pub async fn list_jobs_for_issue(
         &self,
         issue_id: &IssueId,
-    ) -> Result<Vec<metis_common::jobs::JobVersionRecord>> {
+    ) -> Result<Vec<metis_common::jobs::JobSummaryRecord>> {
         let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, None);
         let response = self
             .client

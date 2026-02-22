@@ -3,7 +3,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type {
   EntityEventData,
   IssueVersionRecord,
-  JobVersionRecord,
+  JobSummaryRecord,
   PatchVersionRecord,
   DocumentVersionRecord,
   ListIssuesResponse,
@@ -100,8 +100,8 @@ const wrapIssues = (items: IssueVersionRecord[]): ListIssuesResponse => ({ issue
 const issueRecordId = (r: IssueVersionRecord) => r.issue_id;
 
 const jobList = (r: ListJobsResponse) => r.jobs;
-const wrapJobs = (items: JobVersionRecord[]): ListJobsResponse => ({ jobs: items });
-const jobRecordId = (r: JobVersionRecord) => r.job_id;
+const wrapJobs = (items: JobSummaryRecord[]): ListJobsResponse => ({ jobs: items });
+const jobRecordId = (r: JobSummaryRecord) => r.job_id;
 
 const patchList = (r: ListPatchesResponse) => r.patches;
 const wrapPatches = (items: PatchVersionRecord[]): ListPatchesResponse => ({ patches: items });
@@ -169,10 +169,11 @@ export function useSSE(): SSEConnectionState {
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
         }
       } else if (entity_type === "job" || eventType.startsWith("job_")) {
-        const record = entity as unknown as JobVersionRecord;
+        const record = entity as unknown as JobSummaryRecord;
         const spawnedFrom = record.task?.spawned_from;
 
-        setVersioned(queryClient, ["job", entity_id], record);
+        // SSE now sends summary records; invalidate the detail cache instead of direct-setting.
+        queryClient.invalidateQueries({ queryKey: ["job", entity_id] });
         upsertInList(queryClient, ["allJobs"], jobList, wrapJobs, jobRecordId, entity_id, record);
 
         if (spawnedFrom) {
