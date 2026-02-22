@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { Spinner, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
 import { useIssues } from "../features/issues/useIssues";
@@ -27,6 +27,7 @@ export function DashboardPage() {
   const { user } = useAuth();
   const { data: issues, isLoading } = useIssues();
   const { data: jobsByIssue } = useAllJobs();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get("selected");
   const activeTab = searchParams.get("tab") ?? "inbox";
@@ -34,6 +35,11 @@ export function DashboardPage() {
 
   const setSelectedId = useCallback(
     (id: string | null) => {
+      // Push a history entry when going from no selection to a selection
+      // so the browser back button can return to the list view.
+      // Replace when switching between items or deselecting to avoid
+      // cluttering the history stack.
+      const shouldPush = id !== null && selectedId === null;
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -44,29 +50,32 @@ export function DashboardPage() {
           }
           return next;
         },
-        { replace: true },
+        { replace: !shouldPush },
       );
     },
-    [setSearchParams],
+    [setSearchParams, selectedId],
   );
 
   const setActiveTab = useCallback(
     (tab: string) => {
+      // Push a history entry when actually changing tabs so back button
+      // reverses tab switches. Replace if re-selecting the current tab.
+      const shouldPush = tab !== activeTab;
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
           next.set("tab", tab);
           return next;
         },
-        { replace: true },
+        { replace: !shouldPush },
       );
     },
-    [setSearchParams],
+    [setSearchParams, activeTab],
   );
 
   const handleMobileBack = useCallback(() => {
-    setSelectedId(null);
-  }, [setSelectedId]);
+    navigate(-1);
+  }, [navigate]);
 
   const username = user ? actorDisplayName(user.actor) : "";
 
