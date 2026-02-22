@@ -122,6 +122,10 @@ pub enum PatchesCommand {
         /// Mark the review as approved.
         #[arg(long = "approve")]
         approve: bool,
+
+        /// Request changes on the patch.
+        #[arg(long = "request-changes", conflicts_with = "approve")]
+        request_changes: bool,
     },
 
     /// Update an existing patch.
@@ -239,7 +243,8 @@ pub async fn run(
             author,
             contents,
             approve,
-        } => review_patch(client, id, author, contents, approve).await,
+            request_changes,
+        } => review_patch(client, id, author, contents, approve, request_changes).await,
         PatchesCommand::Update {
             id,
             title,
@@ -922,6 +927,7 @@ async fn review_patch(
     author: String,
     contents: String,
     approve: bool,
+    request_changes: bool,
 ) -> Result<()> {
     let author = author.trim().to_string();
     if author.is_empty() {
@@ -941,6 +947,10 @@ async fn review_patch(
         .patch
         .reviews
         .push(Review::new(contents, approve, author, Some(Utc::now())));
+
+    if request_changes {
+        record.patch.status = PatchStatus::ChangesRequested;
+    }
 
     let response = client
         .update_patch(&id, &UpsertPatchRequest::new(record.patch))
@@ -1794,6 +1804,7 @@ mod tests {
             "alice".to_string(),
             "looks good now".to_string(),
             true,
+            false,
         )
         .await?;
 
@@ -1801,6 +1812,157 @@ mod tests {
         update_mock.assert();
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn review_patch_request_changes_sets_status() -> Result<()> {
+        let review_patch_id = patch_id("p-review-rc");
+        let patch_record = PatchVersionRecord::new(
+            review_patch_id.clone(),
+            0,
+            Utc::now(),
+            Patch::new(
+                "patch needing changes".to_string(),
+                "description".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                Username::from("test-creator"),
+                vec![],
+                sample_repo_name(),
+                None,
+                false,
+                None,
+                None,
+                None,
+            ),
+            None,
+        );
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let get_mock = mock_get_patch(&server, patch_record.clone());
+        let patch_id_for_mock = review_patch_id.clone();
+        let update_mock = server.mock(move |when, then| {
+            when.method(PUT)
+                .path(format!("/v1/patches/{}", patch_id_for_mock.as_ref()))
+                .json_body_partial(
+                    r#"{
+                        "patch": {
+                            "status": "ChangesRequested",
+                            "reviews": [
+                                {"contents": "needs work", "is_approved": false, "author": "alice"}
+                            ]
+                        }
+                    }"#,
+                );
+            then.status(200)
+                .json_body_obj(&UpsertPatchResponse::new(review_patch_id.clone(), 1));
+        });
+
+        review_patch(
+            &client,
+            patch_id("p-review-rc"),
+            "alice".to_string(),
+            "needs work".to_string(),
+            false,
+            true,
+        )
+        .await?;
+
+        get_mock.assert();
+        update_mock.assert();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn review_patch_approve_does_not_change_status() -> Result<()> {
+        let review_patch_id = patch_id("p-review-approve");
+        let patch_record = PatchVersionRecord::new(
+            review_patch_id.clone(),
+            0,
+            Utc::now(),
+            Patch::new(
+                "patch to approve".to_string(),
+                "description".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                Username::from("test-creator"),
+                vec![],
+                sample_repo_name(),
+                None,
+                false,
+                None,
+                None,
+                None,
+            ),
+            None,
+        );
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let get_mock = mock_get_patch(&server, patch_record.clone());
+        let patch_id_for_mock = review_patch_id.clone();
+        let update_mock = server.mock(move |when, then| {
+            when.method(PUT)
+                .path(format!("/v1/patches/{}", patch_id_for_mock.as_ref()))
+                .json_body_partial(
+                    r#"{
+                        "patch": {
+                            "status": "Open",
+                            "reviews": [
+                                {"contents": "lgtm", "is_approved": true, "author": "alice"}
+                            ]
+                        }
+                    }"#,
+                );
+            then.status(200)
+                .json_body_obj(&UpsertPatchResponse::new(review_patch_id.clone(), 1));
+        });
+
+        review_patch(
+            &client,
+            patch_id("p-review-approve"),
+            "alice".to_string(),
+            "lgtm".to_string(),
+            true,
+            false,
+        )
+        .await?;
+
+        get_mock.assert();
+        update_mock.assert();
+
+        Ok(())
+    }
+
+    #[test]
+    fn review_approve_and_request_changes_conflict() {
+        use clap::Parser;
+
+        #[derive(Parser, Debug)]
+        struct Cli {
+            #[command(subcommand)]
+            command: PatchesCommand,
+        }
+
+        let result = Cli::try_parse_from([
+            "cli",
+            "review",
+            "p-conflict",
+            "--author",
+            "alice",
+            "--contents",
+            "msg",
+            "--approve",
+            "--request-changes",
+        ]);
+        assert!(
+            result.is_err(),
+            "expected clap conflict error when both --approve and --request-changes are provided"
+        );
     }
 
     #[tokio::test]
