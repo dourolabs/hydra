@@ -23,9 +23,8 @@ use crate::git;
 use crate::git::{
     apply_patch, checkout_branch as git_checkout_branch, current_branch,
     diff_commit_range as git_diff_commit_range, fetch_remote as git_fetch_remote,
-    has_uncommitted_changes as git_has_uncommitted_changes, head_oid as git_head_oid,
-    push_branch, push_to_ref, rebase_onto as git_rebase_onto,
-    reset_hard as git_reset_hard,
+    has_uncommitted_changes as git_has_uncommitted_changes, head_oid as git_head_oid, push_branch,
+    push_to_ref, rebase_onto as git_rebase_onto, reset_hard as git_reset_hard,
     resolve_commit_range_from_merge_base as git_resolve_commit_range_from_merge_base,
     update_branch_to_head as git_update_branch_to_head,
 };

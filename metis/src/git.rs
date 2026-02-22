@@ -514,12 +514,8 @@ pub fn reset_hard(repo_root: &Path, rev: &str) -> Result<()> {
     let target_commit = target
         .peel_to_commit()
         .with_context(|| format!("failed to peel '{rev}' to a commit"))?;
-    repo.reset(
-        target_commit.as_object(),
-        git2::ResetType::Hard,
-        None,
-    )
-    .context("failed to hard-reset to target commit")?;
+    repo.reset(target_commit.as_object(), git2::ResetType::Hard, None)
+        .context("failed to hard-reset to target commit")?;
     Ok(())
 }
 
