@@ -13,16 +13,30 @@
   height: calc(100dvh - var(--space-12));
 }
 
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .leftPane {
   display: flex;
   flex-direction: column;
   height: 100%;
+  animation: scaleIn 250ms ease-out both;
 }
 
 .tabs {
   flex-shrink: 0;
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--color-border);
+  animation: scaleIn 250ms ease-out both;
+  animation-delay: 100ms;
 }
 
 .placeholder {
@@ -61,6 +75,13 @@
   border-color: var(--color-accent-bright);
   color: var(--color-accent-bright);
   background-color: rgba(0, 204, 102, 0.14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leftPane,
+  .tabs {
+    animation: none;
+  }
 }
 
 @media (max-width: 768px) {
