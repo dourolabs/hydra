@@ -21,12 +21,11 @@ use serde::Serialize;
 
 use crate::git;
 use crate::git::{
-    apply_patch, checkout_branch as git_checkout_branch, current_branch,
-    diff_commit_range as git_diff_commit_range, fetch_remote as git_fetch_remote,
-    has_uncommitted_changes as git_has_uncommitted_changes, head_oid as git_head_oid, push_branch,
-    push_to_ref, rebase_onto as git_rebase_onto, reset_hard as git_reset_hard,
+    apply_patch, current_branch, diff_commit_range as git_diff_commit_range,
+    fetch_remote as git_fetch_remote, has_uncommitted_changes as git_has_uncommitted_changes,
+    push_branch, push_to_ref,
     resolve_commit_range_from_merge_base as git_resolve_commit_range_from_merge_base,
-    update_branch_to_head as git_update_branch_to_head, PushError,
+    squash_merge_onto as git_squash_merge_onto, PushError,
 };
 use crate::{
     client::MetisClientInterface,
@@ -160,13 +159,13 @@ pub enum PatchesCommand {
         base_ref: String,
     },
 
-    /// Merge a patch by rebasing onto a base branch and pushing.
+    /// Merge a patch by squash-merging onto a base branch and pushing.
     Merge {
         /// Patch ID to merge.
         #[arg(value_name = "PATCH_ID")]
         patch_id: PatchId,
 
-        /// Base branch to rebase onto (defaults to the repo's configured default branch or 'main').
+        /// Base branch to squash-merge onto (defaults to the repo's configured default branch or 'main').
         #[arg(long = "base", value_name = "BASE")]
         base: Option<String>,
     },
@@ -732,50 +731,43 @@ async fn merge_patch(
         );
     }
 
-    // Save the current branch so we can restore it after the merge.
-    let original_branch = current_branch(&repo_root)?;
-
     // Fetch from origin to ensure we have the latest refs.
     let github_token = client.get_github_token().await.ok();
     git_fetch_remote(&repo_root, github_token.as_deref())?;
 
-    // Checkout the patch branch.
-    git_checkout_branch(&repo_root, branch_name)
-        .with_context(|| format!("failed to checkout patch branch '{branch_name}'"))?;
-
-    // Helper closure to restore the original branch on failure.
-    let restore_branch = |repo_root: &Path, original: &str| {
-        if let Err(e) = git_checkout_branch(repo_root, original) {
-            eprintln!("Warning: failed to restore original branch '{original}': {e}");
-        }
-    };
-
-    // 6. Rebase and push with retry loop to handle concurrent pushes.
+    // 6. Squash merge and push with retry loop to handle concurrent pushes.
     //
-    // Between rebase and push, another concurrent merge can advance
-    // origin/main, causing a NotFastForward push error. We retry the
-    // fetch-rebase-push sequence up to MAX_MERGE_ATTEMPTS times.
+    // The squash merge creates a single commit containing all patch changes
+    // on a temporary local branch. This branch is then pushed to
+    // origin/{base_branch}. If a concurrent push advances the remote,
+    // the push fails with NotFastForward and we retry by re-fetching and
+    // re-creating the squash merge on top of the updated base.
     //
-    // Before each retry we hard-reset the branch back to its original
-    // (pre-rebase) state so that the subsequent rebase starts cleanly.
+    // The squash_merge_onto function does not modify HEAD or the working
+    // directory — it only creates/updates a local branch ref.
     const MAX_MERGE_ATTEMPTS: u32 = 3;
     let onto_ref = format!("origin/{base_branch}");
-    let pre_rebase_oid = git_head_oid(&repo_root)?;
+    let source_ref = format!("origin/{branch_name}");
+    let merge_branch = format!("metis-squash-merge/{}", patch_id.as_ref());
+    let commit_message = format!("{} ({})\n\n{}", patch.title, patch_id, patch.description);
     let mut push_succeeded = false;
 
     for attempt in 1..=MAX_MERGE_ATTEMPTS {
         if attempt > 1 {
-            // Reset branch to pre-rebase state so the next rebase starts fresh.
-            git_reset_hard(&repo_root, &pre_rebase_oid)?;
             // Re-fetch to pick up any new commits pushed to origin.
             git_fetch_remote(&repo_root, github_token.as_deref())?;
         }
 
-        // Rebase the patch branch onto origin/<base>.
-        if let Err(err) = git_rebase_onto(&repo_root, &onto_ref) {
-            restore_branch(&repo_root, &original_branch);
+        // Squash-merge the patch branch onto origin/<base>.
+        if let Err(err) = git_squash_merge_onto(
+            &repo_root,
+            &onto_ref,
+            &source_ref,
+            &merge_branch,
+            &commit_message,
+        ) {
             bail!(
-                "Error: failed to rebase patch {patch_id} onto {base_branch}.\n\n\
+                "Error: failed to squash merge patch {patch_id} onto {base_branch}.\n\n\
                  The patch branch \"{branch_name}\" has conflicts with \"{base_branch}\". To resolve:\n\
                  1. Rebase your changes onto {base_branch} locally: git rebase origin/{base_branch}\n\
                  2. Resolve any conflicts\n\
@@ -785,14 +777,10 @@ async fn merge_patch(
             );
         }
 
-        // Ensure the branch ref is updated to match HEAD after the rebase.
-        // git2's rebase may not always update the named branch ref.
-        git_update_branch_to_head(&repo_root, branch_name)?;
-
-        // Push the rebased branch to the base branch on origin.
+        // Push the squash-merged branch to the base branch on origin.
         match push_to_ref(
             &repo_root,
-            branch_name,
+            &merge_branch,
             &base_branch,
             github_token.as_deref(),
             false,
@@ -813,9 +801,8 @@ async fn merge_patch(
             }
             Err(err) => {
                 // Non-retriable push error.
-                restore_branch(&repo_root, &original_branch);
                 bail!(
-                    "Error: failed to push rebased branch '{branch_name}' to origin/{base_branch}.\n\n\
+                    "Error: failed to push squash merge to origin/{base_branch}.\n\n\
                      Underlying error: {err}"
                 );
             }
@@ -823,16 +810,12 @@ async fn merge_patch(
     }
 
     if !push_succeeded {
-        restore_branch(&repo_root, &original_branch);
         bail!(
             "Error: failed to merge patch {patch_id} to {base_branch} after {MAX_MERGE_ATTEMPTS} attempts.\n\n\
-             The base branch was updated by concurrent pushes between each rebase and push attempt.\n\
+             The base branch was updated by concurrent pushes between each merge and push attempt.\n\
              Please retry: metis patches merge {patch_id}"
         );
     }
-
-    // Restore the original branch.
-    restore_branch(&repo_root, &original_branch);
 
     // 8. Update the patch status to Merged.
     let mut merged_patch = patch.clone();

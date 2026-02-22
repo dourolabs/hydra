@@ -590,6 +590,90 @@ pub fn rebase_onto(repo_root: &Path, onto_ref: &str) -> Result<()> {
     Ok(())
 }
 
+/// Squash-merge a source ref onto a base ref, creating a single commit.
+///
+/// Performs a tree-level merge between the base and source refs and creates
+/// a single commit whose only parent is the base commit (i.e., a squash merge).
+/// The result is stored in a local branch named `local_branch`.
+///
+/// This function does not modify HEAD or the working directory.
+pub fn squash_merge_onto(
+    repo_root: &Path,
+    base_ref: &str,
+    source_ref: &str,
+    local_branch: &str,
+    commit_message: &str,
+) -> Result<()> {
+    let repo = repo_for_path(repo_root)?;
+
+    let base_object = repo
+        .revparse_single(base_ref)
+        .with_context(|| format!("failed to resolve base ref '{base_ref}'"))?;
+    let base_commit = base_object
+        .peel_to_commit()
+        .with_context(|| format!("failed to peel '{base_ref}' to a commit"))?;
+
+    let source_object = repo
+        .revparse_single(source_ref)
+        .with_context(|| format!("failed to resolve source ref '{source_ref}'"))?;
+    let source_commit = source_object
+        .peel_to_commit()
+        .with_context(|| format!("failed to peel '{source_ref}' to a commit"))?;
+
+    let merge_base_oid = repo
+        .merge_base(base_commit.id(), source_commit.id())
+        .with_context(|| {
+            format!("failed to find merge base between '{base_ref}' and '{source_ref}'")
+        })?;
+    let merge_base_commit = repo
+        .find_commit(merge_base_oid)
+        .context("failed to find merge base commit")?;
+
+    let ancestor_tree = merge_base_commit
+        .tree()
+        .context("failed to get merge base tree")?;
+    let base_tree = base_commit.tree().context("failed to get base tree")?;
+    let source_tree = source_commit.tree().context("failed to get source tree")?;
+
+    let mut merged_index = repo
+        .merge_trees(&ancestor_tree, &base_tree, &source_tree, None)
+        .context("failed to merge trees")?;
+
+    if merged_index.has_conflicts() {
+        bail!("squash merge conflict encountered");
+    }
+
+    let tree_oid = merged_index
+        .write_tree_to(&repo)
+        .context("failed to write merged tree")?;
+    let merged_tree = repo
+        .find_tree(tree_oid)
+        .context("failed to find merged tree")?;
+
+    let signature = repo
+        .signature()
+        .context("failed to resolve git signature for squash merge")?;
+
+    let commit_oid = repo
+        .commit(
+            None,
+            &signature,
+            &signature,
+            commit_message,
+            &merged_tree,
+            &[&base_commit],
+        )
+        .context("failed to create squash merge commit")?;
+
+    let new_commit = repo
+        .find_commit(commit_oid)
+        .context("failed to find new squash merge commit")?;
+    repo.branch(local_branch, &new_commit, true)
+        .with_context(|| format!("failed to create/update branch '{local_branch}'"))?;
+
+    Ok(())
+}
+
 /// Structured error type for push failures.
 #[derive(Debug, Error)]
 pub enum PushError {

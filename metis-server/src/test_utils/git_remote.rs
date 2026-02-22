@@ -196,6 +196,26 @@ impl GitRemote {
             &format!("refs/heads/{branch}:{path}"),
         ])
     }
+
+    /// Count the number of commits between two SHAs (exclusive base, inclusive head).
+    pub fn commit_count(&self, base_sha: &str, head_sha: &str) -> anyhow::Result<usize> {
+        let output = run_git_output(&[
+            "--git-dir",
+            &self.url,
+            "rev-list",
+            "--count",
+            &format!("{base_sha}..{head_sha}"),
+        ])?;
+        output
+            .trim()
+            .parse()
+            .context("failed to parse commit count")
+    }
+
+    /// Return the full commit message of the given SHA.
+    pub fn commit_message(&self, sha: &str) -> anyhow::Result<String> {
+        run_git_output(&["--git-dir", &self.url, "log", "-1", "--format=%B", sha])
+    }
 }
 
 /// Run a git command, returning an error if it exits with a non-zero status.
