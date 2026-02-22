@@ -454,6 +454,98 @@ impl GithubCiStatus {
     }
 }
 
+/// Compact review information for patch list views.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct ReviewSummary {
+    pub count: u32,
+    pub approved: bool,
+}
+
+impl ReviewSummary {
+    pub fn from_reviews(reviews: &[Review]) -> Self {
+        Self {
+            count: reviews.len() as u32,
+            approved: reviews.iter().any(|r| r.is_approved),
+        }
+    }
+}
+
+/// Lightweight summary of a patch for list views.
+///
+/// Excludes `diff`, `description`, `reviews[].contents`, and `commit_range`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct PatchSummary {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub status: PatchStatus,
+    #[serde(default)]
+    pub is_automatic_backup: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<TaskId>,
+    pub creator: Username,
+    pub review_summary: ReviewSummary,
+    pub service_repo_name: RepoName,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<GithubPr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
+}
+
+impl From<&Patch> for PatchSummary {
+    fn from(patch: &Patch) -> Self {
+        PatchSummary {
+            title: patch.title.clone(),
+            status: patch.status,
+            is_automatic_backup: patch.is_automatic_backup,
+            created_by: patch.created_by.clone(),
+            creator: patch.creator.clone(),
+            review_summary: ReviewSummary::from_reviews(&patch.reviews),
+            service_repo_name: patch.service_repo_name.clone(),
+            github: patch.github.clone(),
+            branch_name: patch.branch_name.clone(),
+            base_branch: patch.base_branch.clone(),
+            deleted: patch.deleted,
+        }
+    }
+}
+
+/// Summary-level version record for patch list responses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct PatchSummaryRecord {
+    pub patch_id: PatchId,
+    pub version: VersionNumber,
+    pub timestamp: DateTime<Utc>,
+    pub patch: PatchSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<ActorRef>,
+}
+
+impl From<&PatchVersionRecord> for PatchSummaryRecord {
+    fn from(record: &PatchVersionRecord) -> Self {
+        PatchSummaryRecord {
+            patch_id: record.patch_id.clone(),
+            version: record.version,
+            timestamp: record.timestamp,
+            patch: PatchSummary::from(&record.patch),
+            actor: record.actor.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -593,5 +685,105 @@ mod tests {
         let json = serde_json::to_string(&cr).unwrap();
         let deserialized: CommitRange = serde_json::from_str(&json).unwrap();
         assert_eq!(cr, deserialized);
+    }
+
+    fn make_test_patch() -> Patch {
+        Patch {
+            title: "fix bug".to_string(),
+            description: "long description of the fix".to_string(),
+            diff: "diff --git a/file.rs\n+added line\n".to_string(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            created_by: Some(crate::TaskId::new()),
+            creator: Username::from("alice"),
+            reviews: vec![
+                Review::new("looks good".to_string(), true, "bob".to_string(), None),
+                Review::new(
+                    "needs changes".to_string(),
+                    false,
+                    "carol".to_string(),
+                    None,
+                ),
+            ],
+            service_repo_name: "org/repo".parse().unwrap(),
+            github: None,
+            deleted: false,
+            branch_name: Some("feature/fix".to_string()),
+            commit_range: Some(CommitRange::new(
+                "0000000000000000000000000000000000000001".parse().unwrap(),
+                "0000000000000000000000000000000000000002".parse().unwrap(),
+            )),
+            base_branch: Some("main".to_string()),
+        }
+    }
+
+    #[test]
+    fn review_summary_counts_reviews_and_checks_approval() {
+        let reviews = vec![
+            Review::new("ok".to_string(), false, "a".to_string(), None),
+            Review::new("lgtm".to_string(), true, "b".to_string(), None),
+        ];
+        let summary = ReviewSummary::from_reviews(&reviews);
+        assert_eq!(summary.count, 2);
+        assert!(summary.approved);
+    }
+
+    #[test]
+    fn review_summary_no_approval() {
+        let reviews = vec![Review::new(
+            "needs work".to_string(),
+            false,
+            "a".to_string(),
+            None,
+        )];
+        let summary = ReviewSummary::from_reviews(&reviews);
+        assert_eq!(summary.count, 1);
+        assert!(!summary.approved);
+    }
+
+    #[test]
+    fn review_summary_empty_reviews() {
+        let summary = ReviewSummary::from_reviews(&[]);
+        assert_eq!(summary.count, 0);
+        assert!(!summary.approved);
+    }
+
+    #[test]
+    fn patch_summary_excludes_diff_description_commit_range() {
+        let patch = make_test_patch();
+        let summary = PatchSummary::from(&patch);
+        let value = serde_json::to_value(&summary).unwrap();
+        assert!(value.get("diff").is_none());
+        assert!(value.get("description").is_none());
+        assert!(value.get("commit_range").is_none());
+        assert!(value.get("reviews").is_none());
+    }
+
+    #[test]
+    fn patch_summary_maps_all_fields() {
+        let patch = make_test_patch();
+        let summary = PatchSummary::from(&patch);
+        assert_eq!(summary.title, "fix bug");
+        assert_eq!(summary.status, PatchStatus::Open);
+        assert!(!summary.is_automatic_backup);
+        assert!(summary.created_by.is_some());
+        assert_eq!(summary.creator, Username::from("alice"));
+        assert_eq!(summary.review_summary.count, 2);
+        assert!(summary.review_summary.approved);
+        assert_eq!(summary.branch_name.as_deref(), Some("feature/fix"));
+        assert_eq!(summary.base_branch.as_deref(), Some("main"));
+        assert!(!summary.deleted);
+    }
+
+    #[test]
+    fn patch_summary_record_from_version_record() {
+        let patch = make_test_patch();
+        let patch_id: PatchId = crate::PatchId::new();
+        let record = PatchVersionRecord::new(patch_id.clone(), 5, chrono::Utc::now(), patch, None);
+        let summary_record = PatchSummaryRecord::from(&record);
+        assert_eq!(summary_record.patch_id, patch_id);
+        assert_eq!(summary_record.version, 5);
+        assert_eq!(summary_record.patch.title, "fix bug");
+        assert_eq!(summary_record.actor, None);
     }
 }

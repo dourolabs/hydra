@@ -148,6 +148,61 @@ impl UpsertDocumentResponse {
     }
 }
 
+/// Lightweight summary of a document for list views.
+///
+/// Excludes `body_markdown`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct DocumentSummary {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<DocumentPath>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<TaskId>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
+}
+
+impl From<&Document> for DocumentSummary {
+    fn from(doc: &Document) -> Self {
+        DocumentSummary {
+            title: doc.title.clone(),
+            path: doc.path.clone(),
+            created_by: doc.created_by.clone(),
+            deleted: doc.deleted,
+        }
+    }
+}
+
+/// Summary-level version record for document list responses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct DocumentSummaryRecord {
+    pub document_id: DocumentId,
+    pub version: VersionNumber,
+    pub timestamp: DateTime<Utc>,
+    pub document: DocumentSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<ActorRef>,
+}
+
+impl From<&DocumentVersionRecord> for DocumentSummaryRecord {
+    fn from(record: &DocumentVersionRecord) -> Self {
+        DocumentSummaryRecord {
+            document_id: record.document_id.clone(),
+            version: record.version,
+            timestamp: record.timestamp,
+            document: DocumentSummary::from(&record.document),
+            actor: record.actor.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -258,5 +313,51 @@ mod tests {
         let query: SearchDocumentsQuery = serde_json::from_str(json).unwrap();
         assert_eq!(query.path_prefix.as_deref(), Some("docs/"));
         assert_eq!(query.path_is_exact, None);
+    }
+
+    #[test]
+    fn document_summary_excludes_body_markdown() {
+        let doc = Document::new(
+            "My Doc".to_string(),
+            "# Heading\n\nLong markdown body...".to_string(),
+            Some("docs/test.md".to_string()),
+            Some(TaskId::new()),
+            false,
+        )
+        .unwrap();
+        let summary = DocumentSummary::from(&doc);
+        let value = serde_json::to_value(&summary).unwrap();
+        assert!(value.get("body_markdown").is_none());
+    }
+
+    #[test]
+    fn document_summary_maps_all_fields() {
+        let created_by = TaskId::new();
+        let doc = Document::new(
+            "Title".to_string(),
+            "body".to_string(),
+            Some("docs/path.md".to_string()),
+            Some(created_by.clone()),
+            false,
+        )
+        .unwrap();
+        let summary = DocumentSummary::from(&doc);
+        assert_eq!(summary.title, "Title");
+        assert_eq!(summary.path.as_deref(), Some("/docs/path.md"));
+        assert_eq!(summary.created_by, Some(created_by));
+        assert!(!summary.deleted);
+    }
+
+    #[test]
+    fn document_summary_record_from_version_record() {
+        let doc =
+            Document::new("Title".to_string(), "body".to_string(), None, None, false).unwrap();
+        let doc_id = DocumentId::new();
+        let record = DocumentVersionRecord::new(doc_id.clone(), 2, chrono::Utc::now(), doc, None);
+        let summary_record = DocumentSummaryRecord::from(&record);
+        assert_eq!(summary_record.document_id, doc_id);
+        assert_eq!(summary_record.version, 2);
+        assert_eq!(summary_record.document.title, "Title");
+        assert_eq!(summary_record.actor, None);
     }
 }
