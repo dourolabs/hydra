@@ -746,6 +746,36 @@ pub struct IssueSummaryRecord {
     pub actor: Option<ActorRef>,
 }
 
+impl From<IssueSummary> for Issue {
+    fn from(summary: IssueSummary) -> Self {
+        Issue {
+            issue_type: summary.issue_type,
+            description: summary.description,
+            creator: summary.creator,
+            progress: String::new(),
+            status: summary.status,
+            assignee: summary.assignee,
+            job_settings: JobSettings::default(),
+            todo_list: summary.todo_list,
+            dependencies: summary.dependencies,
+            patches: summary.patches,
+            deleted: summary.deleted,
+        }
+    }
+}
+
+impl From<IssueSummaryRecord> for IssueVersionRecord {
+    fn from(summary: IssueSummaryRecord) -> Self {
+        IssueVersionRecord {
+            issue_id: summary.issue_id,
+            version: summary.version,
+            timestamp: summary.timestamp,
+            issue: summary.issue.into(),
+            actor: summary.actor,
+        }
+    }
+}
+
 impl From<&IssueVersionRecord> for IssueSummaryRecord {
     fn from(record: &IssueVersionRecord) -> Self {
         IssueSummaryRecord {
@@ -763,11 +793,11 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct ListIssuesResponse {
-    pub issues: Vec<IssueVersionRecord>,
+    pub issues: Vec<IssueSummaryRecord>,
 }
 
 impl ListIssuesResponse {
-    pub fn new(issues: Vec<IssueVersionRecord>) -> Self {
+    pub fn new(issues: Vec<IssueSummaryRecord>) -> Self {
         Self { issues }
     }
 }

@@ -8,9 +8,9 @@ use crate::{
 use metis_common::{
     IssueId, PatchId,
     api::v1::issues::{
-        AddTodoItemRequest, IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse,
-        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse,
-        UpsertIssueRequest, UpsertIssueResponse,
+        AddTodoItemRequest, IssueSummary, IssueVersionRecord, ListIssueVersionsResponse,
+        ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
+        TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
     },
 };
 use reqwest::StatusCode;
@@ -623,7 +623,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     assert_eq!(filtered_issues.issues.len(), 1);
     assert_eq!(
         filtered_issues.issues[0].issue,
-        metis_common::api::v1::issues::Issue::from(base_issue)
+        IssueSummary::from(&metis_common::api::v1::issues::Issue::from(base_issue))
     );
 
     let filtered_by_assignee: ListIssuesResponse = client
@@ -644,7 +644,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     assert_eq!(filtered_by_assignee.issues.len(), 1);
     assert_eq!(
         filtered_by_assignee.issues[0].issue,
-        metis_common::api::v1::issues::Issue::from(assigned_issue)
+        IssueSummary::from(&metis_common::api::v1::issues::Issue::from(assigned_issue))
     );
 
     let filtered_by_status: ListIssuesResponse = client
@@ -665,7 +665,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     assert_eq!(filtered_by_status.issues.len(), 1);
     assert_eq!(
         filtered_by_status.issues[0].issue,
-        metis_common::api::v1::issues::Issue::from(closed_issue)
+        IssueSummary::from(&metis_common::api::v1::issues::Issue::from(closed_issue))
     );
     Ok(())
 }
