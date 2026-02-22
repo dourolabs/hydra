@@ -48,3 +48,4 @@ metis-server = { path = "../metis-server", features = ["test-utils"] }
 octocrab = "0.49"
 jsonwebtoken = "10"
 openssl = "0.10"
+serde_yaml_ng = "0.10"

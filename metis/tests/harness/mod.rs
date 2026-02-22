@@ -603,8 +603,8 @@ impl TestHarnessBuilder {
 
         // Override the policy engine if a custom patch_workflow config was provided.
         if let Some(pwc) = self.patch_workflow_config {
-            let params = toml::Value::try_from(&pwc)
-                .context("failed to serialize PatchWorkflowConfig to TOML")?;
+            let params = serde_yaml_ng::to_value(&pwc)
+                .context("failed to serialize PatchWorkflowConfig to YAML")?;
             let policy_config = PolicyConfig {
                 global: PolicyList {
                     restrictions: vec![
