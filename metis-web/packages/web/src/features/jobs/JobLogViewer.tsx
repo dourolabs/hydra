@@ -35,11 +35,8 @@ export function JobLogViewer({ jobId, status }: JobLogViewerProps) {
     }
   }, []);
 
-  useEffect(() => {
-    if (!isStreaming) {
-      cleanup();
-      return;
-    }
+  const openLogStream = useCallback(() => {
+    cleanup();
 
     const es = new EventSource(
       `/api/v1/jobs/${encodeURIComponent(jobId)}/logs?watch=true`,
@@ -67,9 +64,30 @@ export function JobLogViewer({ jobId, status }: JobLogViewerProps) {
         setStreamConnected(false);
       }
     };
+  }, [jobId, cleanup]);
 
-    return cleanup;
-  }, [jobId, isStreaming, cleanup]);
+  useEffect(() => {
+    if (!isStreaming) {
+      cleanup();
+      return;
+    }
+
+    openLogStream();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        setStreamLines([]);
+        openLogStream();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      cleanup();
+    };
+  }, [isStreaming, openLogStream, cleanup]);
 
   // Parse snapshot text into lines
   const snapshotLines = snapshotText ? snapshotText.split("\n") : [];

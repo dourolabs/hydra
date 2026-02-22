@@ -284,5 +284,26 @@ export function useSSE(): SSEConnectionState {
     };
   }, [connect]);
 
+  // Reconnect and refresh caches when the page becomes visible again
+  // (e.g., after mobile suspend or tab switch)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        retriesRef.current = 0;
+        if (timerRef.current) {
+          clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
+        invalidateAll();
+        connect();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [connect, invalidateAll]);
+
   return state;
 }
