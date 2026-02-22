@@ -380,3 +380,222 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
 
     Ok(())
 }
+
+/// Same as `review_rejection_then_approve_merge_cycle` but the worker does NOT
+/// pass `--status Open` when updating the patch. The auto-transition logic in
+/// `app/patches.rs` should move the status from ChangesRequested → Open when
+/// the commit_range changes, allowing `patch_workflow` to re-fire.
+#[tokio::test]
+async fn review_rejection_auto_transition_without_explicit_status() -> Result<()> {
+    let pr_number = 43;
+    let repo_owner = "test-org";
+    let repo_name = "review-repo2";
+    let head_ref = "feature/swe-auto";
+    let repo = RepoName::from_str("test-org/review-repo2")?;
+
+    let mut harness = harness::TestHarness::builder()
+        .with_repo("test-org/review-repo2")
+        .with_github()
+        .with_user("reviewer")
+        .with_agent("swe", "You are a software engineer")
+        .with_patch_workflow_config(test_patch_workflow_config("reviewer", Some("swe")))
+        .build()
+        .await?;
+
+    let client = harness.client()?;
+
+    // ── Step 1: Create SWE's issue with job settings ──────────────
+    let job_settings = test_job_settings_full(&repo, "worker:latest", "main");
+
+    let swe_issue_id = harness
+        .default_user()
+        .create_issue_with_settings(
+            "SWE task: implement feature (auto-transition test)",
+            IssueType::Task,
+            IssueStatus::Open,
+            Some("swe"),
+            Some(job_settings.clone()),
+        )
+        .await?;
+
+    // ── Step 2: Spawn a task and create the initial patch ─────────
+    let task_ids = harness.step_schedule().await?;
+    assert_eq!(task_ids.len(), 1);
+    let swe_task_id = &task_ids[0];
+
+    let result = harness
+        .run_worker(
+            swe_task_id,
+            vec![
+                "echo 'fn main() { /* v1 */ }' > feature.rs",
+                "git add feature.rs",
+                "git commit -m 'implement feature v1'",
+                "metis patches create --title 'Implement feature (auto)' --description 'First attempt'",
+            ],
+        )
+        .await?;
+
+    assert_eq!(result.patches_created.len(), 1);
+    let patch_id = result.patches_created[0].clone();
+
+    // ── Step 3: Verify initial workflow issues created ─────────────
+    let all_issues = harness.default_user().list_issues().await?;
+    let rr_children =
+        find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::ReviewRequest);
+    let mr_children =
+        find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::MergeRequest);
+
+    assert_eq!(rr_children.len(), 1, "should have 1 ReviewRequest");
+    assert_eq!(mr_children.len(), 1, "should have 1 MergeRequest");
+
+    let old_rr_id = &rr_children[0].issue_id;
+    let old_mr_id = &mr_children[0].issue_id;
+
+    // ── Step 4: Set up GitHub mock with CHANGES_REQUESTED review ──
+    let patch_branch = {
+        let patch = client.get_patch(&patch_id).await?;
+        patch
+            .patch
+            .branch_name
+            .clone()
+            .unwrap_or_else(|| head_ref.to_string())
+    };
+
+    let head_sha = harness
+        .remote("test-org/review-repo2")
+        .create_branch(&patch_branch, "feature.rs", "fn main() { /* v1 */ }\n")
+        .unwrap_or_else(|_| {
+            harness
+                .remote("test-org/review-repo2")
+                .branch_sha(&patch_branch)
+                .expect("branch should exist")
+        });
+
+    {
+        let mut patch_record = client.get_patch(&patch_id).await?;
+        patch_record.patch.github = Some(GithubPr::new(
+            repo_owner.to_string(),
+            repo_name.to_string(),
+            pr_number,
+            None,
+            None,
+            None,
+            None,
+        ));
+        let request = UpsertPatchRequest::new(patch_record.patch);
+        client.update_patch(&patch_id, &request).await?;
+    }
+
+    let (_github_server, github_app) = GitHubMockBuilder::new()
+        .with_pr(
+            repo_owner,
+            repo_name,
+            MockPr::new(pr_number, &patch_branch, &head_sha).with_review(
+                MockReview::new(
+                    "reviewer",
+                    "CHANGES_REQUESTED",
+                    "Please fix the implementation",
+                )
+                .with_author_id(1001),
+            ),
+        )
+        .build()?;
+    harness.state_mut().github_app = Some(github_app);
+
+    // ── Step 5: step_github_sync() → ChangesRequested ─────────────
+    harness
+        .step_github_sync()
+        .await
+        .context("step_github_sync failed after CHANGES_REQUESTED")?;
+
+    let patch_after_reject = client.get_patch(&patch_id).await?;
+    assert_eq!(
+        patch_after_reject.patch.status,
+        PatchStatus::ChangesRequested,
+    );
+
+    // Verify old workflow issues are Failed
+    let old_mr_after = client.get_issue(old_mr_id, false).await?;
+    assert_eq!(old_mr_after.issue.status, IssueStatus::Failed);
+    let old_rr_after = client.get_issue(old_rr_id, false).await?;
+    assert_eq!(old_rr_after.issue.status, IssueStatus::Failed);
+
+    // ── Step 6: Worker updates patch WITHOUT --status Open ────────
+    // The auto-transition should kick in because commit_range changes.
+    {
+        let task_ids = harness.step_schedule().await?;
+        assert_eq!(task_ids.len(), 1);
+        let swe_task_id_2 = &task_ids[0];
+
+        let patch_id_str = patch_id.as_ref();
+        harness
+            .run_worker(
+                swe_task_id_2,
+                vec![
+                    "echo 'fn main() { /* v2 - fixed */ }' > feature.rs",
+                    "git add feature.rs",
+                    "git commit -m 'address review feedback'",
+                    // No --status Open here! Relying on auto-transition.
+                    &format!("metis patches update {patch_id_str}"),
+                ],
+            )
+            .await?;
+    }
+
+    // ── Step 7: Verify patch auto-transitioned to Open ────────────
+    let patch_after_update = client.get_patch(&patch_id).await?;
+    assert_eq!(
+        patch_after_update.patch.status,
+        PatchStatus::Open,
+        "patch should auto-transition to Open when commit_range changes on ChangesRequested patch"
+    );
+
+    // ── Step 8: Verify patch_workflow re-fires → new workflow issues
+    let all_issues = harness.default_user().list_issues().await?;
+    let new_rr_children = find_children_by_type_and_status(
+        &all_issues.issues,
+        &swe_issue_id,
+        IssueType::ReviewRequest,
+        IssueStatus::Open,
+    );
+    let new_mr_children = find_children_by_type_and_status(
+        &all_issues.issues,
+        &swe_issue_id,
+        IssueType::MergeRequest,
+        IssueStatus::Open,
+    );
+
+    assert_eq!(
+        new_rr_children.len(),
+        1,
+        "patch_workflow should create 1 new ReviewRequest after auto-transition"
+    );
+    assert_eq!(
+        new_mr_children.len(),
+        1,
+        "patch_workflow should create 1 new MergeRequest after auto-transition"
+    );
+
+    let new_rr_id = &new_rr_children[0].issue_id;
+    let new_mr_id = &new_mr_children[0].issue_id;
+
+    assert_ne!(new_rr_id, old_rr_id);
+    assert_ne!(new_mr_id, old_mr_id);
+
+    // ── Step 9: Verify old + new workflow issues coexist ──────────
+    let all_rr = find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::ReviewRequest);
+    let all_mr = find_children_by_type(&all_issues.issues, &swe_issue_id, IssueType::MergeRequest);
+
+    assert_eq!(
+        all_rr.len(),
+        2,
+        "2 ReviewRequest issues (old Failed + new Open)"
+    );
+    assert_eq!(
+        all_mr.len(),
+        2,
+        "2 MergeRequest issues (old Failed + new Open)"
+    );
+
+    Ok(())
+}

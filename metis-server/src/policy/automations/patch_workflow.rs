@@ -200,8 +200,16 @@ impl PatchWorkflowAutomation {
             return Ok(());
         };
 
-        // Only trigger when status changes from ChangesRequested to Open
-        if old.status != PatchStatus::ChangesRequested || new.status != PatchStatus::Open {
+        // Trigger when the patch is (now) Open and either:
+        // - it was previously ChangesRequested (explicit re-open), or
+        // - the commit_range changed (new commits dismiss existing reviews).
+        // Skip automatic backups.
+        let commit_range_changed =
+            old.commit_range != new.commit_range && new.commit_range.is_some();
+        if new.status != PatchStatus::Open
+            || new.is_automatic_backup
+            || !(old.status == PatchStatus::ChangesRequested || commit_range_changed)
+        {
             return Ok(());
         }
 
@@ -1299,6 +1307,194 @@ mod tests {
         assert!(
             found,
             "expected a MergeRequest issue with configured assignee"
+        );
+    }
+
+    // ---- Tests for broadened handle_patch_updated trigger ----
+
+    fn make_commit_range(base_hex: &str, head_hex: &str) -> crate::domain::patches::CommitRange {
+        use crate::domain::patches::{CommitRange, GitOid};
+        use git2::Oid;
+        CommitRange::new(
+            GitOid::new(Oid::from_str(base_hex).unwrap()),
+            GitOid::new(Oid::from_str(head_hex).unwrap()),
+        )
+    }
+
+    #[tokio::test]
+    async fn triggers_workflow_on_commit_range_change_for_open_patch() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let mut old_patch = make_patch(PatchStatus::Open);
+        old_patch.commit_range = Some(make_commit_range(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ));
+
+        let mut new_patch = make_patch(PatchStatus::Open);
+        new_patch.commit_range = Some(make_commit_range(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "cccccccccccccccccccccccccccccccccccccccc",
+        ));
+
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: Some(old_patch),
+            new: new_patch,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchUpdated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = PatchWorkflowAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        let open_mr_count = futures::future::join_all(issues.iter().map(|id| {
+            let store = store.clone();
+            async move { store.get_issue(id, false).await.unwrap() }
+        }))
+        .await
+        .into_iter()
+        .filter(|i| {
+            i.item.issue_type == IssueType::MergeRequest && i.item.status == IssueStatus::Open
+        })
+        .count();
+
+        assert_eq!(
+            open_mr_count, 1,
+            "commit_range change on Open patch should trigger workflow"
+        );
+    }
+
+    #[tokio::test]
+    async fn skips_workflow_when_no_commit_range_change_on_open_patch() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let range = Some(make_commit_range(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ));
+
+        let mut old_patch = make_patch(PatchStatus::Open);
+        old_patch.commit_range = range.clone();
+
+        let mut new_patch = make_patch(PatchStatus::Open);
+        new_patch.commit_range = range;
+        // Change something else (e.g. title) but not commit_range
+        new_patch.title = "updated title".to_string();
+
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: Some(old_patch),
+            new: new_patch,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchUpdated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = PatchWorkflowAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        for issue_id in &issues {
+            let issue = store.get_issue(issue_id, false).await.unwrap();
+            assert_ne!(
+                issue.item.issue_type,
+                IssueType::MergeRequest,
+                "no commit_range change on Open→Open should NOT trigger workflow"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn existing_changes_requested_to_open_still_triggers() {
+        // Verify the original ChangesRequested→Open path still works
+        // (this is essentially the same as creates_merge_request_issue_on_reopen,
+        // but explicitly named for clarity).
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let old_patch = make_patch(PatchStatus::ChangesRequested);
+        let new_patch = make_patch(PatchStatus::Open);
+
+        let (patch_id, _) = store
+            .add_patch(new_patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: Some(old_patch),
+            new: new_patch,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchUpdated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = PatchWorkflowAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        let open_mr_count = futures::future::join_all(issues.iter().map(|id| {
+            let store = store.clone();
+            async move { store.get_issue(id, false).await.unwrap() }
+        }))
+        .await
+        .into_iter()
+        .filter(|i| {
+            i.item.issue_type == IssueType::MergeRequest && i.item.status == IssueStatus::Open
+        })
+        .count();
+
+        assert_eq!(
+            open_mr_count, 1,
+            "ChangesRequested→Open should still trigger workflow"
         );
     }
 }

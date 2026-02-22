@@ -1,5 +1,8 @@
 use crate::{
-    domain::{actors::ActorRef, patches::Patch},
+    domain::{
+        actors::ActorRef,
+        patches::{Patch, PatchStatus},
+    },
     store::{ReadOnlyStore, Status, StoreError},
 };
 use metis_common::{
@@ -135,6 +138,16 @@ impl AppState {
                 patch.created_by = existing_patch.item.created_by;
                 if patch.github.is_none() {
                     patch.github = existing_patch.item.github.clone();
+                }
+
+                // Auto-transition: when the commit_range changes on a
+                // ChangesRequested patch, treat it as a re-submission and
+                // move the status back to Open.
+                if existing_patch.item.status == PatchStatus::ChangesRequested
+                    && patch.commit_range.is_some()
+                    && patch.commit_range != existing_patch.item.commit_range
+                {
+                    patch.status = PatchStatus::Open;
                 }
 
                 let version = self
@@ -600,6 +613,209 @@ mod tests {
         assert_eq!(
             stored.item.creator, creator_username,
             "patch.creator should be preserved as set by the caller"
+        );
+
+        Ok(())
+    }
+
+    // ---- Auto-transition tests: ChangesRequested → Open on commit_range change ----
+
+    fn make_commit_range(base_hex: &str, head_hex: &str) -> crate::domain::patches::CommitRange {
+        use crate::domain::patches::{CommitRange, GitOid};
+        use git2::Oid;
+        CommitRange::new(
+            GitOid::new(Oid::from_str(base_hex).unwrap()),
+            GitOid::new(Oid::from_str(head_hex).unwrap()),
+        )
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_auto_transitions_changes_requested_to_open_on_commit_range_change()
+    -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::new("octo", "repo")?;
+
+        let existing = Patch::new(
+            "patch".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::ChangesRequested,
+            false,
+            None,
+            Username::from("test-creator"),
+            Vec::new(),
+            repo_name.clone(),
+            None,
+            None,
+            Some(make_commit_range(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            )),
+            None,
+        );
+        let (patch_id, _) = handles
+            .store
+            .as_ref()
+            .add_patch(existing, &ActorRef::test())
+            .await?;
+
+        // Update with a different commit_range but keep status as ChangesRequested
+        let update = Patch::new(
+            "patch".to_string(),
+            "desc".to_string(),
+            "diff v2".to_string(),
+            PatchStatus::ChangesRequested,
+            false,
+            None,
+            Username::from("test-creator"),
+            Vec::new(),
+            repo_name,
+            None,
+            None,
+            Some(make_commit_range(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "cccccccccccccccccccccccccccccccccccccccc",
+            )),
+            None,
+        );
+        let request = api::patches::UpsertPatchRequest::new(update.into());
+        handles
+            .state
+            .upsert_patch(ActorRef::test(), Some(patch_id.clone()), request)
+            .await?;
+
+        let stored = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        assert_eq!(
+            stored.item.status,
+            PatchStatus::Open,
+            "should auto-transition to Open when commit_range changes on ChangesRequested patch"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_no_auto_transition_when_commit_range_unchanged() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::new("octo", "repo")?;
+
+        let range = make_commit_range(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+
+        let existing = Patch::new(
+            "patch".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::ChangesRequested,
+            false,
+            None,
+            Username::from("test-creator"),
+            Vec::new(),
+            repo_name.clone(),
+            None,
+            None,
+            Some(range.clone()),
+            None,
+        );
+        let (patch_id, _) = handles
+            .store
+            .as_ref()
+            .add_patch(existing, &ActorRef::test())
+            .await?;
+
+        // Update with the same commit_range (metadata-only change)
+        let update = Patch::new(
+            "updated title".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::ChangesRequested,
+            false,
+            None,
+            Username::from("test-creator"),
+            Vec::new(),
+            repo_name,
+            None,
+            None,
+            Some(range),
+            None,
+        );
+        let request = api::patches::UpsertPatchRequest::new(update.into());
+        handles
+            .state
+            .upsert_patch(ActorRef::test(), Some(patch_id.clone()), request)
+            .await?;
+
+        let stored = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        assert_eq!(
+            stored.item.status,
+            PatchStatus::ChangesRequested,
+            "should NOT auto-transition when commit_range is unchanged"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_no_auto_transition_for_open_status() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::new("octo", "repo")?;
+
+        let existing = Patch::new(
+            "patch".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Username::from("test-creator"),
+            Vec::new(),
+            repo_name.clone(),
+            None,
+            None,
+            Some(make_commit_range(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            )),
+            None,
+        );
+        let (patch_id, _) = handles
+            .store
+            .as_ref()
+            .add_patch(existing, &ActorRef::test())
+            .await?;
+
+        // Update with different commit_range, but patch is already Open
+        let update = Patch::new(
+            "patch".to_string(),
+            "desc".to_string(),
+            "diff v2".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Username::from("test-creator"),
+            Vec::new(),
+            repo_name,
+            None,
+            None,
+            Some(make_commit_range(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "cccccccccccccccccccccccccccccccccccccccc",
+            )),
+            None,
+        );
+        let request = api::patches::UpsertPatchRequest::new(update.into());
+        handles
+            .state
+            .upsert_patch(ActorRef::test(), Some(patch_id.clone()), request)
+            .await?;
+
+        let stored = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        assert_eq!(
+            stored.item.status,
+            PatchStatus::Open,
+            "Open patches should stay Open (auto-transition only for ChangesRequested)"
         );
 
         Ok(())
