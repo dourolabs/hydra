@@ -2893,6 +2893,7 @@ dependencies = [
  "shlex",
  "tempfile",
  "textwrap",
+ "thiserror 1.0.69",
  "tokio",
  "toml",
  "tui-textarea",

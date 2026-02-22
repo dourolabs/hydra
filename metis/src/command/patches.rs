@@ -26,7 +26,7 @@ use crate::git::{
     has_uncommitted_changes as git_has_uncommitted_changes, head_oid as git_head_oid, push_branch,
     push_to_ref, rebase_onto as git_rebase_onto, reset_hard as git_reset_hard,
     resolve_commit_range_from_merge_base as git_resolve_commit_range_from_merge_base,
-    update_branch_to_head as git_update_branch_to_head,
+    update_branch_to_head as git_update_branch_to_head, PushError,
 };
 use crate::{
     client::MetisClientInterface,
@@ -801,25 +801,23 @@ async fn merge_patch(
                 push_succeeded = true;
                 break;
             }
-            Err(err) => {
-                let err_msg = format!("{err:#}");
-                if err_msg.contains("not a fast-forward") {
-                    if attempt < MAX_MERGE_ATTEMPTS {
-                        eprintln!(
-                            "Push to origin/{base_branch} failed (not a fast-forward), \
-                             retrying ({attempt}/{MAX_MERGE_ATTEMPTS})..."
-                        );
-                        continue;
-                    }
-                    // All retries exhausted — fall through to error below.
-                } else {
-                    // Non-retriable push error.
-                    restore_branch(&repo_root, &original_branch);
-                    bail!(
-                        "Error: failed to push rebased branch '{branch_name}' to origin/{base_branch}.\n\n\
-                         Underlying error: {err}"
+            Err(PushError::NotFastForward { .. }) => {
+                if attempt < MAX_MERGE_ATTEMPTS {
+                    eprintln!(
+                        "Push to origin/{base_branch} failed (not a fast-forward), \
+                         retrying ({attempt}/{MAX_MERGE_ATTEMPTS})..."
                     );
+                    continue;
                 }
+                // All retries exhausted — fall through to error below.
+            }
+            Err(err) => {
+                // Non-retriable push error.
+                restore_branch(&repo_root, &original_branch);
+                bail!(
+                    "Error: failed to push rebased branch '{branch_name}' to origin/{base_branch}.\n\n\
+                     Underlying error: {err}"
+                );
             }
         }
     }

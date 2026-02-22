@@ -11,6 +11,7 @@ use git2::{
     RevparseMode, Status, StatusOptions,
 };
 use metis_common::{patches::GitOid, EnvGuard};
+use thiserror::Error;
 
 fn repo_for_path(path: &Path) -> Result<Repository> {
     Repository::discover(path).with_context(|| {
@@ -587,6 +588,19 @@ pub fn rebase_onto(repo_root: &Path, onto_ref: &str) -> Result<()> {
     Ok(())
 }
 
+/// Structured error type for push failures.
+#[derive(Debug, Error)]
+pub enum PushError {
+    #[error(
+        "failed to push to origin/{remote_ref}: not a fast-forward. \
+         The base branch was updated by a concurrent push."
+    )]
+    NotFastForward { remote_ref: String },
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 /// Push a local branch to a different ref on the remote.
 ///
 /// For example, `push_to_ref(root, "feature", "main", token, false)` pushes
@@ -597,11 +611,12 @@ pub fn push_to_ref(
     remote_ref: &str,
     github_token: Option<&str>,
     force: bool,
-) -> Result<()> {
-    let repo = repo_for_path(repo_root)?;
+) -> Result<(), PushError> {
+    let repo = repo_for_path(repo_root).map_err(PushError::Other)?;
     let mut remote = repo
         .find_remote("origin")
-        .context("failed to find 'origin' remote")?;
+        .context("failed to find 'origin' remote")
+        .map_err(PushError::Other)?;
     let callbacks = remote_callbacks(github_token);
     let mut push_options = PushOptions::new();
     push_options.remote_callbacks(callbacks);
@@ -615,12 +630,13 @@ pub fn push_to_ref(
         .push(&[refspec.as_str()], Some(&mut push_options))
         .map_err(|err| {
             if !force && err.code() == ErrorCode::NotFastForward {
-                anyhow!(
-                    "failed to push to origin/{remote_ref}: not a fast-forward. \
-                     The base branch was updated by a concurrent push."
-                )
+                PushError::NotFastForward {
+                    remote_ref: remote_ref.to_string(),
+                }
             } else {
-                anyhow!(err).context(format!("failed to push to origin/{remote_ref}"))
+                PushError::Other(
+                    anyhow!(err).context(format!("failed to push to origin/{remote_ref}")),
+                )
             }
         })?;
 
