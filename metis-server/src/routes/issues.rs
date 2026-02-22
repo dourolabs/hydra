@@ -226,6 +226,9 @@ pub async fn list_issues(
         .map(Into::into)
         .collect();
 
+    let include_ancestors = query.include_ancestors.unwrap_or(true);
+    let has_filters = query.has_filters();
+
     info!(
         issue_type = ?query.issue_type,
         status = ?query.status,
@@ -233,6 +236,7 @@ pub async fn list_issues(
         query = ?query.q,
         graph_filters = ?graph_filters,
         include_deleted = ?query.include_deleted,
+        include_ancestors,
         "list_issues invoked"
     );
 
@@ -254,32 +258,123 @@ pub async fn list_issues(
         )
     };
 
-    let filtered: Vec<api_issues::IssueSummaryRecord> = issues
+    let filtered: Vec<(
+        IssueId,
+        metis_common::Versioned<crate::domain::issues::Issue>,
+    )> = issues
         .into_iter()
         .filter(|(id, _)| {
             graph_matches
                 .as_ref()
                 .is_none_or(|allowed| allowed.contains(id))
         })
-        .map(|(id, versioned)| {
-            let api_issue: api_issues::Issue = versioned.item.into();
-            let summary = api_issues::IssueSummary::from(&api_issue);
-            api_issues::IssueSummaryRecord::new(
-                id,
-                versioned.version,
-                versioned.timestamp,
-                summary,
-                versioned.actor,
-            )
-        })
         .collect();
 
-    let response = api_issues::ListIssuesResponse::new(filtered);
+    let response = if has_filters {
+        // Collect matching IDs (issues that directly matched the filters)
+        let matching_ids: Vec<IssueId> = filtered.iter().map(|(id, _)| id.clone()).collect();
+
+        // Build result map starting with matching issues
+        let mut result_map: std::collections::HashMap<IssueId, api_issues::IssueSummaryRecord> =
+            std::collections::HashMap::new();
+
+        for (id, versioned) in &filtered {
+            let api_issue: api_issues::Issue = versioned.item.clone().into();
+            let summary = api_issues::IssueSummary::from(&api_issue);
+            result_map.insert(
+                id.clone(),
+                api_issues::IssueSummaryRecord::new(
+                    id.clone(),
+                    versioned.version,
+                    versioned.timestamp,
+                    summary,
+                    versioned.actor.clone(),
+                ),
+            );
+        }
+
+        // Walk up child-of dependency chains to collect ancestors
+        if include_ancestors {
+            let mut ancestors_to_fetch: Vec<IssueId> = Vec::new();
+            for (_, versioned) in &filtered {
+                for dep in &versioned.item.dependencies {
+                    if dep.dependency_type == crate::domain::issues::IssueDependencyType::ChildOf
+                        && !result_map.contains_key(&dep.issue_id)
+                    {
+                        ancestors_to_fetch.push(dep.issue_id.clone());
+                    }
+                }
+            }
+
+            // Walk up transitively
+            let mut visited: std::collections::HashSet<IssueId> =
+                result_map.keys().cloned().collect();
+            while let Some(ancestor_id) = ancestors_to_fetch.pop() {
+                if !visited.insert(ancestor_id.clone()) {
+                    continue;
+                }
+                match state.get_issue(&ancestor_id, false).await {
+                    Ok(ancestor) => {
+                        let api_issue: api_issues::Issue = ancestor.item.clone().into();
+                        let summary = api_issues::IssueSummary::from(&api_issue);
+                        result_map.insert(
+                            ancestor_id.clone(),
+                            api_issues::IssueSummaryRecord::new(
+                                ancestor_id,
+                                ancestor.version,
+                                ancestor.timestamp,
+                                summary,
+                                ancestor.actor,
+                            ),
+                        );
+
+                        // Continue walking up
+                        for dep in &ancestor.item.dependencies {
+                            if dep.dependency_type
+                                == crate::domain::issues::IssueDependencyType::ChildOf
+                                && !visited.contains(&dep.issue_id)
+                            {
+                                ancestors_to_fetch.push(dep.issue_id.clone());
+                            }
+                        }
+                    }
+                    Err(crate::store::StoreError::IssueNotFound(_)) => {
+                        // Ancestor may have been deleted; skip it
+                    }
+                    Err(err) => {
+                        return Err(map_issue_error(err, None));
+                    }
+                }
+            }
+        }
+
+        let issues: Vec<api_issues::IssueSummaryRecord> = result_map.into_values().collect();
+        api_issues::ListIssuesResponse::with_matching_ids(issues, matching_ids)
+    } else {
+        // No filters active — return all issues without matching_ids
+        let issues: Vec<api_issues::IssueSummaryRecord> = filtered
+            .into_iter()
+            .map(|(id, versioned)| {
+                let api_issue: api_issues::Issue = versioned.item.into();
+                let summary = api_issues::IssueSummary::from(&api_issue);
+                api_issues::IssueSummaryRecord::new(
+                    id,
+                    versioned.version,
+                    versioned.timestamp,
+                    summary,
+                    versioned.actor,
+                )
+            })
+            .collect();
+        api_issues::ListIssuesResponse::new(issues)
+    };
+
     info!(
         issue_type = ?query.issue_type,
         status = ?query.status,
         assignee = ?query.assignee,
         returned = response.issues.len(),
+        matching_ids = ?response.matching_ids.as_ref().map(|ids| ids.len()),
         "list_issues completed"
     );
     Ok(Json(response))

@@ -661,6 +661,8 @@ pub struct SearchIssuesQuery {
     pub graph_filters: Vec<IssueGraphFilter>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
+    #[serde(default)]
+    pub include_ancestors: Option<bool>,
 }
 
 impl SearchIssuesQuery {
@@ -679,7 +681,17 @@ impl SearchIssuesQuery {
             q,
             graph_filters,
             include_deleted,
+            include_ancestors: None,
         }
+    }
+
+    /// Returns `true` when any attribute or graph filter is set.
+    pub fn has_filters(&self) -> bool {
+        self.issue_type.is_some()
+            || self.status.is_some()
+            || self.assignee.is_some()
+            || self.q.as_ref().is_some_and(|v| !v.trim().is_empty())
+            || !self.graph_filters.is_empty()
     }
 }
 
@@ -782,11 +794,23 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
 #[non_exhaustive]
 pub struct ListIssuesResponse {
     pub issues: Vec<IssueSummaryRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matching_ids: Option<Vec<IssueId>>,
 }
 
 impl ListIssuesResponse {
     pub fn new(issues: Vec<IssueSummaryRecord>) -> Self {
-        Self { issues }
+        Self {
+            issues,
+            matching_ids: None,
+        }
+    }
+
+    pub fn with_matching_ids(issues: Vec<IssueSummaryRecord>, matching_ids: Vec<IssueId>) -> Self {
+        Self {
+            issues,
+            matching_ids: Some(matching_ids),
+        }
     }
 }
 
@@ -863,6 +887,7 @@ mod tests {
             q: Some("test query".to_string()),
             graph_filters: vec![],
             include_deleted: None,
+            include_ancestors: None,
         };
 
         let params = serialize_query_params(&query)
@@ -885,6 +910,7 @@ mod tests {
             q: None,
             graph_filters: vec![filter1, filter2],
             include_deleted: None,
+            include_ancestors: None,
         };
 
         let params = serialize_query_params(&query)

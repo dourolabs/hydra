@@ -1298,3 +1298,311 @@ async fn get_issue_version_out_of_range_negative_offset_returns_400() -> anyhow:
 
     Ok(())
 }
+
+#[tokio::test]
+async fn list_issues_with_filter_returns_matching_ids() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create issues with different statuses
+    let open_issue = issue(
+        IssueType::Task,
+        "open task",
+        default_user(),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        Vec::new(),
+        vec![],
+        Vec::new(),
+    );
+    let closed_issue = issue(
+        IssueType::Task,
+        "closed task",
+        default_user(),
+        String::new(),
+        IssueStatus::Closed,
+        None,
+        Vec::new(),
+        vec![],
+        Vec::new(),
+    );
+
+    let open_created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(open_issue.into(), None))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(closed_issue.into(), None))
+        .send()
+        .await?;
+
+    // Filter by status=open — should get matching_ids
+    let response: ListIssuesResponse = client
+        .get(format!("{}/v1/issues?status=open", server.base_url()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert!(response.matching_ids.is_some());
+    let matching_ids = response.matching_ids.unwrap();
+    assert_eq!(matching_ids.len(), 1);
+    assert_eq!(matching_ids[0], open_created.issue_id);
+
+    // No filters — matching_ids should be absent
+    let all_response: ListIssuesResponse = client
+        .get(format!("{}/v1/issues", server.base_url()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert!(all_response.matching_ids.is_none());
+    assert_eq!(all_response.issues.len(), 2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_issues_includes_ancestors_when_filtering() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create parent issue
+    let parent = issue(
+        IssueType::Task,
+        "parent task",
+        default_user(),
+        String::new(),
+        IssueStatus::InProgress,
+        None,
+        Vec::new(),
+        vec![],
+        Vec::new(),
+    );
+    let parent_created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(parent.into(), None))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Create child issue that is child-of parent
+    let child = issue(
+        IssueType::Task,
+        "child task",
+        default_user(),
+        String::new(),
+        IssueStatus::Open,
+        Some("alice"),
+        Vec::new(),
+        vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_created.issue_id.clone(),
+        )],
+        Vec::new(),
+    );
+    let child_created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(child.into(), None))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Filter by assignee=alice — should return child AND its parent ancestor
+    let response: ListIssuesResponse = client
+        .get(format!("{}/v1/issues?assignee=alice", server.base_url()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert!(response.matching_ids.is_some());
+    let matching_ids = response.matching_ids.unwrap();
+    // Only the child directly matches the filter
+    assert_eq!(matching_ids.len(), 1);
+    assert_eq!(matching_ids[0], child_created.issue_id);
+
+    // But the response includes both child and parent
+    let response_ids: std::collections::HashSet<IssueId> =
+        response.issues.iter().map(|r| r.issue_id.clone()).collect();
+    assert!(
+        response_ids.contains(&child_created.issue_id),
+        "response should contain child"
+    );
+    assert!(
+        response_ids.contains(&parent_created.issue_id),
+        "response should contain parent ancestor"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_issues_include_ancestors_false_excludes_ancestors() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create parent issue
+    let parent = issue(
+        IssueType::Task,
+        "parent task",
+        default_user(),
+        String::new(),
+        IssueStatus::InProgress,
+        None,
+        Vec::new(),
+        vec![],
+        Vec::new(),
+    );
+    let parent_created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(parent.into(), None))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Create child issue that is child-of parent
+    let child = issue(
+        IssueType::Task,
+        "child task",
+        default_user(),
+        String::new(),
+        IssueStatus::Open,
+        Some("bob"),
+        Vec::new(),
+        vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_created.issue_id.clone(),
+        )],
+        Vec::new(),
+    );
+    let child_created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(child.into(), None))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Filter with include_ancestors=false — should only return matching child
+    let response: ListIssuesResponse = client
+        .get(format!(
+            "{}/v1/issues?assignee=bob&include_ancestors=false",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(response.issues.len(), 1);
+    assert_eq!(response.issues[0].issue_id, child_created.issue_id);
+
+    let matching_ids = response.matching_ids.unwrap();
+    assert_eq!(matching_ids.len(), 1);
+    assert_eq!(matching_ids[0], child_created.issue_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_issues_ancestor_walk_is_transitive() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create grandparent -> parent -> child chain
+    let grandparent = issue(
+        IssueType::Task,
+        "grandparent",
+        default_user(),
+        String::new(),
+        IssueStatus::InProgress,
+        None,
+        Vec::new(),
+        vec![],
+        Vec::new(),
+    );
+    let gp_created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(grandparent.into(), None))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let parent = issue(
+        IssueType::Task,
+        "parent",
+        default_user(),
+        String::new(),
+        IssueStatus::InProgress,
+        None,
+        Vec::new(),
+        vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            gp_created.issue_id.clone(),
+        )],
+        Vec::new(),
+    );
+    let parent_created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(parent.into(), None))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let child = issue(
+        IssueType::Bug,
+        "child bug",
+        default_user(),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        Vec::new(),
+        vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_created.issue_id.clone(),
+        )],
+        Vec::new(),
+    );
+    let child_created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(child.into(), None))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Filter by issue_type=bug — child matches, parent and grandparent are ancestors
+    let response: ListIssuesResponse = client
+        .get(format!("{}/v1/issues?issue_type=bug", server.base_url()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let matching_ids = response.matching_ids.unwrap();
+    assert_eq!(matching_ids.len(), 1);
+    assert_eq!(matching_ids[0], child_created.issue_id);
+
+    // All three should be in the response (child + parent + grandparent)
+    let response_ids: std::collections::HashSet<IssueId> =
+        response.issues.iter().map(|r| r.issue_id.clone()).collect();
+    assert_eq!(response_ids.len(), 3);
+    assert!(response_ids.contains(&child_created.issue_id));
+    assert!(response_ids.contains(&parent_created.issue_id));
+    assert!(response_ids.contains(&gp_created.issue_id));
+
+    Ok(())
+}

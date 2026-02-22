@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Panel, Spinner } from "@metis/ui";
 import type { IssueSummaryRecord } from "@metis/api";
 import { useIssues } from "../features/issues/useIssues";
+import type { IssueFilterParams } from "../features/issues/useIssues";
 import { useIssueFilters } from "../features/issues/useIssueFilters";
 import { IssueTree } from "../features/issues/IssueTree";
 import { IssueFilters } from "../features/issues/IssueFilters";
@@ -20,31 +21,6 @@ const STATUS_ORDER: Record<string, number> = {
   dropped: 5,
   rejected: 6,
 };
-
-function issueMatchesText(record: IssueSummaryRecord, q: string): boolean {
-  const lower = q.toLowerCase();
-  const desc = record.issue.description?.toLowerCase() ?? "";
-  const id = record.issue_id.toLowerCase();
-  return desc.includes(lower) || id.includes(lower);
-}
-
-function issueMatchesFilter(record: IssueSummaryRecord, statuses: string[], assignee: string, type: string, q: string): boolean {
-  if (statuses.length > 0 && !statuses.includes(record.issue.status)) return false;
-  if (assignee && record.issue.assignee !== assignee) return false;
-  if (type && record.issue.type !== type) return false;
-  if (q && !issueMatchesText(record, q)) return false;
-  return true;
-}
-
-function getMatchingIds(issues: IssueSummaryRecord[], filters: IssueFilterValues): Set<string> {
-  const ids = new Set<string>();
-  for (const record of issues) {
-    if (issueMatchesFilter(record, filters.statuses, filters.assignee, filters.type, filters.q)) {
-      ids.add(record.issue_id);
-    }
-  }
-  return ids;
-}
 
 function sortIssues(issues: IssueSummaryRecord[], sort: SortOption): IssueSummaryRecord[] {
   const sorted = [...issues];
@@ -79,11 +55,26 @@ function hasActiveFilters(filters: IssueFilterValues): boolean {
   return filters.statuses.length > 0 || filters.assignee !== "" || filters.type !== "" || filters.q !== "";
 }
 
+/** Build server-side filter params from the current UI filter state. */
+function buildFilterParams(filters: IssueFilterValues): IssueFilterParams | undefined {
+  const params: IssueFilterParams = {};
+  if (filters.statuses.length === 1) params.status = filters.statuses[0];
+  if (filters.assignee) params.assignee = filters.assignee;
+  if (filters.type) params.issue_type = filters.type;
+  if (filters.q) params.q = filters.q;
+  return Object.keys(params).length > 0 ? params : undefined;
+}
+
 export function IssuesPage() {
   const { filters, setFilters } = useIssueFilters();
-  const { data: issues, isLoading, error } = useIssues();
+  const active = hasActiveFilters(filters);
+  const filterParams = useMemo(() => buildFilterParams(filters), [filters]);
+  const { data, isLoading, error } = useIssues(filterParams);
   const { data: jobsByIssue } = useAllJobs();
   const { collapsedIds, onToggle } = useTreeExpandState();
+
+  const issues = data?.issues;
+  const serverMatchingIds = data?.matchingIds;
 
   const assignees = useMemo(() => (issues ? extractAssignees(issues) : []), [issues]);
 
@@ -92,12 +83,16 @@ export function IssuesPage() {
     return sortIssues(issues, filters.sort);
   }, [issues, filters.sort]);
 
-  const matchingIds = useMemo(
-    () => (issues ? getMatchingIds(issues, filters) : new Set<string>()),
-    [issues, filters],
-  );
-
-  const active = hasActiveFilters(filters);
+  // Use server-provided matching_ids when filters are active.
+  // For multi-status filters (not yet supported server-side), fall back to
+  // treating all returned issues as matching.
+  const matchingIds = useMemo(() => {
+    if (!active) return undefined;
+    if (serverMatchingIds) return new Set<string>(serverMatchingIds);
+    // Fallback: all returned issues are considered matching
+    if (issues) return new Set<string>(issues.map((i) => i.issue_id));
+    return new Set<string>();
+  }, [active, serverMatchingIds, issues]);
 
   return (
     <div className={styles.page}>
@@ -119,17 +114,17 @@ export function IssuesPage() {
         {error && (
           <p className={styles.error}>Failed to load issues: {(error as Error).message}</p>
         )}
-        {issues && (sortedIssues.length === 0 || (active && matchingIds.size === 0)) && (
+        {issues && (sortedIssues.length === 0 || (active && matchingIds && matchingIds.size === 0)) && (
           <p className={styles.empty}>
             {filters.q
               ? `No issues matching "${filters.q}".`
               : "No issues found."}
           </p>
         )}
-        {sortedIssues.length > 0 && (!active || matchingIds.size > 0) && (
+        {sortedIssues.length > 0 && (!active || (matchingIds && matchingIds.size > 0)) && (
           <IssueTree
             issues={sortedIssues}
-            matchingIds={active ? matchingIds : undefined}
+            matchingIds={matchingIds}
             jobsByIssue={jobsByIssue}
             collapsedIds={collapsedIds}
             onToggle={onToggle}

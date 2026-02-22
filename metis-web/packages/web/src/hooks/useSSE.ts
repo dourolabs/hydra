@@ -2,11 +2,9 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type {
   EntityEventData,
-  IssueSummaryRecord,
   JobSummaryRecord,
   PatchSummaryRecord,
   DocumentVersionRecord,
-  ListIssuesResponse,
   ListJobsResponse,
   ListPatchesResponse,
   ListDocumentsResponse,
@@ -95,10 +93,6 @@ function removeFromList<TResp, TItem>(
 }
 
 // Entity-specific accessors for the list-response shapes
-const issueList = (r: ListIssuesResponse) => r.issues;
-const wrapIssues = (items: IssueSummaryRecord[]): ListIssuesResponse => ({ issues: items });
-const issueRecordId = (r: IssueSummaryRecord) => r.issue_id;
-
 const jobList = (r: ListJobsResponse) => r.jobs;
 const wrapJobs = (items: JobSummaryRecord[]): ListJobsResponse => ({ jobs: items });
 const jobRecordId = (r: JobSummaryRecord) => r.job_id;
@@ -161,13 +155,13 @@ export function useSSE(): SSEConnectionState {
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         if (eventType === "issue_deleted") {
           queryClient.removeQueries({ queryKey: ["issue", entity_id] });
-          removeFromList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id);
         } else {
-          const record = entity as unknown as IssueSummaryRecord;
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
-          upsertInList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id, record);
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
         }
+        // Issue list queries now include filter params in the key, so
+        // invalidate by prefix to cover all filtered variants.
+        queryClient.invalidateQueries({ queryKey: ["issues"] });
       } else if (entity_type === "job" || eventType.startsWith("job_")) {
         const record = entity as unknown as JobSummaryRecord;
         const spawnedFrom = record.task?.spawned_from;

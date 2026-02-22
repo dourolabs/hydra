@@ -1,14 +1,31 @@
 import { useQuery } from "@tanstack/react-query";
-import type { IssueSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, SearchIssuesQuery, ListIssuesResponse } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { computeBlockedStatus } from "./blockedStatus";
 import { topologicalSort } from "./topologicalSort";
 
-export function useIssues() {
+export interface IssueFilterParams {
+  status?: string;
+  assignee?: string;
+  issue_type?: string;
+  q?: string;
+}
+
+export function useIssues(filterParams?: IssueFilterParams) {
   return useQuery({
-    queryKey: ["issues"],
-    queryFn: () => apiClient.listIssues(),
-    select: (data) => data.issues,
+    queryKey: ["issues", filterParams],
+    queryFn: () => {
+      const query: Partial<SearchIssuesQuery> = {};
+      if (filterParams?.status) query.status = filterParams.status as SearchIssuesQuery["status"];
+      if (filterParams?.assignee) query.assignee = filterParams.assignee;
+      if (filterParams?.issue_type) query.issue_type = filterParams.issue_type as SearchIssuesQuery["issue_type"];
+      if (filterParams?.q) query.q = filterParams.q;
+      return apiClient.listIssues(Object.keys(query).length > 0 ? query : undefined);
+    },
+    select: (data: ListIssuesResponse) => ({
+      issues: data.issues,
+      matchingIds: data.matching_ids ?? null,
+    }),
   });
 }
 

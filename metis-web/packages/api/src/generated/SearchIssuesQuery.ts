@@ -2,4 +2,4 @@
 import type { IssueStatus } from "./IssueStatus";
 import type { IssueType } from "./IssueType";
 
-export type SearchIssuesQuery = { issue_type: IssueType | null, status: IssueStatus | null, assignee: string | null, q: string | null, graph: string, include_deleted: boolean | null, };
+export type SearchIssuesQuery = { issue_type: IssueType | null, status: IssueStatus | null, assignee: string | null, q: string | null, graph: string, include_deleted: boolean | null, include_ancestors: boolean | null, };
