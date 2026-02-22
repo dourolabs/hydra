@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Spinner, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
@@ -32,6 +32,7 @@ export function DashboardPage() {
   const selectedId = searchParams.get("selected");
   const activeTab = searchParams.get("tab") ?? "inbox";
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const hasSelectionHistoryRef = useRef(false);
 
   const setSelectedId = useCallback(
     (id: string | null) => {
@@ -40,6 +41,9 @@ export function DashboardPage() {
       // Replace when switching between items or deselecting to avoid
       // cluttering the history stack.
       const shouldPush = id !== null && selectedId === null;
+      if (shouldPush) {
+        hasSelectionHistoryRef.current = true;
+      }
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -74,8 +78,13 @@ export function DashboardPage() {
   );
 
   const handleMobileBack = useCallback(() => {
-    navigate(-1);
-  }, [navigate]);
+    if (hasSelectionHistoryRef.current) {
+      hasSelectionHistoryRef.current = false;
+      navigate(-1);
+    } else {
+      setSelectedId(null);
+    }
+  }, [navigate, setSelectedId]);
 
   const username = user ? actorDisplayName(user.actor) : "";
 
