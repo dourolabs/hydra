@@ -1,13 +1,13 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Workspace crates: `metis` (CLI), `metis-server` (Axum API and background workers), and `metis-common` (shared models). CLI subcommands stay under `metis/src/command`; see `metis-server/AGENTS.md` for detailed route and background layout expectations. Copy each `config.toml.sample` to `config.toml` for overrides. Dockerfiles live in `images/`; automation scripts are in `scripts/`.
+Workspace crates: `metis` (CLI), `metis-server` (Axum API and background workers), and `metis-common` (shared models). CLI subcommands stay under `metis/src/command`; see `metis-server/AGENTS.md` for detailed route and background layout expectations. Copy each crate's sample config (`config.toml.sample` for metis CLI; `config.yaml.sample` for metis-server) to `config.toml` or `config.yaml` respectively for overrides. Dockerfiles live in `images/`; automation scripts are in `scripts/`.
 
 ## Build, Test, and Development Commands
 - `cargo check --workspace` quickly verifies the entire workspace compiles.
 - `cargo build --workspace --all-targets` produces debug binaries; add `--release` when publishing images.
 - `cargo run -p metis -- jobs list` runs the CLI against a server; substitute other subcommands from `metis/src/command`.
-- `METIS_CONFIG=metis-server/config.toml cargo run -p metis-server` launches the HTTP service with the desired config.
+- `METIS_CONFIG=metis-server/config.yaml cargo run -p metis-server` launches the HTTP service with the desired config.
 - `./scripts/docker-build.sh` builds all deployment containers.
 
 ## Documentation Guidelines
@@ -35,4 +35,4 @@ choice with tradeoffs, and what the alternatives were. Attach screenshots or CLI
 - **Do not commit screenshots or other images to the git repository.** Instead, upload them to the metis document store under the `screenshots/` directory.
 
 ## Configuration & Security Notes
-Never commit secrets. Use the `config.toml.sample` files as templates and load them via `METIS_CONFIG` or env vars such as `OPENAI_API_KEY`. Confirm Docker images reference the intended worker image and namespace before publishing. Add new external integrations to `metis-common` so sensitive values stay centralized and masked.
+Never commit secrets. Use the sample config files (`config.toml.sample` or `config.yaml.sample`) as templates and load them via `METIS_CONFIG` or env vars such as `OPENAI_API_KEY`. Confirm Docker images reference the intended worker image and namespace before publishing. Add new external integrations to `metis-common` so sensitive values stay centralized and masked.
