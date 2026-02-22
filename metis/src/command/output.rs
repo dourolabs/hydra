@@ -6,7 +6,7 @@ use clap::ValueEnum;
 use metis_common::{
     agents::AgentRecord,
     documents::DocumentVersionRecord,
-    issues::{Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord},
+    issues::{IssueSummaryRecord, IssueVersionRecord},
     jobs::{JobSummary, JobSummaryRecord, JobVersionRecord, Task},
     patches::{PatchStatus, PatchSummaryRecord, PatchVersionRecord},
     repositories::RepositoryRecord,
@@ -191,38 +191,39 @@ fn render_issue_records_jsonl(
     Ok(())
 }
 
-fn render_issue_records_pretty(
-    issues: &[IssueVersionRecord],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for (index, issue_record) in issues.iter().enumerate() {
-        let Issue {
-            issue_type,
-            description,
-            creator,
-            progress,
-            status,
-            assignee,
-            dependencies,
-            ..
-        } = &issue_record.issue;
+struct IssueDisplayFields<'a> {
+    issue_id: &'a str,
+    issue_type: &'a dyn std::fmt::Display,
+    status: &'a dyn std::fmt::Display,
+    creator: &'a str,
+    assignee: Option<&'a str>,
+    description: &'a str,
+    progress: Option<&'a str>,
+    dependencies: &'a [metis_common::issues::IssueDependency],
+}
 
-        writeln!(
-            writer,
-            "Issue {} ({issue_type}, {status})",
-            issue_record.issue_id
-        )?;
-        writeln!(writer, "Creator: {}", creator.as_ref())?;
-        writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
-        writeln!(writer, "Description:")?;
-        if description.trim().is_empty() {
-            writeln!(writer, "  -")?;
-        } else {
-            for line in description.lines() {
-                writeln!(writer, "  {line}")?;
-            }
+fn write_issue_fields_pretty(fields: &IssueDisplayFields, writer: &mut impl Write) -> Result<()> {
+    writeln!(
+        writer,
+        "Issue {} ({}, {})",
+        fields.issue_id, fields.issue_type, fields.status
+    )?;
+    writeln!(writer, "Creator: {}", fields.creator)?;
+    writeln!(
+        writer,
+        "Assignee: {}",
+        fields.assignee.unwrap_or("-")
+    )?;
+    writeln!(writer, "Description:")?;
+    if fields.description.trim().is_empty() {
+        writeln!(writer, "  -")?;
+    } else {
+        for line in fields.description.lines() {
+            writeln!(writer, "  {line}")?;
         }
+    }
 
+    if let Some(progress) = fields.progress {
         writeln!(writer, "Progress:")?;
         if progress.trim().is_empty() {
             writeln!(writer, "  -")?;
@@ -231,19 +232,43 @@ fn render_issue_records_pretty(
                 writeln!(writer, "  {line}")?;
             }
         }
+    }
 
-        if dependencies.is_empty() {
-            writeln!(writer, "Dependencies: none")?;
-        } else {
-            writeln!(writer, "Dependencies:")?;
-            for dependency in dependencies {
-                writeln!(
-                    writer,
-                    "  - {} {}",
-                    dependency.dependency_type, dependency.issue_id
-                )?;
-            }
+    if fields.dependencies.is_empty() {
+        writeln!(writer, "Dependencies: none")?;
+    } else {
+        writeln!(writer, "Dependencies:")?;
+        for dependency in fields.dependencies {
+            writeln!(
+                writer,
+                "  - {} {}",
+                dependency.dependency_type, dependency.issue_id
+            )?;
         }
+    }
+
+    Ok(())
+}
+
+fn render_issue_records_pretty(
+    issues: &[IssueVersionRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    for (index, issue_record) in issues.iter().enumerate() {
+        let issue = &issue_record.issue;
+        write_issue_fields_pretty(
+            &IssueDisplayFields {
+                issue_id: issue_record.issue_id.as_ref(),
+                issue_type: &issue.issue_type,
+                status: &issue.status,
+                creator: issue.creator.as_ref(),
+                assignee: issue.assignee.as_deref(),
+                description: &issue.description,
+                progress: Some(&issue.progress),
+                dependencies: &issue.dependencies,
+            },
+            writer,
+        )?;
 
         if index + 1 < issues.len() {
             writeln!(writer)?;
@@ -270,44 +295,20 @@ fn render_issue_summary_records_pretty(
     writer: &mut impl Write,
 ) -> Result<()> {
     for (index, issue_record) in issues.iter().enumerate() {
-        let IssueSummary {
-            issue_type,
-            description,
-            creator,
-            status,
-            assignee,
-            dependencies,
-            ..
-        } = &issue_record.issue;
-
-        writeln!(
+        let issue = &issue_record.issue;
+        write_issue_fields_pretty(
+            &IssueDisplayFields {
+                issue_id: issue_record.issue_id.as_ref(),
+                issue_type: &issue.issue_type,
+                status: &issue.status,
+                creator: issue.creator.as_ref(),
+                assignee: issue.assignee.as_deref(),
+                description: &issue.description,
+                progress: None,
+                dependencies: &issue.dependencies,
+            },
             writer,
-            "Issue {} ({issue_type}, {status})",
-            issue_record.issue_id
         )?;
-        writeln!(writer, "Creator: {}", creator.as_ref())?;
-        writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
-        writeln!(writer, "Description:")?;
-        if description.trim().is_empty() {
-            writeln!(writer, "  -")?;
-        } else {
-            for line in description.lines() {
-                writeln!(writer, "  {line}")?;
-            }
-        }
-
-        if dependencies.is_empty() {
-            writeln!(writer, "Dependencies: none")?;
-        } else {
-            writeln!(writer, "Dependencies:")?;
-            for dependency in dependencies {
-                writeln!(
-                    writer,
-                    "  - {} {}",
-                    dependency.dependency_type, dependency.issue_id
-                )?;
-            }
-        }
 
         if index + 1 < issues.len() {
             writeln!(writer)?;
