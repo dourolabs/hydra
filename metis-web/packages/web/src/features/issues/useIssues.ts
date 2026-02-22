@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { IssueVersionRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { computeBlockedStatus } from "./blockedStatus";
+import { topologicalSort } from "./topologicalSort";
 
 export function useIssues() {
   return useQuery({
@@ -50,10 +51,10 @@ export function buildIssueTree(issues: IssueVersionRecord[]): IssueTreeNode[] {
 
   function buildNode(record: IssueVersionRecord): IssueTreeNode {
     const childIds = childrenMap.get(record.issue_id) ?? [];
-    const children = childIds
+    const childRecords = childIds
       .map((id) => issueMap.get(id))
-      .filter((i): i is IssueVersionRecord => i !== undefined)
-      .map(buildNode);
+      .filter((i): i is IssueVersionRecord => i !== undefined);
+    const children = topologicalSort(childRecords).map(buildNode);
 
     const status = computeBlockedStatus(record, issueMap);
 
@@ -68,5 +69,5 @@ export function buildIssueTree(issues: IssueVersionRecord[]): IssueTreeNode[] {
 
   // Root nodes are issues that have no parent (not in hasParent set)
   const roots = issues.filter((i) => !hasParent.has(i.issue_id));
-  return roots.map(buildNode);
+  return topologicalSort(roots).map(buildNode);
 }

@@ -4,6 +4,7 @@ import { Spinner, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
 import { useIssues } from "../features/issues/useIssues";
 import { computeBlockedStatus } from "../features/issues/blockedStatus";
+import { topologicalSort } from "../features/issues/topologicalSort";
 import { useAllJobs } from "../features/jobs/useAllJobs";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
@@ -75,12 +76,13 @@ export function DashboardPage() {
     for (const record of issues) {
       issueMap.set(record.issue_id, record);
     }
-    return issues
+    const filtered = issues
       .filter((i) => isInbox(i, username) && !computeBlockedStatus(i, issueMap).blocked)
       .sort(
         (a, b) =>
           new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
       );
+    return topologicalSort(filtered);
   }, [issues, username]);
 
   const assignees = useMemo(() => {

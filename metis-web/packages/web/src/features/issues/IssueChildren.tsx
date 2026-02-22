@@ -3,6 +3,7 @@ import { Badge, Spinner } from "@metis/ui";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { useIssues } from "./useIssues";
+import { topologicalSort } from "./topologicalSort";
 import styles from "./IssueChildren.module.css";
 
 interface IssueChildrenProps {
@@ -18,9 +19,11 @@ export function IssueChildren({ issueId }: IssueChildrenProps) {
 
   // Find children: issues that have a "child-of" dependency on this issueId
   const children = allIssues
-    ? allIssues.filter((record) =>
-        record.issue.dependencies.some(
-          (dep) => dep.type === "child-of" && dep.issue_id === issueId,
+    ? topologicalSort(
+        allIssues.filter((record) =>
+          record.issue.dependencies.some(
+            (dep) => dep.type === "child-of" && dep.issue_id === issueId,
+          ),
         ),
       )
     : [];
