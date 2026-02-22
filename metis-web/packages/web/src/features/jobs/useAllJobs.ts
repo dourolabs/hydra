@@ -23,6 +23,9 @@ export function useAllJobs() {
           map.set(issueId, [job]);
         }
       }
+      for (const list of map.values()) {
+        list.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      }
       return map;
     },
     staleTime: 30_000,
