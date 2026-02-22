@@ -996,16 +996,33 @@ async fn fetch_child_issues(
         .await
         .with_context(|| format!("failed to fetch children for issue '{issue_id}'"))?;
 
-    let mut children = Vec::with_capacity(response.issues.len());
-    for summary in &response.issues {
-        let full = client
-            .get_issue(&summary.issue_id, false)
-            .await
-            .with_context(|| format!("failed to fetch child issue '{}'", summary.issue_id))?;
-        children.push(full);
-    }
+    Ok(response
+        .issues
+        .into_iter()
+        .map(issue_version_from_summary)
+        .collect())
+}
 
-    Ok(children)
+fn issue_version_from_summary(summary: IssueSummaryRecord) -> IssueVersionRecord {
+    IssueVersionRecord::new(
+        summary.issue_id,
+        summary.version,
+        summary.timestamp,
+        Issue::new(
+            summary.issue.issue_type,
+            summary.issue.description,
+            summary.issue.creator,
+            String::new(),
+            summary.issue.status,
+            summary.issue.assignee,
+            None,
+            summary.issue.todo_list,
+            summary.issue.dependencies,
+            summary.issue.patches,
+            summary.issue.deleted,
+        ),
+        summary.actor,
+    )
 }
 
 async fn issues_with_patches(
@@ -2949,11 +2966,6 @@ mod tests {
                     &child_issue,
                 )]));
         });
-        let child_issue_mock = server.mock(|when, then| {
-            when.method(GET)
-                .path(format!("/v1/issues/{}", child_issue.issue_id).as_str());
-            then.status(200).json_body_obj(&child_issue);
-        });
         let root_patch_record = PatchVersionRecord::new(
             root_patch_id.clone(),
             0,
@@ -3123,7 +3135,6 @@ mod tests {
         root_issue_mock.assert();
         parent_issue_mock.assert();
         list_children_mock.assert();
-        child_issue_mock.assert();
         root_patch_mock.assert();
         parent_patch_mock.assert();
         child_patch_mock.assert();
@@ -3137,7 +3148,6 @@ mod tests {
         assert_eq!(root_issue_mock.hits(), 1);
         assert_eq!(parent_issue_mock.hits(), 1);
         assert_eq!(list_children_mock.hits(), 1);
-        assert_eq!(child_issue_mock.hits(), 1);
         assert_eq!(root_patch_mock.hits(), 1);
         assert_eq!(parent_patch_mock.hits(), 1);
         assert_eq!(child_patch_mock.hits(), 1);
