@@ -251,3 +251,182 @@ async fn worker_merge_restores_original_branch() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that two concurrent `metis patches merge` commands both succeed
+/// thanks to the retry logic that handles NotFastForward push errors.
+///
+/// Two workers each clone to separate temp dirs but share the same bare
+/// remote. One worker's push succeeds first; the other's push fails with
+/// NotFastForward, triggering the retry logic which should succeed.
+#[tokio::test]
+async fn concurrent_merges_both_succeed() -> Result<()> {
+    let repo_str = "octo/repo";
+    let repo = metis_common::RepoName::from_str(repo_str)?;
+
+    let harness = harness::TestHarness::builder()
+        .with_repo(repo_str)
+        .build()
+        .await?;
+
+    let client = harness.client()?;
+
+    // ── 1. Create two feature branches, each modifying a different file ──
+    let feature_branch_1 = "feature/concurrent-1";
+    let feature_branch_2 = "feature/concurrent-2";
+    let content_1 = "change from branch 1\n";
+    let content_2 = "change from branch 2\n";
+
+    harness
+        .remote(repo_str)
+        .create_branch(feature_branch_1, "file1.txt", content_1)
+        .context("failed to create feature branch 1")?;
+    harness
+        .remote(repo_str)
+        .create_branch(feature_branch_2, "file2.txt", content_2)
+        .context("failed to create feature branch 2")?;
+
+    let main_head_before = harness.remote(repo_str).branch_sha("main")?;
+
+    // ── 2. Create two parent issues with job settings ────────────
+    let parent_issue_1 = harness
+        .default_user()
+        .create_issue_with_settings(
+            "merge task 1",
+            IssueType::Task,
+            IssueStatus::Open,
+            Some("swe"),
+            Some(test_job_settings_full(&repo, "worker:latest", "main")),
+        )
+        .await?;
+
+    let parent_issue_2 = harness
+        .default_user()
+        .create_issue_with_settings(
+            "merge task 2",
+            IssueType::Task,
+            IssueStatus::Open,
+            Some("swe"),
+            Some(test_job_settings_full(&repo, "worker:latest", "main")),
+        )
+        .await?;
+
+    // ── 3. Create two patches with approved reviews ─────────────
+    let patch_id_1 = harness
+        .default_user()
+        .create_patch("Concurrent merge 1", "First concurrent merge", &repo)
+        .await?;
+    let patch_id_2 = harness
+        .default_user()
+        .create_patch("Concurrent merge 2", "Second concurrent merge", &repo)
+        .await?;
+
+    for (patch_id, branch_name) in [
+        (&patch_id_1, feature_branch_1),
+        (&patch_id_2, feature_branch_2),
+    ] {
+        let mut record = client.get_patch(patch_id).await?;
+        record.patch.branch_name = Some(branch_name.to_string());
+        record.patch.base_branch = Some("main".to_string());
+        record.patch.reviews = vec![Review::new(
+            "approved".to_string(),
+            true,
+            "reviewer".to_string(),
+            Some(chrono::Utc::now()),
+        )];
+        let request = UpsertPatchRequest::new(record.patch);
+        client.update_patch(patch_id, &request).await?;
+    }
+
+    // ── 4. Create and start jobs for each patch ─────────────────
+    let job_id_1 = harness
+        .default_user()
+        .create_job_for_issue(&repo, "merge patch 1", &parent_issue_1)
+        .await?;
+    let job_id_2 = harness
+        .default_user()
+        .create_job_for_issue(&repo, "merge patch 2", &parent_issue_2)
+        .await?;
+
+    for job_id in [&job_id_1, &job_id_2] {
+        harness
+            .state()
+            .start_pending_task(job_id.clone(), ActorRef::test())
+            .await;
+        harness
+            .state()
+            .transition_task_to_running(job_id, ActorRef::test())
+            .await
+            .context("failed to transition task to running")?;
+    }
+
+    // ── 5. Run both workers concurrently ────────────────────────
+    let cmd_1 = format!("metis patches merge {}", patch_id_1.as_ref());
+    let cmd_2 = format!("metis patches merge {}", patch_id_2.as_ref());
+
+    let (result_1, result_2) = tokio::join!(
+        harness.run_worker(&job_id_1, vec![cmd_1.as_str()]),
+        harness.run_worker(&job_id_2, vec![cmd_2.as_str()]),
+    );
+
+    // ── 6. Verify both merge commands succeeded ─────────────────
+    let result_1 = result_1.context("worker 1 failed")?;
+    let result_2 = result_2.context("worker 2 failed")?;
+
+    assert_eq!(
+        result_1.outputs.len(),
+        1,
+        "expected exactly one command output from worker 1"
+    );
+    assert_eq!(
+        result_2.outputs.len(),
+        1,
+        "expected exactly one command output from worker 2"
+    );
+
+    let merge_output_1 = &result_1.outputs[0];
+    let merge_output_2 = &result_2.outputs[0];
+    assert_eq!(
+        merge_output_1.status, 0,
+        "merge 1 failed (exit code {}).\nstdout: {}\nstderr: {}",
+        merge_output_1.status, merge_output_1.stdout, merge_output_1.stderr,
+    );
+    assert_eq!(
+        merge_output_2.status, 0,
+        "merge 2 failed (exit code {}).\nstdout: {}\nstderr: {}",
+        merge_output_2.status, merge_output_2.stdout, merge_output_2.stderr,
+    );
+
+    // ── 7. Verify both patches are Merged ───────────────────────
+    let final_patch_1 = client.get_patch(&patch_id_1).await?;
+    let final_patch_2 = client.get_patch(&patch_id_2).await?;
+    assert_eq!(
+        final_patch_1.patch.status,
+        PatchStatus::Merged,
+        "patch 1 should be marked as Merged"
+    );
+    assert_eq!(
+        final_patch_2.patch.status,
+        PatchStatus::Merged,
+        "patch 2 should be marked as Merged"
+    );
+
+    // ── 8. Verify the remote main branch contains both changes ──
+    let main_head_after = harness.remote(repo_str).branch_sha("main")?;
+    assert_ne!(
+        main_head_after, main_head_before,
+        "main branch should have advanced after merges"
+    );
+
+    let main_file1 = harness.remote(repo_str).read_file("main", "file1.txt")?;
+    let main_file2 = harness.remote(repo_str).read_file("main", "file2.txt")?;
+    assert_eq!(
+        main_file1, content_1,
+        "main should contain file1.txt from branch 1"
+    );
+    assert_eq!(
+        main_file2, content_2,
+        "main should contain file2.txt from branch 2"
+    );
+
+    Ok(())
+}
