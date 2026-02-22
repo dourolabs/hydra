@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Panel, Spinner, Button, Modal, Input, Textarea } from "@metis/ui";
-import type { DocumentVersionRecord } from "@metis/api";
+import type { DocumentSummaryRecord } from "@metis/api";
 import { apiClient } from "../api/client";
 import { useDocuments } from "../features/documents/useDocuments";
 import { useToast } from "../features/toast/useToast";
@@ -11,10 +11,10 @@ import styles from "./DocumentsPage.module.css";
 
 interface DocumentGroup {
   prefix: string;
-  documents: DocumentVersionRecord[];
+  documents: DocumentSummaryRecord[];
 }
 
-function getPathPrefix(doc: DocumentVersionRecord): string {
+function getPathPrefix(doc: DocumentSummaryRecord): string {
   const path = doc.document.path;
   if (!path) return "";
   // Strip leading slash, then take the first path segment
@@ -24,8 +24,8 @@ function getPathPrefix(doc: DocumentVersionRecord): string {
   return cleaned.slice(0, slashIndex);
 }
 
-function groupDocumentsByPrefix(documents: DocumentVersionRecord[]): DocumentGroup[] {
-  const groups = new Map<string, DocumentVersionRecord[]>();
+function groupDocumentsByPrefix(documents: DocumentSummaryRecord[]): DocumentGroup[] {
+  const groups = new Map<string, DocumentSummaryRecord[]>();
 
   for (const doc of documents) {
     if (doc.document.deleted) continue;
@@ -50,7 +50,7 @@ function groupDocumentsByPrefix(documents: DocumentVersionRecord[]): DocumentGro
   return sorted;
 }
 
-function getDocumentDisplayTitle(doc: DocumentVersionRecord): string {
+function getDocumentDisplayTitle(doc: DocumentSummaryRecord): string {
   if (doc.document.title) return doc.document.title;
   if (doc.document.path) return doc.document.path;
   return doc.document_id;
@@ -104,7 +104,7 @@ export function DocumentsPage() {
 }
 
 interface DocumentRowProps {
-  doc: DocumentVersionRecord;
+  doc: DocumentSummaryRecord;
 }
 
 function DocumentRow({ doc }: DocumentRowProps) {
@@ -170,7 +170,7 @@ interface DocumentDeleteModalProps {
   onClose: () => void;
   onConfirm: () => void;
   isPending: boolean;
-  doc: DocumentVersionRecord;
+  doc: DocumentSummaryRecord;
 }
 
 function DocumentDeleteModal({ open, onClose, onConfirm, isPending, doc }: DocumentDeleteModalProps) {

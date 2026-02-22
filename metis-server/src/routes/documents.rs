@@ -137,13 +137,14 @@ pub async fn list_documents(
     let records = documents
         .into_iter()
         .map(|(id, versioned)| {
-            v1::documents::DocumentVersionRecord::new(
+            let full_record = v1::documents::DocumentVersionRecord::new(
                 id,
                 versioned.version,
                 versioned.timestamp,
                 versioned.item.into(),
                 versioned.actor,
-            )
+            );
+            v1::documents::DocumentSummaryRecord::from(&full_record)
         })
         .collect();
 

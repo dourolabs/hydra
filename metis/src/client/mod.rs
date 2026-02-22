@@ -962,7 +962,8 @@ impl MetisClient {
     /// Fetch a document by its exact path.
     ///
     /// Uses the list documents endpoint with a path prefix filter and
-    /// path_is_exact=true to find a document with an exact path match.
+    /// path_is_exact=true to find a document matching the path, then
+    /// fetches the full record via the detail endpoint.
     pub async fn get_document_by_path(
         &self,
         path: &str,
@@ -978,11 +979,14 @@ impl MetisClient {
         );
         let response = self.list_documents(&query).await?;
 
-        response
+        let summary = response
             .documents
             .into_iter()
             .next()
-            .ok_or_else(|| anyhow!("document with path '{path}' not found"))
+            .ok_or_else(|| anyhow!("document with path '{path}' not found"))?;
+
+        self.get_document(&summary.document_id, include_deleted)
+            .await
     }
 
     /// Call `GET /v1/documents` to list documents.
