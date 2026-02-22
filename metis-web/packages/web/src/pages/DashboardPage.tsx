@@ -144,6 +144,7 @@ export function DashboardPage() {
           jobsByIssue={jobsByIssue ?? new Map()}
           selectedId={selectedId}
           onSelect={setSelectedId}
+          username={username}
         />
       )}
       <button

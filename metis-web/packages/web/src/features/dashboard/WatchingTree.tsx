@@ -17,6 +17,7 @@ interface WatchingTreeProps {
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
+  username: string;
 }
 
 interface SubtreeSummary {
@@ -97,6 +98,7 @@ function TreeNodeRow({
   expanded,
   onToggle,
   hasChildren,
+  username,
 }: {
   node: IssueTreeNode;
   jobsByIssue: Map<string, JobVersionRecord[]>;
@@ -106,6 +108,7 @@ function TreeNodeRow({
   expanded: boolean;
   onToggle: () => void;
   hasChildren: boolean;
+  username: string;
 }) {
   const active = node.id === selectedId;
   const jobs = jobsByIssue.get(node.id);
@@ -121,6 +124,7 @@ function TreeNodeRow({
   const classNames = [styles.node];
   if (active) classNames.push(styles.active);
   if (node.blocked) classNames.push(styles.blocked);
+  if (node.issue.issue.assignee === username) classNames.push(styles.assignedToMe);
 
   return (
     <button
@@ -166,12 +170,14 @@ function RootTreeNode({
   selectedId,
   onSelect,
   onJobClick,
+  username,
 }: {
   node: IssueTreeNode;
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
   onJobClick: (issueId: string, jobId: string) => void;
+  username: string;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -198,6 +204,7 @@ function RootTreeNode({
         expanded={expanded}
         onToggle={toggle}
         hasChildren={totalChildren > 0}
+        username={username}
       />
       {summaryText && (
         <div className={styles.summary}>{summaryText}</div>
@@ -215,6 +222,7 @@ function RootTreeNode({
               expanded={false}
               onToggle={() => {}}
               hasChildren={false}
+              username={username}
             />
           ))}
         </div>
@@ -226,6 +234,7 @@ function RootTreeNode({
           selectedId={selectedId}
           onSelect={onSelect}
           onJobClick={onJobClick}
+          username={username}
         />
       )}
     </li>
@@ -238,12 +247,14 @@ function ChildNodes({
   selectedId,
   onSelect,
   onJobClick,
+  username,
 }: {
   nodes: IssueTreeNode[];
   jobsByIssue: Map<string, JobVersionRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
   onJobClick: (issueId: string, jobId: string) => void;
+  username: string;
 }) {
   const [expandedSet, setExpandedSet] = useState<Set<string>>(() => new Set());
 
@@ -277,6 +288,7 @@ function ChildNodes({
               expanded={isExpanded}
               onToggle={() => toggle(child.id)}
               hasChildren={hasGrandchildren}
+              username={username}
             />
             {isExpanded && hasGrandchildren && (
               <ChildNodes
@@ -285,6 +297,7 @@ function ChildNodes({
                 selectedId={selectedId}
                 onSelect={onSelect}
                 onJobClick={onJobClick}
+                username={username}
               />
             )}
           </div>
@@ -299,6 +312,7 @@ export function WatchingTree({
   jobsByIssue,
   selectedId,
   onSelect,
+  username,
 }: WatchingTreeProps) {
   const navigate = useNavigate();
 
@@ -331,6 +345,7 @@ export function WatchingTree({
           selectedId={selectedId}
           onSelect={onSelect}
           onJobClick={handleJobClick}
+          username={username}
         />
       ))}
     </ul>

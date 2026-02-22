@@ -80,6 +80,15 @@
   margin-left: 24px;
 }
 
+.assignedToMe {
+  background: rgba(0, 204, 102, 0.06);
+  border-left: 2px solid var(--color-accent-dim);
+}
+
+.assignedToMe.active {
+  border-left: 2px solid var(--color-accent);
+}
+
 .blocked {
   opacity: 0.5;
 }
