@@ -47,6 +47,7 @@
   .left {
     flex: 1 1 auto !important;
     overflow-y: auto;
+    overflow-x: hidden;
   }
 
   .divider {
