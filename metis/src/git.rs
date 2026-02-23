@@ -204,6 +204,17 @@ pub fn branch_exists(repo_root: &Path, branch: &str) -> Result<bool> {
     Ok(exists)
 }
 
+pub fn delete_local_branch(repo_root: &Path, branch: &str) -> Result<()> {
+    let repo = repo_for_path(repo_root)?;
+    let mut local_branch = repo
+        .find_branch(branch, BranchType::Local)
+        .with_context(|| format!("failed to find local branch '{branch}'"))?;
+    local_branch
+        .delete()
+        .with_context(|| format!("failed to delete local branch '{branch}'"))?;
+    Ok(())
+}
+
 pub fn checkout_new_branch(repo_root: &Path, branch: &str) -> Result<()> {
     let repo = repo_for_path(repo_root)?;
     let head_commit = repo
