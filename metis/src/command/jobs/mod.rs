@@ -125,6 +125,10 @@ pub enum JobsCommand {
 
         #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_METIS_ISSUE_ID)]
         issue_id: Option<IssueId>,
+
+        /// Use a temporary directory as the working destination instead of PATH.
+        #[arg(long = "tempdir")]
+        tempdir: bool,
     },
 }
 
@@ -162,6 +166,7 @@ pub async fn run(
             anthropic_api_key,
             claude_code_oauth_token,
             issue_id,
+            tempdir,
         } => {
             let commands = ModelAwareCommands::default();
             worker_run::run(
@@ -172,6 +177,7 @@ pub async fn run(
                 anthropic_api_key,
                 claude_code_oauth_token,
                 issue_id,
+                tempdir,
                 &commands,
                 context,
             )

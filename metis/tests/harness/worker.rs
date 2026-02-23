@@ -295,6 +295,7 @@ pub(super) async fn run_worker_impl(
         None,
         None,
         None,
+        false,
         &bash_commands,
         &context,
     )
@@ -347,6 +348,7 @@ pub(super) async fn run_worker_expect_failure_impl(
         None,
         None,
         None,
+        false,
         &bash_commands,
         &context,
     )

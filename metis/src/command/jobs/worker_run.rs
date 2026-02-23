@@ -34,6 +34,7 @@ pub async fn run(
     anthropic_api_key: Option<String>,
     claude_code_oauth_token: Option<String>,
     issue_id: Option<IssueId>,
+    use_tempdir: bool,
     commands: &dyn WorkerCommands,
     _context: &CommandContext,
 ) -> Result<()> {
@@ -46,7 +47,15 @@ pub async fn run(
         ..
     } = client.get_job_context(&job).await?;
     let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
-    ensure_clean_destination(&dest)?;
+    let dest = if use_tempdir {
+        let tmp = tempfile::tempdir().context("failed to create temporary working directory")?;
+        let tmp_path = tmp.keep();
+        log_status(format!("Using temporary directory: {}", tmp_path.display()));
+        tmp_path
+    } else {
+        ensure_clean_destination(&dest)?;
+        dest
+    };
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
     if let Some(token) = claude_code_oauth_token
