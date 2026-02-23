@@ -567,7 +567,13 @@ impl JobEngine for KubernetesJobEngine {
             name: "metis-worker".to_string(),
             image: Some(image.to_string()),
             image_pull_policy: Some("IfNotPresent".into()),
-            args: None,
+            command: Some(vec!["metis".to_string()]),
+            args: Some(vec![
+                "jobs".to_string(),
+                "worker-run".to_string(),
+                metis_id.to_string(),
+                ".".to_string(),
+            ]),
             env: Some(self.build_env_vars(metis_id, env_vars, auth_token)),
             env_from,
             ..Default::default()
