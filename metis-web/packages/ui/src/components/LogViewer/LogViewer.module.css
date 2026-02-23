@@ -40,3 +40,17 @@
   text-align: center;
   color: var(--color-text-tertiary);
 }
+
+@media (max-width: 768px) {
+  .logViewer {
+    font-size: var(--font-size-xs);
+  }
+
+  .lineNumber {
+    padding: 0 var(--space-1);
+  }
+
+  .lineContent {
+    padding: 0 var(--space-2);
+  }
+}
