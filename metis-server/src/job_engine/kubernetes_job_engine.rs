@@ -567,10 +567,13 @@ impl JobEngine for KubernetesJobEngine {
             name: "metis-worker".to_string(),
             image: Some(image.to_string()),
             image_pull_policy: Some("IfNotPresent".into()),
-            command: Some(vec!["/bin/bash".to_string(), "-c".to_string()]),
-            args: Some(vec![format!(
-                "source \"${{NVM_DIR}}/nvm.sh\" 2>/dev/null || true; exec metis jobs worker-run {metis_id} ."
-            )]),
+            command: Some(vec!["metis".to_string()]),
+            args: Some(vec![
+                "jobs".to_string(),
+                "worker-run".to_string(),
+                metis_id.to_string(),
+                ".".to_string(),
+            ]),
             env: Some(self.build_env_vars(metis_id, env_vars, auth_token)),
             env_from,
             ..Default::default()

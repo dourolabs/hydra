@@ -105,17 +105,15 @@ ENV NVM_DIR=/home/worker/.nvm
 # Install node, codex, claude, and puppeteer as the non-root user
 RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && npm install -g @openai/codex @anthropic-ai/claude-code puppeteer pnpm"
 
-# Ensure cargo is in PATH for the worker user's login shell
-# TODO: this is sort of a hacky spot for this. need to consolidate app-specific configuration somewhere.
-RUN echo 'export PATH="/usr/local/cargo/bin:$PATH"' >> /home/worker/.bash_profile
+# Create stable symlink to nvm-installed node binaries so they are in PATH
+# without requiring `source nvm.sh`
+RUN bash -c "source $NVM_DIR/nvm.sh && ln -sf \$(dirname \$(which node)) $NVM_DIR/default"
+ENV PATH="/home/worker/.nvm/default:$PATH"
 
 # Switch back to root to copy files and set permissions
 USER root
 
 WORKDIR ${APP_HOME}
-
-COPY ./scripts/worker-entrypoint.sh /usr/local/worker-entrypoint.sh
-RUN chmod +x /usr/local/worker-entrypoint.sh && chown worker:worker /usr/local/worker-entrypoint.sh
 
 # Copy the built metis CLI into PATH and make it accessible
 COPY --from=builder /app/target/release/metis /usr/local/bin/metis
@@ -126,8 +124,6 @@ RUN chown -R worker:worker ${APP_HOME}
 
 # Switch to the non-root user
 USER worker
-
-ENTRYPOINT ["/usr/local/worker-entrypoint.sh"]
 
 # Default to an interactive shell so users can run Codex CLI commands.
 CMD ["bash"]
