@@ -117,6 +117,27 @@ async fn worker_merge_pushes_to_remote() -> Result<()> {
         "main should contain the feature branch content after merge"
     );
 
+    // ── 6b. Verify exactly 1 new commit on main (squash merge) ──
+    let commit_count = harness
+        .remote(repo_str)
+        .commit_count(&main_head_before, &main_head_after)?;
+    assert_eq!(
+        commit_count, 1,
+        "squash merge should produce exactly 1 new commit on main, got {commit_count}"
+    );
+
+    // ── 6c. Verify the squash commit message contains patch title and ID ──
+    let commit_msg = harness.remote(repo_str).commit_message(&main_head_after)?;
+    let patch_id_str = patch_id.as_ref();
+    assert!(
+        commit_msg.contains("Merge feature"),
+        "squash commit message should contain the patch title, got: {commit_msg}"
+    );
+    assert!(
+        commit_msg.contains(patch_id_str),
+        "squash commit message should contain the patch ID, got: {commit_msg}"
+    );
+
     // ── 7. Verify the patch status was updated to Merged ─────────
     let final_patch = client.get_patch(&patch_id).await?;
     assert_eq!(
@@ -426,6 +447,15 @@ async fn concurrent_merges_both_succeed() -> Result<()> {
     assert_eq!(
         main_file2, content_2,
         "main should contain file2.txt from branch 2"
+    );
+
+    // ── 9. Verify exactly 2 squash commits on main (one per merge) ──
+    let commit_count = harness
+        .remote(repo_str)
+        .commit_count(&main_head_before, &main_head_after)?;
+    assert_eq!(
+        commit_count, 2,
+        "two concurrent squash merges should produce exactly 2 new commits on main, got {commit_count}"
     );
 
     Ok(())
