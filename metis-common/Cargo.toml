@@ -11,6 +11,7 @@ vendored-openssl = [
 ts = ["dep:ts-rs"]
 
 [dependencies]
+base64 = "0.22"
 indexmap = { version = "2", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde", "clock"] }

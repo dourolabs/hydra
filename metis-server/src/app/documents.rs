@@ -151,6 +151,15 @@ impl AppState {
         store.list_documents(query).await
     }
 
+    pub async fn list_documents_paginated(
+        &self,
+        query: &SearchDocumentsQuery,
+        pagination: &metis_common::api::v1::pagination::PaginationParams,
+    ) -> Result<crate::store::PaginatedResult<(DocumentId, Versioned<Document>)>, StoreError> {
+        let store = self.store.as_ref();
+        store.list_documents_paginated(query, pagination).await
+    }
+
     pub async fn delete_document(
         &self,
         document_id: &DocumentId,

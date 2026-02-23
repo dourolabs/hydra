@@ -99,6 +99,15 @@ impl AppState {
         store.list_patches(query).await
     }
 
+    pub async fn list_patches_paginated(
+        &self,
+        query: &SearchPatchesQuery,
+        pagination: &metis_common::api::v1::pagination::PaginationParams,
+    ) -> Result<crate::store::PaginatedResult<(PatchId, Versioned<Patch>)>, StoreError> {
+        let store = self.store.as_ref();
+        store.list_patches_paginated(query, pagination).await
+    }
+
     pub async fn delete_patch(
         &self,
         patch_id: &PatchId,

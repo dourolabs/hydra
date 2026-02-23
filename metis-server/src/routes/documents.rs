@@ -129,12 +129,15 @@ pub async fn list_documents(
     Query(query): Query<v1::documents::SearchDocumentsQuery>,
 ) -> Result<Json<v1::documents::ListDocumentsResponse>, ApiError> {
     info!(query = ?query.q, path_prefix = ?query.path_prefix, path_is_exact = ?query.path_is_exact, created_by = ?query.created_by, include_deleted = ?query.include_deleted, "list_documents invoked");
-    let documents = state
-        .list_documents(&query)
+
+    let pagination = query.pagination_params();
+    let result = state
+        .list_documents_paginated(&query, &pagination)
         .await
         .map_err(|err| map_document_error(err, None))?;
 
-    let records = documents
+    let records = result
+        .items
         .into_iter()
         .map(|(id, versioned)| {
             let full_record = v1::documents::DocumentVersionRecord::new(
@@ -148,9 +151,12 @@ pub async fn list_documents(
         })
         .collect();
 
-    let response = v1::documents::ListDocumentsResponse::new(records);
+    let next_cursor = result.next_cursor.map(|c| c.encode());
+    let response =
+        v1::documents::ListDocumentsResponse::paginated(records, next_cursor, result.total_count);
     info!(
         returned = response.documents.len(),
+        total = response.total_count,
         "list_documents completed"
     );
     Ok(Json(response))

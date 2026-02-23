@@ -83,6 +83,15 @@ pub struct SearchDocumentsQuery {
     pub created_by: Option<TaskId>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
+    /// Maximum items per page (default 50, max 200).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// Opaque cursor from a previous response for keyset pagination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// Sort direction by timestamp (default: desc).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<super::SortOrder>,
 }
 
 impl SearchDocumentsQuery {
@@ -99,12 +108,20 @@ impl SearchDocumentsQuery {
             path_is_exact,
             created_by,
             include_deleted,
+            limit: None,
+            cursor: None,
+            sort: None,
         }
     }
 
     pub fn with_path_is_exact(mut self, path_is_exact: bool) -> Self {
         self.path_is_exact = Some(path_is_exact);
         self
+    }
+
+    /// Extract pagination params from query fields.
+    pub fn pagination_params(&self) -> super::PaginationParams {
+        super::PaginationParams::new(self.limit, self.cursor.clone(), self.sort)
     }
 }
 
@@ -209,11 +226,34 @@ impl From<&DocumentVersionRecord> for DocumentSummaryRecord {
 #[non_exhaustive]
 pub struct ListDocumentsResponse {
     pub documents: Vec<DocumentSummaryRecord>,
+    /// Opaque cursor for the next page. Absent when no more results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Total number of matching items.
+    #[serde(default)]
+    pub total_count: u32,
 }
 
 impl ListDocumentsResponse {
     pub fn new(documents: Vec<DocumentSummaryRecord>) -> Self {
-        Self { documents }
+        let total_count = documents.len() as u32;
+        Self {
+            documents,
+            next_cursor: None,
+            total_count,
+        }
+    }
+
+    pub fn paginated(
+        documents: Vec<DocumentSummaryRecord>,
+        next_cursor: Option<String>,
+        total_count: u32,
+    ) -> Self {
+        Self {
+            documents,
+            next_cursor,
+            total_count,
+        }
     }
 }
 
@@ -260,6 +300,9 @@ mod tests {
             path_is_exact: None,
             created_by: Some(TaskId::new()),
             include_deleted: None,
+            limit: None,
+            cursor: None,
+            sort: None,
         };
 
         let params = serialize_query_params(&query)

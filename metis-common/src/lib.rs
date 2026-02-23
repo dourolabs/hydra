@@ -21,8 +21,8 @@ pub use activity_log::{
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
-    agents, documents, events, issues, job_status, jobs, login, logs, merge_queues, patches,
-    repositories, task_status, users, whoami,
+    agents, documents, events, issues, job_status, jobs, login, logs, merge_queues, pagination,
+    patches, repositories, task_status, users, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
@@ -90,6 +90,10 @@ mod ts_export {
         crate::BuildCacheSettings::export_all(&cfg).expect("BuildCacheSettings");
         crate::BuildCacheStorageConfig::export_all(&cfg).expect("BuildCacheStorageConfig");
         crate::BuildCacheContext::export_all(&cfg).expect("BuildCacheContext");
+
+        // API v1: pagination
+        crate::pagination::SortOrder::export_all(&cfg).expect("SortOrder");
+        crate::pagination::PaginatedResponse::<()>::export_all(&cfg).expect("PaginatedResponse");
 
         // API v1: agents
         crate::agents::AgentRecord::export_all(&cfg).expect("AgentRecord");

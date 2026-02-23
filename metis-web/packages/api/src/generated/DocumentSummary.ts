@@ -2,4 +2,9 @@
 import type { DocumentPath } from "./DocumentPath";
 import type { TaskId } from "./TaskId";
 
+/**
+ * Lightweight summary of a document for list views.
+ *
+ * Excludes `body_markdown`.
+ */
 export type DocumentSummary = { title: string, path?: DocumentPath | null, created_by?: TaskId | null, deleted?: boolean, };

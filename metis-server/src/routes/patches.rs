@@ -202,12 +202,14 @@ pub async fn list_patches(
 ) -> Result<Json<v1::patches::ListPatchesResponse>, ApiError> {
     info!(query = ?query.q, include_deleted = ?query.include_deleted, "list_patches invoked");
 
-    let patches = state
-        .list_patches_with_query(&query)
+    let pagination = query.pagination_params();
+    let result = state
+        .list_patches_paginated(&query, &pagination)
         .await
         .map_err(|err| map_patch_error(err, None))?;
 
-    let records: Vec<v1::patches::PatchSummaryRecord> = patches
+    let records: Vec<v1::patches::PatchSummaryRecord> = result
+        .items
         .into_iter()
         .map(|(id, versioned)| {
             let full_record = v1::patches::PatchVersionRecord::new(
@@ -221,10 +223,13 @@ pub async fn list_patches(
         })
         .collect();
 
-    let response = v1::patches::ListPatchesResponse::new(records);
+    let next_cursor = result.next_cursor.map(|c| c.encode());
+    let response =
+        v1::patches::ListPatchesResponse::paginated(records, next_cursor, result.total_count);
     info!(
         query = ?query.q,
         returned = response.patches.len(),
+        total = response.total_count,
         "list_patches completed"
     );
     Ok(Json(response))

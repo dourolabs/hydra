@@ -16,12 +16,21 @@ pub async fn run(
     spawned_from: Option<IssueId>,
     context: &CommandContext,
 ) -> Result<()> {
-    let response = client
-        .list_jobs(&SearchJobsQuery::new(None, spawned_from, None, None))
-        .await?;
+    let mut all_jobs = Vec::new();
+    let mut cursor = None;
+    loop {
+        let mut query = SearchJobsQuery::new(None, spawned_from.clone(), None, None);
+        query.cursor = cursor;
+        let response = client.list_jobs(&query).await?;
+        all_jobs.extend(response.jobs);
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
     let limit = limit.max(1);
-    let total_jobs = response.jobs.len();
-    let (jobs, truncated) = truncate_jobs(response.jobs, limit);
+    let total_jobs = all_jobs.len();
+    let (jobs, truncated) = truncate_jobs(all_jobs, limit);
 
     let mut buffer = Vec::new();
     render_job_summary_records(context.output_format, &jobs, &mut buffer)?;

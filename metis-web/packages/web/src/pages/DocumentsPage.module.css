@@ -93,6 +93,12 @@
   white-space: nowrap;
 }
 
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
 /* Create document modal */
 .createModal {
   width: 80vw;

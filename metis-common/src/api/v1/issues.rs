@@ -661,6 +661,16 @@ pub struct SearchIssuesQuery {
     pub graph_filters: Vec<IssueGraphFilter>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
+    /// Maximum number of root issues per page (default 50, max 200).
+    /// All descendants of included roots are returned automatically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// Opaque cursor from a previous response for keyset pagination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// Sort direction by timestamp for root issues (default: desc).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<super::SortOrder>,
 }
 
 impl SearchIssuesQuery {
@@ -679,7 +689,15 @@ impl SearchIssuesQuery {
             q,
             graph_filters,
             include_deleted,
+            limit: None,
+            cursor: None,
+            sort: None,
         }
+    }
+
+    /// Extract pagination params from query fields.
+    pub fn pagination_params(&self) -> super::PaginationParams {
+        super::PaginationParams::new(self.limit, self.cursor.clone(), self.sort)
     }
 }
 
@@ -782,11 +800,34 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
 #[non_exhaustive]
 pub struct ListIssuesResponse {
     pub issues: Vec<IssueSummaryRecord>,
+    /// Opaque cursor for the next page. Absent when no more results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Total number of matching root issues.
+    #[serde(default)]
+    pub total_count: u32,
 }
 
 impl ListIssuesResponse {
     pub fn new(issues: Vec<IssueSummaryRecord>) -> Self {
-        Self { issues }
+        let total_count = issues.len() as u32;
+        Self {
+            issues,
+            next_cursor: None,
+            total_count,
+        }
+    }
+
+    pub fn paginated(
+        issues: Vec<IssueSummaryRecord>,
+        next_cursor: Option<String>,
+        total_count: u32,
+    ) -> Self {
+        Self {
+            issues,
+            next_cursor,
+            total_count,
+        }
     }
 }
 
@@ -863,6 +904,9 @@ mod tests {
             q: Some("test query".to_string()),
             graph_filters: vec![],
             include_deleted: None,
+            limit: None,
+            cursor: None,
+            sort: None,
         };
 
         let params = serialize_query_params(&query)
@@ -885,6 +929,9 @@ mod tests {
             q: None,
             graph_filters: vec![filter1, filter2],
             include_deleted: None,
+            limit: None,
+            cursor: None,
+            sort: None,
         };
 
         let params = serialize_query_params(&query)

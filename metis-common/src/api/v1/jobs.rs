@@ -375,11 +375,34 @@ impl From<&JobVersionRecord> for JobSummaryRecord {
 #[non_exhaustive]
 pub struct ListJobsResponse {
     pub jobs: Vec<JobSummaryRecord>,
+    /// Opaque cursor for the next page. Absent when no more results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Total number of matching items.
+    #[serde(default)]
+    pub total_count: u32,
 }
 
 impl ListJobsResponse {
     pub fn new(jobs: Vec<JobSummaryRecord>) -> Self {
-        Self { jobs }
+        let total_count = jobs.len() as u32;
+        Self {
+            jobs,
+            next_cursor: None,
+            total_count,
+        }
+    }
+
+    pub fn paginated(
+        jobs: Vec<JobSummaryRecord>,
+        next_cursor: Option<String>,
+        total_count: u32,
+    ) -> Self {
+        Self {
+            jobs,
+            next_cursor,
+            total_count,
+        }
     }
 }
 
@@ -427,6 +450,15 @@ pub struct SearchJobsQuery {
     pub include_deleted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<Status>,
+    /// Maximum items per page (default 50, max 200).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// Opaque cursor from a previous response for keyset pagination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// Sort direction by timestamp (default: desc).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<super::SortOrder>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -455,7 +487,15 @@ impl SearchJobsQuery {
             spawned_from,
             include_deleted,
             status,
+            limit: None,
+            cursor: None,
+            sort: None,
         }
+    }
+
+    /// Extract pagination params from query fields.
+    pub fn pagination_params(&self) -> super::PaginationParams {
+        super::PaginationParams::new(self.limit, self.cursor.clone(), self.sort)
     }
 }
 
@@ -488,6 +528,9 @@ mod tests {
             spawned_from: Some(issue_id.clone()),
             include_deleted: None,
             status: None,
+            limit: None,
+            cursor: None,
+            sort: None,
         };
 
         let params = serialize_query_params(&query)

@@ -236,9 +236,9 @@ pub async fn list_issues(
         "list_issues invoked"
     );
 
-    // Pass the query to the store for filtering (except graph filters)
-    let issues = state
-        .list_issues_with_query(&query)
+    let pagination = query.pagination_params();
+    let result = state
+        .list_issues_paginated(&query, &pagination)
         .await
         .map_err(|err| map_issue_error(err, None))?;
 
@@ -254,7 +254,8 @@ pub async fn list_issues(
         )
     };
 
-    let filtered: Vec<api_issues::IssueSummaryRecord> = issues
+    let filtered: Vec<api_issues::IssueSummaryRecord> = result
+        .items
         .into_iter()
         .filter(|(id, _)| {
             graph_matches
@@ -274,12 +275,15 @@ pub async fn list_issues(
         })
         .collect();
 
-    let response = api_issues::ListIssuesResponse::new(filtered);
+    let next_cursor = result.next_cursor.map(|c| c.encode());
+    let response =
+        api_issues::ListIssuesResponse::paginated(filtered, next_cursor, result.total_count);
     info!(
         issue_type = ?query.issue_type,
         status = ?query.status,
         assignee = ?query.assignee,
         returned = response.issues.len(),
+        total = response.total_count,
         "list_issues completed"
     );
     Ok(Json(response))

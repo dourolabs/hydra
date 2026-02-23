@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::pagination::{CursorData, PaginationParams};
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -18,6 +19,23 @@ use metis_common::{
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use std::collections::{HashMap, HashSet};
+
+/// Result type for paginated store queries.
+pub struct PaginatedResult<T> {
+    pub items: Vec<T>,
+    pub next_cursor: Option<CursorData>,
+    pub total_count: u32,
+}
+
+impl<T> PaginatedResult<T> {
+    pub fn new(items: Vec<T>, next_cursor: Option<CursorData>, total_count: u32) -> Self {
+        Self {
+            items,
+            next_cursor,
+            total_count,
+        }
+    }
+}
 
 mod issue_graph;
 mod memory_store;
@@ -351,6 +369,47 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError>;
+
+    // -------------------------------------------------------------------------
+    // Paginated list methods
+    // -------------------------------------------------------------------------
+
+    /// Lists patches with cursor-based pagination.
+    ///
+    /// Returns a page of results sorted by `(timestamp, id)` using keyset
+    /// pagination. The existing `list_patches` method is unchanged for
+    /// internal callers that need all results.
+    async fn list_patches_paginated(
+        &self,
+        query: &SearchPatchesQuery,
+        pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(PatchId, Versioned<Patch>)>, StoreError>;
+
+    /// Lists tasks/jobs with cursor-based pagination.
+    async fn list_tasks_paginated(
+        &self,
+        query: &SearchJobsQuery,
+        pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(TaskId, Versioned<Task>)>, StoreError>;
+
+    /// Lists documents with cursor-based pagination.
+    async fn list_documents_paginated(
+        &self,
+        query: &SearchDocumentsQuery,
+        pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(DocumentId, Versioned<Document>)>, StoreError>;
+
+    /// Lists issues with roots+descendants cursor-based pagination.
+    ///
+    /// The `limit` in PaginationParams controls the number of **root** issues
+    /// (issues with no parent). All descendants of included roots are returned
+    /// automatically. `total_count` reflects the total number of root issues
+    /// matching the filters.
+    async fn list_issues_paginated(
+        &self,
+        query: &SearchIssuesQuery,
+        pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(IssueId, Versioned<Issue>)>, StoreError>;
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.

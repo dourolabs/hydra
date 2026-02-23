@@ -314,6 +314,61 @@ impl MemoryStore {
 
         Ok(())
     }
+
+    /// Paginate a sorted list of (id, versioned) items using keyset pagination.
+    fn paginate_items<Id: AsRef<str> + Clone>(
+        items: &mut Vec<(Id, Versioned<impl Clone>)>,
+        pagination: &super::PaginationParams,
+    ) -> (Option<super::CursorData>, u32) {
+        use metis_common::api::v1::SortOrder;
+        // Sort by (timestamp, id)
+        match pagination.sort {
+            SortOrder::Desc => items.sort_by(|(a_id, a), (b_id, b)| {
+                b.timestamp
+                    .cmp(&a.timestamp)
+                    .then_with(|| b_id.as_ref().cmp(a_id.as_ref()))
+            }),
+            SortOrder::Asc => items.sort_by(|(a_id, a), (b_id, b)| {
+                a.timestamp
+                    .cmp(&b.timestamp)
+                    .then_with(|| a_id.as_ref().cmp(b_id.as_ref()))
+            }),
+        }
+
+        let total_count = items.len() as u32;
+
+        // Apply cursor: skip items before/after the cursor position
+        if let Some(ref cursor) = pagination.cursor {
+            let skip_pos = match pagination.sort {
+                SortOrder::Desc => items.iter().position(|(id, v)| {
+                    (v.timestamp, id.as_ref()) < (cursor.timestamp, cursor.id.as_str())
+                }),
+                SortOrder::Asc => items.iter().position(|(id, v)| {
+                    (v.timestamp, id.as_ref()) > (cursor.timestamp, cursor.id.as_str())
+                }),
+            };
+            if let Some(pos) = skip_pos {
+                items.drain(..pos);
+            } else {
+                items.clear();
+            }
+        }
+
+        // Take limit + 1 to detect if there are more pages
+        let limit = pagination.limit as usize;
+        let has_more = items.len() > limit;
+        items.truncate(limit);
+
+        let next_cursor = if has_more {
+            items
+                .last()
+                .map(|(id, v)| super::CursorData::new(v.timestamp, id.as_ref().to_string()))
+        } else {
+            None
+        };
+
+        (next_cursor, total_count)
+    }
 }
 
 impl Default for MemoryStore {
@@ -866,6 +921,148 @@ impl ReadOnlyStore for MemoryStore {
 
         users.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
         Ok(users)
+    }
+
+    // -------------------------------------------------------------------------
+    // Paginated list methods
+    // -------------------------------------------------------------------------
+
+    async fn list_patches_paginated(
+        &self,
+        query: &SearchPatchesQuery,
+        pagination: &super::PaginationParams,
+    ) -> Result<super::PaginatedResult<(PatchId, Versioned<Patch>)>, StoreError> {
+        let mut items = self.list_patches(query).await?;
+        let (next_cursor, total_count) = Self::paginate_items(&mut items, pagination);
+        Ok(super::PaginatedResult::new(items, next_cursor, total_count))
+    }
+
+    async fn list_tasks_paginated(
+        &self,
+        query: &SearchJobsQuery,
+        pagination: &super::PaginationParams,
+    ) -> Result<super::PaginatedResult<(TaskId, Versioned<Task>)>, StoreError> {
+        let mut items = self.list_tasks(query).await?;
+        let (next_cursor, total_count) = Self::paginate_items(&mut items, pagination);
+        Ok(super::PaginatedResult::new(items, next_cursor, total_count))
+    }
+
+    async fn list_documents_paginated(
+        &self,
+        query: &SearchDocumentsQuery,
+        pagination: &super::PaginationParams,
+    ) -> Result<super::PaginatedResult<(DocumentId, Versioned<Document>)>, StoreError> {
+        let mut items = self.list_documents(query).await?;
+        let (next_cursor, total_count) = Self::paginate_items(&mut items, pagination);
+        Ok(super::PaginatedResult::new(items, next_cursor, total_count))
+    }
+
+    async fn list_issues_paginated(
+        &self,
+        query: &SearchIssuesQuery,
+        pagination: &super::PaginationParams,
+    ) -> Result<super::PaginatedResult<(IssueId, Versioned<Issue>)>, StoreError> {
+        use metis_common::api::v1::SortOrder;
+        let all_issues = self.list_issues(query).await?;
+
+        // Identify root issues (no child-of parent in the current result set)
+        let all_issue_ids: HashSet<IssueId> = all_issues.iter().map(|(id, _)| id.clone()).collect();
+
+        let mut roots: Vec<(IssueId, Versioned<Issue>)> = all_issues
+            .iter()
+            .filter(|(_, v)| {
+                !v.item.dependencies.iter().any(|d| {
+                    d.dependency_type == IssueDependencyType::ChildOf
+                        && all_issue_ids.contains(&d.issue_id)
+                })
+            })
+            .cloned()
+            .collect();
+
+        // Sort roots by (timestamp, id)
+        match pagination.sort {
+            SortOrder::Desc => roots.sort_by(|(a_id, a), (b_id, b)| {
+                b.timestamp
+                    .cmp(&a.timestamp)
+                    .then_with(|| b_id.as_ref().cmp(a_id.as_ref()))
+            }),
+            SortOrder::Asc => roots.sort_by(|(a_id, a), (b_id, b)| {
+                a.timestamp
+                    .cmp(&b.timestamp)
+                    .then_with(|| a_id.as_ref().cmp(b_id.as_ref()))
+            }),
+        }
+
+        let total_count = roots.len() as u32;
+
+        // Apply cursor to roots
+        if let Some(ref cursor) = pagination.cursor {
+            let skip_pos = match pagination.sort {
+                SortOrder::Desc => roots.iter().position(|(id, v)| {
+                    (v.timestamp, id.as_ref()) < (cursor.timestamp, cursor.id.as_str())
+                }),
+                SortOrder::Asc => roots.iter().position(|(id, v)| {
+                    (v.timestamp, id.as_ref()) > (cursor.timestamp, cursor.id.as_str())
+                }),
+            };
+            if let Some(pos) = skip_pos {
+                roots.drain(..pos);
+            } else {
+                roots.clear();
+            }
+        }
+
+        let limit = pagination.limit as usize;
+        let has_more = roots.len() > limit;
+        roots.truncate(limit);
+
+        let next_cursor = if has_more {
+            roots
+                .last()
+                .map(|(id, v)| super::CursorData::new(v.timestamp, id.as_ref().to_string()))
+        } else {
+            None
+        };
+
+        // Collect root IDs, then add all descendants
+        let selected_root_ids: HashSet<IssueId> = roots.iter().map(|(id, _)| id.clone()).collect();
+
+        // Build parent->children map for BFS
+        let mut children_map: HashMap<IssueId, Vec<IssueId>> = HashMap::new();
+        for (id, v) in &all_issues {
+            for dep in &v.item.dependencies {
+                if dep.dependency_type == IssueDependencyType::ChildOf {
+                    children_map
+                        .entry(dep.issue_id.clone())
+                        .or_default()
+                        .push(id.clone());
+                }
+            }
+        }
+
+        // BFS to collect all descendants of selected roots
+        let mut result_ids: HashSet<IssueId> = selected_root_ids.clone();
+        let mut queue: Vec<IssueId> = selected_root_ids.into_iter().collect();
+        while let Some(parent_id) = queue.pop() {
+            if let Some(children) = children_map.get(&parent_id) {
+                for child_id in children {
+                    if result_ids.insert(child_id.clone()) {
+                        queue.push(child_id.clone());
+                    }
+                }
+            }
+        }
+
+        let result: Vec<(IssueId, Versioned<Issue>)> = all_issues
+            .into_iter()
+            .filter(|(id, _)| result_ids.contains(id))
+            .collect();
+
+        Ok(super::PaginatedResult::new(
+            result,
+            next_cursor,
+            total_count,
+        ))
     }
 }
 

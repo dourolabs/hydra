@@ -1,14 +1,16 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import type { IssueSummaryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { computeBlockedStatus } from "./blockedStatus";
 import { topologicalSort } from "./topologicalSort";
 
 export function useIssues() {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ["issues"],
-    queryFn: () => apiClient.listIssues(),
-    select: (data) => data.issues,
+    queryFn: ({ pageParam }) => apiClient.listIssues({ cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    select: (data) => data.pages.flatMap((page) => page.issues),
   });
 }
 

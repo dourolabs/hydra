@@ -68,22 +68,25 @@ pub async fn list_jobs(
     );
     let namespace = state.config.metis.namespace.clone();
 
-    // All filtering (q, spawned_from, include_deleted) is done at the Store level.
-    // Text search (q) matches task ID, prompt, and status (NOT notes).
-    let tasks = state.list_tasks_with_query(&query).await.map_err(|err| {
-        error!(error = %err, "failed to list tasks");
-        ApiError::internal(format!("Failed to list tasks: {err}"))
-    })?;
+    let pagination = query.pagination_params();
+    let result = state
+        .list_tasks_paginated(&query, &pagination)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to list tasks");
+            ApiError::internal(format!("Failed to list tasks: {err}"))
+        })?;
 
     // Batch-fetch status logs to compute timing fields
-    let task_ids: Vec<TaskId> = tasks.iter().map(|(id, _)| id.clone()).collect();
+    let task_ids: Vec<TaskId> = result.items.iter().map(|(id, _)| id.clone()).collect();
     let status_logs = state.get_status_logs(&task_ids).await.map_err(|err| {
         error!(error = %err, "failed to fetch status logs for timing");
         ApiError::internal(format!("Failed to fetch status logs: {err}"))
     })?;
 
-    // Build summary records with timing fields, sorted by version timestamp
-    let mut summaries: Vec<v1::jobs::JobSummaryRecord> = tasks
+    // Build summary records with timing fields
+    let summaries: Vec<v1::jobs::JobSummaryRecord> = result
+        .items
         .into_iter()
         .map(|(task_id, versioned_task)| {
             let mut api_task: v1::jobs::Task = versioned_task.item.into();
@@ -103,16 +106,17 @@ pub async fn list_jobs(
         })
         .collect();
 
-    // Sort by version timestamp, most recent first
-    summaries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    let next_cursor = result.next_cursor.map(|c| c.encode());
 
     info!(
         namespace = %namespace,
         job_count = summaries.len(),
+        total = result.total_count,
         "list_jobs completed successfully"
     );
 
-    let response = v1::jobs::ListJobsResponse::new(summaries);
+    let response =
+        v1::jobs::ListJobsResponse::paginated(summaries, next_cursor, result.total_count);
     Ok(Json(response))
 }
 

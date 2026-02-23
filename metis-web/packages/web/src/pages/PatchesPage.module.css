@@ -96,6 +96,12 @@
   white-space: nowrap;
 }
 
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
 /* Mobile card layout */
 @media (max-width: 768px) {
   .patchRow {

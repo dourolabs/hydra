@@ -3,4 +3,7 @@ import type { ActorRef } from "./ActorRef";
 import type { DocumentId } from "./DocumentId";
 import type { DocumentSummary } from "./DocumentSummary";
 
+/**
+ * Summary-level version record for document list responses.
+ */
 export type DocumentSummaryRecord = { document_id: DocumentId, version: bigint, timestamp: string, document: DocumentSummary, actor?: ActorRef | null, };

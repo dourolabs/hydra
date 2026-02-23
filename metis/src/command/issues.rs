@@ -1302,18 +1302,29 @@ async fn fetch_issues(
     });
 
     let include_deleted_opt = if include_deleted { Some(true) } else { None };
-    let issues = client
-        .list_issues(&SearchIssuesQuery::new(
+    let mut all_issues = Vec::new();
+    let mut cursor = None;
+    loop {
+        let mut search_query = SearchIssuesQuery::new(
             issue_type,
             status,
             trimmed_assignee.clone(),
-            trimmed_query,
-            graph_filters,
+            trimmed_query.clone(),
+            graph_filters.clone(),
             include_deleted_opt,
-        ))
-        .await
-        .context("failed to list issues")?
-        .issues;
+        );
+        search_query.cursor = cursor;
+        let response = client
+            .list_issues(&search_query)
+            .await
+            .context("failed to list issues")?;
+        all_issues.extend(response.issues);
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    let issues = all_issues;
 
     for issue in &issues {
         if let Some(expected_type) = issue_type {

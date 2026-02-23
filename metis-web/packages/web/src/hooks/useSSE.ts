@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient, type InfiniteData } from "@tanstack/react-query";
 import type {
   EntityEventData,
   IssueSummaryRecord,
@@ -40,15 +40,15 @@ interface VersionedRecord {
 }
 
 /**
- * Version-guarded upsert into an array within a list-response cache entry.
- * Updates in place (with version guard) if the entity already exists, or
- * appends to cover newly-created entities.
+ * Version-guarded upsert into an array within a regular (non-infinite) query
+ * cache entry. Updates in place (with version guard) if the entity already
+ * exists, or appends to cover newly-created entities.
  */
 function upsertInList<TResp, TItem extends VersionedRecord>(
   qc: QueryClient,
   key: readonly unknown[],
   getItems: (resp: TResp) => TItem[],
-  wrapItems: (items: TItem[]) => TResp,
+  setItems: (resp: TResp, items: TItem[]) => TResp,
   getId: (item: TItem) => string,
   entityId: string,
   record: TItem,
@@ -61,42 +61,89 @@ function upsertInList<TResp, TItem extends VersionedRecord>(
       if (arr[idx].version > record.version) return old;
       const updated = [...arr];
       updated[idx] = record;
-      return wrapItems(updated);
+      return setItems(old, updated);
     }
-    return wrapItems([...arr, record]);
+    return setItems(old, [...arr, record]);
   });
 }
 
-/** Remove an entity from an array within a list-response cache entry. */
-function removeFromList<TResp, TItem>(
+
+/**
+ * Version-guarded upsert into an infinite query cache. Scans all pages for the
+ * entity; updates in place if found, otherwise prepends to the first page.
+ */
+function upsertInInfiniteList<TResp, TItem extends VersionedRecord>(
   qc: QueryClient,
   key: readonly unknown[],
   getItems: (resp: TResp) => TItem[],
-  wrapItems: (items: TItem[]) => TResp,
+  setItems: (resp: TResp, items: TItem[]) => TResp,
+  getId: (item: TItem) => string,
+  entityId: string,
+  record: TItem,
+) {
+  qc.setQueryData<InfiniteData<TResp>>(key, (old) => {
+    if (!old || old.pages.length === 0) return old;
+
+    for (let i = 0; i < old.pages.length; i++) {
+      const items = getItems(old.pages[i]);
+      const idx = items.findIndex((a) => getId(a) === entityId);
+      if (idx >= 0) {
+        if (items[idx].version > record.version) return old;
+        const newPages = [...old.pages];
+        const newItems = [...items];
+        newItems[idx] = record;
+        newPages[i] = setItems(old.pages[i], newItems);
+        return { ...old, pages: newPages };
+      }
+    }
+
+    // Not found — prepend to first page
+    const newPages = [...old.pages];
+    newPages[0] = setItems(old.pages[0], [record, ...getItems(old.pages[0])]);
+    return { ...old, pages: newPages };
+  });
+}
+
+/** Remove an entity from an infinite query cache (scans all pages). */
+function removeFromInfiniteList<TResp, TItem>(
+  qc: QueryClient,
+  key: readonly unknown[],
+  getItems: (resp: TResp) => TItem[],
+  setItems: (resp: TResp, items: TItem[]) => TResp,
   getId: (item: TItem) => string,
   entityId: string,
 ) {
-  qc.setQueryData<TResp>(key, (old) => {
-    if (!old) return old;
-    return wrapItems(getItems(old).filter((a) => getId(a) !== entityId));
+  qc.setQueryData<InfiniteData<TResp>>(key, (old) => {
+    if (!old || old.pages.length === 0) return old;
+    let changed = false;
+    const newPages = old.pages.map((page) => {
+      const items = getItems(page);
+      const filtered = items.filter((a) => getId(a) !== entityId);
+      if (filtered.length < items.length) {
+        changed = true;
+        return setItems(page, filtered);
+      }
+      return page;
+    });
+    return changed ? { ...old, pages: newPages } : old;
   });
 }
 
 // Entity-specific accessors for the list-response shapes
 const issueList = (r: ListIssuesResponse) => r.issues;
-const wrapIssues = (items: IssueSummaryRecord[]): ListIssuesResponse => ({ issues: items });
+const setIssueItems = (r: ListIssuesResponse, items: IssueSummaryRecord[]): ListIssuesResponse => ({ ...r, issues: items });
 const issueRecordId = (r: IssueSummaryRecord) => r.issue_id;
 
 const jobList = (r: ListJobsResponse) => r.jobs;
-const wrapJobs = (items: JobSummaryRecord[]): ListJobsResponse => ({ jobs: items });
+const setJobItems = (r: ListJobsResponse, items: JobSummaryRecord[]): ListJobsResponse => ({ ...r, jobs: items });
 const jobRecordId = (r: JobSummaryRecord) => r.job_id;
 
 const patchList = (r: ListPatchesResponse) => r.patches;
-const wrapPatches = (items: PatchSummaryRecord[]): ListPatchesResponse => ({ patches: items });
+const setPatchItems = (r: ListPatchesResponse, items: PatchSummaryRecord[]): ListPatchesResponse => ({ ...r, patches: items });
 const patchRecordId = (r: PatchSummaryRecord) => r.patch_id;
 
 const docList = (r: ListDocumentsResponse) => r.documents;
-const wrapDocs = (items: DocumentSummaryRecord[]): ListDocumentsResponse => ({ documents: items });
+const setDocItems = (r: ListDocumentsResponse, items: DocumentSummaryRecord[]): ListDocumentsResponse => ({ ...r, documents: items });
 const docRecordId = (r: DocumentSummaryRecord) => r.document_id;
 
 /**
@@ -149,11 +196,11 @@ export function useSSE(): SSEConnectionState {
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         if (eventType === "issue_deleted") {
           queryClient.removeQueries({ queryKey: ["issue", entity_id] });
-          removeFromList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id);
+          removeFromInfiniteList(queryClient, ["issues"], issueList, setIssueItems, issueRecordId, entity_id);
         } else {
           const record = entity as unknown as IssueSummaryRecord;
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
-          upsertInList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id, record);
+          upsertInInfiniteList(queryClient, ["issues"], issueList, setIssueItems, issueRecordId, entity_id, record);
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
         }
       } else if (entity_type === "job" || eventType.startsWith("job_")) {
@@ -162,33 +209,33 @@ export function useSSE(): SSEConnectionState {
 
         // SSE now sends summary records; invalidate the detail cache instead of direct-setting.
         queryClient.invalidateQueries({ queryKey: ["job", entity_id] });
-        upsertInList(queryClient, ["allJobs"], jobList, wrapJobs, jobRecordId, entity_id, record);
+        upsertInList(queryClient, ["allJobs"], jobList, setJobItems, jobRecordId, entity_id, record);
 
         if (spawnedFrom) {
-          upsertInList(queryClient, ["jobs", spawnedFrom], jobList, wrapJobs, jobRecordId, entity_id, record);
+          upsertInList(queryClient, ["jobs", spawnedFrom], jobList, setJobItems, jobRecordId, entity_id, record);
         } else {
           queryClient.invalidateQueries({ queryKey: ["jobs"] });
         }
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         if (eventType === "patch_deleted") {
           queryClient.removeQueries({ queryKey: ["patch", entity_id] });
-          removeFromList(queryClient, ["patches"], patchList, wrapPatches, patchRecordId, entity_id);
+          removeFromInfiniteList(queryClient, ["patches"], patchList, setPatchItems, patchRecordId, entity_id);
         } else {
           const record = entity as unknown as PatchSummaryRecord;
           // SSE now carries summary records — update list cache directly
-          upsertInList(queryClient, ["patches"], patchList, wrapPatches, patchRecordId, entity_id, record);
+          upsertInInfiniteList(queryClient, ["patches"], patchList, setPatchItems, patchRecordId, entity_id, record);
           // Detail cache uses full PatchVersionRecord; invalidate so it refetches
           queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
         }
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
         if (eventType === "document_deleted") {
           queryClient.removeQueries({ queryKey: ["document", entity_id] });
-          removeFromList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id);
+          removeFromInfiniteList(queryClient, ["documents"], docList, setDocItems, docRecordId, entity_id);
         } else {
           const record = entity as unknown as DocumentSummaryRecord;
           // Invalidate the detail cache since SSE now carries summary data only
           queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
-          upsertInList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id, record);
+          upsertInInfiniteList(queryClient, ["documents"], docList, setDocItems, docRecordId, entity_id, record);
         }
       }
     },

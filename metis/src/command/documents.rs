@@ -320,18 +320,28 @@ async fn list_documents(
     } else {
         None
     };
-    let query = SearchDocumentsQuery::new(
-        args.query,
-        args.path_prefix,
-        None,
-        args.created_by,
-        include_deleted,
-    );
-    let response = client
-        .list_documents(&query)
-        .await
-        .context("failed to list documents")?;
-    Ok(response.documents)
+    let mut all_documents = Vec::new();
+    let mut cursor = None;
+    loop {
+        let mut query = SearchDocumentsQuery::new(
+            args.query.clone(),
+            args.path_prefix.clone(),
+            None,
+            args.created_by.clone(),
+            include_deleted,
+        );
+        query.cursor = cursor;
+        let response = client
+            .list_documents(&query)
+            .await
+            .context("failed to list documents")?;
+        all_documents.extend(response.documents);
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(all_documents)
 }
 
 async fn create_document(

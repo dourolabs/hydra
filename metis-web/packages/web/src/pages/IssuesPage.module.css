@@ -2,3 +2,9 @@
 .center { composes: center from './page.module.css'; }
 .error { composes: error from './page.module.css'; }
 .empty { composes: empty from './page.module.css'; }
+
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4);
+}

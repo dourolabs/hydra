@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Panel, Spinner } from "@metis/ui";
+import { Button, Panel, Spinner } from "@metis/ui";
 import type { IssueSummaryRecord } from "@metis/api";
 import { useIssues } from "../features/issues/useIssues";
 import { useIssueFilters } from "../features/issues/useIssueFilters";
@@ -81,7 +81,7 @@ function hasActiveFilters(filters: IssueFilterValues): boolean {
 
 export function IssuesPage() {
   const { filters, setFilters } = useIssueFilters();
-  const { data: issues, isLoading, error } = useIssues();
+  const { data: issues, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useIssues();
   const { data: jobsByIssue } = useAllJobs();
   const { collapsedIds, onToggle } = useTreeExpandState();
 
@@ -136,6 +136,19 @@ export function IssuesPage() {
           />
         )}
       </Panel>
+
+      {hasNextPage && (
+        <div className={styles.loadMore}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? "Loading..." : "Load More"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,13 +6,14 @@ use crate::{
         patches::Patch,
         users::{User, Username},
     },
-    store::{ReadOnlyStore, Store, StoreError, Task, TaskStatusLog},
+    store::{PaginatedResult, ReadOnlyStore, Store, StoreError, Task, TaskStatusLog},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::pagination::PaginationParams;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -203,6 +204,38 @@ impl ReadOnlyStore for FailingStore {
         &self,
         _query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
+        fail()
+    }
+
+    async fn list_patches_paginated(
+        &self,
+        _query: &SearchPatchesQuery,
+        _pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(PatchId, Versioned<Patch>)>, StoreError> {
+        fail()
+    }
+
+    async fn list_tasks_paginated(
+        &self,
+        _query: &SearchJobsQuery,
+        _pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(TaskId, Versioned<Task>)>, StoreError> {
+        fail()
+    }
+
+    async fn list_documents_paginated(
+        &self,
+        _query: &SearchDocumentsQuery,
+        _pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(DocumentId, Versioned<Document>)>, StoreError> {
+        fail()
+    }
+
+    async fn list_issues_paginated(
+        &self,
+        _query: &SearchIssuesQuery,
+        _pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(IssueId, Versioned<Issue>)>, StoreError> {
         fail()
     }
 }

@@ -444,16 +444,23 @@ async fn fetch_patches(
     include_deleted: bool,
 ) -> Result<Vec<PatchSummaryRecord>> {
     let include_deleted_opt = if include_deleted { Some(true) } else { None };
-    let response = client
-        .list_patches(&SearchPatchesQuery::new(
-            query,
-            include_deleted_opt,
-            vec![],
-            None,
-        ))
-        .await
-        .context("failed to search for patches")?;
-    Ok(response.patches)
+    let mut all_patches = Vec::new();
+    let mut cursor = None;
+    loop {
+        let mut search_query =
+            SearchPatchesQuery::new(query.clone(), include_deleted_opt, vec![], None);
+        search_query.cursor = cursor;
+        let response = client
+            .list_patches(&search_query)
+            .await
+            .context("failed to search for patches")?;
+        all_patches.extend(response.patches);
+        cursor = response.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(all_patches)
 }
 
 async fn create_patch(

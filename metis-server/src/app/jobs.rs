@@ -768,6 +768,15 @@ impl AppState {
         store.list_tasks(query).await
     }
 
+    pub async fn list_tasks_paginated(
+        &self,
+        query: &SearchJobsQuery,
+        pagination: &metis_common::api::v1::pagination::PaginationParams,
+    ) -> Result<crate::store::PaginatedResult<(TaskId, Versioned<Task>)>, StoreError> {
+        let store = self.store.as_ref();
+        store.list_tasks_paginated(query, pagination).await
+    }
+
     pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         let store = self.store.as_ref();
         store.get_status_log(task_id).await

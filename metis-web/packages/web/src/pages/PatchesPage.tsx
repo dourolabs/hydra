@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { Badge, Panel, Spinner } from "@metis/ui";
+import { Badge, Button, Panel, Spinner } from "@metis/ui";
 import type { PatchSummaryRecord } from "@metis/api";
 import { usePatches } from "../features/patches/usePatches";
 import { patchToBadgeStatus } from "../utils/statusMapping";
@@ -8,7 +8,7 @@ import { formatRelativeTime } from "../utils/time";
 import styles from "./PatchesPage.module.css";
 
 export function PatchesPage() {
-  const { data: patches, isLoading, error } = usePatches();
+  const { data: patches, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = usePatches();
 
   const sorted = useMemo(() => {
     if (!patches) return [];
@@ -37,6 +37,19 @@ export function PatchesPage() {
             ))}
           </ul>
         </Panel>
+      )}
+
+      {hasNextPage && (
+        <div className={styles.loadMore}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? "Loading..." : "Load More"}
+          </Button>
+        </div>
       )}
     </div>
   );

@@ -57,7 +57,7 @@ function getDocumentDisplayTitle(doc: DocumentSummaryRecord): string {
 }
 
 export function DocumentsPage() {
-  const { data: documents, isLoading, error } = useDocuments();
+  const { data: documents, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useDocuments();
   const [createOpen, setCreateOpen] = useState(false);
 
   const groups = useMemo(() => (documents ? groupDocumentsByPrefix(documents) : []), [documents]);
@@ -94,6 +94,19 @@ export function DocumentsPage() {
           </ul>
         </Panel>
       ))}
+
+      {hasNextPage && (
+        <div className={styles.loadMore}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? "Loading..." : "Load More"}
+          </Button>
+        </div>
+      )}
 
       <DocumentCreateModal
         open={createOpen}

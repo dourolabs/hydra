@@ -131,6 +131,15 @@ impl AppState {
         store.list_issues(query).await
     }
 
+    pub async fn list_issues_paginated(
+        &self,
+        query: &SearchIssuesQuery,
+        pagination: &metis_common::api::v1::pagination::PaginationParams,
+    ) -> Result<crate::store::PaginatedResult<(IssueId, Versioned<Issue>)>, StoreError> {
+        let store = self.store.as_ref();
+        store.list_issues_paginated(query, pagination).await
+    }
+
     pub async fn upsert_issue(
         &self,
         issue_id: Option<IssueId>,

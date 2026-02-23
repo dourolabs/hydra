@@ -386,6 +386,15 @@ pub struct SearchPatchesQuery {
     /// Filter patches by exact branch name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
+    /// Maximum items per page (default 50, max 200).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// Opaque cursor from a previous response for keyset pagination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// Sort direction by timestamp (default: desc).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<super::SortOrder>,
 }
 
 impl SearchPatchesQuery {
@@ -400,7 +409,15 @@ impl SearchPatchesQuery {
             include_deleted,
             status,
             branch_name,
+            limit: None,
+            cursor: None,
+            sort: None,
         }
+    }
+
+    /// Extract pagination params, consuming the pagination fields.
+    pub fn pagination_params(&self) -> super::PaginationParams {
+        super::PaginationParams::new(self.limit, self.cursor.clone(), self.sort)
     }
 }
 
@@ -552,11 +569,34 @@ impl From<&PatchVersionRecord> for PatchSummaryRecord {
 #[non_exhaustive]
 pub struct ListPatchesResponse {
     pub patches: Vec<PatchSummaryRecord>,
+    /// Opaque cursor for the next page. Absent when no more results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Total number of matching items.
+    #[serde(default)]
+    pub total_count: u32,
 }
 
 impl ListPatchesResponse {
     pub fn new(patches: Vec<PatchSummaryRecord>) -> Self {
-        Self { patches }
+        let total_count = patches.len() as u32;
+        Self {
+            patches,
+            next_cursor: None,
+            total_count,
+        }
+    }
+
+    pub fn paginated(
+        patches: Vec<PatchSummaryRecord>,
+        next_cursor: Option<String>,
+        total_count: u32,
+    ) -> Self {
+        Self {
+            patches,
+            next_cursor,
+            total_count,
+        }
     }
 }
 
@@ -587,6 +627,9 @@ mod tests {
             include_deleted: None,
             status: Vec::new(),
             branch_name: None,
+            limit: None,
+            cursor: None,
+            sort: None,
         };
 
         let params = serialize_query_params(&query)

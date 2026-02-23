@@ -5,12 +5,13 @@ use crate::domain::{
     patches::Patch,
     users::{User, Username},
 };
-use crate::store::{ReadOnlyStore, Store, StoreError, Task, TaskStatusLog};
+use crate::store::{PaginatedResult, ReadOnlyStore, Store, StoreError, Task, TaskStatusLog};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::pagination::PaginationParams;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -941,6 +942,40 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         self.inner.list_users(query).await
+    }
+
+    // ---- Paginated list methods (delegated) ----
+
+    async fn list_patches_paginated(
+        &self,
+        query: &SearchPatchesQuery,
+        pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(PatchId, Versioned<Patch>)>, StoreError> {
+        self.inner.list_patches_paginated(query, pagination).await
+    }
+
+    async fn list_tasks_paginated(
+        &self,
+        query: &SearchJobsQuery,
+        pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(TaskId, Versioned<Task>)>, StoreError> {
+        self.inner.list_tasks_paginated(query, pagination).await
+    }
+
+    async fn list_documents_paginated(
+        &self,
+        query: &SearchDocumentsQuery,
+        pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(DocumentId, Versioned<Document>)>, StoreError> {
+        self.inner.list_documents_paginated(query, pagination).await
+    }
+
+    async fn list_issues_paginated(
+        &self,
+        query: &SearchIssuesQuery,
+        pagination: &PaginationParams,
+    ) -> Result<PaginatedResult<(IssueId, Versioned<Issue>)>, StoreError> {
+        self.inner.list_issues_paginated(query, pagination).await
     }
 }
 

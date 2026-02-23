@@ -1,10 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { apiClient } from "../../api/client";
 
 export function usePatches() {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ["patches"],
-    queryFn: () => apiClient.listPatches(),
-    select: (data) => data.patches,
+    queryFn: ({ pageParam }) => apiClient.listPatches({ cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    select: (data) => data.pages.flatMap((page) => page.patches),
   });
 }
