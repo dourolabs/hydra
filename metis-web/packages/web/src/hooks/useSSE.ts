@@ -39,18 +39,6 @@ interface VersionedRecord {
   version: number | bigint;
 }
 
-/** Version-guarded set on an individual entity cache key. */
-function setVersioned<T extends VersionedRecord>(
-  qc: QueryClient,
-  key: readonly unknown[],
-  record: T,
-) {
-  qc.setQueryData<T>(key, (old) => {
-    if (old && old.version > record.version) return old;
-    return record;
-  });
-}
-
 /**
  * Version-guarded upsert into an array within a list-response cache entry.
  * Updates in place (with version guard) if the entity already exists, or
