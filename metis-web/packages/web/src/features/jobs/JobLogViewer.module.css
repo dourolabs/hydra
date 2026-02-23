@@ -52,3 +52,11 @@
     opacity: 0.3;
   }
 }
+
+@media (max-width: 768px) {
+  .logViewer {
+    max-height: calc(100vh - 240px);
+    max-height: calc(100dvh - 240px);
+    min-height: 200px;
+  }
+}
