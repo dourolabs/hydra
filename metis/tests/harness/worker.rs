@@ -320,6 +320,76 @@ pub(super) async fn run_worker_impl(
     })
 }
 
+pub(super) async fn run_worker_with_tempdir_impl(
+    harness: &TestHarness,
+    job_id: &TaskId,
+    commands: Vec<&str>,
+) -> Result<WorkerResult> {
+    // Ensure env vars are set for the worker subprocess.
+    ensure_worker_env_vars(harness, job_id).await?;
+
+    // Wait for the job to reach Running status.
+    wait_for_running(harness, job_id).await?;
+
+    // Snapshot existing patches before the worker run.
+    let client = harness.client()?;
+    let before_patches = client
+        .list_patches(&SearchPatchesQuery::default())
+        .await
+        .context("failed to list patches before worker run")?;
+    let before_patch_ids: Vec<PatchId> = before_patches
+        .patches
+        .iter()
+        .filter(|p| !p.patch.is_automatic_backup)
+        .map(|p| p.patch_id.clone())
+        .collect();
+
+    // Create BashCommands and run the worker with use_tempdir=true.
+    // Use a non-empty directory as dest to confirm ensure_clean_destination
+    // is bypassed when --tempdir is set.
+    let string_commands: Vec<String> = commands.iter().map(|s| s.to_string()).collect();
+    let bash_commands = BashCommands::new(string_commands, false);
+
+    let worker_dir =
+        tempfile::tempdir().context("failed to create directory for tempdir worker test")?;
+    let non_empty_dest = worker_dir.path().to_path_buf();
+    std::fs::write(non_empty_dest.join("existing_file.txt"), "not empty")
+        .context("failed to create placeholder file in worker dest")?;
+
+    let context = CommandContext::new(ResolvedOutputFormat::Pretty);
+    let run_result = metis::command::jobs::worker_run::run(
+        harness.default_user().client(),
+        job_id.clone(),
+        non_empty_dest,
+        None,
+        None,
+        None,
+        None,
+        true, // use_tempdir
+        &bash_commands,
+        &context,
+    )
+    .await;
+
+    let outputs = bash_commands.outputs();
+
+    if let Err(err) = run_result {
+        let formatted = format_command_outputs(&outputs);
+        return Err(anyhow::anyhow!(
+            "worker run with tempdir failed: {err}\ncommand outputs:\n{formatted}"
+        ));
+    }
+
+    let patches_created = collect_created_patches(harness, &before_patch_ids).await?;
+    let final_status = get_job_status(harness, job_id).await?;
+
+    Ok(WorkerResult {
+        outputs,
+        patches_created,
+        final_status,
+    })
+}
+
 pub(super) async fn run_worker_expect_failure_impl(
     harness: &TestHarness,
     job_id: &TaskId,

@@ -76,6 +76,46 @@ async fn run_worker_captures_command_outputs() -> Result<()> {
     Ok(())
 }
 
+/// Verify that --tempdir causes worker commands to run inside a temporary
+/// directory rather than the original destination path.
+#[tokio::test]
+async fn run_worker_with_tempdir_uses_temp_dir_as_cwd() -> Result<()> {
+    let harness = harness::TestHarness::builder()
+        .with_repo("acme/tempdir-test")
+        .build()
+        .await?;
+    let user = harness.default_user();
+
+    let repo = metis_common::RepoName::from_str("acme/tempdir-test")?;
+    let job_id = user.create_job(&repo, "tempdir cwd test").await?;
+
+    let result = harness
+        .run_worker_with_tempdir(&job_id, vec!["pwd"])
+        .await?;
+
+    assert_eq!(
+        result.final_status,
+        Status::Complete,
+        "job should complete after successful worker run with --tempdir"
+    );
+    assert!(!result.outputs.is_empty(), "should have captured outputs");
+
+    // The working directory should be a /repo subdirectory inside a temp path,
+    // not the original (non-empty) destination directory.
+    let cwd = result.outputs[0].stdout.trim();
+    assert!(
+        cwd.contains("/repo"),
+        "worker cwd should be a repo subdirectory, got: {cwd}"
+    );
+    let temp_dir_prefix = std::env::temp_dir();
+    assert!(
+        cwd.starts_with(temp_dir_prefix.to_str().unwrap()),
+        "worker cwd should be inside the system temp directory, got: {cwd}"
+    );
+
+    Ok(())
+}
+
 /// Verify that run_worker_expect_failure returns WorkerFailure when a command fails.
 #[tokio::test]
 async fn run_worker_expect_failure_captures_error() -> Result<()> {

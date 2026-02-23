@@ -317,6 +317,20 @@ impl TestHarness {
         worker::run_worker_impl(self, job_id, commands, false).await
     }
 
+    /// Run a worker with `--tempdir` enabled.
+    ///
+    /// Like [`run_worker`](Self::run_worker) but passes `use_tempdir=true`
+    /// to `worker_run::run`. The destination directory is intentionally
+    /// non-empty to confirm `ensure_clean_destination` is bypassed. Worker
+    /// commands receive the freshly-created temporary directory as their cwd.
+    pub async fn run_worker_with_tempdir(
+        &self,
+        job_id: &TaskId,
+        commands: Vec<&str>,
+    ) -> Result<WorkerResult> {
+        worker::run_worker_with_tempdir_impl(self, job_id, commands).await
+    }
+
     /// Run a worker that is expected to fail.
     ///
     /// Like [`run_worker`](Self::run_worker) but expects the worker commands
