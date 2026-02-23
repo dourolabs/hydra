@@ -257,17 +257,63 @@ async fn build_update_request(
     client: &dyn MetisClientInterface,
     args: &UpdateRepositoryArgs,
 ) -> Result<(RepoName, UpdateRepositoryRequest)> {
-    let remote_url = resolve_remote_url(client, args).await?;
+    let current = fetch_current_repository(client, &args.name).await?;
+
+    let remote_url = match &args.remote_url {
+        Some(url) => parse_required(url, "remote URL")?,
+        None => current.remote_url,
+    };
+
+    let default_branch = if args.clear_default_branch {
+        None
+    } else {
+        match &args.default_branch {
+            Some(value) => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    bail!(
+                        "default branch must not be empty (use --clear-default-branch to clear it)"
+                    );
+                }
+                Some(trimmed.to_string())
+            }
+            None => current.default_branch,
+        }
+    };
+
+    let default_image = if args.clear_default_image {
+        None
+    } else {
+        match &args.default_image {
+            Some(value) => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    bail!(
+                        "default image must not be empty (use --clear-default-image to clear it)"
+                    );
+                }
+                Some(trimmed.to_string())
+            }
+            None => current.default_image,
+        }
+    };
+
     Ok((
         args.name.clone(),
-        UpdateRepositoryRequest::new(build_repository_config(
-            remote_url,
-            &args.default_branch,
-            args.clear_default_branch,
-            &args.default_image,
-            args.clear_default_image,
-        )?),
+        UpdateRepositoryRequest::new(Repository::new(remote_url, default_branch, default_image)),
     ))
+}
+
+async fn fetch_current_repository(
+    client: &dyn MetisClientInterface,
+    name: &RepoName,
+) -> Result<Repository> {
+    let repositories = fetch_repositories(client, false).await?;
+    let record = repositories
+        .into_iter()
+        .find(|r| r.name == *name)
+        .with_context(|| format!("repository '{name}' not found; pass --remote-url to set one"))?;
+    Ok(record.repository)
 }
 
 fn build_repository_config(
@@ -292,27 +338,6 @@ fn build_repository_config(
             "--clear-default-image",
         )?,
     ))
-}
-
-async fn resolve_remote_url(
-    client: &dyn MetisClientInterface,
-    args: &UpdateRepositoryArgs,
-) -> Result<String> {
-    if let Some(remote_url) = &args.remote_url {
-        return parse_required(remote_url, "remote URL");
-    }
-
-    let repositories = fetch_repositories(client, false).await?;
-    let repository = repositories
-        .into_iter()
-        .find(|repository| repository.name == args.name)
-        .with_context(|| {
-            format!(
-                "repository '{}' not found; pass --remote-url to set one",
-                args.name
-            )
-        })?;
-    parse_required(&repository.repository.remote_url, "remote URL")
 }
 
 fn parse_required(value: &str, field: &str) -> Result<String> {
@@ -498,6 +523,13 @@ mod tests {
         args.default_branch = None;
         args.default_image = Some("ghcr.io/dourolabs/metis:stable".to_string());
         let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![
+                    sample_repository_info(&args.name),
+                ]));
+        });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
                 .path("/v1/repositories/dourolabs/metis")
@@ -526,6 +558,7 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("default_branch: <none>"));
 
+        list_mock.assert();
         update_mock.assert();
     }
 
@@ -548,7 +581,7 @@ mod tests {
                 .path("/v1/repositories/dourolabs/metis")
                 .json_body(json!({
                     "remote_url": "https://example.com/metis.git",
-                    "default_branch": null,
+                    "default_branch": "main",
                     "default_image": "ghcr.io/dourolabs/metis:stable"
                 }));
             then.status(200)
@@ -556,7 +589,7 @@ mod tests {
                     args.name.clone(),
                     Repository::new(
                         "https://example.com/metis.git".to_string(),
-                        None,
+                        Some("main".to_string()),
                         args.default_image.clone(),
                     ),
                 )));
@@ -569,13 +602,25 @@ mod tests {
             repository.repository.remote_url,
             "https://example.com/metis.git"
         );
+        assert_eq!(
+            repository.repository.default_branch,
+            Some("main".to_string())
+        );
         list_mock.assert();
         update_mock.assert();
     }
 
     #[tokio::test]
     async fn update_repository_reports_client_error() {
+        let args = sample_update_args();
         let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![
+                    sample_repository_info(&args.name),
+                ]));
+        });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
                 .path("/v1/repositories/dourolabs/metis")
@@ -587,7 +632,6 @@ mod tests {
             then.status(404);
         });
         let client = mock_client(&server);
-        let args = sample_update_args();
 
         let error = update_repository(&client, args).await.unwrap_err();
         assert!(
@@ -595,6 +639,154 @@ mod tests {
             "error should include context: {error:?}"
         );
 
+        list_mock.assert();
+        update_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn update_repository_preserves_unmodified_fields() {
+        // Only --default-image is provided; default_branch and remote_url should be preserved.
+        let mut args = sample_update_args();
+        args.remote_url = None;
+        args.default_branch = None;
+        args.default_image = Some("ghcr.io/dourolabs/metis:canary".to_string());
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![
+                    sample_repository_info(&args.name),
+                ]));
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/metis")
+                .json_body(json!({
+                    "remote_url": "https://example.com/metis.git",
+                    "default_branch": "main",
+                    "default_image": "ghcr.io/dourolabs/metis:canary"
+                }));
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
+                    args.name.clone(),
+                    Repository::new(
+                        "https://example.com/metis.git".to_string(),
+                        Some("main".to_string()),
+                        Some("ghcr.io/dourolabs/metis:canary".to_string()),
+                    ),
+                )));
+        });
+        let client = mock_client(&server);
+
+        let repository = update_repository(&client, args).await.unwrap();
+
+        assert_eq!(
+            repository.repository.remote_url,
+            "https://example.com/metis.git"
+        );
+        assert_eq!(
+            repository.repository.default_branch,
+            Some("main".to_string())
+        );
+        assert_eq!(
+            repository.repository.default_image,
+            Some("ghcr.io/dourolabs/metis:canary".to_string())
+        );
+        list_mock.assert();
+        update_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn update_repository_clear_default_branch_preserves_default_image() {
+        let mut args = sample_update_args();
+        args.remote_url = None;
+        args.default_branch = None;
+        args.clear_default_branch = true;
+        args.default_image = None;
+        args.clear_default_image = false;
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![
+                    sample_repository_info(&args.name),
+                ]));
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/metis")
+                .json_body(json!({
+                    "remote_url": "https://example.com/metis.git",
+                    "default_branch": null,
+                    "default_image": "ghcr.io/dourolabs/metis:latest"
+                }));
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
+                    args.name.clone(),
+                    Repository::new(
+                        "https://example.com/metis.git".to_string(),
+                        None,
+                        Some("ghcr.io/dourolabs/metis:latest".to_string()),
+                    ),
+                )));
+        });
+        let client = mock_client(&server);
+
+        let repository = update_repository(&client, args).await.unwrap();
+
+        assert_eq!(repository.repository.default_branch, None);
+        assert_eq!(
+            repository.repository.default_image,
+            Some("ghcr.io/dourolabs/metis:latest".to_string())
+        );
+        list_mock.assert();
+        update_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn update_repository_clear_default_image_preserves_default_branch() {
+        let mut args = sample_update_args();
+        args.remote_url = None;
+        args.default_branch = None;
+        args.clear_default_branch = false;
+        args.default_image = None;
+        args.clear_default_image = true;
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![
+                    sample_repository_info(&args.name),
+                ]));
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/metis")
+                .json_body(json!({
+                    "remote_url": "https://example.com/metis.git",
+                    "default_branch": "main",
+                    "default_image": null
+                }));
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
+                    args.name.clone(),
+                    Repository::new(
+                        "https://example.com/metis.git".to_string(),
+                        Some("main".to_string()),
+                        None,
+                    ),
+                )));
+        });
+        let client = mock_client(&server);
+
+        let repository = update_repository(&client, args).await.unwrap();
+
+        assert_eq!(
+            repository.repository.default_branch,
+            Some("main".to_string())
+        );
+        assert_eq!(repository.repository.default_image, None);
+        list_mock.assert();
         update_mock.assert();
     }
 
