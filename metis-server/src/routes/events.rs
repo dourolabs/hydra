@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
 use metis_common::{
     api::v1::{
-        documents::DocumentVersionRecord,
+        documents::{DocumentSummaryRecord, DocumentVersionRecord},
         error::ApiError,
         events::{
             EntityEventData, EventsQuery, HeartbeatEventData, LAST_EVENT_ID_HEADER,
@@ -360,14 +360,15 @@ async fn serialize_entity(
         }
         MutationPayload::Document { new, .. } => {
             let api_doc: metis_common::api::v1::documents::Document = new.clone().into();
-            let record = DocumentVersionRecord::new(
+            let full_record = DocumentVersionRecord::new(
                 entity_id.parse().ok()?,
                 version,
                 timestamp,
                 api_doc,
                 Some(payload.actor().clone()),
             );
-            serde_json::to_value(record).ok()?
+            let summary_record = DocumentSummaryRecord::from(&full_record);
+            serde_json::to_value(summary_record).ok()?
         }
     };
     Some(value)

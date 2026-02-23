@@ -5,7 +5,7 @@ import type {
   IssueSummaryRecord,
   JobSummaryRecord,
   PatchSummaryRecord,
-  DocumentVersionRecord,
+  DocumentSummaryRecord,
   ListIssuesResponse,
   ListJobsResponse,
   ListPatchesResponse,
@@ -37,18 +37,6 @@ const BASE_BACKOFF_MS = 1_000;
 
 interface VersionedRecord {
   version: number | bigint;
-}
-
-/** Version-guarded set on an individual entity cache key. */
-function setVersioned<T extends VersionedRecord>(
-  qc: QueryClient,
-  key: readonly unknown[],
-  record: T,
-) {
-  qc.setQueryData<T>(key, (old) => {
-    if (old && old.version > record.version) return old;
-    return record;
-  });
 }
 
 /**
@@ -108,8 +96,8 @@ const wrapPatches = (items: PatchSummaryRecord[]): ListPatchesResponse => ({ pat
 const patchRecordId = (r: PatchSummaryRecord) => r.patch_id;
 
 const docList = (r: ListDocumentsResponse) => r.documents;
-const wrapDocs = (items: DocumentVersionRecord[]): ListDocumentsResponse => ({ documents: items });
-const docRecordId = (r: DocumentVersionRecord) => r.document_id;
+const wrapDocs = (items: DocumentSummaryRecord[]): ListDocumentsResponse => ({ documents: items });
+const docRecordId = (r: DocumentSummaryRecord) => r.document_id;
 
 /**
  * SSE hook that connects to the BFF /api/v1/events endpoint, listens for
@@ -197,8 +185,9 @@ export function useSSE(): SSEConnectionState {
           queryClient.removeQueries({ queryKey: ["document", entity_id] });
           removeFromList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id);
         } else {
-          const record = entity as unknown as DocumentVersionRecord;
-          setVersioned(queryClient, ["document", entity_id], record);
+          const record = entity as unknown as DocumentSummaryRecord;
+          // Invalidate the detail cache since SSE now carries summary data only
+          queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
           upsertInList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id, record);
         }
       }

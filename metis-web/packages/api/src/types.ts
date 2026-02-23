@@ -25,6 +25,8 @@ export type { DeleteRepositoryResponse } from "./generated/DeleteRepositoryRespo
 export type { Document } from "./generated/Document";
 export type { DocumentId } from "./generated/DocumentId";
 export type { DocumentPath } from "./generated/DocumentPath";
+export type { DocumentSummary } from "./generated/DocumentSummary";
+export type { DocumentSummaryRecord } from "./generated/DocumentSummaryRecord";
 export type { DocumentVersionRecord } from "./generated/DocumentVersionRecord";
 export type { EnqueueMergePatchRequest } from "./generated/EnqueueMergePatchRequest";
 export type { EntityEventData } from "./generated/EntityEventData";

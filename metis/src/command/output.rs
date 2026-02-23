@@ -5,7 +5,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::ValueEnum;
 use metis_common::{
     agents::AgentRecord,
-    documents::DocumentVersionRecord,
+    documents::{DocumentSummaryRecord, DocumentVersionRecord},
     issues::{Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord},
     jobs::{JobSummary, JobSummaryRecord, JobVersionRecord, Task},
     patches::{PatchStatus, PatchSummaryRecord, PatchVersionRecord},
@@ -165,6 +165,17 @@ pub fn render_document_records(
         ResolvedOutputFormat::Pretty => {
             render_document_records_pretty(documents, full_output, writer)
         }
+    }
+}
+
+pub fn render_document_summary_records(
+    format: ResolvedOutputFormat,
+    documents: &[DocumentSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => render_document_summary_records_jsonl(documents, writer),
+        ResolvedOutputFormat::Pretty => render_document_summary_records_pretty(documents, writer),
     }
 }
 
@@ -630,6 +641,49 @@ fn render_document_records_jsonl(
     for document in documents {
         serde_json::to_writer(&mut *writer, document)?;
         writer.write_all(b"\n")?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn render_document_summary_records_jsonl(
+    documents: &[DocumentSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    for document in documents {
+        serde_json::to_writer(&mut *writer, document)?;
+        writer.write_all(b"\n")?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn render_document_summary_records_pretty(
+    documents: &[DocumentSummaryRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    if documents.is_empty() {
+        writeln!(writer, "No documents found.")?;
+        writer.flush()?;
+        return Ok(());
+    }
+
+    for (index, record) in documents.iter().enumerate() {
+        writeln!(writer, "Document {}", record.document_id)?;
+        writeln!(writer, "Title: {}", record.document.title)?;
+        let path = record.document.path.as_deref().unwrap_or("-");
+        writeln!(writer, "Path: {path}")?;
+        let created_by = record
+            .document
+            .created_by
+            .as_ref()
+            .map(|id| id.as_ref())
+            .unwrap_or("-");
+        writeln!(writer, "Created by: {created_by}")?;
+
+        if index + 1 < documents.len() {
+            writeln!(writer)?;
+        }
     }
     writer.flush()?;
     Ok(())
