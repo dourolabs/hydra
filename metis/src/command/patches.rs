@@ -21,9 +21,9 @@ use serde::Serialize;
 
 use crate::git;
 use crate::git::{
-    apply_patch, current_branch, diff_commit_range as git_diff_commit_range,
-    fetch_remote as git_fetch_remote, has_uncommitted_changes as git_has_uncommitted_changes,
-    push_branch, push_to_ref,
+    apply_patch, current_branch, delete_local_branch as git_delete_local_branch,
+    diff_commit_range as git_diff_commit_range, fetch_remote as git_fetch_remote,
+    has_uncommitted_changes as git_has_uncommitted_changes, push_branch, push_to_ref,
     resolve_commit_range_from_merge_base as git_resolve_commit_range_from_merge_base,
     squash_merge_onto as git_squash_merge_onto, PushError,
 };
@@ -817,6 +817,11 @@ async fn merge_patch(
              The base branch was updated by concurrent pushes between each merge and push attempt.\n\
              Please retry: metis patches merge {patch_id}"
         );
+    }
+
+    // Clean up the temporary squash-merge branch (best-effort).
+    if let Err(err) = git_delete_local_branch(&repo_root, &merge_branch) {
+        eprintln!("Warning: failed to clean up temporary branch '{merge_branch}': {err}");
     }
 
     // 8. Update the patch status to Merged.
