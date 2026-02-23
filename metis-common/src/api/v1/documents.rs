@@ -16,6 +16,8 @@ pub struct Document {
     pub created_by: Option<TaskId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub creation_timestamp: Option<DateTime<Utc>>,
 }
 
 impl Document {
@@ -33,6 +35,7 @@ impl Document {
             path,
             created_by,
             deleted,
+            creation_timestamp: None,
         })
     }
 }
@@ -164,6 +167,8 @@ pub struct DocumentSummary {
     pub created_by: Option<TaskId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub creation_timestamp: Option<DateTime<Utc>>,
 }
 
 impl From<&Document> for DocumentSummary {
@@ -173,6 +178,7 @@ impl From<&Document> for DocumentSummary {
             path: doc.path.clone(),
             created_by: doc.created_by.clone(),
             deleted: doc.deleted,
+            creation_timestamp: doc.creation_timestamp,
         }
     }
 }

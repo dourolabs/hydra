@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use metis_common::api::v1 as api;
 use metis_common::{DocumentPath, TaskId};
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,8 @@ pub struct Document {
     pub created_by: Option<TaskId>,
     #[serde(default)]
     pub deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub creation_timestamp: Option<DateTime<Utc>>,
 }
 
 impl From<api::documents::Document> for Document {
@@ -23,6 +26,7 @@ impl From<api::documents::Document> for Document {
             path: value.path,
             created_by: value.created_by,
             deleted: value.deleted,
+            creation_timestamp: value.creation_timestamp,
         }
     }
 }
@@ -30,13 +34,15 @@ impl From<api::documents::Document> for Document {
 impl From<Document> for api::documents::Document {
     fn from(value: Document) -> Self {
         // Path is already a valid DocumentPath, so re-parsing via new() cannot fail.
-        api::documents::Document::new(
+        let mut doc = api::documents::Document::new(
             value.title,
             value.body_markdown,
             value.path.map(|p| p.to_string()),
             value.created_by,
             value.deleted,
         )
-        .expect("domain Document always has a valid path")
+        .expect("domain Document always has a valid path");
+        doc.creation_timestamp = value.creation_timestamp;
+        doc
     }
 }

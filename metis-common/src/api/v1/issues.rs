@@ -449,6 +449,8 @@ pub struct Issue {
     pub patches: Vec<PatchId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub creation_timestamp: Option<DateTime<Utc>>,
 }
 
 impl Issue {
@@ -478,6 +480,7 @@ impl Issue {
             dependencies,
             patches,
             deleted,
+            creation_timestamp: None,
         }
     }
 }
@@ -957,6 +960,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            creation_timestamp: None,
         };
 
         let value = serde_json::to_value(&issue).expect("issue should serialize");
@@ -984,6 +988,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            creation_timestamp: None,
         };
 
         let actor = ActorRef::Authenticated {
@@ -1012,6 +1017,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            creation_timestamp: None,
         };
 
         let record = IssueVersionRecord::new(issue_id, 1, chrono::Utc::now(), issue, None);
@@ -1059,6 +1065,7 @@ mod tests {
             )],
             patches: vec!["p-abcd".parse().unwrap()],
             deleted: false,
+            creation_timestamp: None,
         }
     }
 

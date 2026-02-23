@@ -3,6 +3,7 @@ use crate::{
     domain::issues::{Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, TodoItem},
     store::{ReadOnlyStore, Status, StoreError},
 };
+use chrono::Utc;
 use metis_common::{
     TaskId, VersionNumber, Versioned, api::v1 as api, api::v1::issues::SearchIssuesQuery,
     issues::IssueId,
@@ -138,7 +139,7 @@ impl AppState {
         actor: ActorRef,
     ) -> Result<(IssueId, VersionNumber), UpsertIssueError> {
         let api::issues::UpsertIssueRequest { issue, job_id, .. } = request;
-        let issue: Issue = issue.into();
+        let mut issue: Issue = issue.into();
 
         let store = self.store.as_ref();
 
@@ -147,6 +148,22 @@ impl AppState {
                 if job_id.is_some() {
                     return Err(UpsertIssueError::JobIdProvidedForUpdate);
                 }
+
+                // Preserve creation_timestamp from the existing version.
+                let existing = store
+                    .get_issue(&id, true)
+                    .await
+                    .map_err(|source| match source {
+                        StoreError::IssueNotFound(_) => UpsertIssueError::IssueNotFound {
+                            issue_id: id.clone(),
+                            source,
+                        },
+                        other => UpsertIssueError::Store {
+                            source: other,
+                            issue_id: Some(id.clone()),
+                        },
+                    })?;
+                issue.creation_timestamp = existing.item.creation_timestamp;
 
                 let updated_issue = issue.clone();
 
@@ -216,6 +233,7 @@ impl AppState {
                         .await?;
                 }
 
+                issue.creation_timestamp = Some(Utc::now());
                 let (id, version) = self
                     .store
                     .add_issue_with_actor(issue, actor)

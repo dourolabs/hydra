@@ -72,7 +72,10 @@ async fn documents_can_be_created_listed_and_retrieved() -> anyhow::Result<()> {
         .json()
         .await?;
     assert_eq!(fetched.document_id, created.document_id);
-    assert_eq!(fetched.document, document);
+    assert!(fetched.document.creation_timestamp.is_some());
+    let mut expected_document = document;
+    expected_document.creation_timestamp = fetched.document.creation_timestamp;
+    assert_eq!(fetched.document, expected_document);
 
     let list: ListDocumentsResponse = client
         .get(format!("{}/v1/documents", server.base_url()))

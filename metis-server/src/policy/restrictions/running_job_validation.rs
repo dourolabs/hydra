@@ -112,6 +112,7 @@ mod tests {
             path: None,
             created_by,
             deleted: false,
+            creation_timestamp: None,
         }
     }
 

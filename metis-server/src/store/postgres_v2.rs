@@ -232,8 +232,8 @@ impl PostgresStoreV2 {
             .map_err(|e| StoreError::Internal(format!("failed to serialize patches: {e}")))?;
 
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, creation_timestamp)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -250,6 +250,7 @@ impl PostgresStoreV2 {
             .bind(&patches_json)
             .bind(issue.deleted)
             .bind(actor)
+            .bind(issue.creation_timestamp)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -286,6 +287,7 @@ impl PostgresStoreV2 {
             dependencies,
             patches,
             deleted: row.deleted,
+            creation_timestamp: row.creation_timestamp,
         })
     }
 
@@ -326,8 +328,8 @@ impl PostgresStoreV2 {
             .transpose()?;
 
         let query = format!(
-            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
+            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, creation_timestamp)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -347,6 +349,7 @@ impl PostgresStoreV2 {
             .bind(patch.creator.as_str())
             .bind(patch.base_branch.as_deref())
             .bind(actor)
+            .bind(patch.creation_timestamp)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -405,6 +408,7 @@ impl PostgresStoreV2 {
             branch_name: row.branch_name.clone(),
             commit_range,
             base_branch: row.base_branch.clone(),
+            creation_timestamp: row.creation_timestamp,
         })
     }
 
@@ -564,8 +568,8 @@ impl PostgresStoreV2 {
         })?;
 
         let query = format!(
-            "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, created_by, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+            "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, created_by, deleted, actor, creation_timestamp)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -576,6 +580,7 @@ impl PostgresStoreV2 {
             .bind(document.created_by.as_ref().map(|t| t.as_ref()))
             .bind(document.deleted)
             .bind(actor)
+            .bind(document.creation_timestamp)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -608,6 +613,7 @@ impl PostgresStoreV2 {
             path,
             created_by,
             deleted: row.deleted,
+            creation_timestamp: row.creation_timestamp,
         })
     }
 
@@ -851,6 +857,7 @@ struct IssueRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
+    creation_timestamp: Option<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -875,6 +882,7 @@ struct PatchRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
+    creation_timestamp: Option<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -914,6 +922,7 @@ struct DocumentRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
+    creation_timestamp: Option<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2657,6 +2666,7 @@ mod tests {
             path: Some(path.parse().unwrap()),
             created_by,
             deleted: false,
+            creation_timestamp: None,
         }
     }
 
@@ -3280,6 +3290,7 @@ mod tests {
             path: Some("docs/test.md".parse().unwrap()),
             created_by: None,
             deleted: false,
+            creation_timestamp: None,
         };
         let (doc_id, _) = store.add_document(doc, &ActorRef::test()).await.unwrap();
 
@@ -3290,6 +3301,7 @@ mod tests {
             path: Some("docs/test.md".parse().unwrap()),
             created_by: None,
             deleted: false,
+            creation_timestamp: None,
         };
         store
             .update_document(&doc_id, updated_doc, &ActorRef::test())

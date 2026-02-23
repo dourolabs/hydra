@@ -1,4 +1,5 @@
 use super::users::Username;
+use chrono::{DateTime, Utc};
 use metis_common::api::v1 as api;
 use metis_common::{IssueId, PatchId, RepoName};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -357,6 +358,8 @@ pub struct Issue {
     pub patches: Vec<PatchId>,
     #[serde(default)]
     pub deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub creation_timestamp: Option<DateTime<Utc>>,
 }
 
 impl Issue {
@@ -385,6 +388,7 @@ impl Issue {
             dependencies,
             patches,
             deleted: false,
+            creation_timestamp: None,
         }
     }
 }
@@ -697,13 +701,14 @@ impl From<api::issues::Issue> for Issue {
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
             patches: value.patches,
             deleted: value.deleted,
+            creation_timestamp: value.creation_timestamp,
         }
     }
 }
 
 impl From<Issue> for api::issues::Issue {
     fn from(value: Issue) -> Self {
-        api::issues::Issue::new(
+        let mut issue = api::issues::Issue::new(
             value.issue_type.into(),
             value.description,
             value.creator.into(),
@@ -715,7 +720,9 @@ impl From<Issue> for api::issues::Issue {
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
             value.deleted,
-        )
+        );
+        issue.creation_timestamp = value.creation_timestamp;
+        issue
     }
 }
 
@@ -782,6 +789,7 @@ mod tests {
             }],
             patches: vec![patch_id.clone()],
             deleted: false,
+            creation_timestamp: None,
         };
 
         let issue_json = serde_json::to_string(&issue).expect("should serialize to JSON");

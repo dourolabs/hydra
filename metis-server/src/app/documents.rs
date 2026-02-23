@@ -2,6 +2,7 @@ use crate::{
     domain::{actors::ActorRef, documents::Document},
     store::{ReadOnlyStore, Status, StoreError},
 };
+use chrono::Utc;
 use metis_common::{
     DocumentId, TaskId, VersionNumber, Versioned, api::v1::documents::SearchDocumentsQuery,
 };
@@ -91,7 +92,9 @@ impl AppState {
             Some(id) => {
                 let mut document = document;
                 // old_document is Some in update path
-                document.created_by = old_document.unwrap().created_by;
+                let old_doc = old_document.unwrap();
+                document.created_by = old_doc.created_by;
+                document.creation_timestamp = old_doc.creation_timestamp;
 
                 let version = self
                     .store
@@ -109,6 +112,8 @@ impl AppState {
                 Ok((id, version))
             }
             None => {
+                let mut document = document;
+                document.creation_timestamp = Some(Utc::now());
                 let created_by = document.created_by.clone();
                 let (document_id, version) = self
                     .store
@@ -184,6 +189,7 @@ mod tests {
             path: Some("docs/notes.md".parse().unwrap()),
             created_by: None,
             deleted: false,
+            creation_timestamp: None,
         };
 
         let result = state
@@ -201,6 +207,7 @@ mod tests {
             path: None,
             created_by: None,
             deleted: false,
+            creation_timestamp: None,
         };
 
         let result = state

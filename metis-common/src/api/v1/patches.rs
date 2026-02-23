@@ -242,6 +242,8 @@ pub struct Patch {
     /// additional commits since work on the patch began.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub creation_timestamp: Option<DateTime<Utc>>,
 }
 
 impl Patch {
@@ -277,6 +279,7 @@ impl Patch {
             branch_name,
             commit_range,
             base_branch,
+            creation_timestamp: None,
         }
     }
 }
@@ -644,6 +647,7 @@ mod tests {
                 "0000000000000000000000000000000000000002".parse().unwrap(),
             )),
             base_branch: Some("main".to_string()),
+            creation_timestamp: None,
         };
 
         let json = serde_json::to_string(&patch).unwrap();
@@ -714,6 +718,7 @@ mod tests {
                 "0000000000000000000000000000000000000002".parse().unwrap(),
             )),
             base_branch: Some("main".to_string()),
+            creation_timestamp: None,
         }
     }
 

@@ -212,6 +212,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            creation_timestamp: None,
         };
         let updated_issue = Issue {
             description: "Updated".to_string(),
@@ -266,6 +267,7 @@ mod tests {
             branch_name: None,
             commit_range: None,
             base_branch: None,
+            creation_timestamp: None,
         };
         let patch_v2 = Patch {
             title: "v2".to_string(),
@@ -310,6 +312,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
+            creation_timestamp: None,
         };
 
         let actor = ActorRef::Authenticated {

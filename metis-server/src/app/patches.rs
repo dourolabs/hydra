@@ -2,6 +2,7 @@ use crate::{
     domain::{actors::ActorRef, patches::Patch},
     store::{ReadOnlyStore, Status, StoreError},
 };
+use chrono::Utc;
 use metis_common::{
     PatchId, TaskId, VersionNumber, Versioned, api::v1 as api, api::v1::patches::SearchPatchesQuery,
 };
@@ -133,6 +134,7 @@ impl AppState {
                         })?;
 
                 patch.created_by = existing_patch.item.created_by;
+                patch.creation_timestamp = existing_patch.item.creation_timestamp;
                 if patch.github.is_none() {
                     patch.github = existing_patch.item.github.clone();
                 }
@@ -159,6 +161,7 @@ impl AppState {
                         .await?;
                 }
 
+                patch.creation_timestamp = Some(Utc::now());
                 let (id, version) = self
                     .store
                     .add_patch_with_actor(patch, actor)

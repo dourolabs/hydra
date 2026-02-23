@@ -69,6 +69,8 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
     // The test actor is a task worker whose creator is "test-creator", so the
     // route handler populates patch.creator from Actor.creator.
     expected_patch.creator = "test-creator".into();
+    assert!(fetched.patch.creation_timestamp.is_some());
+    expected_patch.creation_timestamp = fetched.patch.creation_timestamp;
     assert_eq!(fetched.patch, expected_patch);
     Ok(())
 }

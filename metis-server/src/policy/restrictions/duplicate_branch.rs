@@ -91,6 +91,7 @@ mod tests {
             base_branch: None,
             reviews: Vec::new(),
             deleted: false,
+            creation_timestamp: None,
         }
     }
 

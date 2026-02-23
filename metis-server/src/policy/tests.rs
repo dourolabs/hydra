@@ -67,6 +67,7 @@ fn dummy_document_payload() -> Arc<MutationPayload> {
             path: None,
             created_by: None,
             deleted: false,
+            creation_timestamp: None,
         },
         actor: ActorRef::test(),
     })
@@ -649,6 +650,7 @@ fn make_dummy_document() -> crate::domain::documents::Document {
         path: None,
         created_by: None,
         deleted: false,
+        creation_timestamp: None,
     }
 }
 
