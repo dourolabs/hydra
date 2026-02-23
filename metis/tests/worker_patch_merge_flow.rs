@@ -9,7 +9,7 @@ use metis_common::{
 use metis_server::domain::actors::ActorRef;
 use std::str::FromStr;
 
-/// Test that `metis patches merge <patch-id>` run as a worker rebases the patch
+/// Test that `metis patches merge <patch-id>` run as a worker squash merges the patch
 /// branch onto main, pushes the result to the remote, and marks the patch as
 /// Merged.
 #[tokio::test]
