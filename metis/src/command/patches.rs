@@ -36,7 +36,7 @@ use crate::{
 };
 #[derive(Subcommand, Debug)]
 pub enum PatchesCommand {
-    /// List or search patches.
+    /// List or search patches. Returns summary records without the full diff, description, or review contents; use `get` for complete details.
     List {
         /// Patch id to retrieve.
         #[arg(long = "id", value_name = "PATCH_ID")]
@@ -51,7 +51,7 @@ pub enum PatchesCommand {
         include_deleted: bool,
     },
 
-    /// Get a single patch by ID.
+    /// Get the full details of a single patch by ID. Returns the complete patch including diff, description, and reviews.
     Get {
         /// Patch ID to retrieve.
         #[arg(value_name = "PATCH_ID")]

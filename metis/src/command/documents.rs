@@ -27,9 +27,9 @@ use std::{
 
 #[derive(Debug, Subcommand)]
 pub enum DocumentsCommand {
-    /// List stored documents.
+    /// List stored documents. Returns summary records without the document body; use `get` for the full document.
     List(DocumentsListArgs),
-    /// Fetch a document by ID or path.
+    /// Get the full details of a document by ID or path. Returns the complete document including body content.
     Get {
         /// Document ID (e.g., d-abcdef) or path (e.g., docs/plan.md).
         #[arg(value_name = "ID_OR_PATH")]

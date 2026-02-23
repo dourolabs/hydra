@@ -57,7 +57,7 @@ pub enum JobsCommand {
         )]
         prompt: Vec<String>,
     },
-    /// List all Metis jobs in the configured namespace.
+    /// List all Metis jobs in the configured namespace. Returns summary records with a truncated prompt; use `get` for full details.
     List {
         /// Number of jobs to display (most recent first).
         #[arg(
@@ -71,7 +71,7 @@ pub enum JobsCommand {
         #[arg(long = "from", value_name = "ISSUE_ID")]
         spawned_from: Option<IssueId>,
     },
-    /// Get a single job by ID.
+    /// Get the full details of a single job by ID. Returns the complete job record including the full prompt, context, and configuration.
     Get {
         /// Job identifier returned by `metis jobs create` or `metis jobs list`.
         #[arg(value_name = "JOB_ID")]

@@ -36,7 +36,7 @@ use std::{
 
 #[derive(Debug, Subcommand)]
 pub enum IssueCommands {
-    /// List Metis issues.
+    /// List Metis issues. Returns summary records with truncated descriptions; use `get` or `describe` for complete details.
     List {
         /// Filter by issue ID.
         #[arg(long, value_name = "ISSUE_ID", conflicts_with = "query")]
@@ -307,7 +307,7 @@ pub enum IssueCommands {
         #[arg(value_name = "ISSUE_ID")]
         id: IssueId,
     },
-    /// Get a single issue by ID (alias for `list --id <issue-id>`).
+    /// Get the full details of a single issue by ID. Returns all fields including the complete description, progress notes, and job settings that are omitted from the summary returned by `list`.
     Get {
         /// Issue ID to get.
         #[arg(value_name = "ISSUE_ID")]
