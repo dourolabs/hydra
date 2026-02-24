@@ -1,5 +1,5 @@
 use crate::api::v1::users::Username;
-use crate::ids::TaskId;
+use crate::ids::{IssueId, TaskId};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -9,6 +9,7 @@ use std::str::FromStr;
 pub enum ActorId {
     Username(Username),
     Task(TaskId),
+    Issue(IssueId),
 }
 
 /// A typed reference to who performed an operation.
@@ -38,6 +39,7 @@ impl ActorRef {
             ActorRef::Authenticated { actor_id } => match actor_id {
                 ActorId::Username(username) => username.to_string(),
                 ActorId::Task(task_id) => task_id.to_string(),
+                ActorId::Issue(issue_id) => issue_id.to_string(),
             },
             ActorRef::System {
                 worker_name,
@@ -47,6 +49,7 @@ impl ActorRef {
                     let behalf_name = match behalf {
                         ActorId::Username(username) => username.to_string(),
                         ActorId::Task(task_id) => task_id.to_string(),
+                        ActorId::Issue(issue_id) => issue_id.to_string(),
                     };
                     format!("{worker_name} (on behalf of {behalf_name})")
                 } else {
@@ -88,6 +91,14 @@ pub fn parse_actor_name(name: &str) -> Option<ActorId> {
             return None;
         }
         return Some(ActorId::Username(Username::from(username)));
+    }
+
+    if let Some(rest) = name.strip_prefix("a-") {
+        if rest.is_empty() {
+            return None;
+        }
+        let issue_id = IssueId::from_str(rest).ok()?;
+        return Some(ActorId::Issue(issue_id));
     }
 
     if let Some(task_id) = name.strip_prefix("w-") {
@@ -199,6 +210,36 @@ mod tests {
         let task_id = TaskId::from_str("t-abcdef").unwrap();
         let result = parse_actor_name("w-t-abcdef");
         assert_eq!(result, Some(ActorId::Task(task_id)));
+    }
+
+    #[test]
+    fn actor_id_issue_serialization_round_trip() {
+        let issue_id = IssueId::from_str("i-abcdef").unwrap();
+        let actor_id = ActorId::Issue(issue_id);
+        let json = serde_json::to_string(&actor_id).unwrap();
+        let deserialized: ActorId = serde_json::from_str(&json).unwrap();
+        assert_eq!(actor_id, deserialized);
+    }
+
+    #[test]
+    fn parse_actor_name_issue() {
+        let issue_id = IssueId::from_str("i-abcdef").unwrap();
+        let result = parse_actor_name("a-i-abcdef");
+        assert_eq!(result, Some(ActorId::Issue(issue_id)));
+    }
+
+    #[test]
+    fn parse_actor_name_empty_issue() {
+        assert_eq!(parse_actor_name("a-"), None);
+    }
+
+    #[test]
+    fn actor_ref_display_name_issue() {
+        let issue_id = IssueId::from_str("i-abcdef").unwrap();
+        let actor_ref = ActorRef::Authenticated {
+            actor_id: ActorId::Issue(issue_id),
+        };
+        assert_eq!(actor_ref.display_name(), "i-abcdef");
     }
 
     #[test]

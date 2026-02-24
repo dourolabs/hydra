@@ -26,7 +26,7 @@ pub use api::v1::{
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
-pub use ids::{DocumentId, IssueId, MetisId, MetisIdError, PatchId, TaskId};
+pub use ids::{DocumentId, IssueId, MessageId, MetisId, MetisIdError, PatchId, TaskId};
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use repo_name::{RepoName, RepoNameError};
 pub use repositories::{
