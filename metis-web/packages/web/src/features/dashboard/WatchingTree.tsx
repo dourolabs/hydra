@@ -330,8 +330,8 @@ export function WatchingTree({
     // Keep full (unpruned) roots so that summarizeSubtree sees all children.
     // Use pruneTree only to decide whether the root has any active nodes.
     // Hide hard-blocked root issues entirely.
-    return tree.filter((root) => !root.hardBlocked && pruneTree(root, jobsByIssue) !== null);
-  }, [issues, jobsByIssue]);
+    return tree.filter((root) => !root.hardBlocked && root.issue.issue.creator === username && pruneTree(root, jobsByIssue) !== null);
+  }, [issues, jobsByIssue, username]);
 
   if (watchingRoots.length === 0) {
     return <p className={styles.empty}>No issues being watched.</p>;
