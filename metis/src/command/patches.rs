@@ -4,6 +4,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::{Args, Subcommand};
 use metis_common::{
+    activity_log_for_patch_versions,
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     issues::{IssueId, UpsertIssueRequest},
     jobs::BundleSpec,
@@ -15,7 +16,7 @@ use metis_common::{
     review_utils::{find_last_commit_range_change_timestamp, has_approved_non_dismissed_review},
     users::Username,
     whoami::ActorIdentity,
-    PatchId, RelativeVersionNumber, RepoName, TaskId,
+    PatchId, RelativeVersionNumber, RepoName, TaskId, Versioned,
 };
 use serde::Serialize;
 
@@ -29,8 +30,12 @@ use crate::git::{
 };
 use crate::{
     client::MetisClientInterface,
-    command::output::{
-        render_patch_records, render_patch_summary_records, CommandContext, ResolvedOutputFormat,
+    command::{
+        changelog::{summarize_activity_log, write_changelog_pretty},
+        output::{
+            render_patch_records, render_patch_summary_records, CommandContext,
+            ResolvedOutputFormat,
+        },
     },
 };
 #[derive(Subcommand, Debug)]
@@ -176,6 +181,16 @@ pub enum PatchesCommand {
         #[command(subcommand)]
         command: PatchAssetsCommand,
     },
+    /// Show changelog for a patch (most recent first).
+    Changelog {
+        /// Patch ID to show changelog for.
+        #[arg(value_name = "PATCH_ID")]
+        id: PatchId,
+
+        /// Maximum number of changelog entries to show.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Delete a patch.
     Delete {
         /// Patch ID to delete.
@@ -263,6 +278,9 @@ pub async fn run(
         PatchesCommand::Merge { patch_id, base } => merge_patch(client, patch_id, base).await,
         PatchesCommand::Assets { command } => {
             patch_assets(client, command, context.output_format).await
+        }
+        PatchesCommand::Changelog { id, limit } => {
+            changelog_patch(client, id, context.output_format, limit).await
         }
         PatchesCommand::Delete { id } => {
             let deleted = client
@@ -999,6 +1017,44 @@ async fn review_patch(
         .with_context(|| format!("failed to update patch '{id}' with review"))?;
 
     println!("{}", response.patch_id);
+    Ok(())
+}
+
+async fn changelog_patch(
+    client: &dyn MetisClientInterface,
+    id: PatchId,
+    output_format: ResolvedOutputFormat,
+    limit: usize,
+) -> Result<()> {
+    let response = client
+        .list_patch_versions(&id)
+        .await
+        .with_context(|| format!("failed to fetch versions for patch '{id}'"))?;
+    let versions: Vec<Versioned<Patch>> = response
+        .versions
+        .into_iter()
+        .map(|record| Versioned::new(record.patch, record.version, record.timestamp))
+        .collect();
+    let entries = activity_log_for_patch_versions(id, &versions);
+    let mut summaries = summarize_activity_log(&entries)?;
+    summaries.reverse();
+    summaries.truncate(limit);
+
+    let mut buffer = Vec::new();
+    match output_format {
+        ResolvedOutputFormat::Pretty => {
+            write_changelog_pretty(&summaries, &mut buffer)?;
+        }
+        ResolvedOutputFormat::Jsonl => {
+            for entry in &summaries {
+                serde_json::to_writer(&mut buffer, entry)?;
+                buffer.write_all(b"\n")?;
+            }
+        }
+    }
+    std::io::stdout().write_all(&buffer)?;
+    std::io::stdout().flush()?;
+
     Ok(())
 }
 
