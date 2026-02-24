@@ -123,7 +123,7 @@ export function DashboardPage() {
     }
   }, [selectedId, issues, selectedExists, setSelectedId]);
 
-  const watchingCount = useWatchingCount(issues, jobsByIssue);
+  const watchingCount = useWatchingCount(issues, jobsByIssue, username);
 
   const tabs = useMemo(
     () => [
