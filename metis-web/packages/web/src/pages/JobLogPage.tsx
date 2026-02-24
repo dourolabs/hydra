@@ -1,12 +1,19 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Badge, Spinner } from "@metis/ui";
+import { Badge, Spinner, Tabs } from "@metis/ui";
 import { jobToBadgeStatus } from "../utils/statusMapping";
 import { getRuntime } from "../utils/time";
 import { useJob } from "../features/jobs/useJob";
 import { JobLogViewer } from "../features/jobs/JobLogViewer";
+import { JobSettings } from "../features/jobs/JobSettings";
 import { ApiError } from "../api/client";
 import { Breadcrumbs } from "../layout/Breadcrumbs";
 import styles from "./JobLogPage.module.css";
+
+const TABS = [
+  { id: "logs", label: "Logs" },
+  { id: "settings", label: "Settings" },
+];
 
 export function JobLogPage() {
   const { issueId, jobId } = useParams<{
@@ -14,6 +21,7 @@ export function JobLogPage() {
     jobId: string;
   }>();
   const { data: record, isLoading, error } = useJob(jobId ?? "");
+  const [activeTab, setActiveTab] = useState("logs");
 
   return (
     <div className={styles.page}>
@@ -77,8 +85,14 @@ export function JobLogPage() {
             </div>
           </div>
 
-          {/* Log viewer */}
-          <JobLogViewer jobId={record.job_id} status={record.task.status} />
+          {/* Tab bar */}
+          <Tabs tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab} />
+
+          {/* Tab content */}
+          {activeTab === "logs" && (
+            <JobLogViewer jobId={record.job_id} status={record.task.status} />
+          )}
+          {activeTab === "settings" && <JobSettings task={record.task} />}
         </>
       )}
     </div>
