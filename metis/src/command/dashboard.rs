@@ -6551,10 +6551,11 @@ mod tests {
 
     #[test]
     fn issue_version_to_record_preserves_progress() {
+        let now = Utc::now();
         let version_record = IssueVersionRecord::new(
             issue_id("i-progress"),
             1,
-            Utc::now(),
+            now,
             Issue::new(
                 IssueType::Task,
                 "test issue".to_string(),
@@ -6569,6 +6570,7 @@ mod tests {
                 false,
             ),
             None,
+            now,
         );
 
         let record = issue_version_to_record(version_record).expect("should produce a record");
@@ -6580,10 +6582,11 @@ mod tests {
 
     #[test]
     fn issue_to_record_summary_has_empty_progress() {
+        let now = Utc::now();
         let summary_record = IssueSummaryRecord::new(
             issue_id("i-summary"),
             1,
-            Utc::now(),
+            now,
             metis_common::issues::IssueSummary::from(&Issue::new(
                 IssueType::Task,
                 "test issue".to_string(),
@@ -6598,6 +6601,7 @@ mod tests {
                 false,
             )),
             None,
+            now,
         );
 
         let record = issue_to_record(summary_record).expect("should produce a record");

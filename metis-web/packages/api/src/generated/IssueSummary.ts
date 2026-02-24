@@ -6,4 +6,10 @@ import type { PatchId } from "./PatchId";
 import type { TodoItem } from "./TodoItem";
 import type { Username } from "./Username";
 
+/**
+ * Lightweight summary of an issue for list views.
+ *
+ * Excludes `progress`, `job_settings`, and the full `description` body.
+ * The `description` field is truncated to the first line (max 200 chars).
+ */
 export type IssueSummary = { type: IssueType, description: string, creator: Username, status: IssueStatus, assignee?: string | null, dependencies: Array<IssueDependency>, patches: Array<PatchId>, todo_list?: Array<TodoItem>, deleted?: boolean, };

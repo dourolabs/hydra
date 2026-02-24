@@ -90,7 +90,8 @@ impl MemoryStore {
         version: VersionNumber,
         actor: &ActorRef,
     ) -> Versioned<T> {
-        Versioned::with_actor(item, version, Utc::now(), actor.clone())
+        let now = Utc::now();
+        Versioned::with_actor(item, version, now, actor.clone(), now)
     }
 
     fn versioned_at_with_actor<T>(
@@ -99,7 +100,7 @@ impl MemoryStore {
         timestamp: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Versioned<T> {
-        Versioned::with_actor(item, version, timestamp, actor.clone())
+        Versioned::with_actor(item, version, timestamp, actor.clone(), timestamp)
     }
 
     /// Returns true if the patch matches the search term.
@@ -279,7 +280,8 @@ impl MemoryStore {
                 continue;
             }
             if let Some(entry) = self.documents.get(id) {
-                if let Some(latest) = Self::latest_versioned(entry.value()) {
+                if let Some(mut latest) = Self::latest_versioned(entry.value()) {
+                    latest.creation_time = entry.value()[0].timestamp;
                     documents.push((id.clone(), latest));
                 }
             }
@@ -366,24 +368,32 @@ impl ReadOnlyStore for MemoryStore {
         id: &IssueId,
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
-        let versioned = self
+        let entry = self
             .issues
             .get(id)
-            .and_then(|entry| Self::latest_versioned(entry.value()))
+            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
+        let mut versioned = Self::latest_versioned(entry.value())
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
 
         if !include_deleted && versioned.item.deleted {
             return Err(StoreError::IssueNotFound(id.clone()));
         }
 
+        versioned.creation_time = entry.value()[0].timestamp;
         Ok(versioned)
     }
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
-        self.issues
+        let entry = self
+            .issues
             .get(id)
-            .map(|entry| entry.value().clone())
-            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
+            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
+        let creation_time = entry.value()[0].timestamp;
+        let mut versions = entry.value().clone();
+        for v in &mut versions {
+            v.creation_time = creation_time;
+        }
+        Ok(versions)
     }
 
     async fn list_issues(
@@ -408,7 +418,7 @@ impl ReadOnlyStore for MemoryStore {
             .issues
             .iter()
             .filter_map(|entry| {
-                let latest = Self::latest_versioned(entry.value())?;
+                let mut latest = Self::latest_versioned(entry.value())?;
                 if !include_deleted && latest.item.deleted {
                     return None;
                 }
@@ -423,6 +433,7 @@ impl ReadOnlyStore for MemoryStore {
                 ) {
                     return None;
                 }
+                latest.creation_time = entry.value()[0].timestamp;
                 Some((issue_id.clone(), latest))
             })
             .collect())
@@ -518,22 +529,30 @@ impl ReadOnlyStore for MemoryStore {
         id: &PatchId,
         include_deleted: bool,
     ) -> Result<Versioned<Patch>, StoreError> {
-        let versioned = self
+        let entry = self
             .patches
             .get(id)
-            .and_then(|entry| Self::latest_versioned(entry.value()))
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
+        let mut versioned = Self::latest_versioned(entry.value())
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
         if !include_deleted && versioned.item.deleted {
             return Err(StoreError::PatchNotFound(id.clone()));
         }
+        versioned.creation_time = entry.value()[0].timestamp;
         Ok(versioned)
     }
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
-        self.patches
+        let entry = self
+            .patches
             .get(id)
-            .map(|entry| entry.value().clone())
-            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
+        let creation_time = entry.value()[0].timestamp;
+        let mut versions = entry.value().clone();
+        for v in &mut versions {
+            v.creation_time = creation_time;
+        }
+        Ok(versions)
     }
 
     async fn list_patches(
@@ -554,7 +573,7 @@ impl ReadOnlyStore for MemoryStore {
             .patches
             .iter()
             .filter_map(|entry| {
-                let latest = Self::latest_versioned(entry.value())?;
+                let mut latest = Self::latest_versioned(entry.value())?;
                 if !include_deleted && latest.item.deleted {
                     return None;
                 }
@@ -569,6 +588,7 @@ impl ReadOnlyStore for MemoryStore {
                 if !Self::patch_matches(search_term.as_deref(), entry.key(), &latest.item) {
                     return None;
                 }
+                latest.creation_time = entry.value()[0].timestamp;
                 Some((entry.key().clone(), latest))
             })
             .collect())
@@ -590,14 +610,16 @@ impl ReadOnlyStore for MemoryStore {
         id: &DocumentId,
         include_deleted: bool,
     ) -> Result<Versioned<Document>, StoreError> {
-        let versioned = self
+        let entry = self
             .documents
             .get(id)
-            .and_then(|entry| Self::latest_versioned(entry.value()))
+            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+        let mut versioned = Self::latest_versioned(entry.value())
             .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
         if !include_deleted && versioned.item.deleted {
             return Err(StoreError::DocumentNotFound(id.clone()));
         }
+        versioned.creation_time = entry.value()[0].timestamp;
         Ok(versioned)
     }
 
@@ -605,10 +627,16 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         id: &DocumentId,
     ) -> Result<Vec<Versioned<Document>>, StoreError> {
-        self.documents
+        let entry = self
+            .documents
             .get(id)
-            .map(|entry| entry.value().clone())
-            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))
+            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+        let creation_time = entry.value()[0].timestamp;
+        let mut versions = entry.value().clone();
+        for v in &mut versions {
+            v.creation_time = creation_time;
+        }
+        Ok(versions)
     }
 
     async fn list_documents(
@@ -627,7 +655,8 @@ impl ReadOnlyStore for MemoryStore {
                 self.documents
                     .iter()
                     .filter_map(|entry| {
-                        let latest = Self::latest_versioned(entry.value())?;
+                        let mut latest = Self::latest_versioned(entry.value())?;
+                        latest.creation_time = entry.value()[0].timestamp;
                         Some((entry.key().clone(), latest))
                     })
                     .collect()

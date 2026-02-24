@@ -48,6 +48,7 @@ pub struct DocumentVersionRecord {
     pub document: Document,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
+    pub creation_time: DateTime<Utc>,
 }
 
 impl DocumentVersionRecord {
@@ -57,6 +58,7 @@ impl DocumentVersionRecord {
         timestamp: DateTime<Utc>,
         document: Document,
         actor: Option<ActorRef>,
+        creation_time: DateTime<Utc>,
     ) -> Self {
         Self {
             document_id,
@@ -64,6 +66,7 @@ impl DocumentVersionRecord {
             timestamp,
             document,
             actor,
+            creation_time,
         }
     }
 }
@@ -189,6 +192,7 @@ pub struct DocumentSummaryRecord {
     pub document: DocumentSummary,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
+    pub creation_time: DateTime<Utc>,
 }
 
 impl From<&DocumentVersionRecord> for DocumentSummaryRecord {
@@ -199,6 +203,7 @@ impl From<&DocumentVersionRecord> for DocumentSummaryRecord {
             timestamp: record.timestamp,
             document: DocumentSummary::from(&record.document),
             actor: record.actor.clone(),
+            creation_time: record.creation_time,
         }
     }
 }
@@ -353,7 +358,8 @@ mod tests {
         let doc =
             Document::new("Title".to_string(), "body".to_string(), None, None, false).unwrap();
         let doc_id = DocumentId::new();
-        let record = DocumentVersionRecord::new(doc_id.clone(), 2, chrono::Utc::now(), doc, None);
+        let ts = chrono::Utc::now();
+        let record = DocumentVersionRecord::new(doc_id.clone(), 2, ts, doc, None, ts);
         let summary_record = DocumentSummaryRecord::from(&record);
         assert_eq!(summary_record.document_id, doc_id);
         assert_eq!(summary_record.version, 2);

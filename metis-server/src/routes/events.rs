@@ -318,23 +318,47 @@ async fn serialize_entity(
         MutationPayload::Issue { new, .. } => {
             let api_issue: metis_common::api::v1::issues::Issue = new.clone().into();
             let summary = IssueSummary::from(&api_issue);
+            let creation_time = if version == 1 {
+                timestamp
+            } else {
+                let issue_id: IssueId = entity_id.parse().ok()?;
+                state
+                    .get_issue(&issue_id, true)
+                    .await
+                    .ok()
+                    .map(|v| v.creation_time)
+                    .unwrap_or(timestamp)
+            };
             let record = IssueSummaryRecord::new(
                 entity_id.parse().ok()?,
                 version,
                 timestamp,
                 summary,
                 Some(payload.actor().clone()),
+                creation_time,
             );
             serde_json::to_value(record).ok()?
         }
         MutationPayload::Patch { new, .. } => {
             let api_patch: metis_common::api::v1::patches::Patch = new.clone().into();
+            let creation_time = if version == 1 {
+                timestamp
+            } else {
+                let patch_id: PatchId = entity_id.parse().ok()?;
+                state
+                    .get_patch(&patch_id, true)
+                    .await
+                    .ok()
+                    .map(|v| v.creation_time)
+                    .unwrap_or(timestamp)
+            };
             let full_record = PatchVersionRecord::new(
                 entity_id.parse().ok()?,
                 version,
                 timestamp,
                 api_patch,
                 Some(payload.actor().clone()),
+                creation_time,
             );
             let summary_record =
                 metis_common::api::v1::patches::PatchSummaryRecord::from(&full_record);
@@ -360,12 +384,24 @@ async fn serialize_entity(
         }
         MutationPayload::Document { new, .. } => {
             let api_doc: metis_common::api::v1::documents::Document = new.clone().into();
+            let creation_time = if version == 1 {
+                timestamp
+            } else {
+                let doc_id: DocumentId = entity_id.parse().ok()?;
+                state
+                    .get_document(&doc_id, true)
+                    .await
+                    .ok()
+                    .map(|v| v.creation_time)
+                    .unwrap_or(timestamp)
+            };
             let full_record = DocumentVersionRecord::new(
                 entity_id.parse().ok()?,
                 version,
                 timestamp,
                 api_doc,
                 Some(payload.actor().clone()),
+                creation_time,
             );
             let summary_record = DocumentSummaryRecord::from(&full_record);
             serde_json::to_value(summary_record).ok()?

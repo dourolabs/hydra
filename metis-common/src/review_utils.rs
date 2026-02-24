@@ -142,6 +142,7 @@ mod tests {
             timestamp,
             make_api_patch(commit_range),
             None,
+            timestamp,
         )
     }
 

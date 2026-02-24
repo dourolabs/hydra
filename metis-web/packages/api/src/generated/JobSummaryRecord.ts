@@ -3,4 +3,7 @@ import type { ActorRef } from "./ActorRef";
 import type { JobSummary } from "./JobSummary";
 import type { TaskId } from "./TaskId";
 
+/**
+ * Summary-level version record for job list responses.
+ */
 export type JobSummaryRecord = { job_id: TaskId, version: bigint, timestamp: string, task: JobSummary, actor?: ActorRef | null, };
