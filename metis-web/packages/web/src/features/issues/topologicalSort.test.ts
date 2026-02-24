@@ -11,6 +11,7 @@ function makeRecord(
     issue_id: id,
     version: BigInt(1),
     timestamp: "2026-01-01T00:00:00Z",
+    creation_time: "2026-01-01T00:00:00Z",
     issue: {
       type: "task",
       description: "",
