@@ -1,17 +1,25 @@
 use crate::{
     client::MetisClientInterface,
-    command::output::{render_job_records, CommandContext},
+    command::{
+        changelog::{summarize_activity_log, write_changelog_pretty},
+        output::{render_job_records, CommandContext, ResolvedOutputFormat},
+    },
     worker_commands::ModelAwareCommands,
 };
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use metis_common::{
+    activity_log_for_job_versions,
     constants::{
         ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID, ENV_OPENAI_API_KEY,
     },
-    IssueId, MetisId, RelativeVersionNumber, TaskId,
+    jobs::Task,
+    IssueId, MetisId, RelativeVersionNumber, TaskId, Versioned,
 };
-use std::path::PathBuf;
+use std::{
+    io::{self, Write},
+    path::PathBuf,
+};
 
 pub mod create;
 pub mod kill;
@@ -97,6 +105,16 @@ pub enum JobsCommand {
         #[arg(value_name = "JOB_ID")]
         job: TaskId,
     },
+    /// Show changelog for a job (most recent first).
+    Changelog {
+        /// Job identifier returned by `metis jobs create` or `metis jobs list`.
+        #[arg(value_name = "JOB_ID")]
+        id: TaskId,
+
+        /// Maximum number of changelog entries to show.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Retrieve a job's context locally and run it via Codex or Claude.
     WorkerRun {
         /// Job identifier returned by `metis jobs create` or `metis jobs list`.
@@ -157,6 +175,9 @@ pub async fn run(
             spawned_from,
         } => list::run(client, limit, spawned_from, context).await?,
         JobsCommand::Get { id, version } => get_job(client, &id, version, context).await?,
+        JobsCommand::Changelog { id, limit } => {
+            changelog_job(client, id, context.output_format, limit).await?
+        }
         JobsCommand::Logs { id, watch } => logs::run(client, id, watch, context).await?,
         JobsCommand::Kill { job } => kill::run(client, job, context).await?,
         JobsCommand::WorkerRun {
@@ -208,5 +229,43 @@ async fn get_job(
             .with_context(|| format!("failed to fetch job '{job_id}'"))?,
     };
     render_job_records(context.output_format, &[job], &mut std::io::stdout())?;
+    Ok(())
+}
+
+async fn changelog_job(
+    client: &dyn MetisClientInterface,
+    id: TaskId,
+    output_format: ResolvedOutputFormat,
+    limit: usize,
+) -> Result<()> {
+    let response = client
+        .list_job_versions(&id)
+        .await
+        .with_context(|| format!("failed to fetch versions for job '{id}'"))?;
+    let versions: Vec<Versioned<Task>> = response
+        .versions
+        .into_iter()
+        .map(|record| Versioned::new(record.task, record.version, record.timestamp))
+        .collect();
+    let entries = activity_log_for_job_versions(id, &versions);
+    let mut summaries = summarize_activity_log(&entries)?;
+    summaries.reverse();
+    summaries.truncate(limit);
+
+    let mut buffer = Vec::new();
+    match output_format {
+        ResolvedOutputFormat::Pretty => {
+            write_changelog_pretty(&summaries, &mut buffer)?;
+        }
+        ResolvedOutputFormat::Jsonl => {
+            for entry in &summaries {
+                serde_json::to_writer(&mut buffer, entry)?;
+                buffer.write_all(b"\n")?;
+            }
+        }
+    }
+    io::stdout().write_all(&buffer)?;
+    io::stdout().flush()?;
+
     Ok(())
 }
