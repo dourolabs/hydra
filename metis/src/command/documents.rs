@@ -1,11 +1,11 @@
 use crate::{
     client::MetisClientInterface,
     command::{
-        changelog::{summarize_activity_log, write_changelog_pretty},
         output::{
             render_document_records, render_document_summary_records, CommandContext,
             ResolvedOutputFormat,
         },
+        utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
 };
 use anyhow::{bail, Context, Result};
@@ -342,7 +342,14 @@ async fn changelog_document(
     let versions: Vec<Versioned<DocumentPayload>> = response
         .versions
         .into_iter()
-        .map(|record| Versioned::new(record.document, record.version, record.timestamp))
+        .map(|record| {
+            Versioned::new(
+                record.document,
+                record.version,
+                record.timestamp,
+                record.creation_time,
+            )
+        })
         .collect();
     let entries = activity_log_for_document_versions(document_id, &versions);
     let mut summaries = summarize_activity_log(&entries)?;

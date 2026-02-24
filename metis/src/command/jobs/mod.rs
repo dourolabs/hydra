@@ -1,8 +1,8 @@
 use crate::{
     client::MetisClientInterface,
     command::{
-        changelog::{summarize_activity_log, write_changelog_pretty},
         output::{render_job_records, CommandContext, ResolvedOutputFormat},
+        utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
     worker_commands::ModelAwareCommands,
 };
@@ -245,7 +245,14 @@ async fn changelog_job(
     let versions: Vec<Versioned<Task>> = response
         .versions
         .into_iter()
-        .map(|record| Versioned::new(record.task, record.version, record.timestamp))
+        .map(|record| {
+            Versioned::new(
+                record.task,
+                record.version,
+                record.timestamp,
+                record.timestamp,
+            )
+        })
         .collect();
     let entries = activity_log_for_job_versions(id, &versions);
     let mut summaries = summarize_activity_log(&entries)?;

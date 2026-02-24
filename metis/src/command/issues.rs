@@ -1,13 +1,13 @@
 use crate::{
     client::MetisClientInterface,
     command::{
-        changelog::{
-            summarize_activity_log, write_activity_log_pretty, write_changelog_pretty,
-            ActivityLogEntrySummary,
-        },
         output::{
             render_issue_records, render_issue_summary_records, CommandContext,
             ResolvedOutputFormat,
+        },
+        utils::changelog::{
+            summarize_activity_log, write_activity_log_pretty, write_changelog_pretty,
+            ActivityLogEntrySummary,
         },
     },
 };
