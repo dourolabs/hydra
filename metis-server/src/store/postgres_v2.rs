@@ -24,10 +24,12 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::Message;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    parse_actor_name,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use serde_json::Value;
@@ -93,6 +95,7 @@ const TABLE_USERS_V2: &str = "metis.users_v2";
 const TABLE_REPOSITORIES_V2: &str = "metis.repositories_v2";
 const TABLE_ACTORS_V2: &str = "metis.actors_v2";
 const TABLE_DOCUMENTS_V2: &str = "metis.documents_v2";
+const TABLE_MESSAGES_V2: &str = "metis.messages_v2";
 
 /// PostgresStoreV2 uses the v2 tables with proper column definitions.
 #[derive(Clone)]
@@ -2167,6 +2170,76 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         self.fetch_latest_users(query).await
     }
+
+    async fn list_messages(
+        &self,
+        conversation_id: &str,
+        before: Option<&MessageId>,
+        limit: u32,
+    ) -> Result<Vec<Message>, StoreError> {
+        let limit = if limit == 0 { 50 } else { limit } as i64;
+
+        let rows = if let Some(cursor) = before {
+            sqlx::query_as::<_, (String, String, String, String, DateTime<Utc>)>(&format!(
+                "SELECT message_id, conversation_id, sender, body, timestamp \
+                 FROM {TABLE_MESSAGES_V2} \
+                 WHERE conversation_id = $1 AND message_id < $2 \
+                 ORDER BY message_id DESC \
+                 LIMIT $3"
+            ))
+            .bind(conversation_id)
+            .bind(cursor.as_ref())
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| StoreError::Internal(e.to_string()))?
+        } else {
+            sqlx::query_as::<_, (String, String, String, String, DateTime<Utc>)>(&format!(
+                "SELECT message_id, conversation_id, sender, body, timestamp \
+                 FROM {TABLE_MESSAGES_V2} \
+                 WHERE conversation_id = $1 \
+                 ORDER BY message_id DESC \
+                 LIMIT $2"
+            ))
+            .bind(conversation_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| StoreError::Internal(e.to_string()))?
+        };
+
+        rows.into_iter()
+            .map(|(message_id, conv_id, sender, body, timestamp)| {
+                let message_id = MessageId::from_str(&message_id)
+                    .map_err(|e| StoreError::Internal(e.to_string()))?;
+                let sender = parse_actor_name(&sender)
+                    .ok_or_else(|| StoreError::Internal(format!("invalid sender: {sender}")))?;
+                Ok(Message {
+                    message_id,
+                    conversation_id: conv_id,
+                    sender,
+                    body,
+                    timestamp,
+                })
+            })
+            .collect()
+    }
+
+    async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
+        let actor_name = actor_id_to_name(actor_id);
+        let rows = sqlx::query_as::<_, (String,)>(&format!(
+            "SELECT DISTINCT conversation_id FROM {TABLE_MESSAGES_V2} \
+             WHERE conversation_id LIKE $1 OR conversation_id LIKE $2 \
+             ORDER BY conversation_id"
+        ))
+        .bind(format!("{actor_name}+%"))
+        .bind(format!("%+{actor_name}"))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StoreError::Internal(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
 }
 
 #[async_trait]
@@ -2626,6 +2699,41 @@ impl Store for PostgresStoreV2 {
         user.deleted = true;
         self.update_user(user, actor).await?;
         Ok(())
+    }
+
+    async fn add_message(
+        &self,
+        message: Message,
+        actor: &ActorRef,
+    ) -> Result<MessageId, StoreError> {
+        let message_id = message.message_id.clone();
+        let sender_name = actor_id_to_name(&message.sender);
+        let actor_json = actor_to_json(actor);
+
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_MESSAGES_V2} (message_id, conversation_id, sender, body, timestamp, actor) \
+             VALUES ($1, $2, $3, $4, $5, $6)"
+        ))
+        .bind(message_id.as_ref())
+        .bind(&message.conversation_id)
+        .bind(&sender_name)
+        .bind(&message.body)
+        .bind(message.timestamp)
+        .bind(&actor_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StoreError::Internal(e.to_string()))?;
+
+        Ok(message_id)
+    }
+}
+
+/// Convert an ActorId to its canonical actor name string.
+fn actor_id_to_name(actor_id: &ActorId) -> String {
+    match actor_id {
+        ActorId::Username(username) => format!("u-{username}"),
+        ActorId::Task(task_id) => format!("w-{task_id}"),
+        ActorId::Issue(issue_id) => format!("a-{issue_id}"),
     }
 }
 

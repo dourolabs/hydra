@@ -17,10 +17,11 @@ use crate::domain::{
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::Message;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    ActorId, DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 
@@ -53,6 +54,8 @@ pub struct MemoryStore {
     users: DashMap<Username, Vec<Versioned<User>>>,
     /// Maps actor names to their Actor data
     actors: DashMap<String, Vec<Versioned<Actor>>>,
+    /// Maps conversation IDs to their messages (ordered by insertion)
+    messages: DashMap<String, Vec<Message>>,
 }
 
 impl MemoryStore {
@@ -71,6 +74,7 @@ impl MemoryStore {
             documents_by_path: DashMap::new(),
             users: DashMap::new(),
             actors: DashMap::new(),
+            messages: DashMap::new(),
         }
     }
 
@@ -896,6 +900,49 @@ impl ReadOnlyStore for MemoryStore {
         users.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
         Ok(users)
     }
+
+    async fn list_messages(
+        &self,
+        conversation_id: &str,
+        before: Option<&MessageId>,
+        limit: u32,
+    ) -> Result<Vec<Message>, StoreError> {
+        let msgs = match self.messages.get(conversation_id) {
+            Some(entry) => entry.value().clone(),
+            None => return Ok(vec![]),
+        };
+
+        // Messages are stored in insertion order (ascending by message_id).
+        // Return in descending order, optionally filtered by `before` cursor.
+        let result: Vec<Message> = msgs
+            .into_iter()
+            .rev()
+            .filter(|m| {
+                if let Some(cursor) = before {
+                    m.message_id.as_ref() < cursor.as_ref()
+                } else {
+                    true
+                }
+            })
+            .take(limit as usize)
+            .collect();
+
+        Ok(result)
+    }
+
+    async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
+        let actor_name = actor_id_to_name(actor_id);
+        let mut conversations = Vec::new();
+        for entry in self.messages.iter() {
+            let conv_id = entry.key();
+            // A conversation ID is "name_a+name_b"; check if the actor participates
+            if conv_id.split('+').any(|part| part == actor_name) {
+                conversations.push(conv_id.clone());
+            }
+        }
+        conversations.sort();
+        Ok(conversations)
+    }
 }
 
 #[async_trait]
@@ -1290,6 +1337,29 @@ impl Store for MemoryStore {
         user.deleted = true;
         self.update_user(user, actor).await?;
         Ok(())
+    }
+
+    async fn add_message(
+        &self,
+        message: Message,
+        _actor: &ActorRef,
+    ) -> Result<MessageId, StoreError> {
+        let message_id = message.message_id.clone();
+        let conversation_id = message.conversation_id.clone();
+        self.messages
+            .entry(conversation_id)
+            .or_default()
+            .push(message);
+        Ok(message_id)
+    }
+}
+
+/// Convert an ActorId to its canonical actor name string.
+fn actor_id_to_name(actor_id: &ActorId) -> String {
+    match actor_id {
+        ActorId::Username(username) => format!("u-{username}"),
+        ActorId::Task(task_id) => format!("w-{task_id}"),
+        ActorId::Issue(issue_id) => format!("a-{issue_id}"),
     }
 }
 
@@ -4686,5 +4756,151 @@ mod tests {
         let query = SearchPatchesQuery::new(None, None, vec![], Some("feature/foo".to_string()));
         let patches = store.list_patches(&query).await.unwrap();
         assert!(patches.is_empty());
+    }
+
+    // -------------------------------------------------------------------------
+    // Message tests
+    // -------------------------------------------------------------------------
+
+    fn sample_message(
+        message_id: &str,
+        conversation_id: &str,
+        sender: ActorId,
+        body: &str,
+    ) -> Message {
+        use metis_common::MessageId;
+        Message {
+            message_id: MessageId::from_str(message_id).unwrap(),
+            conversation_id: conversation_id.to_string(),
+            sender,
+            body: body.to_string(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_message_and_list_returns_descending_order() {
+        let store = MemoryStore::new();
+        let user = ActorId::Username(Username::from("alice").into());
+        let issue = ActorId::Issue(IssueId::from_str("i-abcdef").unwrap());
+        let conv_id = "a-i-abcdef+u-alice";
+
+        let msg1 = sample_message("m-aaaa", conv_id, user.clone(), "hello");
+        let msg2 = sample_message("m-bbbb", conv_id, issue.clone(), "hi there");
+        let msg3 = sample_message("m-cccc", conv_id, user.clone(), "how are you?");
+
+        store.add_message(msg1, &ActorRef::test()).await.unwrap();
+        store.add_message(msg2, &ActorRef::test()).await.unwrap();
+        store.add_message(msg3, &ActorRef::test()).await.unwrap();
+
+        let messages = store.list_messages(conv_id, None, 50).await.unwrap();
+        assert_eq!(messages.len(), 3);
+        // Most recent first (descending by message_id)
+        assert_eq!(messages[0].message_id.as_ref(), "m-cccc");
+        assert_eq!(messages[1].message_id.as_ref(), "m-bbbb");
+        assert_eq!(messages[2].message_id.as_ref(), "m-aaaa");
+    }
+
+    #[tokio::test]
+    async fn list_messages_respects_before_cursor() {
+        let store = MemoryStore::new();
+        let user = ActorId::Username(Username::from("alice").into());
+        let conv_id = "u-alice+u-bob";
+
+        let msg1 = sample_message("m-aaaa", conv_id, user.clone(), "first");
+        let msg2 = sample_message("m-bbbb", conv_id, user.clone(), "second");
+        let msg3 = sample_message("m-cccc", conv_id, user.clone(), "third");
+
+        store.add_message(msg1, &ActorRef::test()).await.unwrap();
+        store.add_message(msg2, &ActorRef::test()).await.unwrap();
+        store.add_message(msg3, &ActorRef::test()).await.unwrap();
+
+        let cursor = metis_common::MessageId::from_str("m-cccc").unwrap();
+        let messages = store
+            .list_messages(conv_id, Some(&cursor), 50)
+            .await
+            .unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].message_id.as_ref(), "m-bbbb");
+        assert_eq!(messages[1].message_id.as_ref(), "m-aaaa");
+    }
+
+    #[tokio::test]
+    async fn list_messages_respects_limit() {
+        let store = MemoryStore::new();
+        let user = ActorId::Username(Username::from("alice").into());
+        let conv_id = "u-alice+u-bob";
+
+        let msg1 = sample_message("m-aaaa", conv_id, user.clone(), "first");
+        let msg2 = sample_message("m-bbbb", conv_id, user.clone(), "second");
+        let msg3 = sample_message("m-cccc", conv_id, user.clone(), "third");
+
+        store.add_message(msg1, &ActorRef::test()).await.unwrap();
+        store.add_message(msg2, &ActorRef::test()).await.unwrap();
+        store.add_message(msg3, &ActorRef::test()).await.unwrap();
+
+        let messages = store.list_messages(conv_id, None, 2).await.unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].message_id.as_ref(), "m-cccc");
+        assert_eq!(messages[1].message_id.as_ref(), "m-bbbb");
+    }
+
+    #[tokio::test]
+    async fn list_messages_empty_conversation() {
+        let store = MemoryStore::new();
+        let messages = store
+            .list_messages("nonexistent+conv", None, 50)
+            .await
+            .unwrap();
+        assert!(messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_conversations_returns_correct_ids_for_actor() {
+        let store = MemoryStore::new();
+        let alice = ActorId::Username(Username::from("alice").into());
+        let bob = ActorId::Username(Username::from("bob").into());
+        let issue = ActorId::Issue(IssueId::from_str("i-abcdef").unwrap());
+
+        let conv_alice_bob = "u-alice+u-bob";
+        let conv_alice_issue = "a-i-abcdef+u-alice";
+        let conv_bob_issue = "a-i-abcdef+u-bob";
+
+        store
+            .add_message(
+                sample_message("m-aaaa", conv_alice_bob, alice.clone(), "hi bob"),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .add_message(
+                sample_message("m-bbbb", conv_alice_issue, alice.clone(), "hi agent"),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .add_message(
+                sample_message("m-cccc", conv_bob_issue, bob.clone(), "hi agent"),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let alice_convs = store.list_conversations(&alice).await.unwrap();
+        assert_eq!(alice_convs.len(), 2);
+        assert!(alice_convs.contains(&conv_alice_bob.to_string()));
+        assert!(alice_convs.contains(&conv_alice_issue.to_string()));
+
+        let bob_convs = store.list_conversations(&bob).await.unwrap();
+        assert_eq!(bob_convs.len(), 2);
+        assert!(bob_convs.contains(&conv_alice_bob.to_string()));
+        assert!(bob_convs.contains(&conv_bob_issue.to_string()));
+
+        let issue_convs = store.list_conversations(&issue).await.unwrap();
+        assert_eq!(issue_convs.len(), 2);
+        assert!(issue_convs.contains(&conv_alice_issue.to_string()));
+        assert!(issue_convs.contains(&conv_bob_issue.to_string()));
     }
 }

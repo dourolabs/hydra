@@ -11,10 +11,11 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::Message;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    ActorId, DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use std::collections::{HashMap, HashSet};
@@ -102,6 +103,8 @@ pub enum StoreError {
     PatchNotFound(PatchId),
     #[error("Document not found: {0}")]
     DocumentNotFound(DocumentId),
+    #[error("Message not found: {0}")]
+    MessageNotFound(MessageId),
     #[error("Invalid dependency: {0}")]
     InvalidDependency(IssueId),
     #[error("Invalid issue status: {0}")]
@@ -351,6 +354,20 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError>;
+
+    /// Lists messages in a conversation, ordered most-recent-first.
+    ///
+    /// If `before` is provided, only messages with an ID lexicographically
+    /// less than the cursor are returned. Results are limited to `limit` rows.
+    async fn list_messages(
+        &self,
+        conversation_id: &str,
+        before: Option<&MessageId>,
+        limit: u32,
+    ) -> Result<Vec<Message>, StoreError>;
+
+    /// Lists conversation IDs that the given actor participates in.
+    async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError>;
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.
@@ -552,6 +569,15 @@ pub trait Store: ReadOnlyStore {
     /// but will be filtered from `get_user` with `include_deleted: false` and from
     /// `list_users` by default (unless `include_deleted: true` is in the query).
     async fn delete_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError>;
+
+    /// Adds a new message to the store.
+    ///
+    /// Returns the assigned MessageId.
+    async fn add_message(
+        &self,
+        message: Message,
+        actor: &ActorRef,
+    ) -> Result<MessageId, StoreError>;
 }
 
 pub use memory_store::MemoryStore;

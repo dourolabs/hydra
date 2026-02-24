@@ -11,10 +11,11 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::Message;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    ActorId, DocumentId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -941,6 +942,21 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         self.inner.list_users(query).await
+    }
+
+    async fn list_messages(
+        &self,
+        conversation_id: &str,
+        before: Option<&MessageId>,
+        limit: u32,
+    ) -> Result<Vec<Message>, StoreError> {
+        self.inner
+            .list_messages(conversation_id, before, limit)
+            .await
+    }
+
+    async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
+        self.inner.list_conversations(actor_id).await
     }
 }
 

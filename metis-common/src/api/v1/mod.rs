@@ -8,6 +8,7 @@ pub mod jobs;
 pub mod login;
 pub mod logs;
 pub mod merge_queues;
+pub mod messages;
 pub mod patches;
 pub mod repositories;
 pub mod task_status;

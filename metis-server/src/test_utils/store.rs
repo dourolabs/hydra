@@ -13,10 +13,11 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::Message;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    ActorId, DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use std::collections::{HashMap, HashSet};
@@ -205,6 +206,19 @@ impl ReadOnlyStore for FailingStore {
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         fail()
     }
+
+    async fn list_messages(
+        &self,
+        _conversation_id: &str,
+        _before: Option<&MessageId>,
+        _limit: u32,
+    ) -> Result<Vec<Message>, StoreError> {
+        fail()
+    }
+
+    async fn list_conversations(&self, _actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
+        fail()
+    }
 }
 
 #[async_trait]
@@ -357,6 +371,14 @@ impl Store for FailingStore {
     }
 
     async fn delete_user(&self, _username: &Username, _actor: &ActorRef) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn add_message(
+        &self,
+        _message: Message,
+        _actor: &ActorRef,
+    ) -> Result<MessageId, StoreError> {
         fail()
     }
 }
