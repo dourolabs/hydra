@@ -696,7 +696,8 @@ fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &Pa
             "patches": [patch_id],
             "surprise": "field"
         },
-        "extra": "issue"
+        "extra": "issue",
+        "creation_time": Utc::now()
     })
 }
 
@@ -742,7 +743,8 @@ fn forward_patch_json(
                 "unexpected": "field"
             },
             "bonus": "field"
-        }
+        },
+        "creation_time": now
     })
 }
 
@@ -779,7 +781,8 @@ fn forward_patch_summary_json(patch_id: &PatchId, repo_name: &RepoName, job_id: 
                 "unexpected": "field"
             },
             "bonus": "field"
-        }
+        },
+        "creation_time": Utc::now()
     })
 }
 
@@ -795,7 +798,8 @@ fn forward_document_json(document_id: &DocumentId, job_id: &TaskId) -> Value {
             "created_by": job_id,
             "extra": "document"
         },
-        "note": "document"
+        "note": "document",
+        "creation_time": Utc::now()
     })
 }
 
@@ -816,7 +820,8 @@ fn forward_document_version_json(
             "created_by": job_id,
             "extra": "document-version"
         },
-        "note": "document-version"
+        "note": "document-version",
+        "creation_time": timestamp
     })
 }
 

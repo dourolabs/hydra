@@ -175,7 +175,7 @@ fn find_last_commit_range_change_timestamp(versions: &[Versioned<Patch>]) -> Opt
                 v.timestamp,
                 v.item.clone().into(),
                 v.actor.clone(),
-                v.creation_time,
+                v.creation_time.unwrap_or(v.timestamp),
             )
         })
         .collect();

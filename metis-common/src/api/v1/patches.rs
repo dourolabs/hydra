@@ -292,8 +292,7 @@ pub struct PatchVersionRecord {
     pub patch: Patch,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub creation_time: Option<DateTime<Utc>>,
+    pub creation_time: DateTime<Utc>,
 }
 
 impl PatchVersionRecord {
@@ -303,7 +302,7 @@ impl PatchVersionRecord {
         timestamp: DateTime<Utc>,
         patch: Patch,
         actor: Option<ActorRef>,
-        creation_time: Option<DateTime<Utc>>,
+        creation_time: DateTime<Utc>,
     ) -> Self {
         Self {
             patch_id,
@@ -536,8 +535,7 @@ pub struct PatchSummaryRecord {
     pub patch: PatchSummary,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub creation_time: Option<DateTime<Utc>>,
+    pub creation_time: DateTime<Utc>,
 }
 
 impl From<&PatchVersionRecord> for PatchSummaryRecord {
@@ -786,8 +784,8 @@ mod tests {
     fn patch_summary_record_from_version_record() {
         let patch = make_test_patch();
         let patch_id: PatchId = crate::PatchId::new();
-        let record =
-            PatchVersionRecord::new(patch_id.clone(), 5, chrono::Utc::now(), patch, None, None);
+        let ts = chrono::Utc::now();
+        let record = PatchVersionRecord::new(patch_id.clone(), 5, ts, patch, None, ts);
         let summary_record = PatchSummaryRecord::from(&record);
         assert_eq!(summary_record.patch_id, patch_id);
         assert_eq!(summary_record.version, 5);

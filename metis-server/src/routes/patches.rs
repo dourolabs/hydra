@@ -126,7 +126,7 @@ pub async fn get_patch(
         patch.timestamp,
         patch.item.into(),
         patch.actor,
-        patch.creation_time,
+        patch.creation_time.unwrap_or(patch.timestamp),
     );
     Ok(Json(response))
 }
@@ -150,7 +150,7 @@ pub async fn list_patch_versions(
                 version.timestamp,
                 version.item.into(),
                 version.actor,
-                version.creation_time,
+                version.creation_time.unwrap_or(version.timestamp),
             )
         })
         .collect();
@@ -193,7 +193,7 @@ pub async fn get_patch_version(
         entry.timestamp,
         entry.item.into(),
         entry.actor,
-        entry.creation_time,
+        entry.creation_time.unwrap_or(entry.timestamp),
     );
     info!(patch_id = %patch_id, version, "get_patch_version completed");
     Ok(Json(response))
@@ -219,7 +219,7 @@ pub async fn list_patches(
                 versioned.timestamp,
                 versioned.item.into(),
                 versioned.actor,
-                versioned.creation_time,
+                versioned.creation_time.unwrap_or(versioned.timestamp),
             );
             v1::patches::PatchSummaryRecord::from(&full_record)
         })
@@ -560,7 +560,7 @@ pub async fn delete_patch(
         patch.timestamp,
         patch.item.into(),
         patch.actor,
-        patch.creation_time,
+        patch.creation_time.unwrap_or(patch.timestamp),
     );
     Ok(Json(response))
 }

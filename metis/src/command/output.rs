@@ -1073,8 +1073,14 @@ mod tests {
             false,
         )
         .unwrap();
-        let record =
-            DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document, None, None);
+        let record = DocumentVersionRecord::new(
+            DocumentId::new(),
+            0,
+            Utc::now(),
+            document,
+            None,
+            Utc::now(),
+        );
         let mut output = Vec::new();
         render_document_records(ResolvedOutputFormat::Pretty, &[record], false, &mut output)
             .unwrap();
@@ -1099,8 +1105,14 @@ mod tests {
             false,
         )
         .unwrap();
-        let record =
-            DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document, None, None);
+        let record = DocumentVersionRecord::new(
+            DocumentId::new(),
+            0,
+            Utc::now(),
+            document,
+            None,
+            Utc::now(),
+        );
         let mut output = Vec::new();
         render_document_records(ResolvedOutputFormat::Pretty, &[record], true, &mut output)
             .unwrap();

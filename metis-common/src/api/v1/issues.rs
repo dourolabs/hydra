@@ -559,8 +559,7 @@ pub struct IssueVersionRecord {
     pub issue: Issue,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub creation_time: Option<DateTime<Utc>>,
+    pub creation_time: DateTime<Utc>,
 }
 
 impl IssueVersionRecord {
@@ -570,7 +569,7 @@ impl IssueVersionRecord {
         timestamp: DateTime<Utc>,
         issue: Issue,
         actor: Option<ActorRef>,
-        creation_time: Option<DateTime<Utc>>,
+        creation_time: DateTime<Utc>,
     ) -> Self {
         Self {
             issue_id,
@@ -748,8 +747,7 @@ pub struct IssueSummaryRecord {
     pub issue: IssueSummary,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub creation_time: Option<DateTime<Utc>>,
+    pub creation_time: DateTime<Utc>,
 }
 
 impl IssueSummaryRecord {
@@ -759,7 +757,7 @@ impl IssueSummaryRecord {
         timestamp: DateTime<Utc>,
         issue: IssueSummary,
         actor: Option<ActorRef>,
-        creation_time: Option<DateTime<Utc>>,
+        creation_time: DateTime<Utc>,
     ) -> Self {
         Self {
             issue_id,
@@ -998,14 +996,8 @@ mod tests {
         let actor = ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("alice")),
         };
-        let record = IssueVersionRecord::new(
-            issue_id,
-            1,
-            chrono::Utc::now(),
-            issue,
-            Some(actor.clone()),
-            None,
-        );
+        let ts = chrono::Utc::now();
+        let record = IssueVersionRecord::new(issue_id, 1, ts, issue, Some(actor.clone()), ts);
 
         let value = serde_json::to_value(&record).expect("should serialize");
         let expected_actor = json!({"Authenticated": {"actor_id": {"Username": "alice"}}});
@@ -1029,7 +1021,8 @@ mod tests {
             deleted: false,
         };
 
-        let record = IssueVersionRecord::new(issue_id, 1, chrono::Utc::now(), issue, None, None);
+        let ts = chrono::Utc::now();
+        let record = IssueVersionRecord::new(issue_id, 1, ts, issue, None, ts);
 
         let value = serde_json::to_value(&record).expect("should serialize");
         assert!(
@@ -1044,7 +1037,8 @@ mod tests {
             "issue_id": "i-test",
             "version": 1,
             "timestamp": "2024-01-01T00:00:00Z",
-            "issue": {"type": "task", "description": "test", "creator": "alice"}
+            "issue": {"type": "task", "description": "test", "creator": "alice"},
+            "creation_time": "2024-01-01T00:00:00Z"
         }"#;
 
         let record: IssueVersionRecord =
@@ -1126,8 +1120,8 @@ mod tests {
     #[test]
     fn issue_summary_record_from_version_record() {
         let issue = make_test_issue("multi\nline\ndesc");
-        let record =
-            IssueVersionRecord::new(issue_id("i-test"), 3, chrono::Utc::now(), issue, None, None);
+        let ts = chrono::Utc::now();
+        let record = IssueVersionRecord::new(issue_id("i-test"), 3, ts, issue, None, ts);
         let summary_record = IssueSummaryRecord::from(&record);
         assert_eq!(summary_record.issue_id, issue_id("i-test"));
         assert_eq!(summary_record.version, 3);

@@ -6,4 +6,4 @@ import type { IssueSummary } from "./IssueSummary";
 /**
  * Summary-level version record for issue list responses.
  */
-export type IssueSummaryRecord = { issue_id: IssueId, version: bigint, timestamp: string, issue: IssueSummary, actor?: ActorRef | null, creation_time?: string | null, };
+export type IssueSummaryRecord = { issue_id: IssueId, version: bigint, timestamp: string, issue: IssueSummary, actor?: ActorRef | null, creation_time: string, };

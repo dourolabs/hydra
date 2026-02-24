@@ -145,7 +145,7 @@ pub async fn get_issue(
         issue.timestamp,
         issue.item.into(),
         issue.actor,
-        issue.creation_time,
+        issue.creation_time.unwrap_or(issue.timestamp),
     );
     Ok(Json(response))
 }
@@ -169,7 +169,7 @@ pub async fn list_issue_versions(
                 version.timestamp,
                 version.item.into(),
                 version.actor,
-                version.creation_time,
+                version.creation_time.unwrap_or(version.timestamp),
             )
         })
         .collect();
@@ -212,7 +212,7 @@ pub async fn get_issue_version(
         entry.timestamp,
         entry.item.into(),
         entry.actor,
-        entry.creation_time,
+        entry.creation_time.unwrap_or(entry.timestamp),
     );
     info!(issue_id = %issue_id, version, "get_issue_version completed");
     Ok(Json(response))
@@ -273,7 +273,7 @@ pub async fn list_issues(
                 versioned.timestamp,
                 summary,
                 versioned.actor,
-                versioned.creation_time,
+                versioned.creation_time.unwrap_or(versioned.timestamp),
             )
         })
         .collect();
@@ -513,7 +513,7 @@ pub async fn delete_issue(
         issue.timestamp,
         issue.item.into(),
         issue.actor,
-        issue.creation_time,
+        issue.creation_time.unwrap_or(issue.timestamp),
     );
     Ok(Json(response))
 }

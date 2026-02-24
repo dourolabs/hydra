@@ -119,7 +119,7 @@ pub async fn get_document(
         document.timestamp,
         document.item.into(),
         document.actor,
-        document.creation_time,
+        document.creation_time.unwrap_or(document.timestamp),
     );
     info!(document_id = %document_id, "get_document completed");
     Ok(Json(response))
@@ -144,7 +144,7 @@ pub async fn list_documents(
                 versioned.timestamp,
                 versioned.item.into(),
                 versioned.actor,
-                versioned.creation_time,
+                versioned.creation_time.unwrap_or(versioned.timestamp),
             );
             v1::documents::DocumentSummaryRecord::from(&full_record)
         })
@@ -177,7 +177,7 @@ pub async fn list_document_versions(
                 version.timestamp,
                 version.item.into(),
                 version.actor,
-                version.creation_time,
+                version.creation_time.unwrap_or(version.timestamp),
             )
         })
         .collect();
@@ -219,7 +219,7 @@ pub async fn get_document_version(
         entry.timestamp,
         entry.item.into(),
         entry.actor,
-        entry.creation_time,
+        entry.creation_time.unwrap_or(entry.timestamp),
     );
     info!(document_id = %document_id, version, "get_document_version completed");
     Ok(Json(response))
@@ -293,7 +293,7 @@ pub async fn delete_document(
         document.timestamp,
         document.item.into(),
         document.actor,
-        document.creation_time,
+        document.creation_time.unwrap_or(document.timestamp),
     );
     Ok(Json(response))
 }

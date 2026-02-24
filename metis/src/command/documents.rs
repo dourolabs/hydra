@@ -978,7 +978,7 @@ mod tests {
             false,
         )
         .unwrap();
-        DocumentVersionRecord::new(id.clone(), 0, Utc::now(), document, None, None)
+        DocumentVersionRecord::new(id.clone(), 0, Utc::now(), document, None, Utc::now())
     }
 
     fn sample_document_summary_record(id: &DocumentId) -> DocumentSummaryRecord {
@@ -1376,7 +1376,7 @@ mod tests {
         )
         .unwrap();
         let record =
-            DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None, None);
+            DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None, Utc::now());
         let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&record)]);
 
         let server = MockServer::start();
@@ -1435,7 +1435,7 @@ mod tests {
             )
             .unwrap(),
             None,
-            None,
+            Utc::now(),
         );
         let unpathed = DocumentVersionRecord::new(
             unpathed_id,
@@ -1450,7 +1450,7 @@ mod tests {
             )
             .unwrap(),
             None,
-            None,
+            Utc::now(),
         );
         let response = ListDocumentsResponse::new(vec![
             DocumentSummaryRecord::from(&pathed),
@@ -1498,7 +1498,7 @@ mod tests {
         )
         .unwrap();
         let record =
-            DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None, None);
+            DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None, Utc::now());
         let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&record)]);
 
         let server = MockServer::start();
@@ -1558,7 +1558,7 @@ mod tests {
         )
         .unwrap();
         let record =
-            DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None, None);
+            DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None, Utc::now());
 
         let removed_id = DocumentId::new();
         let removed_doc = DocumentPayload::new(
@@ -1569,8 +1569,14 @@ mod tests {
             false,
         )
         .unwrap();
-        let removed_record =
-            DocumentVersionRecord::new(removed_id.clone(), 0, Utc::now(), removed_doc, None, None);
+        let removed_record = DocumentVersionRecord::new(
+            removed_id.clone(),
+            0,
+            Utc::now(),
+            removed_doc,
+            None,
+            Utc::now(),
+        );
 
         // First sync with both documents
         let response = ListDocumentsResponse::new(vec![
@@ -1643,7 +1649,7 @@ mod tests {
             false,
         )
         .unwrap();
-        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None, None);
+        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None, Utc::now());
         let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&record)]);
 
         let server = MockServer::start();
@@ -1689,7 +1695,7 @@ mod tests {
             false,
         )
         .unwrap();
-        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None, None);
+        let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None, Utc::now());
         let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&record)]);
 
         let server = MockServer::start();
@@ -1798,7 +1804,7 @@ mod tests {
             )
             .unwrap(),
             None,
-            None,
+            Utc::now(),
         );
         let list_response =
             ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&server_record)]);
@@ -1885,7 +1891,7 @@ mod tests {
             )
             .unwrap(),
             None,
-            None,
+            Utc::now(),
         );
         let list_response =
             ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&list_record)]);
@@ -2017,7 +2023,7 @@ mod tests {
             )
             .unwrap(),
             None,
-            None,
+            Utc::now(),
         );
         let list_response =
             ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&server_record)]);
@@ -2096,7 +2102,7 @@ mod tests {
             )
             .unwrap(),
             None,
-            None,
+            Utc::now(),
         );
         let list_response =
             ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&server_record)]);
@@ -2182,7 +2188,7 @@ mod tests {
             )
             .unwrap(),
             None,
-            None,
+            Utc::now(),
         );
         let list_response =
             ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&server_record)]);
@@ -2248,7 +2254,7 @@ mod tests {
         )
         .unwrap();
         let record =
-            DocumentVersionRecord::new(doc_id.clone(), 5, Utc::now(), document, None, None);
+            DocumentVersionRecord::new(doc_id.clone(), 5, Utc::now(), document, None, Utc::now());
         let response = ListDocumentsResponse::new(vec![DocumentSummaryRecord::from(&record)]);
 
         let server = MockServer::start();
@@ -2425,7 +2431,7 @@ mod tests {
                 DocumentPayload::new("Old".to_string(), body.to_string(), None, None, true)
                     .unwrap(),
                 None,
-                None,
+                Utc::now(),
             );
             then.status(200).json_body_obj(&record);
         });
@@ -2559,7 +2565,7 @@ mod tests {
                 )
                 .unwrap(),
                 None,
-                None,
+                Utc::now(),
             );
             then.status(200).json_body_obj(&record);
         });
