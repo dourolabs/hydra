@@ -67,7 +67,11 @@ export function buildIssueTree(issues: IssueSummaryRecord[]): IssueTreeNode[] {
     };
   }
 
-  // Root nodes are issues that have no parent (not in hasParent set)
-  const roots = issues.filter((i) => !hasParent.has(i.issue_id));
+  // Root nodes are issues that have no parent (not in hasParent set).
+  // Pre-sort by creation_time descending (newest first) so the topological
+  // sort's stable tiebreaker shows newest issues first within the same tier.
+  const roots = issues
+    .filter((i) => !hasParent.has(i.issue_id))
+    .sort((a, b) => b.creation_time.localeCompare(a.creation_time));
   return topologicalSort(roots).map(buildNode);
 }
