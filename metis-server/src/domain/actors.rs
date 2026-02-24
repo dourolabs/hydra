@@ -85,11 +85,7 @@ impl Actor {
     }
 
     pub fn name(&self) -> String {
-        match &self.actor_id {
-            ActorId::Username(username) => format!("u-{username}"),
-            ActorId::Task(task_id) => format!("w-{task_id}"),
-            ActorId::Issue(issue_id) => format!("a-{issue_id}"),
-        }
+        self.actor_id.to_string()
     }
 
     pub fn verify_auth_token(&self, token: &AuthToken) -> bool {

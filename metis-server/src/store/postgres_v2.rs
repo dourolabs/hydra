@@ -672,11 +672,7 @@ impl PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for message '{id}'"))
         })?;
 
-        let sender_name = match &message.sender {
-            ActorId::Username(username) => format!("u-{username}"),
-            ActorId::Task(task_id) => format!("w-{task_id}"),
-            ActorId::Issue(issue_id) => format!("a-{issue_id}"),
-        };
+        let sender_name = message.sender.to_string();
 
         let query = format!(
             "INSERT INTO {TABLE_MESSAGES_V2} (id, version_number, conversation_id, sender, body, deleted, actor)
@@ -2344,11 +2340,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
-        let actor_name = match actor_id {
-            ActorId::Username(username) => format!("u-{username}"),
-            ActorId::Task(task_id) => format!("w-{task_id}"),
-            ActorId::Issue(issue_id) => format!("a-{issue_id}"),
-        };
+        let actor_name = actor_id.to_string();
 
         let query = format!(
             "SELECT DISTINCT conversation_id FROM {TABLE_MESSAGES_V2} \

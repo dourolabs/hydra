@@ -953,11 +953,7 @@ impl ReadOnlyStore for MemoryStore {
     }
 
     async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
-        let actor_name = match actor_id {
-            ActorId::Username(username) => format!("u-{username}"),
-            ActorId::Task(task_id) => format!("w-{task_id}"),
-            ActorId::Issue(issue_id) => format!("a-{issue_id}"),
-        };
+        let actor_name = actor_id.to_string();
 
         let mut conversations = Vec::new();
         for entry in self.conversation_messages.iter() {

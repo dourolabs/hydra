@@ -15,8 +15,8 @@ impl ConversationId {
     /// conversation between A and B is always the same regardless of
     /// who initiates it.
     pub fn from_pair(a: &ActorId, b: &ActorId) -> Self {
-        let name_a = actor_id_to_name(a);
-        let name_b = actor_id_to_name(b);
+        let name_a = a.to_string();
+        let name_b = b.to_string();
         let (first, second) = if name_a <= name_b {
             (name_a, name_b)
         } else {
@@ -61,22 +61,6 @@ impl Message {
             body,
             deleted: false,
         }
-    }
-}
-
-/// Produce the canonical actor name string used in conversation IDs.
-///
-/// This mirrors the naming convention in `Actor::name()`:
-/// - `Username(u)` => `u-{username}`
-/// - `Task(t)` => `w-{task_id}`
-/// - `Issue(i)` => `a-{issue_id}`
-fn actor_id_to_name(actor_id: &ActorId) -> String {
-    // Reuse the same naming convention that Actor::name() uses.
-    // We replicate the logic here to avoid depending on a full Actor instance.
-    match actor_id {
-        ActorId::Username(username) => format!("u-{username}"),
-        ActorId::Task(task_id) => format!("w-{task_id}"),
-        ActorId::Issue(issue_id) => format!("a-{issue_id}"),
     }
 }
 

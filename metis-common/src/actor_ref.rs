@@ -1,6 +1,7 @@
 use crate::api::v1::users::Username;
 use crate::ids::{IssueId, TaskId};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -10,6 +11,16 @@ pub enum ActorId {
     Username(Username),
     Task(TaskId),
     Issue(IssueId),
+}
+
+impl fmt::Display for ActorId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ActorId::Username(username) => write!(f, "u-{username}"),
+            ActorId::Task(task_id) => write!(f, "w-{task_id}"),
+            ActorId::Issue(issue_id) => write!(f, "a-{issue_id}"),
+        }
+    }
 }
 
 /// A typed reference to who performed an operation.
@@ -255,5 +266,25 @@ mod tests {
     #[test]
     fn parse_actor_name_invalid_prefix() {
         assert_eq!(parse_actor_name("x-123"), None);
+    }
+
+    #[test]
+    fn actor_id_display_username() {
+        let actor_id = ActorId::Username(Username::from("alice"));
+        assert_eq!(actor_id.to_string(), "u-alice");
+    }
+
+    #[test]
+    fn actor_id_display_task() {
+        let task_id = TaskId::from_str("t-abcdef").unwrap();
+        let actor_id = ActorId::Task(task_id);
+        assert_eq!(actor_id.to_string(), "w-t-abcdef");
+    }
+
+    #[test]
+    fn actor_id_display_issue() {
+        let issue_id = IssueId::from_str("i-abcdef").unwrap();
+        let actor_id = ActorId::Issue(issue_id);
+        assert_eq!(actor_id.to_string(), "a-i-abcdef");
     }
 }
