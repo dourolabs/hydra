@@ -1,6 +1,5 @@
 pub mod agents;
 pub mod caches;
-pub mod changelog;
 pub mod chat;
 pub mod dashboard;
 pub mod documents;
@@ -10,3 +9,4 @@ pub mod output;
 pub mod patches;
 pub mod repos;
 pub mod users;
+pub mod utils;

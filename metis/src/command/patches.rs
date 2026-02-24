@@ -31,11 +31,11 @@ use crate::git::{
 use crate::{
     client::MetisClientInterface,
     command::{
-        changelog::{summarize_activity_log, write_changelog_pretty},
         output::{
             render_patch_records, render_patch_summary_records, CommandContext,
             ResolvedOutputFormat,
         },
+        utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
 };
 #[derive(Subcommand, Debug)]
@@ -1033,7 +1033,14 @@ async fn changelog_patch(
     let versions: Vec<Versioned<Patch>> = response
         .versions
         .into_iter()
-        .map(|record| Versioned::new(record.patch, record.version, record.timestamp))
+        .map(|record| {
+            Versioned::new(
+                record.patch,
+                record.version,
+                record.timestamp,
+                record.creation_time,
+            )
+        })
         .collect();
     let entries = activity_log_for_patch_versions(id, &versions);
     let mut summaries = summarize_activity_log(&entries)?;
