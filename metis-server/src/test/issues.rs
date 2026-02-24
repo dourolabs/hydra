@@ -5,6 +5,7 @@ use crate::{
     },
     test_utils::{spawn_test_server, test_client},
 };
+use chrono::Utc;
 use metis_common::{
     IssueId, PatchId,
     api::v1::issues::{
@@ -37,6 +38,7 @@ fn issue(
         todo_list,
         dependencies,
         patches,
+        Utc::now(),
     )
 }
 
@@ -75,6 +77,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                Utc::now(),
             )
             .into(),
             None,
@@ -102,6 +105,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                Utc::now(),
             )
             .into(),
             None,
@@ -134,6 +138,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                Utc::now(),
             )
             .into(),
             None,
@@ -161,6 +166,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                Utc::now(),
             )
             .into(),
             None,
@@ -238,6 +244,7 @@ async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                Utc::now(),
             )
             .into(),
             None,

@@ -1,6 +1,7 @@
 mod harness;
 
 use anyhow::Result;
+use chrono::Utc;
 use metis_common::issues::{Issue, IssueStatus, IssueType, JobSettings, UpsertIssueRequest};
 use metis_common::users::Username;
 use metis_server::{background::spawner::AgentQueue, config::AgentQueueConfig};
@@ -31,6 +32,7 @@ async fn create_spawnable_issue(
         Vec::new(),
         Vec::new(),
         false,
+        Utc::now(),
     );
     let request = UpsertIssueRequest::new(issue, None);
     let response = harness

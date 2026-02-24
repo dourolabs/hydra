@@ -975,6 +975,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         )
     }
 
@@ -1056,6 +1057,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         );
 
         let (issue_id, _) = store
@@ -1098,6 +1100,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         );
 
         let (issue_id, _) = store
@@ -1148,6 +1151,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         );
 
         let (issue_id, _) = store
@@ -1196,6 +1200,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         );
 
         store
@@ -1238,6 +1243,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         );
 
         let (issue_id, _) = store
@@ -1291,6 +1297,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         );
 
         let (issue_id, _) = store
@@ -1411,6 +1418,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         );
 
         store
@@ -1459,6 +1467,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         );
 
         store

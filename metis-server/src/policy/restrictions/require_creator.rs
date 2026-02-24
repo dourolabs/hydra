@@ -51,6 +51,7 @@ mod tests {
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::MemoryStore;
+    use chrono::Utc;
 
     fn make_issue(creator: &str) -> Issue {
         Issue::new(
@@ -64,6 +65,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         )
     }
 

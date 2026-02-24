@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use anyhow::{bail, Context, Result};
+use chrono::Utc;
 use clap::{Args, Subcommand};
 use metis_common::{
     constants::{ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ID},
@@ -361,6 +362,7 @@ async fn create_document(
         parsed_path.map(|p| p.to_string()),
         args.created_by.clone(),
         false,
+        Utc::now(),
     )?;
 
     let response = client
@@ -838,6 +840,7 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
                     Some(doc_path),
                     None,
                     false,
+                    Utc::now(),
                 )?;
                 let response = client
                     .create_document(&UpsertDocumentRequest::new(document))
@@ -976,6 +979,7 @@ mod tests {
             Some("docs/runbook.md".to_string()),
             Some(TaskId::new()),
             false,
+            Utc::now(),
         )
         .unwrap();
         DocumentVersionRecord::new(id.clone(), 0, Utc::now(), document, None)
@@ -1029,14 +1033,17 @@ mod tests {
         fs::write(file.path(), "contents").expect("write body");
         let server = MockServer::start();
         let create_mock = server.mock(move |when, then| {
-            when.method(POST).path("/v1/documents").json_body(json!({
-                "document": {
-                    "title": "Release notes",
-                    "body_markdown": "contents",
-                    "path": "/docs/release.md",
-                    "created_by": created_by_for_mock
-                }
-            }));
+            when.method(POST).path("/v1/documents").json_body_partial(
+                serde_json::to_string(&json!({
+                    "document": {
+                        "title": "Release notes",
+                        "body_markdown": "contents",
+                        "path": "/docs/release.md",
+                        "created_by": created_by_for_mock
+                    }
+                }))
+                .unwrap(),
+            );
             then.status(200).json_body_obj(&UpsertDocumentResponse::new(
                 document_id_for_mock.clone(),
                 0,
@@ -1373,6 +1380,7 @@ mod tests {
             Some("guides/deploy.md".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
@@ -1431,6 +1439,7 @@ mod tests {
                 Some("docs/pathed.md".to_string()),
                 None,
                 false,
+                Utc::now(),
             )
             .unwrap(),
             None,
@@ -1445,6 +1454,7 @@ mod tests {
                 None,
                 None,
                 false,
+                Utc::now(),
             )
             .unwrap(),
             None,
@@ -1492,6 +1502,7 @@ mod tests {
             Some("guides/steps.md".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
@@ -1551,6 +1562,7 @@ mod tests {
             Some("docs/keep.md".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 0, Utc::now(), document, None);
@@ -1562,6 +1574,7 @@ mod tests {
             Some("docs/remove.md".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap();
         let removed_record =
@@ -1636,6 +1649,7 @@ mod tests {
             Some("playbooks/guide.md".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap();
         let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None);
@@ -1682,6 +1696,7 @@ mod tests {
             Some("/playbooks/guide.md".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap();
         let record = DocumentVersionRecord::new(doc_id, 0, Utc::now(), document, None);
@@ -1790,6 +1805,7 @@ mod tests {
                 Some("/docs/guide.md".to_string()),
                 None,
                 false,
+                Utc::now(),
             )
             .unwrap(),
             None,
@@ -1876,6 +1892,7 @@ mod tests {
                 Some("/docs/stable.md".to_string()),
                 None,
                 false,
+                Utc::now(),
             )
             .unwrap(),
             None,
@@ -2007,6 +2024,7 @@ mod tests {
                 Some("/docs/guide.md".to_string()),
                 None,
                 false,
+                Utc::now(),
             )
             .unwrap(),
             None,
@@ -2085,6 +2103,7 @@ mod tests {
                 Some("/docs/guide.md".to_string()),
                 None,
                 false,
+                Utc::now(),
             )
             .unwrap(),
             None,
@@ -2170,6 +2189,7 @@ mod tests {
                 Some("/docs/guide.md".to_string()),
                 None,
                 false,
+                Utc::now(),
             )
             .unwrap(),
             None,
@@ -2235,6 +2255,7 @@ mod tests {
             Some("docs/guide.md".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap();
         let record = DocumentVersionRecord::new(doc_id.clone(), 5, Utc::now(), document, None);
@@ -2411,8 +2432,15 @@ mod tests {
                 doc_id_for_delete.clone(),
                 1,
                 Utc::now(),
-                DocumentPayload::new("Old".to_string(), body.to_string(), None, None, true)
-                    .unwrap(),
+                DocumentPayload::new(
+                    "Old".to_string(),
+                    body.to_string(),
+                    None,
+                    None,
+                    true,
+                    Utc::now(),
+                )
+                .unwrap(),
                 None,
             );
             then.status(200).json_body_obj(&record);
@@ -2544,6 +2572,7 @@ mod tests {
                     None,
                     None,
                     true,
+                    Utc::now(),
                 )
                 .unwrap(),
                 None,

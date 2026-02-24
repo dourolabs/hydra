@@ -211,6 +211,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         )
     }
 
@@ -233,6 +234,7 @@ mod tests {
             None,
             commit_range,
             None,
+            Utc::now(),
         )
     }
 
@@ -252,6 +254,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            Utc::now(),
         )
     }
 

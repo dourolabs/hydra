@@ -1,4 +1,5 @@
 use crate::test_utils::{spawn_test_server, test_client};
+use chrono::Utc;
 use metis_common::api::v1::issues::UpsertIssueResponse;
 use serde_json::json;
 
@@ -55,7 +56,8 @@ async fn events_endpoint_sends_snapshot_on_first_connect() -> anyhow::Result<()>
                 "description": "test issue for snapshot",
                 "creator": "tester",
                 "progress": "",
-                "status": "open"
+                "status": "open",
+                "creation_timestamp": Utc::now()
             }
         }))
         .send()
@@ -148,7 +150,8 @@ async fn events_endpoint_streams_issue_mutations() -> anyhow::Result<()> {
                 "description": "test issue for SSE",
                 "creator": "tester",
                 "progress": "",
-                "status": "open"
+                "status": "open",
+                "creation_timestamp": Utc::now()
             }
         }))
         .send()
@@ -186,7 +189,8 @@ async fn events_endpoint_sends_resync_on_reconnect() -> anyhow::Result<()> {
                 "description": "advance seq",
                 "creator": "tester",
                 "progress": "",
-                "status": "open"
+                "status": "open",
+                "creation_timestamp": Utc::now()
             }
         }))
         .send()
@@ -268,7 +272,8 @@ async fn events_endpoint_filters_by_entity_type() -> anyhow::Result<()> {
                 "description": "should be filtered out",
                 "creator": "tester",
                 "progress": "",
-                "status": "open"
+                "status": "open",
+                "creation_timestamp": Utc::now()
             }
         }))
         .send()

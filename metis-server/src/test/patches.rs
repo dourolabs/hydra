@@ -10,6 +10,7 @@ use crate::{
         test_state_with_github_api_base_url,
     },
 };
+use chrono::Utc;
 use httpmock::prelude::HttpMockRequest;
 use httpmock::{Method::GET, Method::POST, MockServer};
 use metis_common::{
@@ -41,6 +42,7 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let response = client
@@ -69,7 +71,6 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
     // The test actor is a task worker whose creator is "test-creator", so the
     // route handler populates patch.creator from Actor.creator.
     expected_patch.creator = "test-creator".into();
-    assert!(fetched.patch.creation_timestamp.is_some());
     expected_patch.creation_timestamp = fetched.patch.creation_timestamp;
     assert_eq!(fetched.patch, expected_patch);
     Ok(())
@@ -93,6 +94,7 @@ async fn patch_versions_endpoints_return_history() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let response = client
@@ -118,6 +120,7 @@ async fn patch_versions_endpoints_return_history() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
     let _updated: UpsertPatchResponse = client
         .put(format!(
@@ -199,6 +202,7 @@ async fn patch_version_endpoints_return_404s() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
     let response = client
         .post(format!("{}/v1/patches", server.base_url()))
@@ -240,6 +244,7 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
     let filtered_patch = Patch::new(
         "login retry patch".to_string(),
@@ -255,6 +260,7 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
 
     for patch in [patch.clone(), filtered_patch.clone()] {
@@ -351,6 +357,7 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let created: UpsertPatchResponse = client
@@ -441,6 +448,7 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let created: UpsertPatchResponse = client
@@ -557,6 +565,7 @@ async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Re
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let created: UpsertPatchResponse = client
@@ -645,6 +654,7 @@ async fn create_patch_asset_surfaces_github_bad_size() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let created: UpsertPatchResponse = client
@@ -695,6 +705,7 @@ async fn create_patch_asset_errors_without_github_pr() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let created: UpsertPatchResponse = client
@@ -754,6 +765,7 @@ async fn delete_patch_basic_operation() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let created: UpsertPatchResponse = client
@@ -812,6 +824,7 @@ async fn delete_patch_include_deleted_in_listing() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let created: UpsertPatchResponse = client
@@ -887,6 +900,7 @@ async fn delete_patch_get_deleted_by_id() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let created: UpsertPatchResponse = client
@@ -942,6 +956,7 @@ async fn delete_patch_idempotency() -> anyhow::Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let created: UpsertPatchResponse = client

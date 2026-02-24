@@ -203,6 +203,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         );
         let (issue_id, _) = handles
             .store

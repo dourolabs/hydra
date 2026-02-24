@@ -72,6 +72,7 @@ mod tests {
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, Store};
+    use chrono::Utc;
     use metis_common::RepoName;
     use std::str::FromStr;
 
@@ -91,7 +92,7 @@ mod tests {
             base_branch: None,
             reviews: Vec::new(),
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         }
     }
 

@@ -511,6 +511,9 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
              for branch '{branch_name}'. Consider updating that patch with: \
              metis patches update {existing_patch_id}"
         )),
+        UpsertPatchError::CreationTimestampOutOfRange => ApiError::bad_request(
+            "creation_timestamp is too far from the current server time (must be within 1 hour)",
+        ),
         UpsertPatchError::PolicyViolation(violation) => ApiError::bad_request(violation.message),
     }
 }

@@ -16,8 +16,7 @@ pub struct Document {
     pub created_by: Option<TaskId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub creation_timestamp: Option<DateTime<Utc>>,
+    pub creation_timestamp: DateTime<Utc>,
 }
 
 impl Document {
@@ -27,6 +26,7 @@ impl Document {
         path: Option<String>,
         created_by: Option<TaskId>,
         deleted: bool,
+        creation_timestamp: DateTime<Utc>,
     ) -> Result<Self, crate::DocumentPathError> {
         let path = path.map(|p| p.parse()).transpose()?;
         Ok(Self {
@@ -35,7 +35,7 @@ impl Document {
             path,
             created_by,
             deleted,
-            creation_timestamp: None,
+            creation_timestamp,
         })
     }
 }
@@ -167,8 +167,8 @@ pub struct DocumentSummary {
     pub created_by: Option<TaskId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub creation_timestamp: Option<DateTime<Utc>>,
+    #[serde(default = "Utc::now")]
+    pub creation_timestamp: DateTime<Utc>,
 }
 
 impl From<&Document> for DocumentSummary {
@@ -241,6 +241,7 @@ impl ListDocumentVersionsResponse {
 mod tests {
     use super::*;
     use crate::test_helpers::serialize_query_params;
+    use chrono::Utc;
     use std::collections::HashMap;
 
     #[test]
@@ -252,6 +253,7 @@ mod tests {
             Some("docs/path.md".to_string()),
             Some(created_by.clone()),
             false,
+            Utc::now(),
         )
         .unwrap();
         assert_eq!(document.path.as_deref(), Some("/docs/path.md"));
@@ -329,6 +331,7 @@ mod tests {
             Some("docs/test.md".to_string()),
             Some(TaskId::new()),
             false,
+            Utc::now(),
         )
         .unwrap();
         let summary = DocumentSummary::from(&doc);
@@ -345,6 +348,7 @@ mod tests {
             Some("docs/path.md".to_string()),
             Some(created_by.clone()),
             false,
+            Utc::now(),
         )
         .unwrap();
         let summary = DocumentSummary::from(&doc);
@@ -356,8 +360,15 @@ mod tests {
 
     #[test]
     fn document_summary_record_from_version_record() {
-        let doc =
-            Document::new("Title".to_string(), "body".to_string(), None, None, false).unwrap();
+        let doc = Document::new(
+            "Title".to_string(),
+            "body".to_string(),
+            None,
+            None,
+            false,
+            Utc::now(),
+        )
+        .unwrap();
         let doc_id = DocumentId::new();
         let record = DocumentVersionRecord::new(doc_id.clone(), 2, chrono::Utc::now(), doc, None);
         let summary_record = DocumentSummaryRecord::from(&record);

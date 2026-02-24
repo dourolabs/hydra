@@ -41,6 +41,8 @@ pub enum UpsertDocumentError {
         #[source]
         source: StoreError,
     },
+    #[error("creation_timestamp is too far from the current server time")]
+    CreationTimestampOutOfRange,
     #[error("{0}")]
     PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
@@ -112,8 +114,11 @@ impl AppState {
                 Ok((id, version))
             }
             None => {
-                let mut document = document;
-                document.creation_timestamp = Some(Utc::now());
+                // Validate creation_timestamp is within 1 hour of server time.
+                let drift = (Utc::now() - document.creation_timestamp).abs();
+                if drift > chrono::Duration::hours(1) {
+                    return Err(UpsertDocumentError::CreationTimestampOutOfRange);
+                }
                 let created_by = document.created_by.clone();
                 let (document_id, version) = self
                     .store
@@ -179,6 +184,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use crate::{domain::actors::ActorRef, domain::documents::Document, test_utils::test_state};
+    use chrono::Utc;
 
     #[tokio::test]
     async fn upsert_document_allows_normal_path() {
@@ -189,7 +195,7 @@ mod tests {
             path: Some("docs/notes.md".parse().unwrap()),
             created_by: None,
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
 
         let result = state
@@ -207,7 +213,7 @@ mod tests {
             path: None,
             created_by: None,
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
 
         let result = state

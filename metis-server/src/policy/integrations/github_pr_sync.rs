@@ -268,6 +268,7 @@ mod tests {
     use crate::domain::patches::{Patch, PatchStatus};
     use crate::domain::users::Username;
     use crate::policy::Automation;
+    use chrono::Utc;
     use metis_common::RepoName;
 
     #[test]
@@ -296,6 +297,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         );
         assert!(patch.branch_name.is_none());
     }
@@ -316,6 +318,7 @@ mod tests {
             Some("feature/branch".into()),
             None,
             None,
+            Utc::now(),
         );
         assert!(patch.branch_name.is_some());
     }
@@ -336,6 +339,7 @@ mod tests {
             Some("feature/branch".into()),
             None,
             None,
+            Utc::now(),
         );
 
         let mut new_patch = old_patch.clone();
@@ -374,6 +378,7 @@ mod tests {
             Some("feature/branch".into()),
             None,
             None,
+            Utc::now(),
         );
         old_patch.github = Some(GithubPr::new(
             "org".into(),

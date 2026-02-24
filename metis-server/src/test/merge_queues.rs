@@ -7,6 +7,7 @@ use crate::{
     },
     test::{TestStateHandles, spawn_test_server_with_state, test_client, test_state_handles},
 };
+use chrono::Utc;
 use git2::{Repository as GitRepository, Signature, build::CheckoutBuilder};
 use metis_common::{
     PatchId, RepoName,
@@ -82,6 +83,7 @@ async fn state_with_repo_and_patch(
         None,
         None,
         None,
+        Utc::now(),
     );
 
     let (patch_id, _) = handles.store.add_patch(patch, &ActorRef::test()).await?;

@@ -230,7 +230,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
                 dependencies: Vec::new(),
                 patches: Vec::new(),
                 deleted: false,
-                creation_timestamp: None,
+                creation_timestamp: Utc::now(),
             },
             &ActorRef::test(),
         )
@@ -318,7 +318,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
                 dependencies: Vec::new(),
                 patches: Vec::new(),
                 deleted: false,
-                creation_timestamp: None,
+                creation_timestamp: Utc::now(),
             },
             &ActorRef::test(),
         )
@@ -924,7 +924,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
                 branch_name: None,
                 commit_range: None,
                 base_branch: None,
-                creation_timestamp: None,
+                creation_timestamp: Utc::now(),
             },
             &ActorRef::test(),
         )
@@ -1091,7 +1091,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 branch_name: None,
                 commit_range: None,
                 base_branch: None,
-                creation_timestamp: None,
+                creation_timestamp: Utc::now(),
             },
             &ActorRef::test(),
         )

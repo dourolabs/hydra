@@ -424,6 +424,9 @@ fn map_upsert_issue_error(err: UpsertIssueError) -> ApiError {
         } => ApiError::internal(anyhow!(
             "failed to kill task '{job_id}' for dropped issue '{issue_id}': {source}"
         )),
+        UpsertIssueError::CreationTimestampOutOfRange => ApiError::bad_request(
+            "creation_timestamp is too far from the current server time (must be within 1 hour)",
+        ),
         UpsertIssueError::PolicyViolation(violation) => ApiError::bad_request(violation.message),
     }
 }

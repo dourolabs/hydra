@@ -1071,6 +1071,7 @@ mod tests {
             Some("docs/runbook.md".to_string()),
             Some(TaskId::new()),
             false,
+            Utc::now(),
         )
         .unwrap();
         let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document, None);
@@ -1096,6 +1097,7 @@ mod tests {
             Some("docs/runbook.md".to_string()),
             Some(TaskId::new()),
             false,
+            Utc::now(),
         )
         .unwrap();
         let record = DocumentVersionRecord::new(DocumentId::new(), 0, Utc::now(), document, None);

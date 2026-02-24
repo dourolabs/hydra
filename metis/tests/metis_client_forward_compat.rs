@@ -462,6 +462,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         vec![],
         vec![],
         false,
+        Utc::now(),
     );
     let issue_request = UpsertIssueRequest::new(issue, None);
 
@@ -523,6 +524,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         None,
         None,
         None,
+        Utc::now(),
     );
     let upsert_patch = UpsertPatchRequest::new(patch);
 
@@ -548,6 +550,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         Some("docs/runbook.md".to_string()),
         Some(job_id.clone()),
         false,
+        Utc::now(),
     )
     .unwrap();
     let upsert_document = UpsertDocumentRequest::new(document);
@@ -694,6 +697,7 @@ fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &Pa
                 { "type": "relates-to", "issue_id": dependency_id }
             ],
             "patches": [patch_id],
+            "creation_timestamp": Utc::now(),
             "surprise": "field"
         },
         "extra": "issue"
@@ -741,6 +745,7 @@ fn forward_patch_json(
                 },
                 "unexpected": "field"
             },
+            "creation_timestamp": Utc::now(),
             "bonus": "field"
         }
     })
@@ -793,6 +798,7 @@ fn forward_document_json(document_id: &DocumentId, job_id: &TaskId) -> Value {
             "body_markdown": "# Runbook",
             "path": "docs/runbook.md",
             "created_by": job_id,
+            "creation_timestamp": Utc::now(),
             "extra": "document"
         },
         "note": "document"
@@ -814,6 +820,7 @@ fn forward_document_version_json(
             "body_markdown": "# Body",
             "path": "docs/runbook.md",
             "created_by": job_id,
+            "creation_timestamp": Utc::now(),
             "extra": "document-version"
         },
         "note": "document-version"

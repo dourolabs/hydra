@@ -358,8 +358,8 @@ pub struct Issue {
     pub patches: Vec<PatchId>,
     #[serde(default)]
     pub deleted: bool,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub creation_timestamp: Option<DateTime<Utc>>,
+    #[serde(default = "Utc::now")]
+    pub creation_timestamp: DateTime<Utc>,
 }
 
 impl Issue {
@@ -375,6 +375,7 @@ impl Issue {
         todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
+        creation_timestamp: DateTime<Utc>,
     ) -> Self {
         Self {
             issue_type,
@@ -388,7 +389,7 @@ impl Issue {
             dependencies,
             patches,
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp,
         }
     }
 }
@@ -708,7 +709,7 @@ impl From<api::issues::Issue> for Issue {
 
 impl From<Issue> for api::issues::Issue {
     fn from(value: Issue) -> Self {
-        let mut issue = api::issues::Issue::new(
+        api::issues::Issue::new(
             value.issue_type.into(),
             value.description,
             value.creator.into(),
@@ -720,9 +721,8 @@ impl From<Issue> for api::issues::Issue {
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
             value.deleted,
-        );
-        issue.creation_timestamp = value.creation_timestamp;
-        issue
+            value.creation_timestamp,
+        )
     }
 }
 
@@ -789,7 +789,7 @@ mod tests {
             }],
             patches: vec![patch_id.clone()],
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
 
         let issue_json = serde_json::to_string(&issue).expect("should serialize to JSON");

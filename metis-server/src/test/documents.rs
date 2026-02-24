@@ -48,6 +48,7 @@ async fn documents_can_be_created_listed_and_retrieved() -> anyhow::Result<()> {
         Some("docs/design.md".to_string()),
         None,
         false,
+        Utc::now(),
     )
     .unwrap();
 
@@ -72,7 +73,6 @@ async fn documents_can_be_created_listed_and_retrieved() -> anyhow::Result<()> {
         .json()
         .await?;
     assert_eq!(fetched.document_id, created.document_id);
-    assert!(fetched.document.creation_timestamp.is_some());
     let mut expected_document = document;
     expected_document.creation_timestamp = fetched.document.creation_timestamp;
     assert_eq!(fetched.document, expected_document);
@@ -107,6 +107,7 @@ async fn document_versions_endpoints_return_history() -> anyhow::Result<()> {
                 None,
                 None,
                 false,
+                Utc::now(),
             )
             .unwrap(),
         ))
@@ -124,6 +125,7 @@ async fn document_versions_endpoints_return_history() -> anyhow::Result<()> {
                 None,
                 None,
                 false,
+                Utc::now(),
             )
             .unwrap(),
         ))
@@ -175,6 +177,7 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
                 None,
                 Some(missing_job.clone()),
                 false,
+                Utc::now(),
             )
             .unwrap(),
         ))
@@ -200,6 +203,7 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
                 None,
                 Some(non_running.clone()),
                 false,
+                Utc::now(),
             )
             .unwrap(),
         ))
@@ -229,6 +233,7 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
                 None,
                 Some(running_job.clone()),
                 false,
+                Utc::now(),
             )
             .unwrap(),
         ))
@@ -262,6 +267,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
             Some("docs/runbook.md".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap(),
         Document::new(
@@ -270,6 +276,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
             Some("docs/guide.md".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap(),
         Document::new(
@@ -278,6 +285,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
             Some("notes/internal.md".to_string()),
             Some(running_task.clone()),
             false,
+            Utc::now(),
         )
         .unwrap(),
     ];
@@ -374,6 +382,7 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             Some("docs/guide.md".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap(),
         Document::new(
@@ -382,6 +391,7 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             Some("docs/guide.md.bak".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap(),
         Document::new(
@@ -390,6 +400,7 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             Some("docs/guide.md/extra".to_string()),
             None,
             false,
+            Utc::now(),
         )
         .unwrap(),
     ];
@@ -470,6 +481,7 @@ async fn delete_document_basic_operation() -> anyhow::Result<()> {
         None,
         None,
         false,
+        Utc::now(),
     )
     .unwrap();
 
@@ -523,6 +535,7 @@ async fn delete_document_include_deleted_in_listing() -> anyhow::Result<()> {
         None,
         None,
         false,
+        Utc::now(),
     )
     .unwrap();
 
@@ -594,6 +607,7 @@ async fn delete_document_get_deleted_by_id() -> anyhow::Result<()> {
         None,
         None,
         false,
+        Utc::now(),
     )
     .unwrap();
 
@@ -635,6 +649,7 @@ async fn delete_document_idempotency() -> anyhow::Result<()> {
         None,
         None,
         false,
+        Utc::now(),
     )
     .unwrap();
 
@@ -701,6 +716,7 @@ async fn get_document_version_negative_offset_returns_correct_version() -> anyho
                 None,
                 None,
                 false,
+                Utc::now(),
             )
             .unwrap(),
         ))
@@ -719,6 +735,7 @@ async fn get_document_version_negative_offset_returns_correct_version() -> anyho
                 None,
                 None,
                 false,
+                Utc::now(),
             )
             .unwrap(),
         ))

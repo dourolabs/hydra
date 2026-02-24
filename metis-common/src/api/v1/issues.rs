@@ -449,8 +449,7 @@ pub struct Issue {
     pub patches: Vec<PatchId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub creation_timestamp: Option<DateTime<Utc>>,
+    pub creation_timestamp: DateTime<Utc>,
 }
 
 impl Issue {
@@ -467,6 +466,7 @@ impl Issue {
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
         deleted: bool,
+        creation_timestamp: DateTime<Utc>,
     ) -> Self {
         Self {
             issue_type,
@@ -480,7 +480,7 @@ impl Issue {
             dependencies,
             patches,
             deleted,
-            creation_timestamp: None,
+            creation_timestamp,
         }
     }
 }
@@ -916,7 +916,7 @@ mod tests {
 
     #[test]
     fn issue_todo_list_defaults_when_missing() {
-        let raw = r#"{"type":"task","description":"write docs","creator":"alice"}"#;
+        let raw = r#"{"type":"task","description":"write docs","creator":"alice","creation_timestamp":"2026-01-01T00:00:00Z"}"#;
 
         let issue: Issue = serde_json::from_str(raw).expect("issue should deserialize");
 
@@ -960,7 +960,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
 
         let value = serde_json::to_value(&issue).expect("issue should serialize");
@@ -988,7 +988,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
 
         let actor = ActorRef::Authenticated {
@@ -1017,7 +1017,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
 
         let record = IssueVersionRecord::new(issue_id, 1, chrono::Utc::now(), issue, None);
@@ -1035,7 +1035,7 @@ mod tests {
             "issue_id": "i-test",
             "version": 1,
             "timestamp": "2024-01-01T00:00:00Z",
-            "issue": {"type": "task", "description": "test", "creator": "alice"}
+            "issue": {"type": "task", "description": "test", "creator": "alice", "creation_timestamp": "2024-01-01T00:00:00Z"}
         }"#;
 
         let record: IssueVersionRecord =
@@ -1065,7 +1065,7 @@ mod tests {
             )],
             patches: vec!["p-abcd".parse().unwrap()],
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         }
     }
 

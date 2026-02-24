@@ -262,6 +262,9 @@ fn map_upsert_document_error(err: UpsertDocumentError) -> ApiError {
             error!(error = %source, "document store operation failed");
             ApiError::internal(anyhow!("document store operation failed: {source}"))
         }
+        UpsertDocumentError::CreationTimestampOutOfRange => ApiError::bad_request(
+            "creation_timestamp is too far from the current server time (must be within 1 hour)",
+        ),
         UpsertDocumentError::PolicyViolation(violation) => ApiError::bad_request(violation.message),
     }
 }

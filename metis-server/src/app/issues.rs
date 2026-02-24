@@ -68,6 +68,8 @@ pub enum UpsertIssueError {
         issue_id: IssueId,
         job_id: TaskId,
     },
+    #[error("creation_timestamp is too far from the current server time")]
+    CreationTimestampOutOfRange,
     #[error("{0}")]
     PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
@@ -233,7 +235,12 @@ impl AppState {
                         .await?;
                 }
 
-                issue.creation_timestamp = Some(Utc::now());
+                // Validate creation_timestamp is within 1 hour of server time.
+                let drift = (Utc::now() - issue.creation_timestamp).abs();
+                if drift > chrono::Duration::hours(1) {
+                    return Err(UpsertIssueError::CreationTimestampOutOfRange);
+                }
+
                 let (id, version) = self
                     .store
                     .add_issue_with_actor(issue, actor)

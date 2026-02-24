@@ -6,6 +6,7 @@ pub mod user_handle;
 mod worker;
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use metis::client::{MetisClient, MetisClientInterface};
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{
@@ -139,6 +140,7 @@ pub async fn create_merge_request_issue(
         )],
         vec![patch_id],
         false,
+        Utc::now(),
     );
     let response = client
         .create_issue(&UpsertIssueRequest::new(issue, None))

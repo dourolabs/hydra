@@ -128,6 +128,7 @@ mod tests {
             None,
             commit_range,
             None,
+            Utc::now(),
         )
     }
 

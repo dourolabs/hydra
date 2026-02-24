@@ -242,8 +242,7 @@ pub struct Patch {
     /// additional commits since work on the patch began.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_branch: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub creation_timestamp: Option<DateTime<Utc>>,
+    pub creation_timestamp: DateTime<Utc>,
 }
 
 impl Patch {
@@ -263,6 +262,7 @@ impl Patch {
         branch_name: Option<String>,
         commit_range: Option<CommitRange>,
         base_branch: Option<String>,
+        creation_timestamp: DateTime<Utc>,
     ) -> Self {
         Self {
             title,
@@ -279,7 +279,7 @@ impl Patch {
             branch_name,
             commit_range,
             base_branch,
-            creation_timestamp: None,
+            creation_timestamp,
         }
     }
 }
@@ -647,7 +647,7 @@ mod tests {
                 "0000000000000000000000000000000000000002".parse().unwrap(),
             )),
             base_branch: Some("main".to_string()),
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
 
         let json = serde_json::to_string(&patch).unwrap();
@@ -670,7 +670,8 @@ mod tests {
             "is_automatic_backup": false,
             "creator": "test-creator",
             "reviews": [],
-            "service_repo_name": "org/repo"
+            "service_repo_name": "org/repo",
+            "creation_timestamp": "2024-01-01T00:00:00Z"
         }"#;
 
         let patch: Patch = serde_json::from_str(json).unwrap();
@@ -718,7 +719,7 @@ mod tests {
                 "0000000000000000000000000000000000000002".parse().unwrap(),
             )),
             base_branch: Some("main".to_string()),
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         }
     }
 

@@ -660,6 +660,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    Utc::now(),
                 ),
                 &ActorRef::test(),
             )
@@ -820,6 +821,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         );
         let pr: PullRequest = serde_json::from_value(json!({
             "url": "",
@@ -892,6 +894,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         );
         let pr: PullRequest = serde_json::from_value(json!({
             "url": "",

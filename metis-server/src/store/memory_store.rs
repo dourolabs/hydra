@@ -920,7 +920,7 @@ impl Store for MemoryStore {
 
     async fn add_issue(
         &self,
-        mut issue: Issue,
+        issue: Issue,
         actor: &ActorRef,
     ) -> Result<(IssueId, VersionNumber), StoreError> {
         let count = self.issues.len() as u64;
@@ -936,7 +936,6 @@ impl Store for MemoryStore {
         let new_dependencies = issue.dependencies.clone();
         let new_patches = issue.patches.clone();
 
-        issue.creation_timestamp = Some(Utc::now());
         self.validate_dependencies(&new_dependencies)?;
         self.issues.insert(
             id.clone(),
@@ -1005,7 +1004,7 @@ impl Store for MemoryStore {
 
     async fn add_patch(
         &self,
-        mut patch: Patch,
+        patch: Patch,
         actor: &ActorRef,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
         let count = self.patches.len() as u64;
@@ -1018,7 +1017,6 @@ impl Store for MemoryStore {
             }
             len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
         };
-        patch.creation_timestamp = Some(Utc::now());
         self.patches.insert(
             id.clone(),
             vec![Self::versioned_now_with_actor(patch, 1, actor)],
@@ -1036,7 +1034,9 @@ impl Store for MemoryStore {
             .patches
             .get_mut(id)
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
-        patch.creation_timestamp = versions.last().and_then(|v| v.item.creation_timestamp);
+        if let Some(last) = versions.last() {
+            patch.creation_timestamp = last.item.creation_timestamp;
+        }
         let next_version = Self::next_version(&versions);
         versions.push(Self::versioned_now_with_actor(patch, next_version, actor));
         Ok(next_version)
@@ -1055,7 +1055,7 @@ impl Store for MemoryStore {
 
     async fn add_document(
         &self,
-        mut document: Document,
+        document: Document,
         actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
         let count = self.documents.len() as u64;
@@ -1068,7 +1068,6 @@ impl Store for MemoryStore {
             }
             len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
         };
-        document.creation_timestamp = Some(Utc::now());
         let path = document.path.clone();
         self.documents.insert(
             id.clone(),
@@ -1088,7 +1087,9 @@ impl Store for MemoryStore {
             .documents
             .get_mut(id)
             .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
-        document.creation_timestamp = versions.last().and_then(|v| v.item.creation_timestamp);
+        if let Some(last) = versions.last() {
+            document.creation_timestamp = last.item.creation_timestamp;
+        }
         let previous_path = versions
             .last()
             .and_then(|version| version.item.path.clone());
@@ -1391,6 +1392,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         )
     }
 
@@ -1401,7 +1403,7 @@ mod tests {
             path: path.map(|p| p.parse().unwrap()),
             created_by,
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         }
     }
 
@@ -1417,6 +1419,7 @@ mod tests {
             Vec::new(),
             dependencies,
             Vec::new(),
+            Utc::now(),
         )
     }
 
@@ -1731,7 +1734,6 @@ mod tests {
             .unwrap();
 
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
-        assert!(fetched.item.creation_timestamp.is_some());
         let mut expected = updated;
         expected.creation_timestamp = fetched.item.creation_timestamp;
         assert_eq!(fetched.item, expected);
@@ -1817,7 +1819,6 @@ mod tests {
             .unwrap();
 
         let fetched = store.get_patch(&id, false).await.unwrap();
-        assert!(fetched.item.creation_timestamp.is_some());
         let mut expected = patch;
         expected.creation_timestamp = fetched.item.creation_timestamp;
         assert_eq!(fetched.item, expected);
@@ -1846,6 +1847,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         );
 
         store
@@ -1854,7 +1856,6 @@ mod tests {
             .unwrap();
 
         let fetched = store.get_patch(&id, false).await.unwrap();
-        assert!(fetched.item.creation_timestamp.is_some());
         let mut expected = updated;
         expected.creation_timestamp = fetched.item.creation_timestamp;
         assert_eq!(fetched.item, expected);
@@ -1907,6 +1908,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    Utc::now(),
                 ),
                 &ActorRef::test(),
             )

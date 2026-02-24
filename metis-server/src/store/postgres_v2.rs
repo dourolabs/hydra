@@ -857,7 +857,7 @@ struct IssueRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
-    creation_timestamp: Option<DateTime<Utc>>,
+    creation_timestamp: DateTime<Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -882,7 +882,7 @@ struct PatchRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
-    creation_timestamp: Option<DateTime<Utc>>,
+    creation_timestamp: DateTime<Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -922,7 +922,7 @@ struct DocumentRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
-    creation_timestamp: Option<DateTime<Utc>>,
+    creation_timestamp: DateTime<Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2638,6 +2638,7 @@ mod tests {
             vec![TodoItem::new("todo".to_string(), false)],
             dependencies,
             Vec::new(),
+            Utc::now(),
         )
     }
 
@@ -2656,6 +2657,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         )
     }
 
@@ -2666,7 +2668,7 @@ mod tests {
             path: Some(path.parse().unwrap()),
             created_by,
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         }
     }
 
@@ -2765,6 +2767,7 @@ mod tests {
             Some("feature/xyz".to_string()),
             Some(CommitRange::new(base_oid, head_oid)),
             Some("main".to_string()),
+            Utc::now(),
         );
         patch.creator = Username::from("patch-creator");
         patch
@@ -2796,6 +2799,7 @@ mod tests {
             ],
             dependencies,
             patches,
+            Utc::now(),
         )
     }
 
@@ -3290,7 +3294,7 @@ mod tests {
             path: Some("docs/test.md".parse().unwrap()),
             created_by: None,
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
         let (doc_id, _) = store.add_document(doc, &ActorRef::test()).await.unwrap();
 
@@ -3301,7 +3305,7 @@ mod tests {
             path: Some("docs/test.md".parse().unwrap()),
             created_by: None,
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
         store
             .update_document(&doc_id, updated_doc, &ActorRef::test())
@@ -3344,6 +3348,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            Utc::now(),
         );
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
@@ -3359,6 +3364,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            Utc::now(),
         );
         store
             .update_issue(&issue_id, updated_issue, &ActorRef::test())
@@ -3422,6 +3428,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         );
         let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
@@ -3440,6 +3447,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         );
         store
             .update_patch(&patch_id, updated_patch, &ActorRef::test())

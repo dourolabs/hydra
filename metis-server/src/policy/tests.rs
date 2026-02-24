@@ -25,6 +25,7 @@ fn dummy_issue() -> Issue {
         Vec::new(),
         Vec::new(),
         Vec::new(),
+        Utc::now(),
     )
 }
 
@@ -53,6 +54,7 @@ fn dummy_patch_payload() -> Arc<MutationPayload> {
             None,
             None,
             None,
+            Utc::now(),
         ),
         actor: ActorRef::test(),
     })
@@ -67,7 +69,7 @@ fn dummy_document_payload() -> Arc<MutationPayload> {
             path: None,
             created_by: None,
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         },
         actor: ActorRef::test(),
     })
@@ -178,6 +180,7 @@ fn make_issue_payload() -> OperationPayload {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         ),
         old: None,
     }
@@ -650,7 +653,7 @@ fn make_dummy_document() -> crate::domain::documents::Document {
         path: None,
         created_by: None,
         deleted: false,
-        creation_timestamp: None,
+        creation_timestamp: Utc::now(),
     }
 }
 
@@ -669,6 +672,7 @@ fn make_dummy_patch() -> crate::domain::patches::Patch {
         None,
         None,
         None,
+        Utc::now(),
     )
 }
 
@@ -883,6 +887,7 @@ async fn disabling_restriction_allows_blocked_operation() {
         Vec::new(),
         Vec::new(),
         Vec::new(),
+        Utc::now(),
     );
 
     let actor = ActorRef::test();

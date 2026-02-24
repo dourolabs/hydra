@@ -1032,7 +1032,7 @@ mod tests {
             dependencies: vec![],
             patches: vec![],
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
         let actor = ActorRef::System {
             worker_name: "migration-test".into(),

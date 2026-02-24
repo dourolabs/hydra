@@ -212,7 +212,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
         let updated_issue = Issue {
             description: "Updated".to_string(),
@@ -267,7 +267,7 @@ mod tests {
             branch_name: None,
             commit_range: None,
             base_branch: None,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
         let patch_v2 = Patch {
             title: "v2".to_string(),
@@ -312,7 +312,7 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
             deleted: false,
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
 
         let actor = ActorRef::Authenticated {
@@ -348,8 +348,15 @@ mod tests {
     #[test]
     fn activity_log_captures_document_path_changes() {
         let document_id = DocumentId::new();
-        let document_v1 =
-            Document::new("Doc".to_string(), "body".to_string(), None, None, false).unwrap();
+        let document_v1 = Document::new(
+            "Doc".to_string(),
+            "body".to_string(),
+            None,
+            None,
+            false,
+            Utc::now(),
+        )
+        .unwrap();
         let document_v2 = Document {
             path: Some("docs/guide.md".parse().unwrap()),
             ..document_v1.clone()

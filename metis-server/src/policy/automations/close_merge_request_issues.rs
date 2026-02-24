@@ -215,6 +215,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         )
     }
 
@@ -236,6 +237,7 @@ mod tests {
                 parent_id.clone(),
             )],
             vec![patch_id.clone()],
+            Utc::now(),
         )
     }
 
@@ -258,6 +260,7 @@ mod tests {
                 parent_id.clone(),
             )],
             vec![patch_id.clone()],
+            Utc::now(),
         )
     }
 
@@ -282,6 +285,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            Utc::now(),
         );
         let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
@@ -339,6 +343,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            Utc::now(),
         );
         let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
@@ -394,6 +399,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            Utc::now(),
         );
         let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
@@ -455,6 +461,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            Utc::now(),
         );
         let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
@@ -516,6 +523,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            Utc::now(),
         );
         let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 

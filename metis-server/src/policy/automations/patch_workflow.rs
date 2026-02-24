@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -282,6 +283,7 @@ impl PatchWorkflowAutomation {
                 Vec::new(),
                 parent_dependencies.clone(),
                 vec![patch_id.clone()],
+                Utc::now(),
             );
 
             let (issue_id, _version) = ctx
@@ -336,6 +338,7 @@ impl PatchWorkflowAutomation {
                 Vec::new(),
                 dependencies,
                 vec![patch_id.clone()],
+                Utc::now(),
             );
 
             let (issue_id, _version) = ctx
@@ -484,6 +487,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         )
     }
 
@@ -508,6 +512,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         )
     }
 
@@ -532,6 +537,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            Utc::now(),
         );
         let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
@@ -549,6 +555,7 @@ mod tests {
                 parent_id.clone(),
             )],
             vec![patch_id.clone()],
+            Utc::now(),
         );
         let (_mr_id, _) = store.add_issue(mr_issue, &ActorRef::test()).await.unwrap();
 
@@ -650,6 +657,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![patch_id.clone()],
+            Utc::now(),
         );
         let (_parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 

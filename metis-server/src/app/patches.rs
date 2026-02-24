@@ -65,6 +65,8 @@ pub enum UpsertPatchError {
         existing_patch_id: PatchId,
         branch_name: String,
     },
+    #[error("creation_timestamp is too far from the current server time")]
+    CreationTimestampOutOfRange,
     #[error("{0}")]
     PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
@@ -161,7 +163,12 @@ impl AppState {
                         .await?;
                 }
 
-                patch.creation_timestamp = Some(Utc::now());
+                // Validate creation_timestamp is within 1 hour of server time.
+                let drift = (Utc::now() - patch.creation_timestamp).abs();
+                if drift > chrono::Duration::hours(1) {
+                    return Err(UpsertPatchError::CreationTimestampOutOfRange);
+                }
+
                 let (id, version) = self
                     .store
                     .add_patch_with_actor(patch, actor)
@@ -272,6 +279,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         );
 
         let (patch_id, _) = handles
@@ -294,6 +302,7 @@ mod tests {
             Some("feature".to_string()),
             None,
             None,
+            Utc::now(),
         );
         let request = api::patches::UpsertPatchRequest::new(request_patch.into());
 
@@ -418,6 +427,7 @@ mod tests {
             Some("metis-t-test".to_string()),
             None,
             None,
+            Utc::now(),
         );
         let request = api::patches::UpsertPatchRequest::new(patch.into());
 
@@ -471,6 +481,7 @@ mod tests {
             Some("feature/foo".to_string()),
             None,
             None,
+            Utc::now(),
         );
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
         let (patch1_id, _) = handles
@@ -501,6 +512,7 @@ mod tests {
             Some("feature/foo".to_string()),
             None,
             None,
+            Utc::now(),
         );
         let request2 = api::patches::UpsertPatchRequest::new(patch2.into());
         handles
@@ -530,6 +542,7 @@ mod tests {
             Some("feature/foo".to_string()),
             None,
             None,
+            Utc::now(),
         );
         let request1 = api::patches::UpsertPatchRequest::new(patch1.into());
         let (patch1_id, _) = handles
@@ -553,6 +566,7 @@ mod tests {
             Some("feature/foo".to_string()),
             None,
             None,
+            Utc::now(),
         );
         let request2 = api::patches::UpsertPatchRequest::new(update_patch.into());
         handles
@@ -591,6 +605,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         );
         let request = api::patches::UpsertPatchRequest::new(patch.into());
 

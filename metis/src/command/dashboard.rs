@@ -1627,6 +1627,7 @@ async fn submit_issue(
             Vec::new(),
             Vec::new(),
             false,
+            Utc::now(),
         ),
         None,
     );
@@ -1659,6 +1660,7 @@ async fn update_issue_status(
         issue.dependencies,
         issue.patches,
         issue.deleted,
+        Utc::now(),
     );
     let response = client
         .update_issue(
@@ -6239,21 +6241,24 @@ mod tests {
     async fn submit_issue_sends_task_request() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/issues").json_body(json!({
-                "issue": {
-                    "type": "task",
-                    "description": "Draft release notes",
-                    "creator": " metis-user ",
-                    "progress": "",
-                    "status": "open",
-                    "assignee": "alice",
-                    "job_settings": {
-                        "repo_name": "dourolabs/metis"
-                    },
-                    "dependencies": [],
-                    "patches": []
-                }
-            }));
+            when.method(POST).path("/v1/issues").json_body_partial(
+                serde_json::to_string(&json!({
+                    "issue": {
+                        "type": "task",
+                        "description": "Draft release notes",
+                        "creator": " metis-user ",
+                        "progress": "",
+                        "status": "open",
+                        "assignee": "alice",
+                        "job_settings": {
+                            "repo_name": "dourolabs/metis"
+                        },
+                        "dependencies": [],
+                        "patches": []
+                    }
+                }))
+                .unwrap(),
+            );
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new"), 0));
         });
@@ -6567,6 +6572,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -6596,6 +6602,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                Utc::now(),
             )),
             None,
         );

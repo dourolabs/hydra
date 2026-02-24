@@ -14,8 +14,8 @@ pub struct Document {
     pub created_by: Option<TaskId>,
     #[serde(default)]
     pub deleted: bool,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub creation_timestamp: Option<DateTime<Utc>>,
+    #[serde(default = "Utc::now")]
+    pub creation_timestamp: DateTime<Utc>,
 }
 
 impl From<api::documents::Document> for Document {
@@ -34,15 +34,14 @@ impl From<api::documents::Document> for Document {
 impl From<Document> for api::documents::Document {
     fn from(value: Document) -> Self {
         // Path is already a valid DocumentPath, so re-parsing via new() cannot fail.
-        let mut doc = api::documents::Document::new(
+        api::documents::Document::new(
             value.title,
             value.body_markdown,
             value.path.map(|p| p.to_string()),
             value.created_by,
             value.deleted,
+            value.creation_timestamp,
         )
-        .expect("domain Document always has a valid path");
-        doc.creation_timestamp = value.creation_timestamp;
-        doc
+        .expect("domain Document always has a valid path")
     }
 }

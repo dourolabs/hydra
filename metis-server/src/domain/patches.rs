@@ -230,8 +230,8 @@ pub struct Patch {
     /// additional commits since work on the patch began.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_branch: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub creation_timestamp: Option<DateTime<Utc>>,
+    #[serde(default = "Utc::now")]
+    pub creation_timestamp: DateTime<Utc>,
 }
 
 impl Patch {
@@ -250,6 +250,7 @@ impl Patch {
         branch_name: Option<String>,
         commit_range: Option<CommitRange>,
         base_branch: Option<String>,
+        creation_timestamp: DateTime<Utc>,
     ) -> Self {
         Self {
             title,
@@ -266,7 +267,7 @@ impl Patch {
             branch_name,
             commit_range,
             base_branch,
-            creation_timestamp: None,
+            creation_timestamp,
         }
     }
 }
@@ -434,7 +435,7 @@ impl From<api::patches::Patch> for Patch {
 
 impl From<Patch> for api::patches::Patch {
     fn from(value: Patch) -> Self {
-        let mut patch = api::patches::Patch::new(
+        api::patches::Patch::new(
             value.title,
             value.description,
             value.diff,
@@ -449,9 +450,8 @@ impl From<Patch> for api::patches::Patch {
             value.branch_name,
             value.commit_range.map(Into::into),
             value.base_branch,
-        );
-        patch.creation_timestamp = value.creation_timestamp;
-        patch
+            value.creation_timestamp,
+        )
     }
 }
 
@@ -584,7 +584,7 @@ mod tests {
                 "0000000000000000000000000000000000000002".parse().unwrap(),
             )),
             base_branch: Some("main".to_string()),
-            creation_timestamp: None,
+            creation_timestamp: Utc::now(),
         };
 
         let api_patch: api::patches::Patch = domain_patch.clone().into();
@@ -611,6 +611,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         );
 
         assert_eq!(domain_patch.branch_name, None);

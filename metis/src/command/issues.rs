@@ -1020,6 +1020,7 @@ fn issue_version_from_summary(summary: IssueSummaryRecord) -> IssueVersionRecord
             summary.issue.dependencies,
             summary.issue.patches,
             summary.issue.deleted,
+            Utc::now(),
         ),
         summary.actor,
     )
@@ -1535,6 +1536,7 @@ async fn create_issue(
         dependencies,
         patches,
         false,
+        Utc::now(),
     );
     let request = UpsertIssueRequest::new(issue.clone(), None);
 
@@ -1680,6 +1682,7 @@ async fn update_issue(
         dependencies_update.unwrap_or(current.issue.dependencies),
         patches_update.unwrap_or(current.issue.patches),
         current.issue.deleted,
+        Utc::now(),
     );
 
     let response = client
@@ -2621,6 +2624,34 @@ mod tests {
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
 
+    /// Serialize a value to JSON, strip any `creation_timestamp` keys (at any
+    /// depth), and return the resulting JSON string.  Used with
+    /// `json_body_partial` so that mock expectations don't fail due to
+    /// sub-millisecond differences between the timestamp constructed in the
+    /// test and the timestamp constructed in the production code.
+    fn json_without_creation_timestamp<T: serde::Serialize>(value: &T) -> String {
+        let mut v = serde_json::to_value(value).unwrap();
+        strip_creation_timestamp(&mut v);
+        serde_json::to_string(&v).unwrap()
+    }
+
+    fn strip_creation_timestamp(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.remove("creation_timestamp");
+                for v in map.values_mut() {
+                    strip_creation_timestamp(v);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr.iter_mut() {
+                    strip_creation_timestamp(v);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
     }
@@ -2694,6 +2725,7 @@ mod tests {
                 dependencies,
                 patches,
                 false,
+                Utc::now(),
             ),
             None,
         )
@@ -2720,6 +2752,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    Utc::now(),
                 ),
                 None,
             ))]);
@@ -2778,6 +2811,7 @@ mod tests {
                 vec![],
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -2827,6 +2861,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    Utc::now(),
                 ),
                 None,
             ))]);
@@ -2985,6 +3020,7 @@ mod tests {
                 None,
                 None,
                 None,
+                Utc::now(),
             ),
             None,
         );
@@ -3007,6 +3043,7 @@ mod tests {
                 None,
                 None,
                 None,
+                Utc::now(),
             ),
             None,
         );
@@ -3029,6 +3066,7 @@ mod tests {
                 None,
                 None,
                 None,
+                Utc::now(),
             ),
             None,
         );
@@ -3172,10 +3210,18 @@ mod tests {
                 patches: vec![parent_patch_record]
             }]
         );
+        // The child issue is reconstructed from an IssueSummaryRecord which
+        // doesn't carry creation_timestamp, so the code fills it with
+        // Utc::now().  Normalize the expected record to match the actual one
+        // before comparing.
+        let mut expected_child = child_issue;
+        if let Some(actual) = description.children.first() {
+            expected_child.issue.creation_timestamp = actual.issue.issue.creation_timestamp;
+        }
         assert_eq!(
             description.children,
             vec![IssueWithPatches {
-                issue: child_issue,
+                issue: expected_child,
                 patches: vec![child_patch_record]
             }]
         );
@@ -3200,13 +3246,14 @@ mod tests {
                 Vec::new(),
                 patch_ids.clone(),
                 false,
+                Utc::now(),
             ),
             None,
         );
         let create_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/issues")
-                .json_body_obj(&create_request);
+                .json_body_partial(json_without_creation_timestamp(&create_request));
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456"), 0));
         });
@@ -3261,13 +3308,14 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                Utc::now(),
             ),
             None,
         );
         let create_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/issues")
-                .json_body_obj(&create_request);
+                .json_body_partial(json_without_creation_timestamp(&create_request));
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456"), 0));
         });
@@ -3325,6 +3373,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -3346,13 +3395,14 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                Utc::now(),
             ),
             None,
         );
         let create_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/issues")
-                .json_body_obj(&create_request);
+                .json_body_partial(json_without_creation_timestamp(&create_request));
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new"), 0));
         });
@@ -3412,6 +3462,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -3439,13 +3490,14 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                Utc::now(),
             ),
             None,
         );
         let create_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/issues")
-                .json_body_obj(&create_request);
+                .json_body_partial(json_without_creation_timestamp(&create_request));
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new"), 0));
         });
@@ -3498,13 +3550,14 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                Utc::now(),
             ),
             None,
         );
         let create_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/issues")
-                .json_body_obj(&create_request);
+                .json_body_partial(json_without_creation_timestamp(&create_request));
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(issue_id("i-secrets"), 0));
         });
@@ -3559,6 +3612,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -3580,13 +3634,14 @@ mod tests {
                 Vec::new(),
                 vec![],
                 false,
+                Utc::now(),
             ),
             None,
         );
         let create_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/issues")
-                .json_body_obj(&create_request);
+                .json_body_partial(json_without_creation_timestamp(&create_request));
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(issue_id("i-child"), 0));
         });
@@ -3773,6 +3828,7 @@ mod tests {
                 )],
                 vec![patch_id("p-3")],
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -3784,7 +3840,7 @@ mod tests {
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
-                .json_body_obj(&updated_request);
+                .json_body_partial(json_without_creation_timestamp(&updated_request));
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
         });
@@ -3849,6 +3905,7 @@ mod tests {
                 )],
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -3865,6 +3922,7 @@ mod tests {
                 vec![],
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -3876,7 +3934,7 @@ mod tests {
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
-                .json_body_obj(&update_request);
+                .json_body_partial(json_without_creation_timestamp(&update_request));
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
         });
@@ -3939,6 +3997,7 @@ mod tests {
                 )],
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -3958,6 +4017,7 @@ mod tests {
                 )],
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -3969,7 +4029,7 @@ mod tests {
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
-                .json_body_obj(&update_request);
+                .json_body_partial(json_without_creation_timestamp(&update_request));
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
         });
@@ -4028,6 +4088,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -4046,6 +4107,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -4057,7 +4119,7 @@ mod tests {
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
-                .json_body_obj(&update_request);
+                .json_body_partial(json_without_creation_timestamp(&update_request));
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
         });
@@ -4118,6 +4180,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -4134,6 +4197,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 false,
+                Utc::now(),
             ),
             None,
         );
@@ -4145,7 +4209,7 @@ mod tests {
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
-                .json_body_obj(&update_request);
+                .json_body_partial(json_without_creation_timestamp(&update_request));
             then.status(200)
                 .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
         });
@@ -4205,6 +4269,7 @@ mod tests {
                     )],
                     Vec::new(),
                     false,
+                    Utc::now(),
                 ),
                 None,
             ),
@@ -4224,6 +4289,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    Utc::now(),
                 ),
                 None,
             ),
@@ -4276,6 +4342,7 @@ mod tests {
                     vec![],
                     Vec::new(),
                     false,
+                    Utc::now(),
                 ),
                 None,
             ));
@@ -4442,6 +4509,7 @@ mod tests {
                 None,
                 None,
                 None,
+                Utc::now(),
             ),
             None,
         );
@@ -4463,6 +4531,7 @@ mod tests {
                         vec![],
                         vec![main_patch_id],
                         false,
+                        Utc::now(),
                     ),
                     None,
                 ),
@@ -4485,6 +4554,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        Utc::now(),
                     ),
                     None,
                 ),
@@ -4526,6 +4596,7 @@ mod tests {
             vec![],
             vec![main_patch_id.clone()],
             false,
+            Utc::now(),
         );
         let mut updated_issue = base_issue.clone();
         updated_issue.status = IssueStatus::InProgress;
@@ -4560,6 +4631,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         );
         let mut updated_patch = base_patch.clone();
         updated_patch.status = PatchStatus::Merged;
@@ -4667,6 +4739,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        Utc::now(),
                     ),
                     None,
                 ),
@@ -4689,6 +4762,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        Utc::now(),
                     ),
                     None,
                 ),
@@ -4711,6 +4785,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        Utc::now(),
                     ),
                     None,
                 ),
@@ -4753,6 +4828,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        Utc::now(),
                     ),
                     None,
                 ),
@@ -4775,6 +4851,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        Utc::now(),
                     ),
                     None,
                 ),
@@ -4797,6 +4874,7 @@ mod tests {
                         vec![],
                         Vec::new(),
                         false,
+                        Utc::now(),
                     ),
                     None,
                 ),
@@ -4858,6 +4936,7 @@ mod tests {
                         vec![],
                         vec![main_patch_id.clone()],
                         false,
+                        Utc::now(),
                     ),
                     None,
                 ),
@@ -4880,6 +4959,7 @@ mod tests {
                         None,
                         None,
                         None,
+                        Utc::now(),
                     ),
                     None,
                 )],

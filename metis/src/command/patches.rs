@@ -907,6 +907,7 @@ pub async fn create_patch_artifact_from_repo(
                 .unwrap_or(base_ref)
                 .to_string(),
         ),
+        Utc::now(),
     );
 
     let github_token = client.get_github_token().await.ok();
@@ -1031,6 +1032,31 @@ mod tests {
 
     const TEST_METIS_TOKEN: &str = "u-test-user:test-metis-token";
 
+    /// Serialize a value to JSON, strip any `creation_timestamp` keys (at any
+    /// depth), and return the resulting JSON string.
+    fn json_without_creation_timestamp<T: serde::Serialize>(value: &T) -> String {
+        let mut v = serde_json::to_value(value).unwrap();
+        strip_creation_timestamp(&mut v);
+        serde_json::to_string(&v).unwrap()
+    }
+
+    fn strip_creation_timestamp(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.remove("creation_timestamp");
+                for v in map.values_mut() {
+                    strip_creation_timestamp(v);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr.iter_mut() {
+                    strip_creation_timestamp(v);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
     }
@@ -1057,10 +1083,11 @@ mod tests {
         expected_request: UpsertPatchRequest,
         response: UpsertPatchResponse,
     ) -> Mock {
+        let partial = json_without_creation_timestamp(&expected_request);
         server.mock(move |when, then| {
             when.method(POST)
                 .path("/v1/patches")
-                .json_body_obj(&expected_request);
+                .json_body_partial(partial.clone());
             then.status(200).json_body_obj(&response);
         })
     }
@@ -1096,10 +1123,11 @@ mod tests {
         expected_request: UpsertPatchRequest,
         response: UpsertPatchResponse,
     ) -> Mock {
+        let partial = json_without_creation_timestamp(&expected_request);
         server.mock(move |when, then| {
             when.method(PUT)
                 .path(format!("/v1/patches/{}", patch_id.as_ref()))
-                .json_body_obj(&expected_request);
+                .json_body_partial(partial.clone());
             then.status(200).json_body_obj(&response);
         })
     }
@@ -1141,6 +1169,7 @@ mod tests {
                 Vec::new(),
                 patches,
                 false,
+                Utc::now(),
             ),
             None,
         )
@@ -1333,6 +1362,7 @@ mod tests {
             Some(branch_name.to_string()),
             Some(CommitRange::new(base_commit, head_commit)),
             Some("main".to_string()),
+            Utc::now(),
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-1"), 0);
@@ -1426,6 +1456,7 @@ mod tests {
             Some(branch_name.to_string()),
             Some(CommitRange::new(base_commit, head_commit)),
             Some("main".to_string()),
+            Utc::now(),
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-2"), 0);
@@ -1513,6 +1544,7 @@ mod tests {
             Some(branch_name),
             Some(CommitRange::new(base_commit, head_commit)),
             Some("main".to_string()),
+            Utc::now(),
         );
         let expected_request = UpsertPatchRequest::new(expected_patch);
         let patch_response = UpsertPatchResponse::new(patch_id("p-automatic"), 0);
@@ -1591,6 +1623,7 @@ mod tests {
             Some(branch_name.to_string()),
             Some(CommitRange::new(base_commit, head_commit)),
             Some("main".to_string()),
+            Utc::now(),
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-service"), 0);
@@ -1680,6 +1713,7 @@ mod tests {
             Some(branch_name.to_string()),
             Some(CommitRange::new(base_commit, head_commit)),
             Some("main".to_string()),
+            Utc::now(),
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let new_patch_id = patch_id("p-link");
@@ -1811,6 +1845,7 @@ mod tests {
                 None,
                 None,
                 None,
+                Utc::now(),
             ),
             None,
         );
@@ -1876,6 +1911,7 @@ mod tests {
                 None,
                 None,
                 None,
+                Utc::now(),
             ),
             None,
         );
@@ -1938,6 +1974,7 @@ mod tests {
                 None,
                 None,
                 None,
+                Utc::now(),
             ),
             None,
         );
@@ -2033,6 +2070,7 @@ mod tests {
                 None,
                 None,
                 None,
+                Utc::now(),
             ),
             None,
         );
@@ -2056,6 +2094,7 @@ mod tests {
             None,
             None,
             None,
+            Utc::now(),
         ));
         let server = MockServer::start();
         let client = metis_client(&server);
@@ -2130,6 +2169,7 @@ mod tests {
                 Some("feature-branch".to_string()),
                 None,
                 Some("main".to_string()),
+                Utc::now(),
             ),
             None,
         );
@@ -2199,6 +2239,7 @@ mod tests {
             Some("feature-branch".to_string()),
             range_v2.clone(),
             Some("main".to_string()),
+            Utc::now(),
         );
 
         let version1 = PatchVersionRecord::new(
@@ -2220,6 +2261,7 @@ mod tests {
                 Some("feature-branch".to_string()),
                 range_v1,
                 Some("main".to_string()),
+                Utc::now(),
             ),
             None,
         );

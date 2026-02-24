@@ -209,6 +209,7 @@ mod tests {
             Vec::new(),
             deps,
             Vec::new(),
+            Utc::now(),
         )
     }
 

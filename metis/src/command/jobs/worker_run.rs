@@ -766,6 +766,7 @@ mod tests {
         },
         test_utils::ids::{patch_id, task_id},
     };
+    use chrono::Utc;
     use git2::{build::CheckoutBuilder, Oid, Repository};
     use httpmock::prelude::*;
     use metis_common::patches::{Patch, PatchStatus, UpsertPatchRequest, UpsertPatchResponse};
@@ -775,6 +776,29 @@ mod tests {
     use std::{collections::HashMap, path::Path, str::FromStr};
 
     const TEST_METIS_TOKEN: &str = "u-test-user:test-metis-token";
+
+    fn json_without_creation_timestamp<T: serde::Serialize>(value: &T) -> String {
+        let mut v = serde_json::to_value(value).unwrap();
+        strip_creation_timestamp(&mut v);
+        serde_json::to_string(&v).unwrap()
+    }
+
+    fn strip_creation_timestamp(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.remove("creation_timestamp");
+                for v in map.values_mut() {
+                    strip_creation_timestamp(v);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr.iter_mut() {
+                    strip_creation_timestamp(v);
+                }
+            }
+            _ => {}
+        }
+    }
 
     fn init_git_repo(repo_path: &Path) -> Result<String> {
         Repository::init(repo_path).context("failed to init git repo for test")?;
@@ -922,13 +946,15 @@ mod tests {
                 base_commit,
             )),
             Some("main".to_string()),
+            Utc::now(),
         );
         let expected_request = UpsertPatchRequest::new(expected_patch);
         let server = MockServer::start();
+        let partial_body = json_without_creation_timestamp(&expected_request);
         let patch_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/patches")
-                .json_body_obj(&expected_request);
+                .json_body_partial(partial_body.clone());
             then.status(200)
                 .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123"), 0));
         });

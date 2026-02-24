@@ -9,6 +9,7 @@ use crate::{
     store::MemoryStore,
     test_utils::{MockJobEngine, test_app_config},
 };
+use chrono::Utc;
 use metis_common::IssueId;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
@@ -101,6 +102,7 @@ pub fn issue_with_status(
         Vec::new(),
         dependencies,
         Vec::new(),
+        Utc::now(),
     )
 }
 

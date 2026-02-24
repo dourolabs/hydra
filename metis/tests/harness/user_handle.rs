@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{
@@ -98,6 +99,7 @@ impl UserHandle {
             Vec::new(),
             Vec::new(),
             false,
+            Utc::now(),
         );
         let request = UpsertIssueRequest::new(issue, None);
         let response = self
@@ -125,6 +127,7 @@ impl UserHandle {
             )],
             Vec::new(),
             false,
+            Utc::now(),
         );
         let request = UpsertIssueRequest::new(issue, None);
         let response = self
@@ -193,6 +196,7 @@ impl UserHandle {
             None,
             None,
             None,
+            Utc::now(),
         );
         let request = UpsertPatchRequest::new(patch);
         let response = self
@@ -236,6 +240,7 @@ impl UserHandle {
             None,
             None,
             None,
+            Utc::now(),
         );
         let request = UpsertPatchRequest::new(patch);
         let response = self
@@ -295,6 +300,7 @@ impl UserHandle {
             Vec::new(),
             Vec::new(),
             false,
+            Utc::now(),
         );
         let request = UpsertIssueRequest::new(issue, None);
         let response = self
@@ -333,6 +339,7 @@ impl UserHandle {
             dependencies,
             patches,
             false,
+            Utc::now(),
         );
         let request = UpsertIssueRequest::new(issue, None);
         let response = self

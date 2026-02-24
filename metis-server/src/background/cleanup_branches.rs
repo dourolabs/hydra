@@ -355,6 +355,7 @@ mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
     use crate::domain::users::Username;
+    use chrono::Utc;
 
     #[test]
     fn parse_github_owner_repo_https_with_git_suffix() {
@@ -536,6 +537,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         );
         let (issue_id, _) = handles
             .store
@@ -601,6 +603,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Utc::now(),
         );
         let (issue_id, _) = handles
             .store
