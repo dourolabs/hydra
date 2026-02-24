@@ -573,6 +573,7 @@ impl JobEngine for KubernetesJobEngine {
                 "worker-run".to_string(),
                 metis_id.to_string(),
                 ".".to_string(),
+                "--tempdir".to_string(),
             ]),
             env: Some(self.build_env_vars(metis_id, env_vars, auth_token)),
             env_from,
