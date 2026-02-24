@@ -1,7 +1,14 @@
 use crate::{
     client::MetisClientInterface,
-    command::output::{
-        render_issue_records, render_issue_summary_records, CommandContext, ResolvedOutputFormat,
+    command::{
+        changelog::{
+            summarize_activity_log, write_activity_log_pretty, write_changelog_pretty,
+            ActivityLogEntrySummary,
+        },
+        output::{
+            render_issue_records, render_issue_summary_records, CommandContext,
+            ResolvedOutputFormat,
+        },
     },
 };
 use anyhow::{anyhow, bail, Context, Result};
@@ -18,16 +25,14 @@ use metis_common::{
         SetTodoItemStatusRequest, TodoItem, UpsertIssueRequest,
     },
     jobs::{JobSummaryRecord, SearchJobsQuery, Task},
-    patches::{PatchStatus, PatchVersionRecord, Review},
-    task_status::Status,
+    patches::{PatchVersionRecord, Review},
     users::Username,
     whoami::ActorIdentity,
-    ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange, MetisId, PatchId,
-    RelativeVersionNumber, RepoName, TaskId, VersionNumber, Versioned,
+    ActivityLogEntry, ActivityObjectKind, PatchId, RelativeVersionNumber, RepoName, TaskId,
+    Versioned,
 };
 use owo_colors::OwoColorize;
-use serde::{de::DeserializeOwned, Serialize};
-use serde_json::Value;
+use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
     io::{self, Write},
@@ -321,14 +326,14 @@ pub enum IssueCommands {
         #[arg(long)]
         version: Option<i64>,
     },
-    /// Show activity log for an issue (most recent first).
-    Activity {
-        /// Issue ID to show activity for.
+    /// Show changelog for an issue (most recent first).
+    Changelog {
+        /// Issue ID to show changelog for.
         #[arg(value_name = "ISSUE_ID")]
         id: IssueId,
 
-        /// Maximum number of activity entries to show.
-        #[arg(long, default_value_t = 10)]
+        /// Maximum number of changelog entries to show.
+        #[arg(long, default_value_t = 20)]
         limit: usize,
     },
 }
@@ -501,8 +506,8 @@ pub async fn run(
             write_issue_records(context.output_format, &[issue])?;
             Ok(())
         }
-        IssueCommands::Activity { id, limit } => {
-            activity_issue(client, id, context.output_format, limit).await
+        IssueCommands::Changelog { id, limit } => {
+            changelog_issue(client, id, context.output_format, limit).await
         }
     }
 }
@@ -527,66 +532,6 @@ struct IssueDescriptionSummary {
     parents: Vec<IssueId>,
     children: Vec<IssueId>,
     activity_log: Vec<ActivityLogEntrySummary>,
-}
-
-#[derive(Debug, Serialize)]
-struct ActivityLogEntrySummary {
-    object_id: MetisId,
-    object_kind: ActivityObjectKind,
-    version: VersionNumber,
-    timestamp: DateTime<Utc>,
-    event: ActivityEventSummary,
-    object: ActivityObjectSummary,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    actor: Option<metis_common::actor_ref::ActorRef>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ActivityEventSummary {
-    Created,
-    Updated {
-        changes: Vec<ActivityFieldChangeSummary>,
-        #[serde(skip_serializing_if = "Vec::is_empty", default)]
-        other_changes: Vec<String>,
-    },
-}
-
-#[derive(Debug, Serialize)]
-struct ActivityFieldChangeSummary {
-    field: String,
-    before: Value,
-    after: Value,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum ActivityObjectSummary {
-    Issue {
-        issue_type: IssueType,
-        status: IssueStatus,
-        description: String,
-        assignee: Option<String>,
-        progress: String,
-    },
-    Patch {
-        title: String,
-        description: String,
-        status: PatchStatus,
-        repo: RepoName,
-        created_by_job: Option<TaskId>,
-        reviews: Vec<ReviewSummary>,
-    },
-    Job {
-        status: Status,
-    },
-}
-
-#[derive(Debug, Serialize)]
-struct ReviewSummary {
-    contents: String,
-    is_approved: bool,
-    author: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -627,26 +572,25 @@ async fn describe_issue(
     Ok(())
 }
 
-async fn activity_issue(
+async fn changelog_issue(
     client: &dyn MetisClientInterface,
     id: IssueId,
     output_format: ResolvedOutputFormat,
     limit: usize,
 ) -> Result<()> {
-    let description = collect_issue_description(client, id, false, None).await?;
-    let summary = summarize_issue_description(&description)?;
-
-    let mut entries = summary.activity_log;
-    entries.reverse();
-    entries.truncate(limit);
+    let issue_versions = fetch_issue_versions(client, &id).await?;
+    let entries = activity_log_for_issue_versions(id, &issue_versions);
+    let mut summaries = summarize_activity_log(&entries)?;
+    summaries.reverse();
+    summaries.truncate(limit);
 
     let mut buffer = Vec::new();
     match output_format {
         ResolvedOutputFormat::Pretty => {
-            write_activity_log_pretty(&entries, &mut buffer)?;
+            write_changelog_pretty(&summaries, &mut buffer)?;
         }
         ResolvedOutputFormat::Jsonl => {
-            for entry in &entries {
+            for entry in &summaries {
                 serde_json::to_writer(&mut buffer, entry)?;
                 buffer.write_all(b"\n")?;
             }
@@ -704,248 +648,6 @@ fn summarize_issue_description(description: &IssueDescription) -> Result<IssueDe
             .collect(),
         activity_log: summarize_activity_log(&description.activity_log)?,
     })
-}
-
-fn summarize_activity_log(entries: &[ActivityLogEntry]) -> Result<Vec<ActivityLogEntrySummary>> {
-    entries.iter().map(summarize_activity_log_entry).collect()
-}
-
-fn summarize_activity_log_entry(entry: &ActivityLogEntry) -> Result<ActivityLogEntrySummary> {
-    let object = summarize_activity_object(entry)?;
-    let event = summarize_activity_event(entry, &object)?;
-
-    Ok(ActivityLogEntrySummary {
-        object_id: entry.object_id.clone(),
-        object_kind: entry.object_kind.clone(),
-        version: entry.version,
-        timestamp: entry.timestamp,
-        event,
-        object,
-        actor: entry.actor.clone(),
-    })
-}
-
-fn summarize_activity_object(entry: &ActivityLogEntry) -> Result<ActivityObjectSummary> {
-    match entry.object_kind {
-        ActivityObjectKind::Issue => {
-            let issue: Issue = decode_activity_object(entry)?;
-            Ok(ActivityObjectSummary::Issue {
-                issue_type: issue.issue_type,
-                status: issue.status,
-                description: issue.description,
-                assignee: issue.assignee,
-                progress: issue.progress,
-            })
-        }
-        ActivityObjectKind::Patch => {
-            let patch: metis_common::patches::Patch = decode_activity_object(entry)?;
-            Ok(ActivityObjectSummary::Patch {
-                title: if patch.title.trim().is_empty() {
-                    "(untitled)".to_string()
-                } else {
-                    patch.title
-                },
-                description: patch.description,
-                status: patch.status,
-                repo: patch.service_repo_name,
-                created_by_job: patch.created_by,
-                reviews: patch
-                    .reviews
-                    .into_iter()
-                    .map(|review| ReviewSummary {
-                        contents: review.contents,
-                        is_approved: review.is_approved,
-                        author: review.author,
-                    })
-                    .collect(),
-            })
-        }
-        ActivityObjectKind::Job => {
-            let task: Task = decode_activity_object(entry)?;
-            Ok(ActivityObjectSummary::Job {
-                status: task.status,
-            })
-        }
-        _ => Ok(ActivityObjectSummary::Job {
-            status: Status::Unknown,
-        }),
-    }
-}
-
-fn summarize_activity_event(
-    entry: &ActivityLogEntry,
-    object: &ActivityObjectSummary,
-) -> Result<ActivityEventSummary> {
-    match &entry.event {
-        ActivityEvent::Created => Ok(ActivityEventSummary::Created),
-        ActivityEvent::Updated { changes } => {
-            let (summaries, other_changes) = summarize_activity_changes(entry, changes, object)?;
-            Ok(ActivityEventSummary::Updated {
-                changes: summaries,
-                other_changes,
-            })
-        }
-        _ => Ok(ActivityEventSummary::Updated {
-            changes: Vec::new(),
-            other_changes: vec!["<unsupported event>".to_string()],
-        }),
-    }
-}
-
-fn summarize_activity_changes(
-    entry: &ActivityLogEntry,
-    changes: &[FieldChange],
-    object: &ActivityObjectSummary,
-) -> Result<(Vec<ActivityFieldChangeSummary>, Vec<String>)> {
-    let mut summaries = Vec::new();
-    let mut other_changes = Vec::new();
-    let mut seen = HashSet::new();
-
-    let mut before_patch: Option<metis_common::patches::Patch> = None;
-    let mut after_patch: Option<metis_common::patches::Patch> = None;
-    if matches!(object, ActivityObjectSummary::Patch { .. })
-        && changes
-            .iter()
-            .any(|change| change.path.starts_with("/reviews"))
-    {
-        if let Some(before_value) = reconstruct_before_object(entry) {
-            before_patch = serde_json::from_value(before_value).ok();
-        }
-        after_patch = serde_json::from_value(entry.object.clone()).ok();
-    }
-
-    for change in changes {
-        if let Some(field) = tracked_field_for_path(&entry.object_kind, &change.path) {
-            if seen.contains(field) {
-                continue;
-            }
-            seen.insert(field);
-
-            if field == "Reviews" {
-                let before_value = summarize_reviews_value(
-                    before_patch.as_ref().map(|patch| patch.reviews.as_slice()),
-                );
-                let after_value = summarize_reviews_value(
-                    after_patch.as_ref().map(|patch| patch.reviews.as_slice()),
-                );
-                summaries.push(ActivityFieldChangeSummary {
-                    field: field.to_string(),
-                    before: before_value,
-                    after: after_value,
-                });
-            } else {
-                summaries.push(ActivityFieldChangeSummary {
-                    field: field.to_string(),
-                    before: change.before.clone(),
-                    after: change.after.clone(),
-                });
-            }
-        } else {
-            other_changes.push(change.path.clone());
-        }
-    }
-
-    Ok((summaries, other_changes))
-}
-
-fn tracked_field_for_path(kind: &ActivityObjectKind, path: &str) -> Option<&'static str> {
-    match kind {
-        ActivityObjectKind::Issue => match path {
-            "/type" => Some("Type"),
-            "/status" => Some("Status"),
-            "/description" => Some("Description"),
-            "/assignee" => Some("Assignee"),
-            "/progress" => Some("Progress"),
-            _ => None,
-        },
-        ActivityObjectKind::Patch => {
-            if path.starts_with("/reviews") {
-                Some("Reviews")
-            } else {
-                match path {
-                    "/title" => Some("Title"),
-                    "/description" => Some("Description"),
-                    "/status" => Some("Status"),
-                    "/service_repo_name" => Some("Repo"),
-                    "/created_by" => Some("Created By Job"),
-                    _ => None,
-                }
-            }
-        }
-        ActivityObjectKind::Job => match path {
-            "/status" => Some("Status"),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn summarize_reviews_value(reviews: Option<&[Review]>) -> Value {
-    let summaries: Vec<ReviewSummary> = reviews
-        .unwrap_or(&[])
-        .iter()
-        .map(|review| ReviewSummary {
-            contents: review.contents.clone(),
-            is_approved: review.is_approved,
-            author: review.author.clone(),
-        })
-        .collect();
-    serde_json::to_value(summaries).unwrap_or(Value::Null)
-}
-
-fn reconstruct_before_object(entry: &ActivityLogEntry) -> Option<Value> {
-    let ActivityEvent::Updated { changes } = &entry.event else {
-        return None;
-    };
-
-    let mut before = entry.object.clone();
-    for change in changes {
-        apply_change(&mut before, &change.path, change.before.clone());
-    }
-    Some(before)
-}
-
-fn apply_change(value: &mut Value, path: &str, new_value: Value) {
-    if path == "/" {
-        *value = new_value;
-        return;
-    }
-
-    let mut current = value;
-    let mut segments = path.trim_start_matches('/').split('/').peekable();
-
-    while let Some(segment) = segments.next() {
-        let is_last = segments.peek().is_none();
-        match current {
-            Value::Object(map) => {
-                if is_last {
-                    map.insert(segment.to_string(), new_value);
-                    return;
-                }
-                current = map
-                    .entry(segment)
-                    .or_insert_with(|| Value::Object(Default::default()));
-            }
-            Value::Array(list) => {
-                let Ok(index) = segment.parse::<usize>() else {
-                    return;
-                };
-                if index >= list.len() {
-                    list.resize_with(index + 1, || Value::Null);
-                }
-                if is_last {
-                    list[index] = new_value;
-                    return;
-                }
-                current = &mut list[index];
-            }
-            _ => return,
-        }
-    }
-}
-
-fn decode_activity_object<T: DeserializeOwned>(entry: &ActivityLogEntry) -> Result<T> {
-    serde_json::from_value(entry.object.clone()).context("failed to decode activity log object")
 }
 
 async fn fetch_parent_issues(
@@ -2051,309 +1753,6 @@ fn write_issue_details_pretty(
     Ok(())
 }
 
-fn write_activity_log_pretty(
-    entries: &[ActivityLogEntrySummary],
-    writer: &mut impl Write,
-) -> Result<()> {
-    for (index, entry) in entries.iter().enumerate() {
-        write_activity_log_entry_pretty(entry, "  ", writer)?;
-        if index + 1 < entries.len() {
-            writeln!(writer)?;
-        }
-    }
-    Ok(())
-}
-
-fn write_activity_log_entry_pretty(
-    entry: &ActivityLogEntrySummary,
-    indent: &str,
-    writer: &mut impl Write,
-) -> Result<()> {
-    let timestamp = entry.timestamp.to_rfc3339_opts(SecondsFormat::Secs, true);
-    let kind_label = match entry.object_kind {
-        ActivityObjectKind::Issue => "Issue",
-        ActivityObjectKind::Patch => "Patch",
-        ActivityObjectKind::Job => "Job",
-        _ => "Activity",
-    };
-    let event_label = match entry.event {
-        ActivityEventSummary::Created => "created",
-        ActivityEventSummary::Updated { .. } => "updated",
-    };
-
-    let actor_label = entry
-        .actor
-        .as_ref()
-        .and_then(format_actor_label)
-        .map(|label| format!(" by {label}"))
-        .unwrap_or_default();
-
-    writeln!(
-        writer,
-        "{indent}{} {} {} v{} {}{}",
-        colorize_dimmed(&timestamp),
-        colorize_bold(kind_label),
-        entry.object_id,
-        entry.version,
-        event_label,
-        actor_label
-    )?;
-
-    let detail_indent = format!("{indent}  ");
-    write_activity_object_summary(&entry.object, &entry.event, &detail_indent, writer)?;
-
-    Ok(())
-}
-
-fn format_actor_label(actor: &metis_common::actor_ref::ActorRef) -> Option<String> {
-    Some(actor.display_name())
-}
-
-fn write_activity_object_summary(
-    object: &ActivityObjectSummary,
-    event: &ActivityEventSummary,
-    indent: &str,
-    writer: &mut impl Write,
-) -> Result<()> {
-    let change_map = match event {
-        ActivityEventSummary::Updated { changes, .. } => changes
-            .iter()
-            .map(|change| (change.field.as_str(), change))
-            .collect::<HashMap<_, _>>(),
-        ActivityEventSummary::Created => HashMap::new(),
-    };
-
-    match object {
-        ActivityObjectSummary::Issue {
-            issue_type,
-            status,
-            description,
-            assignee,
-            progress,
-        } => {
-            write_activity_scalar_field(
-                "Type",
-                &Value::String(issue_type.to_string()),
-                change_map.get("Type").copied(),
-                indent,
-                writer,
-            )?;
-            write_activity_scalar_field(
-                "Status",
-                &Value::String(status.to_string()),
-                change_map.get("Status").copied(),
-                indent,
-                writer,
-            )?;
-            write_activity_optional_scalar_field(
-                "Assignee",
-                assignee.as_deref(),
-                change_map.get("Assignee").copied(),
-                indent,
-                writer,
-            )?;
-            write_activity_multiline_field(
-                "Description",
-                description,
-                change_map.get("Description").copied(),
-                indent,
-                writer,
-            )?;
-            write_activity_multiline_field(
-                "Progress",
-                progress,
-                change_map.get("Progress").copied(),
-                indent,
-                writer,
-            )?;
-        }
-        ActivityObjectSummary::Patch {
-            title,
-            description,
-            status,
-            repo,
-            created_by_job,
-            reviews,
-        } => {
-            write_activity_scalar_field(
-                "Title",
-                &Value::String(title.clone()),
-                change_map.get("Title").copied(),
-                indent,
-                writer,
-            )?;
-            write_activity_scalar_field(
-                "Status",
-                &Value::String(status.to_string()),
-                change_map.get("Status").copied(),
-                indent,
-                writer,
-            )?;
-            write_activity_scalar_field(
-                "Repo",
-                &Value::String(repo.to_string()),
-                change_map.get("Repo").copied(),
-                indent,
-                writer,
-            )?;
-            write_activity_optional_scalar_field(
-                "Created By Job",
-                created_by_job.as_ref().map(|id| id.to_string()).as_deref(),
-                change_map.get("Created By Job").copied(),
-                indent,
-                writer,
-            )?;
-            write_activity_multiline_field(
-                "Description",
-                description,
-                change_map.get("Description").copied(),
-                indent,
-                writer,
-            )?;
-            write_activity_reviews(reviews, indent, writer)?;
-        }
-        ActivityObjectSummary::Job { status } => {
-            write_activity_scalar_field(
-                "Status",
-                &Value::String(format_job_status(*status).to_string()),
-                change_map.get("Status").copied(),
-                indent,
-                writer,
-            )?;
-        }
-    }
-
-    if let ActivityEventSummary::Updated { other_changes, .. } = event {
-        if !other_changes.is_empty() {
-            let joined = other_changes.join(", ");
-            writeln!(writer, "{indent}Other changes: {}", joined.dimmed())?;
-        }
-    }
-
-    Ok(())
-}
-
-fn write_activity_scalar_field(
-    label: &str,
-    current: &Value,
-    change: Option<&ActivityFieldChangeSummary>,
-    indent: &str,
-    writer: &mut impl Write,
-) -> Result<()> {
-    if let Some(change) = change {
-        writeln!(
-            writer,
-            "{indent}{label}: {} -> {}",
-            format_struck_value_for_label(label, &change.before),
-            format_activity_value_pretty_for_label(label, &change.after)
-        )?;
-    } else {
-        writeln!(
-            writer,
-            "{indent}{label}: {}",
-            format_activity_value_pretty_for_label(label, current)
-        )?;
-    }
-    Ok(())
-}
-
-fn write_activity_optional_scalar_field(
-    label: &str,
-    current: Option<&str>,
-    change: Option<&ActivityFieldChangeSummary>,
-    indent: &str,
-    writer: &mut impl Write,
-) -> Result<()> {
-    if let Some(change) = change {
-        writeln!(
-            writer,
-            "{indent}{label}: {} -> {}",
-            format_struck_value_for_label(label, &change.before),
-            format_activity_value_pretty_for_label(label, &change.after)
-        )?;
-    } else {
-        writeln!(writer, "{indent}{label}: {}", current.unwrap_or("-"))?;
-    }
-    Ok(())
-}
-
-fn write_activity_multiline_field(
-    label: &str,
-    value: &str,
-    change: Option<&ActivityFieldChangeSummary>,
-    indent: &str,
-    writer: &mut impl Write,
-) -> Result<()> {
-    if let Some(change) = change {
-        writeln!(
-            writer,
-            "{indent}{label}: {} -> {}",
-            format_struck_value_for_label(label, &change.before),
-            format_activity_value_pretty_for_label(label, &change.after)
-        )?;
-        return Ok(());
-    }
-
-    writeln!(writer, "{indent}{label}:")?;
-    if value.trim().is_empty() {
-        writeln!(writer, "{indent}  -")?;
-    } else {
-        for line in value.lines() {
-            writeln!(writer, "{indent}  {line}")?;
-        }
-    }
-    Ok(())
-}
-
-fn write_activity_reviews(
-    reviews: &[ReviewSummary],
-    indent: &str,
-    writer: &mut impl Write,
-) -> Result<()> {
-    if reviews.is_empty() {
-        writeln!(writer, "{indent}Reviews: none")?;
-        return Ok(());
-    }
-
-    writeln!(writer, "{indent}Reviews:")?;
-    for review in reviews {
-        writeln!(
-            writer,
-            "{indent}  - {}: {} ({})",
-            review.author,
-            colorize_review_decision(review.is_approved),
-            review.contents
-        )?;
-    }
-    Ok(())
-}
-
-fn format_activity_value_pretty(value: &Value) -> String {
-    match value {
-        Value::String(value) => value.clone(),
-        Value::Null => "-".to_string(),
-        _ => format_activity_value(value),
-    }
-}
-
-fn format_activity_value_pretty_for_label(label: &str, value: &Value) -> String {
-    let rendered = format_activity_value_pretty(value);
-    if label == "Status" {
-        rendered.replace('_', "-")
-    } else {
-        rendered
-    }
-}
-
-fn format_struck_value_for_label(label: &str, value: &Value) -> String {
-    let rendered = format_activity_value_pretty_for_label(label, value);
-    if supports_ansi() {
-        format!("\x1b[9m{rendered}\x1b[0m")
-    } else {
-        rendered
-    }
-}
-
 fn supports_ansi() -> bool {
     if std::env::var_os("NO_COLOR").is_some() {
         return false;
@@ -2367,55 +1766,6 @@ fn colorize_header(text: &str) -> String {
     } else {
         text.to_string()
     }
-}
-
-fn colorize_dimmed(text: &str) -> String {
-    if supports_ansi() {
-        text.dimmed().to_string()
-    } else {
-        text.to_string()
-    }
-}
-
-fn colorize_bold(text: &str) -> String {
-    if supports_ansi() {
-        text.bold().to_string()
-    } else {
-        text.to_string()
-    }
-}
-
-fn colorize_review_decision(is_approved: bool) -> String {
-    let text = if is_approved {
-        "approved"
-    } else {
-        "changes requested"
-    };
-    if supports_ansi() {
-        if is_approved {
-            text.green().to_string()
-        } else {
-            text.red().to_string()
-        }
-    } else {
-        text.to_string()
-    }
-}
-
-fn format_job_status(status: Status) -> &'static str {
-    match status {
-        Status::Created => "created",
-        Status::Pending => "pending",
-        Status::Running => "running",
-        Status::Complete => "complete",
-        Status::Failed => "failed",
-        Status::Unknown => "unknown",
-        _ => "unknown",
-    }
-}
-
-fn format_activity_value(value: &Value) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "<unavailable>".to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
