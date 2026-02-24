@@ -6,6 +6,7 @@ pub const MIN_RANDOM_LEN: usize = 4;
 const DEFAULT_RANDOM_LEN: usize = 6;
 pub const MAX_RANDOM_LEN: usize = 12;
 const ISSUE_PREFIX: &str = "i-";
+const MESSAGE_PREFIX: &str = "m-";
 const PATCH_PREFIX: &str = "p-";
 const TASK_PREFIX: &str = "t-";
 const DOCUMENT_PREFIX: &str = "d-";
@@ -68,6 +69,12 @@ pub struct DocumentId(String);
 #[serde(transparent)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
+pub struct MessageId(String);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, type = "string"))]
 pub struct TaskId(String);
 
 impl MetisId {
@@ -83,6 +90,10 @@ impl MetisId {
         DocumentId::try_from(self.clone()).ok()
     }
 
+    pub fn as_message_id(&self) -> Option<MessageId> {
+        MessageId::try_from(self.clone()).ok()
+    }
+
     pub fn as_task_id(&self) -> Option<TaskId> {
         TaskId::try_from(self.clone()).ok()
     }
@@ -90,6 +101,8 @@ impl MetisId {
     pub fn validate_str(value: &str) -> Result<(), MetisIdError> {
         if value.starts_with(ISSUE_PREFIX) {
             IssueId::validate_str(value)
+        } else if value.starts_with(MESSAGE_PREFIX) {
+            MessageId::validate_str(value)
         } else if value.starts_with(PATCH_PREFIX) {
             PatchId::validate_str(value)
         } else if value.starts_with(DOCUMENT_PREFIX) {
@@ -229,6 +242,45 @@ impl<'de> Deserialize<'de> for DocumentId {
     }
 }
 
+impl MessageId {
+    pub fn generate(random_len: usize) -> Result<Self, MetisIdError> {
+        generate_with_prefix(MESSAGE_PREFIX, random_len).map(Self)
+    }
+
+    pub fn new() -> Self {
+        Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
+    }
+
+    pub fn new_for_count(count: u64) -> Self {
+        let len = compute_random_len(count);
+        Self::generate(len).expect("computed random length should always be valid")
+    }
+
+    pub const fn prefix() -> &'static str {
+        MESSAGE_PREFIX
+    }
+
+    fn validate_str(value: &str) -> Result<(), MetisIdError> {
+        validate_with_prefix(value, MESSAGE_PREFIX)
+    }
+}
+
+impl Default for MessageId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'de> Deserialize<'de> for MessageId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        MessageId::try_from(value).map_err(de::Error::custom)
+    }
+}
+
 impl TaskId {
     pub fn generate(random_len: usize) -> Result<Self, MetisIdError> {
         generate_with_prefix(TASK_PREFIX, random_len).map(Self)
@@ -304,6 +356,15 @@ impl TryFrom<String> for DocumentId {
     }
 }
 
+impl TryFrom<String> for MessageId {
+    type Error = MetisIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        MessageId::validate_str(&value)?;
+        Ok(Self(value))
+    }
+}
+
 impl TryFrom<String> for TaskId {
     type Error = MetisIdError;
 
@@ -337,6 +398,14 @@ impl TryFrom<MetisId> for DocumentId {
     }
 }
 
+impl TryFrom<MetisId> for MessageId {
+    type Error = MetisIdError;
+
+    fn try_from(value: MetisId) -> Result<Self, Self::Error> {
+        Self::try_from(value.0)
+    }
+}
+
 impl TryFrom<MetisId> for TaskId {
     type Error = MetisIdError;
 
@@ -363,6 +432,12 @@ impl From<DocumentId> for MetisId {
     }
 }
 
+impl From<MessageId> for MetisId {
+    fn from(value: MessageId) -> Self {
+        Self(value.0)
+    }
+}
+
 impl From<TaskId> for MetisId {
     fn from(value: TaskId) -> Self {
         Self(value.0)
@@ -383,6 +458,12 @@ impl From<PatchId> for String {
 
 impl From<DocumentId> for String {
     fn from(value: DocumentId) -> Self {
+        value.0
+    }
+}
+
+impl From<MessageId> for String {
+    fn from(value: MessageId) -> Self {
         value.0
     }
 }
@@ -423,6 +504,12 @@ impl fmt::Display for DocumentId {
     }
 }
 
+impl fmt::Display for MessageId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 impl fmt::Display for TaskId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -448,6 +535,12 @@ impl AsRef<str> for PatchId {
 }
 
 impl AsRef<str> for DocumentId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for MessageId {
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -484,6 +577,14 @@ impl FromStr for PatchId {
 }
 
 impl FromStr for DocumentId {
+    type Err = MetisIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.to_string().try_into()
+    }
+}
+
+impl FromStr for MessageId {
     type Err = MetisIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -612,6 +713,32 @@ mod tests {
         let serialized = serde_json::to_string(&document_id).expect("serialize");
         let deserialized: DocumentId = serde_json::from_str(&serialized).expect("deserialize");
         assert_eq!(deserialized, document_id);
+    }
+
+    #[test]
+    fn message_id_generate_produces_m_prefix() {
+        let message_id = MessageId::new();
+        assert!(
+            message_id.as_ref().starts_with(MessageId::prefix()),
+            "MessageId should start with 'm-', got: {message_id}",
+        );
+    }
+
+    #[test]
+    fn message_id_round_trips_through_serde() {
+        let message_id = MessageId::new();
+        let serialized = serde_json::to_string(&message_id).expect("serialize");
+        let deserialized: MessageId = serde_json::from_str(&serialized).expect("deserialize");
+        assert_eq!(deserialized, message_id);
+    }
+
+    #[test]
+    fn message_id_rejects_invalid_prefix() {
+        let err = MessageId::try_from("x-invalid".to_string()).expect_err("expected error");
+        match err {
+            MetisIdError::InvalidPrefix(_) => {}
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

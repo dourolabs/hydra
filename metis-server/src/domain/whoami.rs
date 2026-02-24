@@ -1,13 +1,22 @@
 use crate::domain::users::Username;
-use metis_common::TaskId;
 use metis_common::api::v1 as api;
+use metis_common::{IssueId, TaskId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActorIdentity {
-    User { username: Username },
-    Task { task_id: TaskId, creator: Username },
+    User {
+        username: Username,
+    },
+    Task {
+        task_id: TaskId,
+        creator: Username,
+    },
+    Issue {
+        issue_id: IssueId,
+        creator: Username,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +38,10 @@ impl From<ActorIdentity> for api::whoami::ActorIdentity {
             },
             ActorIdentity::Task { task_id, creator } => api::whoami::ActorIdentity::Task {
                 task_id,
+                creator: creator.into(),
+            },
+            ActorIdentity::Issue { issue_id, creator } => api::whoami::ActorIdentity::Issue {
+                issue_id,
                 creator: creator.into(),
             },
         }

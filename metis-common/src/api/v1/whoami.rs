@@ -1,5 +1,5 @@
-use crate::TaskId;
 use crate::api::v1::users::Username;
+use crate::{IssueId, TaskId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -8,8 +8,17 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ActorIdentity {
-    User { username: Username },
-    Task { task_id: TaskId, creator: Username },
+    User {
+        username: Username,
+    },
+    Task {
+        task_id: TaskId,
+        creator: Username,
+    },
+    Issue {
+        issue_id: IssueId,
+        creator: Username,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

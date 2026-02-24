@@ -1,6 +1,6 @@
 use crate::{app::AppState, config::GithubAppSection, domain::users::Username, store::StoreError};
 pub use metis_common::{ActorId, ActorRef, parse_actor_name};
-use metis_common::{TaskId, api::v1::ApiError, github::GithubTokenResponse};
+use metis_common::{IssueId, TaskId, api::v1::ApiError, github::GithubTokenResponse};
 use reqwest::{
     Client, StatusCode,
     header::{ACCEPT, USER_AGENT},
@@ -88,6 +88,7 @@ impl Actor {
         match &self.actor_id {
             ActorId::Username(username) => format!("u-{username}"),
             ActorId::Task(task_id) => format!("w-{task_id}"),
+            ActorId::Issue(issue_id) => format!("a-{issue_id}"),
         }
     }
 
@@ -101,6 +102,19 @@ impl Actor {
     pub fn new_for_task(task_id: TaskId, creator: Username) -> (Actor, String) {
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
         let actor_id = ActorId::Task(task_id);
+        let actor = Actor {
+            auth_token_hash,
+            auth_token_salt,
+            actor_id,
+            creator,
+        };
+        let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
+        (actor, auth_token)
+    }
+
+    pub fn new_for_issue(issue_id: IssueId, creator: Username) -> (Actor, String) {
+        let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
+        let actor_id = ActorId::Issue(issue_id);
         let actor = Actor {
             auth_token_hash,
             auth_token_salt,
@@ -308,6 +322,7 @@ impl From<&Actor> for ActorRef {
 mod tests {
     use super::*;
     use metis_common::api::v1::users::Username as CommonUsername;
+    use std::str::FromStr;
 
     #[test]
     fn new_for_user_creates_user_actor() {
@@ -358,6 +373,26 @@ mod tests {
         let invalid = format!("u-wrong:{}", auth_token.split_once(':').unwrap().1);
         let parsed_invalid = AuthToken::parse(&invalid).expect("auth token should parse");
         assert!(!actor.verify_auth_token(&parsed_invalid));
+    }
+
+    #[test]
+    fn new_for_issue_creates_issue_actor() {
+        let issue_id = IssueId::from_str("i-abcdef").unwrap();
+        let (actor, auth_token) = Actor::new_for_issue(issue_id.clone(), Username::from("creator"));
+
+        assert!(!auth_token.is_empty());
+        assert_eq!(actor.actor_id, ActorId::Issue(issue_id));
+        assert_eq!(actor.name(), "a-i-abcdef");
+
+        let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
+        assert!(actor.verify_auth_token(&parsed));
+    }
+
+    #[test]
+    fn actor_name_returns_a_prefix_for_issue() {
+        let issue_id = IssueId::from_str("i-abcdef").unwrap();
+        let (actor, _) = Actor::new_for_issue(issue_id, Username::from("creator"));
+        assert_eq!(actor.name(), "a-i-abcdef");
     }
 
     #[test]

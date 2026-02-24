@@ -113,6 +113,14 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 })?;
                 task.creator
             }
+            ActorId::Issue(issue_id) => {
+                let issue = ctx.store.get_issue(issue_id, false).await.map_err(|e| {
+                    AutomationError::Other(anyhow::anyhow!(
+                        "github_pr_sync: failed to load issue '{issue_id}': {e}"
+                    ))
+                })?;
+                issue.item.creator
+            }
         };
 
         let token = get_github_token_for_user(ctx.app_state, &creator, &actor_id)
