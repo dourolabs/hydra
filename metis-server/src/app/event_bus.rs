@@ -1,7 +1,8 @@
 use crate::domain::{
-    actors::{Actor, ActorRef},
+    actors::{Actor, ActorId, ActorRef},
     documents::Document,
     issues::{Issue, IssueGraphFilter},
+    messages::Message,
     patches::Patch,
     users::{User, Username},
 };
@@ -14,7 +15,7 @@ use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -747,6 +748,26 @@ impl StoreWithEvents {
     ) -> Result<(), StoreError> {
         self.inner.delete_user(username, &actor).await
     }
+
+    // ---- Message mutations (inherent, with actor) ----
+    // Event emission will be added in Task 3.
+
+    pub async fn add_message_with_actor(
+        &self,
+        message: Message,
+        actor: ActorRef,
+    ) -> Result<(MessageId, VersionNumber), StoreError> {
+        self.inner.add_message(message, &actor).await
+    }
+
+    pub async fn update_message_with_actor(
+        &self,
+        id: &MessageId,
+        message: Message,
+        actor: ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.inner.update_message(id, message, &actor).await
+    }
 }
 
 #[async_trait]
@@ -941,6 +962,27 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         self.inner.list_users(query).await
+    }
+
+    // ---- Message (read-only) ----
+
+    async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
+        self.inner.get_message(id).await
+    }
+
+    async fn list_messages(
+        &self,
+        conversation_id: &str,
+        before: Option<&MessageId>,
+        limit: u32,
+    ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
+        self.inner
+            .list_messages(conversation_id, before, limit)
+            .await
+    }
+
+    async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
+        self.inner.list_conversations(actor_id).await
     }
 }
 

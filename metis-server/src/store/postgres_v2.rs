@@ -12,6 +12,7 @@ use crate::{
             JobSettings, TodoItem,
         },
         jobs::{BundleSpec, Task},
+        messages::Message,
         patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
         task_status::{Status, TaskError},
         users::{User, Username},
@@ -27,7 +28,7 @@ use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use serde_json::Value;
@@ -93,6 +94,7 @@ const TABLE_USERS_V2: &str = "metis.users_v2";
 const TABLE_REPOSITORIES_V2: &str = "metis.repositories_v2";
 const TABLE_ACTORS_V2: &str = "metis.actors_v2";
 const TABLE_DOCUMENTS_V2: &str = "metis.documents_v2";
+const TABLE_MESSAGES_V2: &str = "metis.messages_v2";
 
 /// PostgresStoreV2 uses the v2 tables with proper column definitions.
 #[derive(Clone)]
@@ -656,6 +658,62 @@ impl PostgresStoreV2 {
     }
 
     // -------------------------------------------------------------------------
+    // Message helpers
+    // -------------------------------------------------------------------------
+
+    async fn insert_message(
+        &self,
+        id: &MessageId,
+        version_number: VersionNumber,
+        message: &Message,
+        actor: Option<&Value>,
+    ) -> Result<(), StoreError> {
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for message '{id}'"))
+        })?;
+
+        let sender_name = match &message.sender {
+            ActorId::Username(username) => format!("u-{username}"),
+            ActorId::Task(task_id) => format!("w-{task_id}"),
+            ActorId::Issue(issue_id) => format!("a-{issue_id}"),
+        };
+
+        let query = format!(
+            "INSERT INTO {TABLE_MESSAGES_V2} (id, version_number, conversation_id, sender, body, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(version_number)
+            .bind(&message.conversation_id)
+            .bind(&sender_name)
+            .bind(&message.body)
+            .bind(message.deleted)
+            .bind(actor)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    fn row_to_message(&self, row: &MessageRow) -> Result<Message, StoreError> {
+        let sender = crate::domain::actors::Actor::parse_name(&row.sender).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid sender '{}' stored for message '{}'",
+                row.sender, row.id
+            ))
+        })?;
+
+        Ok(Message {
+            conversation_id: row.conversation_id.clone(),
+            sender,
+            body: row.body.clone(),
+            deleted: row.deleted,
+        })
+    }
+
+    // -------------------------------------------------------------------------
     // User helpers
     // -------------------------------------------------------------------------
 
@@ -964,6 +1022,22 @@ struct ActorRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct MessageRow {
+    id: String,
+    version_number: i64,
+    conversation_id: String,
+    sender: String,
+    body: String,
+    deleted: bool,
+    actor: Option<Value>,
+    created_at: DateTime<Utc>,
+    #[allow(dead_code)]
+    updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    creation_time: Option<DateTime<Utc>>,
 }
 
 fn map_sqlx_error(err: sqlx::Error) -> StoreError {
@@ -2167,6 +2241,133 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         self.fetch_latest_users(query).await
     }
+
+    // -------------------------------------------------------------------------
+    // Message methods (read-only)
+    // -------------------------------------------------------------------------
+
+    async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
+        let query = format!(
+            "SELECT id, version_number, conversation_id, sender, body, deleted, actor, created_at, updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_MESSAGES_V2} WHERE id = $1) AS creation_time
+             FROM {TABLE_MESSAGES_V2}
+             WHERE id = $1
+             ORDER BY version_number DESC
+             LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, MessageRow>(&query)
+            .bind(id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for message '{}'",
+                row.id
+            ))
+        })?;
+        let message = self.row_to_message(&row)?;
+        Ok(Versioned::with_optional_actor(
+            message,
+            version,
+            row.created_at,
+            parse_actor_json(row.actor)?,
+            row.creation_time.unwrap_or(row.created_at),
+        ))
+    }
+
+    async fn list_messages(
+        &self,
+        conversation_id: &str,
+        before: Option<&MessageId>,
+        limit: u32,
+    ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
+        let limit_i64 = i64::from(limit);
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, version_number, conversation_id, sender, body, deleted, actor, created_at, updated_at, \
+             MIN(created_at) OVER (PARTITION BY id) AS creation_time \
+             FROM {TABLE_MESSAGES_V2} WHERE conversation_id = $1 ORDER BY id DESC, version_number DESC"
+        );
+
+        let (sql, bind_before) = if let Some(before_id) = before {
+            let sql = format!(
+                "SELECT * FROM ({subquery}) AS latest WHERE id < $2 ORDER BY id DESC LIMIT $3"
+            );
+            (sql, Some(before_id.as_ref().to_string()))
+        } else {
+            let sql = format!("SELECT * FROM ({subquery}) AS latest ORDER BY id DESC LIMIT $2");
+            (sql, None)
+        };
+
+        let rows = if let Some(ref before_val) = bind_before {
+            sqlx::query_as::<_, MessageRow>(&sql)
+                .bind(conversation_id)
+                .bind(before_val)
+                .bind(limit_i64)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?
+        } else {
+            sqlx::query_as::<_, MessageRow>(&sql)
+                .bind(conversation_id)
+                .bind(limit_i64)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?
+        };
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for message '{}'",
+                    row.id
+                ))
+            })?;
+            let message_id = row.id.parse::<MessageId>().map_err(|err| {
+                StoreError::Internal(format!("invalid message id stored in database: {err}"))
+            })?;
+            let message = self.row_to_message(&row)?;
+            let versioned = Versioned::with_optional_actor(
+                message,
+                version,
+                row.created_at,
+                parse_actor_json(row.actor)?,
+                row.creation_time.unwrap_or(row.created_at),
+            );
+            messages.push((message_id, versioned));
+        }
+
+        Ok(messages)
+    }
+
+    async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
+        let actor_name = match actor_id {
+            ActorId::Username(username) => format!("u-{username}"),
+            ActorId::Task(task_id) => format!("w-{task_id}"),
+            ActorId::Issue(issue_id) => format!("a-{issue_id}"),
+        };
+
+        let query = format!(
+            "SELECT DISTINCT conversation_id FROM {TABLE_MESSAGES_V2} \
+             WHERE conversation_id LIKE $1 OR conversation_id LIKE $2 \
+             ORDER BY conversation_id"
+        );
+        // Match actor as first or second participant in the canonical conversation ID
+        let prefix_pattern = format!("{actor_name}+%");
+        let suffix_pattern = format!("%+{actor_name}");
+
+        let rows = sqlx::query_scalar::<_, String>(&query)
+            .bind(&prefix_pattern)
+            .bind(&suffix_pattern)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(rows)
+    }
 }
 
 #[async_trait]
@@ -2626,6 +2827,53 @@ impl Store for PostgresStoreV2 {
         user.deleted = true;
         self.update_user(user, actor).await?;
         Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Message methods
+    // -------------------------------------------------------------------------
+
+    async fn add_message(
+        &self,
+        message: Message,
+        actor: &ActorRef,
+    ) -> Result<(MessageId, VersionNumber), StoreError> {
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_MESSAGES_V2}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        let count = u64::try_from(count).unwrap_or(0);
+        let id = MessageId::new_for_count(count);
+        let actor_json = actor_to_json(actor);
+        self.insert_message(&id, 1, &message, Some(&actor_json))
+            .await?;
+        Ok((id, 1))
+    }
+
+    async fn update_message(
+        &self,
+        id: &MessageId,
+        message: Message,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.get_message(id).await?;
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_MESSAGES_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("message '{id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for message '{id}'"))
+        })?;
+
+        let actor_json = actor_to_json(actor);
+        self.insert_message(id, next_version, &message, Some(&actor_json))
+            .await?;
+        Ok(next_version)
     }
 }
 
