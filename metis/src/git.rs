@@ -1,13 +1,14 @@
 use std::{
     env,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{
     build::{CheckoutBuilder, RepoBuilder},
     ApplyLocation, BranchType, Commit, Cred, CredentialType, Diff, DiffFormat, DiffOptions,
-    ErrorCode, FetchOptions, IndexAddOption, PushOptions, RemoteCallbacks, Repository,
+    ErrorCode, FetchOptions, IndexAddOption, Oid, PushOptions, RemoteCallbacks, Repository,
     RevparseMode, Status, StatusOptions,
 };
 use metis_common::{patches::GitOid, EnvGuard};
@@ -301,11 +302,36 @@ pub fn push_branch(
     force: bool,
 ) -> Result<(), PushError> {
     let repo = repo_for_path(repo_root).map_err(PushError::Other)?;
+
+    // Record the OID of the local branch for post-push verification.
+    let local_oid = if !force {
+        let branch_ref = format!("refs/heads/{branch}");
+        Some(
+            repo.refname_to_id(&branch_ref)
+                .with_context(|| format!("failed to resolve local branch '{branch}'"))
+                .map_err(PushError::Other)?,
+        )
+    } else {
+        None
+    };
+
     let mut remote = repo
         .find_remote("origin")
         .context("failed to find 'origin' remote")
         .map_err(PushError::Other)?;
-    let callbacks = remote_callbacks(github_token);
+
+    // Set up callbacks with push_update_reference to detect server-side rejections.
+    let mut callbacks = remote_callbacks(github_token);
+    let push_rejection: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    {
+        let push_rejection = Arc::clone(&push_rejection);
+        callbacks.push_update_reference(move |_refname, status| {
+            if let Some(msg) = status {
+                *push_rejection.lock().unwrap() = Some(msg.to_string());
+            }
+            Ok(())
+        });
+    }
     let mut push_options = PushOptions::new();
     push_options.remote_callbacks(callbacks);
 
@@ -327,6 +353,22 @@ pub fn push_branch(
                 )
             }
         })?;
+
+    // Check if the push_update_reference callback caught a server-side rejection.
+    if !force {
+        if let Some(_msg) = push_rejection.lock().unwrap().take() {
+            return Err(PushError::NotFastForward {
+                remote_ref: branch.to_string(),
+            });
+        }
+    }
+
+    // Post-push verification for non-forced pushes: re-fetch and verify our
+    // commit is still reachable from the remote ref.
+    if let Some(pushed_oid) = local_oid {
+        drop(remote);
+        verify_push_reached_remote(&repo, pushed_oid, branch, github_token)?;
+    }
 
     if let Ok(mut local_branch) = repo.find_branch(branch, BranchType::Local) {
         let _ = local_branch.set_upstream(Some(&format!("origin/{branch}")));
@@ -685,6 +727,46 @@ pub fn squash_merge_onto(
     Ok(())
 }
 
+/// Re-fetch from origin and verify that `pushed_oid` is still reachable from
+/// `refs/remotes/origin/<remote_ref>`. Returns `PushError::NotFastForward` if
+/// a concurrent push overwrote the ref.
+fn verify_push_reached_remote(
+    repo: &Repository,
+    pushed_oid: Oid,
+    remote_ref: &str,
+    github_token: Option<&str>,
+) -> Result<(), PushError> {
+    let mut remote = repo
+        .find_remote("origin")
+        .context("failed to find 'origin' remote for post-push verification")
+        .map_err(PushError::Other)?;
+    let mut fetch_opts = FetchOptions::new();
+    fetch_opts.remote_callbacks(remote_callbacks(github_token));
+    remote
+        .fetch(&[] as &[&str], Some(&mut fetch_opts), None)
+        .context("failed to re-fetch from origin after push")
+        .map_err(PushError::Other)?;
+    drop(remote);
+
+    let remote_tracking_ref = format!("refs/remotes/origin/{remote_ref}");
+    let remote_oid = repo
+        .refname_to_id(&remote_tracking_ref)
+        .with_context(|| format!("failed to resolve {remote_tracking_ref} after push"))
+        .map_err(PushError::Other)?;
+
+    if remote_oid != pushed_oid
+        && !repo
+            .graph_descendant_of(remote_oid, pushed_oid)
+            .unwrap_or(false)
+    {
+        return Err(PushError::NotFastForward {
+            remote_ref: remote_ref.to_string(),
+        });
+    }
+
+    Ok(())
+}
+
 /// Structured error type for push failures.
 #[derive(Debug, Error)]
 pub enum PushError {
@@ -710,11 +792,36 @@ pub fn push_to_ref(
     force: bool,
 ) -> Result<(), PushError> {
     let repo = repo_for_path(repo_root).map_err(PushError::Other)?;
+
+    // Record the OID of the local branch for post-push verification.
+    let local_oid = if !force {
+        let branch_ref = format!("refs/heads/{local_branch}");
+        Some(
+            repo.refname_to_id(&branch_ref)
+                .with_context(|| format!("failed to resolve local branch '{local_branch}'"))
+                .map_err(PushError::Other)?,
+        )
+    } else {
+        None
+    };
+
     let mut remote = repo
         .find_remote("origin")
         .context("failed to find 'origin' remote")
         .map_err(PushError::Other)?;
-    let callbacks = remote_callbacks(github_token);
+
+    // Set up callbacks with push_update_reference to detect server-side rejections.
+    let mut callbacks = remote_callbacks(github_token);
+    let push_rejection: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    {
+        let push_rejection = Arc::clone(&push_rejection);
+        callbacks.push_update_reference(move |_refname, status| {
+            if let Some(msg) = status {
+                *push_rejection.lock().unwrap() = Some(msg.to_string());
+            }
+            Ok(())
+        });
+    }
     let mut push_options = PushOptions::new();
     push_options.remote_callbacks(callbacks);
 
@@ -736,6 +843,22 @@ pub fn push_to_ref(
                 )
             }
         })?;
+
+    // Check if the push_update_reference callback caught a server-side rejection.
+    if !force {
+        if let Some(_msg) = push_rejection.lock().unwrap().take() {
+            return Err(PushError::NotFastForward {
+                remote_ref: remote_ref.to_string(),
+            });
+        }
+    }
+
+    // Post-push verification for non-forced pushes: re-fetch and verify our
+    // commit is still reachable from the remote ref.
+    if let Some(pushed_oid) = local_oid {
+        drop(remote);
+        verify_push_reached_remote(&repo, pushed_oid, remote_ref, github_token)?;
+    }
 
     Ok(())
 }
