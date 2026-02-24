@@ -90,7 +90,8 @@ impl MemoryStore {
         version: VersionNumber,
         actor: &ActorRef,
     ) -> Versioned<T> {
-        Versioned::with_actor(item, version, Utc::now(), actor.clone())
+        let now = Utc::now();
+        Versioned::with_actor(item, version, now, actor.clone(), now)
     }
 
     fn versioned_at_with_actor<T>(
@@ -99,7 +100,7 @@ impl MemoryStore {
         timestamp: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Versioned<T> {
-        Versioned::with_actor(item, version, timestamp, actor.clone())
+        Versioned::with_actor(item, version, timestamp, actor.clone(), timestamp)
     }
 
     /// Returns true if the patch matches the search term.
@@ -280,7 +281,7 @@ impl MemoryStore {
             }
             if let Some(entry) = self.documents.get(id) {
                 if let Some(mut latest) = Self::latest_versioned(entry.value()) {
-                    latest.creation_time = entry.value().first().map(|v| v.timestamp);
+                    latest.creation_time = entry.value()[0].timestamp;
                     documents.push((id.clone(), latest));
                 }
             }
@@ -378,7 +379,7 @@ impl ReadOnlyStore for MemoryStore {
             return Err(StoreError::IssueNotFound(id.clone()));
         }
 
-        versioned.creation_time = entry.value().first().map(|v| v.timestamp);
+        versioned.creation_time = entry.value()[0].timestamp;
         Ok(versioned)
     }
 
@@ -387,7 +388,7 @@ impl ReadOnlyStore for MemoryStore {
             .issues
             .get(id)
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
-        let creation_time = entry.value().first().map(|v| v.timestamp);
+        let creation_time = entry.value()[0].timestamp;
         let mut versions = entry.value().clone();
         for v in &mut versions {
             v.creation_time = creation_time;
@@ -432,7 +433,7 @@ impl ReadOnlyStore for MemoryStore {
                 ) {
                     return None;
                 }
-                latest.creation_time = entry.value().first().map(|v| v.timestamp);
+                latest.creation_time = entry.value()[0].timestamp;
                 Some((issue_id.clone(), latest))
             })
             .collect())
@@ -537,7 +538,7 @@ impl ReadOnlyStore for MemoryStore {
         if !include_deleted && versioned.item.deleted {
             return Err(StoreError::PatchNotFound(id.clone()));
         }
-        versioned.creation_time = entry.value().first().map(|v| v.timestamp);
+        versioned.creation_time = entry.value()[0].timestamp;
         Ok(versioned)
     }
 
@@ -546,7 +547,7 @@ impl ReadOnlyStore for MemoryStore {
             .patches
             .get(id)
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
-        let creation_time = entry.value().first().map(|v| v.timestamp);
+        let creation_time = entry.value()[0].timestamp;
         let mut versions = entry.value().clone();
         for v in &mut versions {
             v.creation_time = creation_time;
@@ -587,7 +588,7 @@ impl ReadOnlyStore for MemoryStore {
                 if !Self::patch_matches(search_term.as_deref(), entry.key(), &latest.item) {
                     return None;
                 }
-                latest.creation_time = entry.value().first().map(|v| v.timestamp);
+                latest.creation_time = entry.value()[0].timestamp;
                 Some((entry.key().clone(), latest))
             })
             .collect())
@@ -618,7 +619,7 @@ impl ReadOnlyStore for MemoryStore {
         if !include_deleted && versioned.item.deleted {
             return Err(StoreError::DocumentNotFound(id.clone()));
         }
-        versioned.creation_time = entry.value().first().map(|v| v.timestamp);
+        versioned.creation_time = entry.value()[0].timestamp;
         Ok(versioned)
     }
 
@@ -630,7 +631,7 @@ impl ReadOnlyStore for MemoryStore {
             .documents
             .get(id)
             .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
-        let creation_time = entry.value().first().map(|v| v.timestamp);
+        let creation_time = entry.value()[0].timestamp;
         let mut versions = entry.value().clone();
         for v in &mut versions {
             v.creation_time = creation_time;
@@ -655,7 +656,7 @@ impl ReadOnlyStore for MemoryStore {
                     .iter()
                     .filter_map(|entry| {
                         let mut latest = Self::latest_versioned(entry.value())?;
-                        latest.creation_time = entry.value().first().map(|v| v.timestamp);
+                        latest.creation_time = entry.value()[0].timestamp;
                         Some((entry.key().clone(), latest))
                     })
                     .collect()

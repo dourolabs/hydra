@@ -44,18 +44,22 @@ pub struct Versioned<T> {
     pub actor: Option<ActorRef>,
     /// Timestamp when the first version (version 1) of this entity was created.
     /// Used to pass creation time from the store to route handlers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub creation_time: Option<DateTime<Utc>>,
+    pub creation_time: DateTime<Utc>,
 }
 
 impl<T> Versioned<T> {
-    pub fn new(item: T, version: VersionNumber, timestamp: DateTime<Utc>) -> Self {
+    pub fn new(
+        item: T,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        creation_time: DateTime<Utc>,
+    ) -> Self {
         Self {
             item,
             version,
             timestamp,
             actor: None,
-            creation_time: None,
+            creation_time,
         }
     }
 
@@ -64,13 +68,14 @@ impl<T> Versioned<T> {
         version: VersionNumber,
         timestamp: DateTime<Utc>,
         actor: ActorRef,
+        creation_time: DateTime<Utc>,
     ) -> Self {
         Self {
             item,
             version,
             timestamp,
             actor: Some(actor),
-            creation_time: None,
+            creation_time,
         }
     }
 
@@ -79,13 +84,14 @@ impl<T> Versioned<T> {
         version: VersionNumber,
         timestamp: DateTime<Utc>,
         actor: Option<ActorRef>,
+        creation_time: DateTime<Utc>,
     ) -> Self {
         Self {
             item,
             version,
             timestamp,
             actor,
-            creation_time: None,
+            creation_time,
         }
     }
 }

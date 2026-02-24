@@ -18,4 +18,4 @@ actor?: ActorRef | null,
  * Timestamp when the first version (version 1) of this entity was created.
  * Used to pass creation time from the store to route handlers.
  */
-creation_time?: string | null, };
+creation_time: string, };

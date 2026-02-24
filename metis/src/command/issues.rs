@@ -1136,7 +1136,14 @@ async fn fetch_issue_versions(
     Ok(response
         .versions
         .into_iter()
-        .map(|record| Versioned::new(record.issue, record.version, record.timestamp))
+        .map(|record| {
+            Versioned::new(
+                record.issue,
+                record.version,
+                record.timestamp,
+                record.creation_time,
+            )
+        })
         .collect())
 }
 
@@ -1151,7 +1158,14 @@ async fn fetch_patch_versions(
     Ok(response
         .versions
         .into_iter()
-        .map(|record| Versioned::new(record.patch, record.version, record.timestamp))
+        .map(|record| {
+            Versioned::new(
+                record.patch,
+                record.version,
+                record.timestamp,
+                record.creation_time,
+            )
+        })
         .collect())
 }
 
@@ -1166,7 +1180,14 @@ async fn fetch_job_versions(
     Ok(response
         .versions
         .into_iter()
-        .map(|record| Versioned::new(record.task, record.version, record.timestamp))
+        .map(|record| {
+            Versioned::new(
+                record.task,
+                record.version,
+                record.timestamp,
+                record.timestamp,
+            )
+        })
         .collect())
 }
 
@@ -4564,10 +4585,12 @@ mod tests {
                 base_issue,
                 1,
                 Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
             ),
             Versioned::new(
                 updated_issue,
                 2,
+                Utc.with_ymd_and_hms(2024, 1, 4, 9, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2024, 1, 4, 9, 0, 0).unwrap(),
             ),
         ];
@@ -4597,10 +4620,12 @@ mod tests {
                 base_patch,
                 1,
                 Utc.with_ymd_and_hms(2024, 1, 2, 9, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 1, 2, 9, 0, 0).unwrap(),
             ),
             Versioned::new(
                 updated_patch,
                 2,
+                Utc.with_ymd_and_hms(2024, 1, 3, 9, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2024, 1, 3, 9, 0, 0).unwrap(),
             ),
         ];
@@ -4635,10 +4660,12 @@ mod tests {
                 base_task,
                 1,
                 Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
             ),
             Versioned::new(
                 updated_task,
                 2,
+                Utc.with_ymd_and_hms(2024, 1, 2, 15, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2024, 1, 2, 15, 0, 0).unwrap(),
             ),
         ];

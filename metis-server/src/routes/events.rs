@@ -326,7 +326,7 @@ async fn serialize_entity(
                     .get_issue(&issue_id, true)
                     .await
                     .ok()
-                    .and_then(|v| v.creation_time)
+                    .map(|v| v.creation_time)
                     .unwrap_or(timestamp)
             };
             let record = IssueSummaryRecord::new(
@@ -349,7 +349,7 @@ async fn serialize_entity(
                     .get_patch(&patch_id, true)
                     .await
                     .ok()
-                    .and_then(|v| v.creation_time)
+                    .map(|v| v.creation_time)
                     .unwrap_or(timestamp)
             };
             let full_record = PatchVersionRecord::new(
@@ -392,7 +392,7 @@ async fn serialize_entity(
                     .get_document(&doc_id, true)
                     .await
                     .ok()
-                    .and_then(|v| v.creation_time)
+                    .map(|v| v.creation_time)
                     .unwrap_or(timestamp)
             };
             let full_record = DocumentVersionRecord::new(

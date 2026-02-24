@@ -223,10 +223,12 @@ mod tests {
                 base_issue,
                 1,
                 Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
             ),
             Versioned::new(
                 updated_issue,
                 2,
+                Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
             ),
         ];
@@ -277,10 +279,12 @@ mod tests {
                 patch_v2,
                 2,
                 Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
             ),
             Versioned::new(
                 patch_v1,
                 1,
+                Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
             ),
         ];
@@ -321,6 +325,7 @@ mod tests {
                 base_issue.clone(),
                 1,
                 Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
             ),
             Versioned::with_actor(
                 Issue {
@@ -330,6 +335,7 @@ mod tests {
                 2,
                 Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
                 actor.clone(),
+                Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
             ),
         ];
 
@@ -356,10 +362,12 @@ mod tests {
                 document_v1,
                 1,
                 Utc.with_ymd_and_hms(2024, 1, 1, 8, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 1, 1, 8, 0, 0).unwrap(),
             ),
             Versioned::new(
                 document_v2,
                 2,
+                Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap(),
             ),
         ];

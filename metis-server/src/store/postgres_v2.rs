@@ -769,6 +769,7 @@ impl PostgresStoreV2 {
                     version,
                     row.created_at,
                     parse_actor_json(row.actor)?,
+                    row.created_at,
                 ),
             ));
         }
@@ -1023,6 +1024,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             version,
             row.created_at,
             parse_actor_json(row.actor)?,
+            row.created_at,
         ))
     }
 
@@ -1065,6 +1067,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                     version,
                     row.created_at,
                     parse_actor_json(row.actor)?,
+                    row.created_at,
                 ),
             ));
         }
@@ -1109,13 +1112,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
             return Err(StoreError::IssueNotFound(id.clone()));
         }
 
-        let mut versioned = Versioned::with_optional_actor(
+        let versioned = Versioned::with_optional_actor(
             issue,
             version,
             row.created_at,
             parse_actor_json(row.actor)?,
+            row.creation_time.unwrap_or(row.created_at),
         );
-        versioned.creation_time = row.creation_time;
         Ok(versioned)
     }
 
@@ -1150,12 +1153,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 version,
                 row.created_at,
                 parse_actor_json(row.actor)?,
+                row.created_at,
             ));
         }
 
         let creation_time = results.first().map(|r| r.timestamp);
         for r in &mut results {
-            r.creation_time = creation_time;
+            r.creation_time = creation_time.unwrap_or(r.timestamp);
         }
 
         Ok(results)
@@ -1265,13 +1269,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let issue_id = row.id.parse::<IssueId>().map_err(|err| {
                 StoreError::Internal(format!("invalid issue id stored in database: {err}"))
             })?;
-            let mut versioned = Versioned::with_optional_actor(
+            let versioned = Versioned::with_optional_actor(
                 issue,
                 version,
                 row.created_at,
                 parse_actor_json(row.actor)?,
+                row.creation_time.unwrap_or(row.created_at),
             );
-            versioned.creation_time = row.creation_time;
             issues.push((issue_id, versioned));
         }
 
@@ -1371,13 +1375,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
         if !include_deleted && patch.deleted {
             return Err(StoreError::PatchNotFound(id.clone()));
         }
-        let mut versioned = Versioned::with_optional_actor(
+        let versioned = Versioned::with_optional_actor(
             patch,
             version,
             row.created_at,
             parse_actor_json(row.actor)?,
+            row.creation_time.unwrap_or(row.created_at),
         );
-        versioned.creation_time = row.creation_time;
         Ok(versioned)
     }
 
@@ -1412,12 +1416,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 version,
                 row.created_at,
                 parse_actor_json(row.actor)?,
+                row.created_at,
             ));
         }
 
         let creation_time = results.first().map(|r| r.timestamp);
         for r in &mut results {
-            r.creation_time = creation_time;
+            r.creation_time = creation_time.unwrap_or(r.timestamp);
         }
 
         Ok(results)
@@ -1537,13 +1542,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let patch_id = row.id.parse::<PatchId>().map_err(|err| {
                 StoreError::Internal(format!("invalid patch id stored in database: {err}"))
             })?;
-            let mut versioned = Versioned::with_optional_actor(
+            let versioned = Versioned::with_optional_actor(
                 patch,
                 version,
                 row.created_at,
                 parse_actor_json(row.actor)?,
+                row.creation_time.unwrap_or(row.created_at),
             );
-            versioned.creation_time = row.creation_time;
             patches.push((patch_id, versioned));
         }
 
@@ -1595,13 +1600,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ))
         })?;
         let document = self.row_to_document(&row)?;
-        let mut versioned = Versioned::with_optional_actor(
+        let versioned = Versioned::with_optional_actor(
             document,
             version,
             row.created_at,
             parse_actor_json(row.actor)?,
+            row.creation_time.unwrap_or(row.created_at),
         );
-        versioned.creation_time = row.creation_time;
         Ok(versioned)
     }
 
@@ -1639,12 +1644,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 version,
                 row.created_at,
                 parse_actor_json(row.actor)?,
+                row.created_at,
             ));
         }
 
         let creation_time = results.first().map(|r| r.timestamp);
         for r in &mut results {
-            r.creation_time = creation_time;
+            r.creation_time = creation_time.unwrap_or(r.timestamp);
         }
 
         Ok(results)
@@ -1733,13 +1739,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let document_id = row.id.parse::<DocumentId>().map_err(|err| {
                 StoreError::Internal(format!("invalid document id stored in database: {err}"))
             })?;
-            let mut versioned = Versioned::with_optional_actor(
+            let versioned = Versioned::with_optional_actor(
                 document,
                 version,
                 row.created_at,
                 parse_actor_json(row.actor)?,
+                row.creation_time.unwrap_or(row.created_at),
             );
-            versioned.creation_time = row.creation_time;
             documents.push((document_id, versioned));
         }
 
@@ -1798,6 +1804,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             version,
             row.created_at,
             parse_actor_json(row.actor)?,
+            row.created_at,
         ))
     }
 
@@ -1832,6 +1839,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 version,
                 row.created_at,
                 parse_actor_json(row.actor)?,
+                row.created_at,
             ));
         }
 
@@ -1926,6 +1934,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                     version,
                     row.created_at,
                     parse_actor_json(row.actor)?,
+                    row.created_at,
                 ),
             ));
         }
@@ -1980,6 +1989,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                     version,
                     row.created_at,
                     parse_actor_json(row.actor)?,
+                    row.created_at,
                 ));
         }
 
@@ -2069,6 +2079,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             version,
             row.created_at,
             parse_actor_json(row.actor)?,
+            row.created_at,
         ))
     }
 
@@ -2099,6 +2110,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                     version,
                     row.created_at,
                     parse_actor_json(row.actor)?,
+                    row.created_at,
                 ),
             ));
         }
@@ -2145,6 +2157,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             version,
             row.created_at,
             parse_actor_json(row.actor)?,
+            row.created_at,
         ))
     }
 
@@ -2603,6 +2616,7 @@ impl Store for PostgresStoreV2 {
             version,
             row.created_at,
             parse_actor_json(row.actor)?,
+            row.created_at,
         ))
     }
 
