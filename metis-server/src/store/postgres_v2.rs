@@ -851,6 +851,8 @@ struct IssueRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    creation_time: Option<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -875,6 +877,8 @@ struct PatchRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    creation_time: Option<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -914,6 +918,8 @@ struct DocumentRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    creation_time: Option<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1077,7 +1083,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1102,12 +1109,14 @@ impl ReadOnlyStore for PostgresStoreV2 {
             return Err(StoreError::IssueNotFound(id.clone()));
         }
 
-        Ok(Versioned::with_optional_actor(
+        let mut versioned = Versioned::with_optional_actor(
             issue,
             version,
             row.created_at,
             parse_actor_json(row.actor)?,
-        ))
+        );
+        versioned.creation_time = row.creation_time;
+        Ok(versioned)
     }
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
@@ -1144,6 +1153,11 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ));
         }
 
+        let creation_time = results.first().map(|r| r.timestamp);
+        for r in &mut results {
+            r.creation_time = creation_time;
+        }
+
         Ok(results)
     }
 
@@ -1155,7 +1169,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each issue, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at \
+            "SELECT DISTINCT ON (id) id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, \
+             MIN(created_at) OVER (PARTITION BY id) AS creation_time \
              FROM {TABLE_ISSUES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -1250,15 +1265,14 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let issue_id = row.id.parse::<IssueId>().map_err(|err| {
                 StoreError::Internal(format!("invalid issue id stored in database: {err}"))
             })?;
-            issues.push((
-                issue_id,
-                Versioned::with_optional_actor(
-                    issue,
-                    version,
-                    row.created_at,
-                    parse_actor_json(row.actor)?,
-                ),
-            ));
+            let mut versioned = Versioned::with_optional_actor(
+                issue,
+                version,
+                row.created_at,
+                parse_actor_json(row.actor)?,
+            );
+            versioned.creation_time = row.creation_time;
+            issues.push((issue_id, versioned));
         }
 
         Ok(issues)
@@ -1333,7 +1347,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Patch>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_PATCHES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1356,12 +1371,14 @@ impl ReadOnlyStore for PostgresStoreV2 {
         if !include_deleted && patch.deleted {
             return Err(StoreError::PatchNotFound(id.clone()));
         }
-        Ok(Versioned::with_optional_actor(
+        let mut versioned = Versioned::with_optional_actor(
             patch,
             version,
             row.created_at,
             parse_actor_json(row.actor)?,
-        ))
+        );
+        versioned.creation_time = row.creation_time;
+        Ok(versioned)
     }
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
@@ -1398,6 +1415,11 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ));
         }
 
+        let creation_time = results.first().map(|r| r.timestamp);
+        for r in &mut results {
+            r.creation_time = creation_time;
+        }
+
         Ok(results)
     }
 
@@ -1409,7 +1431,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each patch, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at \
+            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at, \
+             MIN(created_at) OVER (PARTITION BY id) AS creation_time \
              FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -1514,15 +1537,14 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let patch_id = row.id.parse::<PatchId>().map_err(|err| {
                 StoreError::Internal(format!("invalid patch id stored in database: {err}"))
             })?;
-            patches.push((
-                patch_id,
-                Versioned::with_optional_actor(
-                    patch,
-                    version,
-                    row.created_at,
-                    parse_actor_json(row.actor)?,
-                ),
-            ));
+            let mut versioned = Versioned::with_optional_actor(
+                patch,
+                version,
+                row.created_at,
+                parse_actor_json(row.actor)?,
+            );
+            versioned.creation_time = row.creation_time;
+            patches.push((patch_id, versioned));
         }
 
         Ok(patches)
@@ -1549,7 +1571,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Document>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1572,12 +1595,14 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ))
         })?;
         let document = self.row_to_document(&row)?;
-        Ok(Versioned::with_optional_actor(
+        let mut versioned = Versioned::with_optional_actor(
             document,
             version,
             row.created_at,
             parse_actor_json(row.actor)?,
-        ))
+        );
+        versioned.creation_time = row.creation_time;
+        Ok(versioned)
     }
 
     async fn get_document_versions(
@@ -1617,6 +1642,11 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ));
         }
 
+        let creation_time = results.first().map(|r| r.timestamp);
+        for r in &mut results {
+            r.creation_time = creation_time;
+        }
+
         Ok(results)
     }
 
@@ -1628,7 +1658,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each document, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at \
+            "SELECT DISTINCT ON (id) id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at, \
+             MIN(created_at) OVER (PARTITION BY id) AS creation_time \
              FROM {TABLE_DOCUMENTS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -1702,15 +1733,14 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let document_id = row.id.parse::<DocumentId>().map_err(|err| {
                 StoreError::Internal(format!("invalid document id stored in database: {err}"))
             })?;
-            documents.push((
-                document_id,
-                Versioned::with_optional_actor(
-                    document,
-                    version,
-                    row.created_at,
-                    parse_actor_json(row.actor)?,
-                ),
-            ));
+            let mut versioned = Versioned::with_optional_actor(
+                document,
+                version,
+                row.created_at,
+                parse_actor_json(row.actor)?,
+            );
+            versioned.creation_time = row.creation_time;
+            documents.push((document_id, versioned));
         }
 
         Ok(documents)

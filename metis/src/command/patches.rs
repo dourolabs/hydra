@@ -663,6 +663,7 @@ async fn update_patch_inner(
         Utc::now(),
         updated_patch,
         None,
+        None,
     ))
 }
 
@@ -1143,6 +1144,7 @@ mod tests {
                 false,
             ),
             None,
+            None,
         )
     }
 
@@ -1336,7 +1338,8 @@ mod tests {
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-1"), 0);
-        let patch_record = PatchVersionRecord::new(patch_id("p-1"), 0, Utc::now(), patch, None);
+        let patch_record =
+            PatchVersionRecord::new(patch_id("p-1"), 0, Utc::now(), patch, None, None);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1429,7 +1432,8 @@ mod tests {
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-2"), 0);
-        let patch_record = PatchVersionRecord::new(patch_id("p-2"), 0, Utc::now(), patch, None);
+        let patch_record =
+            PatchVersionRecord::new(patch_id("p-2"), 0, Utc::now(), patch, None, None);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1595,7 +1599,7 @@ mod tests {
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-service"), 0);
         let patch_record =
-            PatchVersionRecord::new(patch_id("p-service"), 0, Utc::now(), patch, None);
+            PatchVersionRecord::new(patch_id("p-service"), 0, Utc::now(), patch, None, None);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1685,7 +1689,7 @@ mod tests {
         let new_patch_id = patch_id("p-link");
         let patch_response = UpsertPatchResponse::new(new_patch_id.clone(), 0);
         let patch_record =
-            PatchVersionRecord::new(new_patch_id.clone(), 0, Utc::now(), patch, None);
+            PatchVersionRecord::new(new_patch_id.clone(), 0, Utc::now(), patch, None, None);
         let server = MockServer::start();
         let client = metis_client(&server);
         mock_get_job(&server, job_record);
@@ -1813,6 +1817,7 @@ mod tests {
                 None,
             ),
             None,
+            None,
         );
         let server = MockServer::start();
         let client = metis_client(&server);
@@ -1878,6 +1883,7 @@ mod tests {
                 None,
             ),
             None,
+            None,
         );
         let server = MockServer::start();
         let client = metis_client(&server);
@@ -1939,6 +1945,7 @@ mod tests {
                 None,
                 None,
             ),
+            None,
             None,
         );
         let server = MockServer::start();
@@ -2034,6 +2041,7 @@ mod tests {
                 None,
                 None,
             ),
+            None,
             None,
         );
         let expected_request = UpsertPatchRequest::new(Patch::new(
@@ -2132,6 +2140,7 @@ mod tests {
                 Some("main".to_string()),
             ),
             None,
+            None,
         );
         let versions_response = ListPatchVersionsResponse::new(vec![patch_record.clone()]);
 
@@ -2222,12 +2231,14 @@ mod tests {
                 Some("main".to_string()),
             ),
             None,
+            None,
         );
         let version2 = PatchVersionRecord::new(
             merge_patch_id.clone(),
             2,
             now - chrono::Duration::hours(1),
             patch_v2.clone(),
+            None,
             None,
         );
 
@@ -2236,6 +2247,7 @@ mod tests {
             2,
             now - chrono::Duration::hours(1),
             patch_v2,
+            None,
             None,
         );
 

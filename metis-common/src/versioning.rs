@@ -42,6 +42,10 @@ pub struct Versioned<T> {
     /// `None` for historical versions that predate actor tracking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
+    /// Timestamp when the first version (version 1) of this entity was created.
+    /// Used to pass creation time from the store to route handlers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_time: Option<DateTime<Utc>>,
 }
 
 impl<T> Versioned<T> {
@@ -51,6 +55,7 @@ impl<T> Versioned<T> {
             version,
             timestamp,
             actor: None,
+            creation_time: None,
         }
     }
 
@@ -65,6 +70,7 @@ impl<T> Versioned<T> {
             version,
             timestamp,
             actor: Some(actor),
+            creation_time: None,
         }
     }
 
@@ -79,6 +85,7 @@ impl<T> Versioned<T> {
             version,
             timestamp,
             actor,
+            creation_time: None,
         }
     }
 }

@@ -559,6 +559,8 @@ pub struct IssueVersionRecord {
     pub issue: Issue,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_time: Option<DateTime<Utc>>,
 }
 
 impl IssueVersionRecord {
@@ -568,6 +570,7 @@ impl IssueVersionRecord {
         timestamp: DateTime<Utc>,
         issue: Issue,
         actor: Option<ActorRef>,
+        creation_time: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             issue_id,
@@ -575,6 +578,7 @@ impl IssueVersionRecord {
             timestamp,
             issue,
             actor,
+            creation_time,
         }
     }
 }
@@ -744,6 +748,8 @@ pub struct IssueSummaryRecord {
     pub issue: IssueSummary,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_time: Option<DateTime<Utc>>,
 }
 
 impl IssueSummaryRecord {
@@ -753,6 +759,7 @@ impl IssueSummaryRecord {
         timestamp: DateTime<Utc>,
         issue: IssueSummary,
         actor: Option<ActorRef>,
+        creation_time: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             issue_id,
@@ -760,6 +767,7 @@ impl IssueSummaryRecord {
             timestamp,
             issue,
             actor,
+            creation_time,
         }
     }
 }
@@ -772,6 +780,7 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
             timestamp: record.timestamp,
             issue: IssueSummary::from(&record.issue),
             actor: record.actor.clone(),
+            creation_time: record.creation_time,
         }
     }
 }
@@ -989,8 +998,14 @@ mod tests {
         let actor = ActorRef::Authenticated {
             actor_id: ActorId::Username(Username::from("alice")),
         };
-        let record =
-            IssueVersionRecord::new(issue_id, 1, chrono::Utc::now(), issue, Some(actor.clone()));
+        let record = IssueVersionRecord::new(
+            issue_id,
+            1,
+            chrono::Utc::now(),
+            issue,
+            Some(actor.clone()),
+            None,
+        );
 
         let value = serde_json::to_value(&record).expect("should serialize");
         let expected_actor = json!({"Authenticated": {"actor_id": {"Username": "alice"}}});
@@ -1014,7 +1029,7 @@ mod tests {
             deleted: false,
         };
 
-        let record = IssueVersionRecord::new(issue_id, 1, chrono::Utc::now(), issue, None);
+        let record = IssueVersionRecord::new(issue_id, 1, chrono::Utc::now(), issue, None, None);
 
         let value = serde_json::to_value(&record).expect("should serialize");
         assert!(
@@ -1112,7 +1127,7 @@ mod tests {
     fn issue_summary_record_from_version_record() {
         let issue = make_test_issue("multi\nline\ndesc");
         let record =
-            IssueVersionRecord::new(issue_id("i-test"), 3, chrono::Utc::now(), issue, None);
+            IssueVersionRecord::new(issue_id("i-test"), 3, chrono::Utc::now(), issue, None, None);
         let summary_record = IssueSummaryRecord::from(&record);
         assert_eq!(summary_record.issue_id, issue_id("i-test"));
         assert_eq!(summary_record.version, 3);

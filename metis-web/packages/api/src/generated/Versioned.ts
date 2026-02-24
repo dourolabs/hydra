@@ -13,4 +13,9 @@ timestamp: string,
  * The actor who performed this mutation.
  * `None` for historical versions that predate actor tracking.
  */
-actor?: ActorRef | null, };
+actor?: ActorRef | null, 
+/**
+ * Timestamp when the first version (version 1) of this entity was created.
+ * Used to pass creation time from the store to route handlers.
+ */
+creation_time?: string | null, };

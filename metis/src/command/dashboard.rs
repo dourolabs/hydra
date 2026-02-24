@@ -6569,6 +6569,7 @@ mod tests {
                 false,
             ),
             None,
+            None,
         );
 
         let record = issue_version_to_record(version_record).expect("should produce a record");
@@ -6597,6 +6598,7 @@ mod tests {
                 Vec::new(),
                 false,
             )),
+            None,
             None,
         );
 
