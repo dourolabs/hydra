@@ -92,6 +92,42 @@ impl ActorRef {
     }
 }
 
+/// Parse a user-facing shorthand string into an `ActorId`.
+///
+/// Shorthand rules:
+/// - Strings starting with `"i-"` are parsed as [`IssueId`] → `ActorId::Issue`
+/// - Strings starting with `"t-"` are parsed as [`TaskId`] → `ActorId::Task`
+/// - Everything else is treated as a username → `ActorId::Username`
+///
+/// **Note:** This `FromStr` deliberately does NOT round-trip with [`Display`],
+/// which uses the canonical prefixed format (`u-`, `a-`, `w-`). This `FromStr`
+/// is for *user-facing CLI shorthand*, while `Display` is for the *wire/canonical
+/// format*. Use [`parse_actor_name`] to parse the canonical format.
+impl FromStr for ActorId {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return Err("actor ID must not be empty".to_string());
+        }
+
+        if trimmed.starts_with("i-") {
+            let issue_id = IssueId::from_str(trimmed)
+                .map_err(|e| format!("invalid issue ID '{trimmed}': {e}"))?;
+            return Ok(ActorId::Issue(issue_id));
+        }
+
+        if trimmed.starts_with("t-") {
+            let task_id = TaskId::from_str(trimmed)
+                .map_err(|e| format!("invalid task ID '{trimmed}': {e}"))?;
+            return Ok(ActorId::Task(task_id));
+        }
+
+        Ok(ActorId::Username(Username::from(trimmed)))
+    }
+}
+
 /// Parse an actor name string (e.g. `u-alice` or `w-t-abcdef`) into an `ActorId`.
 ///
 /// Returns `None` if the name does not match a recognized prefix or is otherwise
@@ -286,5 +322,47 @@ mod tests {
         let issue_id = IssueId::from_str("i-abcdef").unwrap();
         let actor_id = ActorId::Issue(issue_id);
         assert_eq!(actor_id.to_string(), "a-i-abcdef");
+    }
+
+    #[test]
+    fn actor_id_from_str_issue_id() {
+        let actor: ActorId = "i-abcdef".parse().unwrap();
+        match actor {
+            ActorId::Issue(id) => assert_eq!(id.to_string(), "i-abcdef"),
+            other => panic!("expected ActorId::Issue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn actor_id_from_str_task_id() {
+        let actor: ActorId = "t-abcdef".parse().unwrap();
+        match actor {
+            ActorId::Task(id) => assert_eq!(id.to_string(), "t-abcdef"),
+            other => panic!("expected ActorId::Task, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn actor_id_from_str_username() {
+        let actor: ActorId = "alice".parse().unwrap();
+        match actor {
+            ActorId::Username(username) => assert_eq!(username.as_str(), "alice"),
+            other => panic!("expected ActorId::Username, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn actor_id_from_str_empty_fails() {
+        assert!("".parse::<ActorId>().is_err());
+        assert!("  ".parse::<ActorId>().is_err());
+    }
+
+    #[test]
+    fn actor_id_from_str_trims_whitespace() {
+        let actor: ActorId = "  bob  ".parse().unwrap();
+        match actor {
+            ActorId::Username(username) => assert_eq!(username.as_str(), "bob"),
+            other => panic!("expected ActorId::Username, got {other:?}"),
+        }
     }
 }
