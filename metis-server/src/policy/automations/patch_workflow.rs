@@ -9,6 +9,7 @@ use crate::domain::patches::{Patch, PatchStatus};
 use crate::domain::users::Username;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
+use crate::store::ReadOnlyStore;
 
 // Re-export config types from metis-common for backward compatibility.
 pub use metis_common::repositories::{MergeRequestConfig, RepoWorkflowConfig, ReviewRequestConfig};
@@ -25,9 +26,9 @@ pub struct PatchWorkflowConfig {
 }
 
 /// Resolved workflow config for a specific patch event (after per-repo lookup).
-struct ResolvedWorkflow<'a> {
-    review_requests: &'a [ReviewRequestConfig],
-    merge_request: Option<&'a MergeRequestConfig>,
+struct ResolvedWorkflow {
+    review_requests: Vec<ReviewRequestConfig>,
+    merge_request: Option<MergeRequestConfig>,
 }
 
 pub struct PatchWorkflowAutomation {
@@ -51,18 +52,48 @@ impl PatchWorkflowAutomation {
     }
 
     /// Resolve the effective workflow config for a given repo name.
-    /// Uses per-repo override if present, otherwise falls back to the top-level config.
-    fn resolve_config(&self, repo_name: &str) -> ResolvedWorkflow<'_> {
-        if let Some(repo_config) = self.config.repos.get(repo_name) {
-            ResolvedWorkflow {
-                review_requests: &repo_config.review_requests,
-                merge_request: repo_config.merge_request.as_ref(),
+    ///
+    /// Fallback chain:
+    /// 1. DB repo config (`patch_workflow` field on the repository record)
+    /// 2. Static per-repo override in YAML (`repos` map in automation config)
+    /// 3. Static global config in YAML (top-level `review_requests` / `merge_request`)
+    async fn resolve_config(
+        &self,
+        repo_name: &metis_common::RepoName,
+        store: &dyn ReadOnlyStore,
+    ) -> ResolvedWorkflow {
+        // 1. Try DB first
+        match store.get_repository(repo_name, false).await {
+            Ok(versioned_repo) => {
+                if let Some(db_config) = versioned_repo.item.patch_workflow {
+                    return ResolvedWorkflow {
+                        review_requests: db_config.review_requests,
+                        merge_request: db_config.merge_request,
+                    };
+                }
             }
-        } else {
-            ResolvedWorkflow {
-                review_requests: &self.config.review_requests,
-                merge_request: self.config.merge_request.as_ref(),
+            Err(e) => {
+                tracing::debug!(
+                    repo = %repo_name,
+                    error = %e,
+                    "could not fetch repository from store; falling back to static config"
+                );
             }
+        }
+
+        // 2. Fall back to static per-repo override in YAML
+        let repo_name_str = repo_name.to_string();
+        if let Some(repo_config) = self.config.repos.get(&repo_name_str) {
+            return ResolvedWorkflow {
+                review_requests: repo_config.review_requests.clone(),
+                merge_request: repo_config.merge_request.clone(),
+            };
+        }
+
+        // 3. Fall back to static global config in YAML
+        ResolvedWorkflow {
+            review_requests: self.config.review_requests.clone(),
+            merge_request: self.config.merge_request.clone(),
         }
     }
 
@@ -209,8 +240,9 @@ impl PatchWorkflowAutomation {
         patch: &Patch,
         parent_issue: Option<&ParentIssueInfo>,
     ) -> Result<(), AutomationError> {
-        let repo_name = patch.service_repo_name.to_string();
-        let workflow = self.resolve_config(&repo_name);
+        let workflow = self
+            .resolve_config(&patch.service_repo_name, ctx.store)
+            .await;
 
         let (creator, job_settings, parent_dependencies) = if let Some(parent) = parent_issue {
             (
@@ -848,8 +880,11 @@ repos:
         assert!(automation.config.review_requests.is_empty());
     }
 
-    #[test]
-    fn per_repo_config_selected_when_present() {
+    #[tokio::test]
+    async fn per_repo_yaml_config_selected_when_present() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
         let mut repos = HashMap::new();
         repos.insert(
             "test/repo".to_string(),
@@ -875,7 +910,8 @@ repos:
             },
         };
 
-        let resolved = automation.resolve_config("test/repo");
+        let repo_name = RepoName::new("test", "repo").unwrap();
+        let resolved = automation.resolve_config(&repo_name, store.as_ref()).await;
         assert_eq!(resolved.review_requests.len(), 1);
         assert_eq!(resolved.review_requests[0].assignee, "repo-reviewer");
         assert_eq!(
@@ -884,8 +920,11 @@ repos:
         );
     }
 
-    #[test]
-    fn falls_back_to_global_config_when_repo_not_found() {
+    #[tokio::test]
+    async fn falls_back_to_global_config_when_repo_not_in_yaml_or_db() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
         let automation = PatchWorkflowAutomation {
             config: PatchWorkflowConfig {
                 review_requests: vec![ReviewRequestConfig {
@@ -898,12 +937,166 @@ repos:
             },
         };
 
-        let resolved = automation.resolve_config("unknown/repo");
+        let repo_name = RepoName::new("unknown", "repo").unwrap();
+        let resolved = automation.resolve_config(&repo_name, store.as_ref()).await;
         assert_eq!(resolved.review_requests.len(), 1);
         assert_eq!(resolved.review_requests[0].assignee, "global-reviewer");
         assert_eq!(
             resolved.merge_request.unwrap().assignee,
             Some("global-merger".to_string())
+        );
+    }
+
+    // ---- Tests for DB-first resolve_config fallback behavior ----
+
+    #[tokio::test]
+    async fn db_config_used_when_present() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        // Add a repository with patch_workflow config in the DB
+        let repo_name = RepoName::new("test", "repo").unwrap();
+        let repo =
+            metis_common::Repository::new("https://example.com/repo.git".to_string(), None, None)
+                .with_patch_workflow(RepoWorkflowConfig {
+                    review_requests: vec![ReviewRequestConfig {
+                        assignee: "db-reviewer".to_string(),
+                    }],
+                    merge_request: Some(MergeRequestConfig {
+                        assignee: Some("db-merger".to_string()),
+                    }),
+                });
+        store
+            .add_repository(repo_name.clone(), repo, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Static config should NOT be used since DB has config
+        let automation = PatchWorkflowAutomation {
+            config: PatchWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "global-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("global-merger".to_string()),
+                }),
+                repos: HashMap::new(),
+            },
+        };
+
+        let resolved = automation.resolve_config(&repo_name, store.as_ref()).await;
+        assert_eq!(resolved.review_requests.len(), 1);
+        assert_eq!(resolved.review_requests[0].assignee, "db-reviewer");
+        assert_eq!(
+            resolved.merge_request.unwrap().assignee,
+            Some("db-merger".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_static_config_when_db_has_no_patch_workflow() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        // Add a repository WITHOUT patch_workflow config
+        let repo_name = RepoName::new("test", "repo").unwrap();
+        let repo =
+            metis_common::Repository::new("https://example.com/repo.git".to_string(), None, None);
+        store
+            .add_repository(repo_name.clone(), repo, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Static per-repo config should be used as fallback
+        let mut repos = HashMap::new();
+        repos.insert(
+            "test/repo".to_string(),
+            RepoWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "yaml-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("yaml-merger".to_string()),
+                }),
+            },
+        );
+
+        let automation = PatchWorkflowAutomation {
+            config: PatchWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "global-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("global-merger".to_string()),
+                }),
+                repos,
+            },
+        };
+
+        let resolved = automation.resolve_config(&repo_name, store.as_ref()).await;
+        assert_eq!(resolved.review_requests.len(), 1);
+        assert_eq!(resolved.review_requests[0].assignee, "yaml-reviewer");
+        assert_eq!(
+            resolved.merge_request.unwrap().assignee,
+            Some("yaml-merger".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn db_config_takes_precedence_over_static_per_repo_override() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        // Add a repository WITH patch_workflow config in DB
+        let repo_name = RepoName::new("test", "repo").unwrap();
+        let repo =
+            metis_common::Repository::new("https://example.com/repo.git".to_string(), None, None)
+                .with_patch_workflow(RepoWorkflowConfig {
+                    review_requests: vec![ReviewRequestConfig {
+                        assignee: "db-reviewer".to_string(),
+                    }],
+                    merge_request: Some(MergeRequestConfig {
+                        assignee: Some("db-merger".to_string()),
+                    }),
+                });
+        store
+            .add_repository(repo_name.clone(), repo, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Also configure static per-repo override for the same repo
+        let mut repos = HashMap::new();
+        repos.insert(
+            "test/repo".to_string(),
+            RepoWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "yaml-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("yaml-merger".to_string()),
+                }),
+            },
+        );
+
+        let automation = PatchWorkflowAutomation {
+            config: PatchWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "global-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("global-merger".to_string()),
+                }),
+                repos,
+            },
+        };
+
+        // DB config should take precedence over static YAML per-repo override
+        let resolved = automation.resolve_config(&repo_name, store.as_ref()).await;
+        assert_eq!(resolved.review_requests.len(), 1);
+        assert_eq!(resolved.review_requests[0].assignee, "db-reviewer");
+        assert_eq!(
+            resolved.merge_request.unwrap().assignee,
+            Some("db-merger".to_string())
         );
     }
 
