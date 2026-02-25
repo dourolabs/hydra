@@ -106,6 +106,11 @@ enum Commands {
         #[command(subcommand)]
         command: command::issues::IssueCommands,
     },
+    /// Send, list, or wait for messages.
+    Messages {
+        #[command(subcommand)]
+        command: command::messages::MessagesCommand,
+    },
     /// Manage service repositories.
     Repos {
         #[command(subcommand)]
@@ -221,6 +226,7 @@ async fn dispatch(
             command::dashboard::run(client, server_url, cli.browser.as_deref(), context).await?
         }
         Commands::Issues { command } => command::issues::run(client, command, context).await?,
+        Commands::Messages { command } => command::messages::run(client, command, context).await?,
         Commands::Repos { command } => command::repos::run(client, command, context).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
         Commands::Chat {
