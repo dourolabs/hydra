@@ -3,12 +3,14 @@ use crate::{
     command::output::{render_versioned_messages, CommandContext},
 };
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use clap::Subcommand;
 use metis_common::{
     actor_ref::ActorId,
     api::v1::messages::{
         SearchMessagesQuery, SendMessageRequest, SendMessageResponse, WaitMessagesQuery,
     },
+    whoami::ActorIdentity,
 };
 use std::io::{self, Write};
 
@@ -26,9 +28,17 @@ pub enum MessagesCommand {
     },
     /// List recent messages.
     List {
-        /// Filter by participant (issue ID or username).
-        #[arg(long, value_name = "PARTICIPANT")]
-        participant: Option<String>,
+        /// Filter by sender (e.g. "u-alice" or "a-i-abc").
+        #[arg(long, value_name = "SENDER")]
+        sender: Option<String>,
+
+        /// Filter by recipient (e.g. "u-alice" or "a-i-abc"). Defaults to the current actor.
+        #[arg(long, value_name = "RECIPIENT")]
+        recipient: Option<String>,
+
+        /// Only show messages after this timestamp (RFC 3339).
+        #[arg(long, value_name = "TIMESTAMP")]
+        after: Option<DateTime<Utc>>,
 
         /// Maximum number of messages to return.
         #[arg(long, value_name = "LIMIT", default_value_t = 50)]
@@ -36,9 +46,13 @@ pub enum MessagesCommand {
     },
     /// Block until a new message arrives (long-poll).
     Wait {
-        /// Filter by participant (issue ID or username).
-        #[arg(long, value_name = "PARTICIPANT")]
-        participant: Option<String>,
+        /// Filter by sender (e.g. "u-alice" or "a-i-abc").
+        #[arg(long, value_name = "SENDER")]
+        sender: Option<String>,
+
+        /// Filter by recipient (e.g. "u-alice" or "a-i-abc").
+        #[arg(long, value_name = "RECIPIENT")]
+        recipient: Option<String>,
 
         /// Timeout in seconds.
         #[arg(long, value_name = "SECONDS", default_value_t = 30)]
@@ -57,10 +71,20 @@ pub async fn run(
             let response = send_message(client, recipient, body).await?;
             render_send_response(context, &response, &mut stdout)?;
         }
-        MessagesCommand::List { participant, limit } => {
+        MessagesCommand::List {
+            sender,
+            recipient,
+            after,
+            limit,
+        } => {
+            let recipient = match recipient {
+                Some(r) => Some(r),
+                None => Some(current_actor_id(client).await?),
+            };
             let mut query = SearchMessagesQuery::default();
-            // Map --participant to recipient filter for backwards compatibility
-            query.recipient = participant;
+            query.sender = sender;
+            query.recipient = recipient;
+            query.after = after;
             query.limit = Some(limit);
             let response = client
                 .list_messages(&query)
@@ -69,11 +93,13 @@ pub async fn run(
             render_versioned_messages(context.output_format, &response.messages, &mut stdout)?;
         }
         MessagesCommand::Wait {
-            participant,
+            sender,
+            recipient,
             timeout,
         } => {
             let mut query = WaitMessagesQuery::default();
-            query.recipient = participant;
+            query.sender = sender;
+            query.recipient = recipient;
             query.timeout = Some(timeout);
             let response = client
                 .wait_for_message(&query)
@@ -112,7 +138,10 @@ fn render_send_response(
             writeln!(writer, "  version: {}", response.version)?;
             if let Some(ref sender) = response.message.sender {
                 writeln!(writer, "  sender: {sender}")?;
+            } else {
+                writeln!(writer, "  sender: system")?;
             }
+            writeln!(writer, "  recipient: {}", response.message.recipient)?;
             writeln!(writer, "  timestamp: {}", response.timestamp)?;
             writer.flush()?;
         }
@@ -130,4 +159,19 @@ async fn send_message(
         .send_message(&request)
         .await
         .context("failed to send message")
+}
+
+/// Resolve the current actor's ID string from the auth context.
+async fn current_actor_id(client: &dyn MetisClientInterface) -> Result<String> {
+    let whoami = client
+        .whoami()
+        .await
+        .context("failed to fetch current actor")?;
+    let actor_id = match whoami.actor {
+        ActorIdentity::User { username } => ActorId::Username(username),
+        ActorIdentity::Task { task_id, .. } => ActorId::Task(task_id),
+        ActorIdentity::Issue { issue_id, .. } => ActorId::Issue(issue_id),
+        _ => anyhow::bail!("unsupported actor type"),
+    };
+    Ok(actor_id.to_string())
 }
