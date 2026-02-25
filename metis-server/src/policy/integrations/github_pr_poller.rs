@@ -220,12 +220,8 @@ async fn sync_patch_from_github(
         )
         .await?;
 
-    let github_reviews = build_review_entries(
-        reviews,
-        review_comments,
-        issue_comments,
-        patch.creator.as_str(),
-    );
+    let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
+    let github_reviews = filter_reviews_by_creator(github_reviews, patch.creator.as_str());
 
     let latest_patch = state.get_patch(patch_id, false).await?;
     let latest_patch = latest_patch.item;
@@ -316,7 +312,6 @@ fn build_review_entries(
     reviews: Vec<PullRequestReview>,
     review_comments: Vec<PullRequestComment>,
     issue_comments: Vec<IssueComment>,
-    creator: &str,
 ) -> Vec<Review> {
     let mut entries = Vec::new();
 
@@ -331,15 +326,6 @@ fn build_review_entries(
         let Some(author) = review.user.as_ref().map(|user| user.login.clone()) else {
             continue;
         };
-
-        if !author.eq_ignore_ascii_case(creator) {
-            debug!(
-                author = %author,
-                creator = %creator,
-                "filtering out review from non-creator author"
-            );
-            continue;
-        }
 
         entries.push(Review::new(
             body,
@@ -363,15 +349,6 @@ fn build_review_entries(
             continue;
         };
 
-        if !author.eq_ignore_ascii_case(creator) {
-            debug!(
-                author = %author,
-                creator = %creator,
-                "filtering out review comment from non-creator author"
-            );
-            continue;
-        }
-
         entries.push(Review::new(
             body.to_string(),
             false,
@@ -388,16 +365,6 @@ fn build_review_entries(
             continue;
         }
 
-        let author = &comment.user.login;
-        if !author.eq_ignore_ascii_case(creator) {
-            debug!(
-                author = %author,
-                creator = %creator,
-                "filtering out issue comment from non-creator author"
-            );
-            continue;
-        }
-
         entries.push(Review::new(
             body.to_string(),
             false,
@@ -407,6 +374,23 @@ fn build_review_entries(
     }
 
     dedupe_reviews(entries)
+}
+
+fn filter_reviews_by_creator(reviews: Vec<Review>, creator: &str) -> Vec<Review> {
+    let before_count = reviews.len();
+    let filtered: Vec<Review> = reviews
+        .into_iter()
+        .filter(|review| review.author.eq_ignore_ascii_case(creator))
+        .collect();
+    let removed = before_count - filtered.len();
+    if removed > 0 {
+        debug!(
+            creator = %creator,
+            removed = removed,
+            "filtered out reviews from non-creator authors"
+        );
+    }
+    filtered
 }
 
 fn merge_reviews(existing: &[Review], github_reviews: Vec<Review>) -> Vec<Review> {
@@ -1205,69 +1189,82 @@ mod tests {
     }
 
     #[test]
-    fn build_review_entries_keeps_creator_reviews() {
+    fn build_review_entries_collects_all_review_types() {
         let reviews = vec![make_pr_review("alice", "looks good", "APPROVED")];
-        let result = build_review_entries(reviews, vec![], vec![], "alice");
-        assert_eq!(result.len(), 1);
+        let review_comments = vec![make_pr_comment("bob", "comment body")];
+        let issue_comments = vec![make_issue_comment("charlie", "issue comment")];
+
+        let result = build_review_entries(reviews, review_comments, issue_comments);
+        assert_eq!(result.len(), 3);
         assert_eq!(result[0].author, "alice");
         assert!(result[0].is_approved);
+        assert_eq!(result[1].author, "bob");
+        assert_eq!(result[2].author, "charlie");
     }
 
     #[test]
-    fn build_review_entries_filters_out_third_party_reviews() {
+    fn filter_reviews_by_creator_keeps_creator_reviews() {
         let reviews = vec![
-            make_pr_review("alice", "creator review", "COMMENTED"),
-            make_pr_review("bob", "third party review", "CHANGES_REQUESTED"),
+            Review::new(
+                "creator review".to_string(),
+                false,
+                "alice".to_string(),
+                None,
+            ),
+            Review::new("third party".to_string(), false, "bob".to_string(), None),
         ];
-        let result = build_review_entries(reviews, vec![], vec![], "alice");
+        let result = filter_reviews_by_creator(reviews, "alice");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].author, "alice");
         assert_eq!(result[0].contents, "creator review");
     }
 
     #[test]
-    fn build_review_entries_case_insensitive_matching() {
-        let reviews = vec![make_pr_review("Alice", "review body", "COMMENTED")];
-        let review_comments = vec![make_pr_comment("ALICE", "comment body")];
-        let issue_comments = vec![make_issue_comment("aLiCe", "issue comment")];
-
-        let result = build_review_entries(reviews, review_comments, issue_comments, "alice");
+    fn filter_reviews_by_creator_case_insensitive() {
+        let reviews = vec![
+            Review::new("review 1".to_string(), false, "Alice".to_string(), None),
+            Review::new("review 2".to_string(), false, "ALICE".to_string(), None),
+            Review::new("review 3".to_string(), false, "aLiCe".to_string(), None),
+        ];
+        let result = filter_reviews_by_creator(reviews, "alice");
         assert_eq!(result.len(), 3);
     }
 
     #[test]
-    fn build_review_entries_filters_third_party_review_comments() {
+    fn filter_reviews_by_creator_removes_all_third_party() {
+        let reviews = vec![
+            Review::new("review 1".to_string(), false, "bob".to_string(), None),
+            Review::new("review 2".to_string(), false, "charlie".to_string(), None),
+            Review::new("review 3".to_string(), false, "dave".to_string(), None),
+        ];
+        let result = filter_reviews_by_creator(reviews, "alice");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn build_and_filter_end_to_end() {
+        let reviews = vec![
+            make_pr_review("alice", "creator review", "COMMENTED"),
+            make_pr_review("bob", "third party review", "CHANGES_REQUESTED"),
+        ];
         let review_comments = vec![
             make_pr_comment("alice", "creator comment"),
-            make_pr_comment("bob", "third party comment"),
+            make_pr_comment("charlie", "third party comment"),
         ];
-        let result = build_review_entries(vec![], review_comments, vec![], "alice");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].author, "alice");
-    }
-
-    #[test]
-    fn build_review_entries_filters_third_party_issue_comments() {
         let issue_comments = vec![
-            make_issue_comment("alice", "creator comment"),
-            make_issue_comment("bob", "third party comment"),
+            make_issue_comment("alice", "creator issue comment"),
+            make_issue_comment("dave", "third party issue comment"),
         ];
-        let result = build_review_entries(vec![], vec![], issue_comments, "alice");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].author, "alice");
-    }
 
-    #[test]
-    fn build_review_entries_with_no_creator_reviews_returns_empty() {
-        let reviews = vec![make_pr_review(
-            "bob",
-            "not the creator",
-            "CHANGES_REQUESTED",
-        )];
-        let review_comments = vec![make_pr_comment("charlie", "also not creator")];
-        let issue_comments = vec![make_issue_comment("dave", "nope")];
+        let all_reviews = build_review_entries(reviews, review_comments, issue_comments);
+        assert_eq!(all_reviews.len(), 6);
 
-        let result = build_review_entries(reviews, review_comments, issue_comments, "alice");
-        assert!(result.is_empty());
+        let filtered = filter_reviews_by_creator(all_reviews, "alice");
+        assert_eq!(filtered.len(), 3);
+        assert!(
+            filtered
+                .iter()
+                .all(|r| r.author.eq_ignore_ascii_case("alice"))
+        );
     }
 }
