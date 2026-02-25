@@ -298,10 +298,10 @@ async fn build_update_request(
         }
     };
 
-    Ok((
-        args.name.clone(),
-        UpdateRepositoryRequest::new(Repository::new(remote_url, default_branch, default_image)),
-    ))
+    let mut repo = Repository::new(remote_url, default_branch, default_image);
+    repo.patch_workflow = current.patch_workflow;
+
+    Ok((args.name.clone(), UpdateRepositoryRequest::new(repo)))
 }
 
 async fn fetch_current_repository(
