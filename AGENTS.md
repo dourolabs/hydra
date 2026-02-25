@@ -34,5 +34,60 @@ Please explicitly call out anything that may be confusing or design questions wh
 choice with tradeoffs, and what the alternatives were. Attach screenshots or CLI snippets for UX changes and highlight configuration, migration, or security impacts.
 - **Do not commit screenshots or other images to the git repository.** Instead, upload them to the metis document store under the `screenshots/` directory.
 
+## Messaging
+
+Agents and users communicate via the messaging system. Each conversation is between two actors (identified by `ActorId`). Issue-based agents have actor IDs of the form `a-<issue-id>` and users have IDs of the form `u-<username>`.
+
+### CLI Commands
+
+Send a message to an issue-agent or user:
+```
+metis messages send <RECIPIENT> "<BODY>"
+# Examples:
+metis messages send i-abcdef "Please investigate the test failure."
+metis messages send alice "Done — the fix is in PR #42."
+```
+
+List recent messages in a conversation:
+```
+metis messages list --participant <ACTOR> --limit 20
+```
+
+Wait (long-poll) for the next message:
+```
+metis messages wait --participant <ACTOR> --timeout 60
+```
+
+### Agent Conversation Loop
+
+Agents can use `metis messages wait` in a loop to carry on a conversation:
+
+```bash
+LAST_ID=""
+while true; do
+  if [ -z "$LAST_ID" ]; then
+    RESULT=$(metis messages wait --participant "$USER_ACTOR" --timeout 60)
+  else
+    RESULT=$(metis messages wait --participant "$USER_ACTOR" --after "$LAST_ID" --timeout 60)
+  fi
+
+  # Process the message and extract the message id...
+  # LAST_ID=<new message id>
+
+  # Send a reply
+  metis messages send "$USER_ACTOR" "Acknowledged, working on it."
+done
+```
+
+### HTTP API
+
+The messaging HTTP API lives under `/v1/messages`:
+
+- **POST /v1/messages** — Send a message. Body: `{ "recipient": <ActorId>, "body": "..." }`. Returns `SendMessageResponse` with `message_id`, `version`, `message`, and `timestamp`.
+- **GET /v1/messages?participant=<name>&before=<id>&limit=<n>** — List messages. Returns messages in descending order (most recent first). Omit `participant` to list across all conversations.
+- **GET /v1/messages/wait?participant=<name>&after=<id>&timeout=<secs>** — Long-poll for new messages. Returns immediately if messages exist after the cursor; otherwise blocks until a new message arrives or the timeout expires (default 30s, max 120s).
+
+All endpoints require Bearer token authentication. Actors can only see messages in their own conversations.
+
 ## Configuration & Security Notes
 Never commit secrets. Use the sample config files (`config.toml.sample` or `config.yaml.sample`) as templates and load them via `METIS_CONFIG` or env vars such as `OPENAI_API_KEY`. Confirm Docker images reference the intended worker image and namespace before publishing. Add new external integrations to `metis-common` so sensitive values stay centralized and masked.
