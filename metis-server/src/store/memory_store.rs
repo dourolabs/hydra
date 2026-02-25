@@ -6,11 +6,12 @@ use std::collections::{HashMap, HashSet};
 use super::issue_graph::IssueGraphContext;
 use super::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog};
 use crate::domain::{
-    actors::{Actor, ActorRef},
+    actors::{Actor, ActorId, ActorRef},
     documents::Document,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
     },
+    messages::Message,
     patches::Patch,
     users::{User, Username},
 };
@@ -20,7 +21,7 @@ use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 
@@ -53,6 +54,10 @@ pub struct MemoryStore {
     users: DashMap<Username, Vec<Versioned<User>>>,
     /// Maps actor names to their Actor data
     actors: DashMap<String, Vec<Versioned<Actor>>>,
+    /// Maps message IDs to their versioned Message data
+    messages: DashMap<MessageId, Vec<Versioned<Message>>>,
+    /// Maps conversation IDs to the set of message IDs in each conversation
+    conversation_messages: DashMap<String, Vec<MessageId>>,
 }
 
 impl MemoryStore {
@@ -71,6 +76,8 @@ impl MemoryStore {
             documents_by_path: DashMap::new(),
             users: DashMap::new(),
             actors: DashMap::new(),
+            messages: DashMap::new(),
+            conversation_messages: DashMap::new(),
         }
     }
 
@@ -896,6 +903,72 @@ impl ReadOnlyStore for MemoryStore {
         users.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
         Ok(users)
     }
+
+    // ---- Message (read-only) ----
+
+    async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
+        let versions = self
+            .messages
+            .get(id)
+            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
+        Self::latest_versioned(versions.value())
+            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))
+    }
+
+    async fn list_messages(
+        &self,
+        conversation_id: &str,
+        before: Option<&MessageId>,
+        limit: u32,
+    ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
+        let msg_ids = match self.conversation_messages.get(conversation_id) {
+            Some(ids) => ids.value().clone(),
+            None => return Ok(Vec::new()),
+        };
+
+        // msg_ids are stored in insertion order (ascending). We iterate in reverse
+        // for descending order (most recent first).
+        let mut results = Vec::new();
+        let mut past_cursor = before.is_none();
+
+        for msg_id in msg_ids.iter().rev() {
+            if !past_cursor {
+                if Some(msg_id) == before {
+                    past_cursor = true;
+                }
+                continue;
+            }
+
+            if let Some(versions) = self.messages.get(msg_id) {
+                if let Some(latest) = Self::latest_versioned(versions.value()) {
+                    results.push((msg_id.clone(), latest));
+                    if results.len() >= limit as usize {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
+        let actor_name = actor_id.to_string();
+
+        let mut conversations = Vec::new();
+        for entry in self.conversation_messages.iter() {
+            let conv_id = entry.key();
+            if conv_id.contains(&actor_name) {
+                // Verify the actor name appears as a full segment (before or after the +)
+                let parts: Vec<&str> = conv_id.split('+').collect();
+                if parts.iter().any(|p| *p == actor_name) {
+                    conversations.push(conv_id.clone());
+                }
+            }
+        }
+        conversations.sort();
+        Ok(conversations)
+    }
 }
 
 #[async_trait]
@@ -1290,6 +1363,54 @@ impl Store for MemoryStore {
         user.deleted = true;
         self.update_user(user, actor).await?;
         Ok(())
+    }
+
+    // ---- Message mutations ----
+
+    async fn add_message(
+        &self,
+        message: Message,
+        actor: &ActorRef,
+    ) -> Result<(MessageId, VersionNumber), StoreError> {
+        let count = self.messages.len() as u64;
+        let mut len = metis_common::ids::compute_random_len(count);
+        let id = loop {
+            let candidate =
+                MessageId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
+            if !self.messages.contains_key(&candidate) {
+                break candidate;
+            }
+            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
+        };
+
+        let conversation_id = message.conversation_id.clone();
+        self.messages.insert(
+            id.clone(),
+            vec![Self::versioned_now_with_actor(message, 1, actor)],
+        );
+
+        // Maintain the conversation index
+        self.conversation_messages
+            .entry(conversation_id)
+            .or_default()
+            .push(id.clone());
+
+        Ok((id, 1))
+    }
+
+    async fn update_message(
+        &self,
+        id: &MessageId,
+        message: Message,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let mut versions = self
+            .messages
+            .get_mut(id)
+            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
+        let next_version = Self::next_version(&versions);
+        versions.push(Self::versioned_now_with_actor(message, next_version, actor));
+        Ok(next_version)
     }
 }
 
