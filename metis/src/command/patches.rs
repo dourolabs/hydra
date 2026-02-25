@@ -711,13 +711,52 @@ async fn merge_patch(
         );
     }
 
-    // 3. Resolve the branch name from the patch.
+    // 3. If the patch is linked to a GitHub PR, merge via the GitHub API.
+    if let Some(github_pr) = &patch.github {
+        let github_token = client
+            .get_github_token()
+            .await
+            .context("GitHub token required to merge via GitHub API")?;
+        let octocrab_client = metis_common::github::build_octocrab_client(&github_token)?;
+
+        let merge_result = octocrab_client
+            .pulls(&github_pr.owner, &github_pr.repo)
+            .merge(github_pr.number)
+            .method(octocrab::params::pulls::MergeMethod::Squash)
+            .title(format!("{} ({})", patch.title, patch_id))
+            .message(patch.description.clone())
+            .send()
+            .await;
+
+        match merge_result {
+            Ok(_) => {
+                let mut merged_patch = patch.clone();
+                merged_patch.status = PatchStatus::Merged;
+                client
+                    .update_patch(&patch_id, &UpsertPatchRequest::new(merged_patch))
+                    .await
+                    .with_context(|| {
+                        format!("failed to update patch '{patch_id}' status to Merged")
+                    })?;
+                println!("Patch '{patch_id}' merged successfully via GitHub API.");
+                return Ok(());
+            }
+            Err(e) => {
+                bail!(
+                    "Error: GitHub API merge failed for patch {patch_id} (PR #{}).\n\n{e}",
+                    github_pr.number
+                );
+            }
+        }
+    }
+
+    // 4. Resolve the branch name from the patch.
     let branch_name = patch
         .branch_name
         .as_deref()
         .ok_or_else(|| anyhow!("patch '{patch_id}' does not have a branch name set"))?;
 
-    // 4. Resolve the base branch.
+    // 5. Resolve the base branch.
     let base_branch = match &base_override {
         Some(b) => b.clone(),
         None => {
@@ -742,7 +781,7 @@ async fn merge_patch(
         }
     };
 
-    // 5. Ensure we are in a git repo and check working tree state.
+    // 6. Ensure we are in a git repo and check working tree state.
     let repo_root = git_repository_root()?;
 
     if git_has_uncommitted_changes(&repo_root)? {
@@ -756,7 +795,7 @@ async fn merge_patch(
     let github_token = client.get_github_token().await.ok();
     git_fetch_remote(&repo_root, github_token.as_deref())?;
 
-    // 6. Squash merge and push with retry loop to handle concurrent pushes.
+    // 7. Squash merge and push with retry loop to handle concurrent pushes.
     //
     // The squash merge creates a single commit containing all patch changes
     // on a temporary local branch. This branch is then pushed to
@@ -843,7 +882,7 @@ async fn merge_patch(
         eprintln!("Warning: failed to clean up temporary branch '{merge_branch}': {err}");
     }
 
-    // 8. Update the patch status to Merged.
+    // 9. Update the patch status to Merged.
     let mut merged_patch = patch.clone();
     merged_patch.status = PatchStatus::Merged;
     client
