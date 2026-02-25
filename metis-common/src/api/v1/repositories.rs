@@ -5,6 +5,32 @@ fn is_false(b: &bool) -> bool {
     !b
 }
 
+/// Configuration for a single review request entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct ReviewRequestConfig {
+    pub assignee: String,
+}
+
+/// Configuration for the merge request issue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct MergeRequestConfig {
+    pub assignee: Option<String>,
+}
+
+/// Per-repo workflow configuration for patch review and merge.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(default)]
+pub struct RepoWorkflowConfig {
+    pub review_requests: Vec<ReviewRequestConfig>,
+    pub merge_request: Option<MergeRequestConfig>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -17,6 +43,8 @@ pub struct Repository {
     pub default_image: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_workflow: Option<RepoWorkflowConfig>,
 }
 
 impl Repository {
@@ -30,7 +58,13 @@ impl Repository {
             default_branch,
             default_image,
             deleted: false,
+            patch_workflow: None,
         }
+    }
+
+    pub fn with_patch_workflow(mut self, config: RepoWorkflowConfig) -> Self {
+        self.patch_workflow = Some(config);
+        self
     }
 }
 
@@ -140,5 +174,92 @@ pub struct DeleteRepositoryResponse {
 impl DeleteRepositoryResponse {
     pub fn new(repository: RepositoryRecord) -> Self {
         Self { repository }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn repository_without_patch_workflow_deserializes_to_none() {
+        let json = json!({
+            "remote_url": "https://example.com/repo.git",
+            "default_branch": "main",
+            "default_image": null
+        });
+        let repo: Repository = serde_json::from_value(json).unwrap();
+        assert_eq!(repo.patch_workflow, None);
+    }
+
+    #[test]
+    fn repository_with_null_patch_workflow_deserializes_to_none() {
+        let json = json!({
+            "remote_url": "https://example.com/repo.git",
+            "patch_workflow": null
+        });
+        let repo: Repository = serde_json::from_value(json).unwrap();
+        assert_eq!(repo.patch_workflow, None);
+    }
+
+    #[test]
+    fn patch_workflow_round_trips_through_serde_json() {
+        let config = RepoWorkflowConfig {
+            review_requests: vec![
+                ReviewRequestConfig {
+                    assignee: "alice".to_string(),
+                },
+                ReviewRequestConfig {
+                    assignee: "$patch_creator".to_string(),
+                },
+            ],
+            merge_request: Some(MergeRequestConfig {
+                assignee: Some("bob".to_string()),
+            }),
+        };
+        let repo = Repository::new(
+            "https://example.com/repo.git".to_string(),
+            Some("main".to_string()),
+            None,
+        )
+        .with_patch_workflow(config.clone());
+
+        let serialized = serde_json::to_value(&repo).unwrap();
+        let deserialized: Repository = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized.patch_workflow, Some(config));
+    }
+
+    #[test]
+    fn patch_workflow_none_is_omitted_from_serialized_json() {
+        let repo = Repository::new("https://example.com/repo.git".to_string(), None, None);
+        let serialized = serde_json::to_value(&repo).unwrap();
+        assert!(
+            !serialized
+                .as_object()
+                .unwrap()
+                .contains_key("patch_workflow"),
+            "patch_workflow should be omitted when None"
+        );
+    }
+
+    #[test]
+    fn repo_workflow_config_defaults_to_empty() {
+        let config: RepoWorkflowConfig = serde_json::from_value(json!({})).unwrap();
+        assert!(config.review_requests.is_empty());
+        assert_eq!(config.merge_request, None);
+    }
+
+    #[test]
+    fn with_patch_workflow_builder_sets_field() {
+        let config = RepoWorkflowConfig {
+            review_requests: vec![ReviewRequestConfig {
+                assignee: "reviewer".to_string(),
+            }],
+            merge_request: None,
+        };
+        let repo = Repository::new("https://example.com/repo.git".to_string(), None, None)
+            .with_patch_workflow(config.clone());
+        assert_eq!(repo.patch_workflow, Some(config));
     }
 }
