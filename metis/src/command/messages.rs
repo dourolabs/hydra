@@ -7,7 +7,7 @@ use clap::Subcommand;
 use metis_common::{
     actor_ref::ActorId,
     api::v1::messages::{
-        ListMessagesQuery, SendMessageRequest, SendMessageResponse, WaitMessagesQuery,
+        SearchMessagesQuery, SendMessageRequest, SendMessageResponse, WaitMessagesQuery,
     },
 };
 use std::io::{self, Write};
@@ -58,8 +58,9 @@ pub async fn run(
             render_send_response(context, &response, &mut stdout)?;
         }
         MessagesCommand::List { participant, limit } => {
-            let mut query = ListMessagesQuery::default();
-            query.participant = participant;
+            let mut query = SearchMessagesQuery::default();
+            // Map --participant to recipient filter for backwards compatibility
+            query.recipient = participant;
             query.limit = Some(limit);
             let response = client
                 .list_messages(&query)
@@ -72,7 +73,7 @@ pub async fn run(
             timeout,
         } => {
             let mut query = WaitMessagesQuery::default();
-            query.participant = participant;
+            query.recipient = participant;
             query.timeout = Some(timeout);
             let response = client
                 .wait_for_message(&query)
@@ -109,7 +110,9 @@ fn render_send_response(
             writeln!(writer, "Message sent.")?;
             writeln!(writer, "  message_id: {}", response.message_id)?;
             writeln!(writer, "  version: {}", response.version)?;
-            writeln!(writer, "  sender: {}", response.message.sender)?;
+            if let Some(ref sender) = response.message.sender {
+                writeln!(writer, "  sender: {sender}")?;
+            }
             writeln!(writer, "  timestamp: {}", response.timestamp)?;
             writer.flush()?;
         }

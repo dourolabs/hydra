@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        actors::{Actor, ActorId, ActorRef},
+        actors::{Actor, ActorRef},
         documents::Document,
         issues::{Issue, IssueGraphFilter},
         messages::Message,
@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -213,14 +214,8 @@ impl ReadOnlyStore for FailingStore {
 
     async fn list_messages(
         &self,
-        _conversation_id: &str,
-        _before: Option<&MessageId>,
-        _limit: u32,
+        _query: &SearchMessagesQuery,
     ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
-        fail()
-    }
-
-    async fn list_conversations(&self, _actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
         fail()
     }
 }

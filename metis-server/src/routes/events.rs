@@ -986,10 +986,12 @@ mod tests {
     async fn server_event_to_sse_message_created() {
         let state = test_app_state();
         let message_id = MessageId::new();
-        let conversation_id = "a-i-abc+u-alice".to_string();
+        let recipient =
+            crate::domain::actors::ActorId::Issue("i-abcdef".parse::<IssueId>().unwrap());
+        let sender = crate::domain::actors::ActorId::Username(Username::from("alice").into());
         let message = crate::domain::messages::Message::new(
-            conversation_id.clone(),
-            crate::domain::actors::ActorId::Username(Username::from("alice").into()),
+            Some(sender.clone()),
+            recipient.clone(),
             "hello".to_string(),
         );
         let payload = Arc::new(MutationPayload::Message {
@@ -1001,7 +1003,8 @@ mod tests {
         let event = ServerEvent::MessageCreated {
             seq: 1,
             message_id: message_id.clone(),
-            conversation_id: conversation_id.clone(),
+            recipient,
+            sender: Some(sender),
             version: 1,
             timestamp,
             payload,
@@ -1023,25 +1026,23 @@ mod tests {
         assert_eq!(obj.get("version").unwrap().as_u64().unwrap(), 1);
         let msg_obj = obj.get("message").expect("should contain message field");
         assert_eq!(msg_obj.get("body").unwrap().as_str().unwrap(), "hello");
-        assert_eq!(
-            msg_obj.get("conversation_id").unwrap().as_str().unwrap(),
-            conversation_id
-        );
     }
 
     #[tokio::test]
     async fn server_event_to_sse_message_updated() {
         let state = test_app_state();
         let message_id = MessageId::new();
-        let conversation_id = "a-i-abc+u-alice".to_string();
+        let recipient =
+            crate::domain::actors::ActorId::Issue("i-abcdef".parse::<IssueId>().unwrap());
+        let sender = crate::domain::actors::ActorId::Username(Username::from("alice").into());
         let old_message = crate::domain::messages::Message::new(
-            conversation_id.clone(),
-            crate::domain::actors::ActorId::Username(Username::from("alice").into()),
+            Some(sender.clone()),
+            recipient.clone(),
             "original".to_string(),
         );
         let new_message = crate::domain::messages::Message::new(
-            conversation_id.clone(),
-            crate::domain::actors::ActorId::Username(Username::from("alice").into()),
+            Some(sender.clone()),
+            recipient.clone(),
             "updated".to_string(),
         );
         let payload = Arc::new(MutationPayload::Message {
@@ -1052,7 +1053,8 @@ mod tests {
         let event = ServerEvent::MessageUpdated {
             seq: 2,
             message_id: message_id.clone(),
-            conversation_id: conversation_id.clone(),
+            recipient,
+            sender: Some(sender),
             version: 2,
             timestamp: Utc::now(),
             payload,

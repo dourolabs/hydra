@@ -9,18 +9,18 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct Message {
-    pub conversation_id: String,
-    pub sender: ActorId,
+    pub sender: Option<ActorId>,
+    pub recipient: ActorId,
     pub body: String,
     #[serde(default)]
     pub deleted: bool,
 }
 
 impl Message {
-    pub fn new(conversation_id: String, sender: ActorId, body: String) -> Self {
+    pub fn new(sender: Option<ActorId>, recipient: ActorId, body: String) -> Self {
         Self {
-            conversation_id,
             sender,
+            recipient,
             body,
             deleted: false,
         }
@@ -79,16 +79,22 @@ impl SendMessageRequest {
     }
 }
 
-/// Query parameters for listing messages.
+/// Query parameters for searching messages.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct ListMessagesQuery {
+pub struct SearchMessagesQuery {
     #[serde(default)]
-    pub participant: Option<String>,
+    pub sender: Option<String>,
     #[serde(default)]
-    pub before: Option<String>,
+    pub recipient: Option<String>,
+    #[serde(default)]
+    pub after: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub before: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
     #[serde(default)]
     pub limit: Option<u32>,
 }
@@ -100,7 +106,9 @@ pub struct ListMessagesQuery {
 #[non_exhaustive]
 pub struct WaitMessagesQuery {
     #[serde(default)]
-    pub participant: Option<String>,
+    pub sender: Option<String>,
+    #[serde(default)]
+    pub recipient: Option<String>,
     #[serde(default)]
     pub after: Option<String>,
     #[serde(default)]
@@ -158,14 +166,28 @@ mod tests {
     #[test]
     fn message_serde_round_trip() {
         let msg = Message::new(
-            "a-i-abc+u-alice".to_string(),
-            ActorId::Username(Username::from("alice")),
+            Some(ActorId::Username(Username::from("alice"))),
+            ActorId::Issue(crate::IssueId::new()),
             "hello world".to_string(),
         );
 
         let json = serde_json::to_string(&msg).expect("serialize");
         let decoded: Message = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn message_with_none_sender_serde_round_trip() {
+        let msg = Message::new(
+            None,
+            ActorId::Issue(crate::IssueId::new()),
+            "system notification".to_string(),
+        );
+
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let decoded: Message = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, msg);
+        assert!(decoded.sender.is_none());
     }
 
     #[test]
@@ -183,8 +205,8 @@ mod tests {
     #[test]
     fn versioned_message_serde_round_trip() {
         let msg = Message::new(
-            "a-i-abc+u-alice".to_string(),
-            ActorId::Username(Username::from("alice")),
+            Some(ActorId::Username(Username::from("alice"))),
+            ActorId::Issue(crate::IssueId::new()),
             "hello".to_string(),
         );
         let ts = chrono::Utc::now();
@@ -199,8 +221,8 @@ mod tests {
     #[test]
     fn versioned_message_omits_actor_when_none() {
         let msg = Message::new(
-            "a-i-abc+u-alice".to_string(),
-            ActorId::Username(Username::from("alice")),
+            Some(ActorId::Username(Username::from("alice"))),
+            ActorId::Issue(crate::IssueId::new()),
             "hello".to_string(),
         );
         let ts = chrono::Utc::now();
@@ -214,16 +236,19 @@ mod tests {
     }
 
     #[test]
-    fn list_messages_query_defaults() {
-        let query = ListMessagesQuery::default();
-        assert_eq!(query.participant, None);
+    fn search_messages_query_defaults() {
+        let query = SearchMessagesQuery::default();
+        assert_eq!(query.sender, None);
+        assert_eq!(query.recipient, None);
+        assert_eq!(query.after, None);
         assert_eq!(query.before, None);
+        assert_eq!(query.include_deleted, None);
         assert_eq!(query.limit, None);
     }
 
     #[test]
     fn message_deleted_defaults_to_false() {
-        let json = r#"{"conversation_id":"a+b","sender":{"Username":"alice"},"body":"hi"}"#;
+        let json = r#"{"sender":{"Username":"alice"},"recipient":{"Username":"bob"},"body":"hi"}"#;
         let msg: Message = serde_json::from_str(json).expect("deserialize");
         assert!(!msg.deleted);
     }

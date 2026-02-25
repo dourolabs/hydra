@@ -781,7 +781,10 @@ fn render_versioned_messages_pretty(
 
     for (index, msg) in messages.iter().enumerate() {
         writeln!(writer, "Message {} (v{})", msg.message_id, msg.version)?;
-        writeln!(writer, "  sender: {}", msg.message.sender)?;
+        if let Some(ref sender) = msg.message.sender {
+            writeln!(writer, "  sender: {sender}")?;
+        }
+        writeln!(writer, "  recipient: {}", msg.message.recipient)?;
         writeln!(writer, "  timestamp: {}", msg.timestamp)?;
         writeln!(writer, "  body: {}", msg.message.body)?;
         if index + 1 < messages.len() {

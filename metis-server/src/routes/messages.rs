@@ -1,7 +1,6 @@
 use crate::{
     app::{AppState, SendMessageError},
     domain::actors::{Actor, ActorRef, parse_actor_name},
-    domain::messages::ConversationId,
     store::{ReadOnlyStore, StoreError},
 };
 use anyhow::anyhow;
@@ -9,7 +8,7 @@ use axum::{Extension, Json, extract::Query, extract::State};
 use metis_common::api::v1::{
     ApiError,
     messages::{
-        self as api_messages, ListMessagesQuery, ListMessagesResponse, SendMessageRequest,
+        self as api_messages, ListMessagesResponse, SearchMessagesQuery, SendMessageRequest,
         SendMessageResponse, VersionedMessage, WaitMessagesQuery,
     },
 };
@@ -51,97 +50,46 @@ pub async fn send_message(
     )))
 }
 
-/// GET /v1/messages — list messages for the authenticated actor.
+/// GET /v1/messages — list messages (authenticated, any actor may query any messages).
+///
+/// Accepts query params: sender, recipient, after (timestamp), before (timestamp),
+/// include_deleted, limit. Returns messages in reverse chronological order (newest first).
 pub async fn list_messages(
     State(state): State<AppState>,
-    Extension(actor): Extension<Actor>,
-    Query(query): Query<ListMessagesQuery>,
+    Extension(_actor): Extension<Actor>,
+    Query(query): Query<SearchMessagesQuery>,
 ) -> Result<Json<ListMessagesResponse>, ApiError> {
-    info!(actor = %actor.name(), "list_messages invoked");
+    info!("list_messages invoked");
 
-    let sender_id = actor.actor_id.clone();
-    let limit = query.limit.unwrap_or(DEFAULT_LIMIT);
-    let before = query.before.as_deref();
+    let mut store_query = SearchMessagesQuery::default();
+    store_query.sender = query.sender;
+    store_query.recipient = query.recipient;
+    store_query.after = query.after;
+    store_query.before = query.before;
+    store_query.include_deleted = query.include_deleted;
+    store_query.limit = Some(query.limit.unwrap_or(DEFAULT_LIMIT));
 
-    let messages = if let Some(ref participant) = query.participant {
-        // Filter to a specific conversation partner
-        let participant_id = parse_actor_name(participant).ok_or_else(|| {
-            ApiError::bad_request(format!("invalid participant actor name: {participant}"))
-        })?;
-        let conversation_id = ConversationId::from_pair(&sender_id, &participant_id);
+    let results = state
+        .store
+        .list_messages(&store_query)
+        .await
+        .map_err(map_store_error)?;
 
-        let before_id = before
-            .map(|s| {
-                s.parse()
-                    .map_err(|_| ApiError::bad_request(format!("invalid before cursor: {s}")))
-            })
-            .transpose()?;
+    let messages: Vec<VersionedMessage> = results
+        .into_iter()
+        .map(|(id, v)| {
+            VersionedMessage::new(
+                id,
+                v.version,
+                v.timestamp,
+                v.item.into(),
+                v.actor,
+                v.creation_time,
+            )
+        })
+        .collect();
 
-        let results = state
-            .store
-            .list_messages(conversation_id.as_str(), before_id.as_ref(), limit)
-            .await
-            .map_err(map_store_error)?;
-
-        results
-            .into_iter()
-            .map(|(id, v)| {
-                VersionedMessage::new(
-                    id,
-                    v.version,
-                    v.timestamp,
-                    v.item.into(),
-                    v.actor,
-                    v.creation_time,
-                )
-            })
-            .collect()
-    } else {
-        // List messages across all conversations for the authenticated actor
-        let conversations = state
-            .store
-            .list_conversations(&sender_id)
-            .await
-            .map_err(map_store_error)?;
-
-        let before_id = before
-            .map(|s| {
-                s.parse()
-                    .map_err(|_| ApiError::bad_request(format!("invalid before cursor: {s}")))
-            })
-            .transpose()?;
-
-        let mut all_messages: Vec<VersionedMessage> = Vec::new();
-        for convo_id in conversations {
-            let results = state
-                .store
-                .list_messages(&convo_id, before_id.as_ref(), limit)
-                .await
-                .map_err(map_store_error)?;
-
-            for (id, v) in results {
-                all_messages.push(VersionedMessage::new(
-                    id,
-                    v.version,
-                    v.timestamp,
-                    v.item.into(),
-                    v.actor,
-                    v.creation_time,
-                ));
-            }
-        }
-
-        // Sort by timestamp descending (most recent first)
-        all_messages.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        all_messages.truncate(limit as usize);
-        all_messages
-    };
-
-    info!(
-        actor = %actor.name(),
-        count = messages.len(),
-        "list_messages completed"
-    );
+    info!(count = messages.len(), "list_messages completed");
 
     Ok(Json(ListMessagesResponse::new(messages)))
 }
@@ -154,21 +102,29 @@ pub async fn wait_for_message(
 ) -> Result<Json<ListMessagesResponse>, ApiError> {
     info!(actor = %actor.name(), "wait_for_message invoked");
 
-    let sender_id = actor.actor_id.clone();
-    let sender_name = sender_id.to_string();
+    let actor_id = actor.actor_id.clone();
+    let actor_name = actor_id.to_string();
     let timeout_secs = query
         .timeout
         .unwrap_or(DEFAULT_WAIT_TIMEOUT_SECS)
         .min(MAX_WAIT_TIMEOUT_SECS);
     let timeout_duration = Duration::from_secs(timeout_secs as u64);
 
-    let participant_id = query
-        .participant
+    let sender_filter = query
+        .sender
         .as_deref()
-        .map(|p| {
-            parse_actor_name(p).ok_or_else(|| {
-                ApiError::bad_request(format!("invalid participant actor name: {p}"))
-            })
+        .map(|s| {
+            parse_actor_name(s)
+                .ok_or_else(|| ApiError::bad_request(format!("invalid sender actor name: {s}")))
+        })
+        .transpose()?;
+
+    let recipient_filter = query
+        .recipient
+        .as_deref()
+        .map(|r| {
+            parse_actor_name(r)
+                .ok_or_else(|| ApiError::bad_request(format!("invalid recipient actor name: {r}")))
         })
         .transpose()?;
 
@@ -178,8 +134,9 @@ pub async fn wait_for_message(
     // Check for existing messages after the cursor
     let existing = check_existing_messages_after_cursor(
         &state,
-        &sender_id,
-        participant_id.as_ref(),
+        &actor_id,
+        sender_filter.as_ref(),
+        recipient_filter.as_ref(),
         query.after.as_deref(),
     )
     .await?;
@@ -207,19 +164,29 @@ pub async fn wait_for_message(
             Ok(Ok(event)) => {
                 if let ServerEvent::MessageCreated {
                     message_id,
-                    conversation_id,
+                    recipient,
+                    sender,
                     ..
                 } = &event
                 {
-                    // Check if this event is for a conversation involving the authenticated actor
-                    if !conversation_id.split('+').any(|seg| seg == sender_name) {
+                    // Check if this event involves the authenticated actor
+                    let involves_actor = recipient.to_string() == actor_name
+                        || sender.as_ref().map(|s| s.to_string()) == Some(actor_name.clone());
+
+                    if !involves_actor {
                         continue;
                     }
 
-                    // Check participant filter
-                    if let Some(ref pid) = participant_id {
-                        let expected_convo = ConversationId::from_pair(&sender_id, pid);
-                        if *conversation_id != expected_convo.to_string() {
+                    // Check sender filter
+                    if let Some(ref sf) = sender_filter {
+                        if sender.as_ref() != Some(sf) {
+                            continue;
+                        }
+                    }
+
+                    // Check recipient filter
+                    if let Some(ref rf) = recipient_filter {
+                        if *recipient != *rf {
                             continue;
                         }
                     }
@@ -267,8 +234,9 @@ pub async fn wait_for_message(
 /// Returns messages in ascending order (oldest new message first) for the wait endpoint.
 async fn check_existing_messages_after_cursor(
     state: &AppState,
-    sender_id: &crate::domain::actors::ActorId,
-    participant_id: Option<&crate::domain::actors::ActorId>,
+    actor_id: &crate::domain::actors::ActorId,
+    sender_filter: Option<&crate::domain::actors::ActorId>,
+    recipient_filter: Option<&crate::domain::actors::ActorId>,
     after_cursor: Option<&str>,
 ) -> Result<Vec<VersionedMessage>, ApiError> {
     // If no cursor, no need to check for existing messages
@@ -280,47 +248,71 @@ async fn check_existing_messages_after_cursor(
         .parse()
         .map_err(|_| ApiError::bad_request(format!("invalid after cursor: {after_str}")))?;
 
-    let conversation_ids = if let Some(pid) = participant_id {
-        vec![ConversationId::from_pair(sender_id, pid).to_string()]
-    } else {
-        state
-            .store
-            .list_conversations(sender_id)
-            .await
-            .map_err(map_store_error)?
-    };
+    // Fetch the cursor message to get its timestamp
+    let cursor_msg = state
+        .store
+        .get_message(&after_id)
+        .await
+        .map_err(map_store_error)?;
+    let after_timestamp = cursor_msg.timestamp;
 
+    let actor_name = actor_id.to_string();
+
+    // Build a query for messages after the cursor timestamp involving this actor
+    // We check both as sender and as recipient
     let mut new_messages = Vec::new();
 
-    for convo_id in &conversation_ids {
-        // Get recent messages (newest first)
-        let messages = state
-            .store
-            .list_messages(convo_id, None, DEFAULT_LIMIT)
-            .await
-            .map_err(map_store_error)?;
-
-        // Find the cursor position — everything before it in the list is newer
-        let mut found_cursor = false;
-        for (id, v) in &messages {
-            if *id == after_id {
-                found_cursor = true;
-                break;
-            }
+    // Messages where actor is recipient
+    let mut query_as_recipient = SearchMessagesQuery::default();
+    query_as_recipient.sender = sender_filter.map(|s| s.to_string());
+    query_as_recipient.recipient = Some(
+        recipient_filter
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| actor_name.clone()),
+    );
+    query_as_recipient.after = Some(after_timestamp);
+    query_as_recipient.limit = Some(DEFAULT_LIMIT);
+    let results = state
+        .store
+        .list_messages(&query_as_recipient)
+        .await
+        .map_err(map_store_error)?;
+    for (id, v) in results {
+        if id != after_id {
             new_messages.push(VersionedMessage::new(
-                id.clone(),
+                id,
                 v.version,
                 v.timestamp,
-                v.item.clone().into(),
-                v.actor.clone(),
+                v.item.into(),
+                v.actor,
                 v.creation_time,
             ));
         }
+    }
 
-        // If cursor not found in the list, all messages are newer
-        if !found_cursor {
-            // Re-add all messages (we already added them in the loop above and broke early)
-            // Actually, if cursor was never found, we already added all of them.
+    // Also check messages where actor is sender (unless sender filter is specified)
+    if sender_filter.is_none() {
+        let mut query_as_sender = SearchMessagesQuery::default();
+        query_as_sender.sender = Some(actor_name);
+        query_as_sender.recipient = recipient_filter.map(|r| r.to_string());
+        query_as_sender.after = Some(after_timestamp);
+        query_as_sender.limit = Some(DEFAULT_LIMIT);
+        let results = state
+            .store
+            .list_messages(&query_as_sender)
+            .await
+            .map_err(map_store_error)?;
+        for (id, v) in results {
+            if id != after_id && !new_messages.iter().any(|m| m.message_id == id) {
+                new_messages.push(VersionedMessage::new(
+                    id,
+                    v.version,
+                    v.timestamp,
+                    v.item.into(),
+                    v.actor,
+                    v.creation_time,
+                ));
+            }
         }
     }
 

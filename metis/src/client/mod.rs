@@ -10,7 +10,7 @@ use metis_common::{
     api::v1::events::EventsQuery,
     api::v1::login::{LoginRequest, LoginResponse},
     api::v1::messages::{
-        ListMessagesQuery, ListMessagesResponse, SendMessageRequest, SendMessageResponse,
+        ListMessagesResponse, SearchMessagesQuery, SendMessageRequest, SendMessageResponse,
         WaitMessagesQuery,
     },
     documents::{
@@ -257,7 +257,7 @@ pub trait MetisClientInterface: Send + Sync {
     ) -> Result<SseEventStream>;
 
     async fn send_message(&self, request: &SendMessageRequest) -> Result<SendMessageResponse>;
-    async fn list_messages(&self, query: &ListMessagesQuery) -> Result<ListMessagesResponse>;
+    async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse>;
     async fn wait_for_message(&self, query: &WaitMessagesQuery) -> Result<ListMessagesResponse>;
 }
 
@@ -1502,8 +1502,8 @@ impl MetisClient {
             .context("failed to decode send message response")
     }
 
-    /// Call `GET /v1/messages` to list messages.
-    pub async fn list_messages(&self, query: &ListMessagesQuery) -> Result<ListMessagesResponse> {
+    /// Call `GET /v1/messages` to list messages (authenticated endpoint).
+    pub async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse> {
         let url = self.endpoint("/v1/messages")?;
         let response = self
             .authed(self.http.get(url))
@@ -1947,7 +1947,7 @@ impl MetisClientInterface for MetisClient {
         MetisClient::send_message(self, request).await
     }
 
-    async fn list_messages(&self, query: &ListMessagesQuery) -> Result<ListMessagesResponse> {
+    async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse> {
         MetisClient::list_messages(self, query).await
     }
 

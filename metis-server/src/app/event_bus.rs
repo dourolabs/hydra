@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -179,7 +180,8 @@ pub enum ServerEvent {
     MessageCreated {
         seq: u64,
         message_id: MessageId,
-        conversation_id: String,
+        recipient: ActorId,
+        sender: Option<ActorId>,
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
@@ -187,7 +189,8 @@ pub enum ServerEvent {
     MessageUpdated {
         seq: u64,
         message_id: MessageId,
-        conversation_id: String,
+        recipient: ActorId,
+        sender: Option<ActorId>,
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
@@ -450,14 +453,16 @@ impl EventBus {
     pub fn emit_message_created(
         &self,
         message_id: MessageId,
-        conversation_id: String,
+        recipient: ActorId,
+        sender: Option<ActorId>,
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
         self.send(ServerEvent::MessageCreated {
             seq: self.next_seq(),
             message_id,
-            conversation_id,
+            recipient,
+            sender,
             version,
             timestamp: Utc::now(),
             payload,
@@ -467,14 +472,16 @@ impl EventBus {
     pub fn emit_message_updated(
         &self,
         message_id: MessageId,
-        conversation_id: String,
+        recipient: ActorId,
+        sender: Option<ActorId>,
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
         self.send(ServerEvent::MessageUpdated {
             seq: self.next_seq(),
             message_id,
-            conversation_id,
+            recipient,
+            sender,
             version,
             timestamp: Utc::now(),
             payload,
@@ -821,15 +828,21 @@ impl StoreWithEvents {
         actor: ActorRef,
     ) -> Result<(MessageId, VersionNumber), StoreError> {
         let new_message = message.clone();
-        let conversation_id = message.conversation_id.clone();
+        let recipient = message.recipient.clone();
+        let sender = message.sender.clone();
         let (message_id, version) = self.inner.add_message(message, &actor).await?;
         let payload = Arc::new(MutationPayload::Message {
             old: None,
             new: new_message,
             actor,
         });
-        self.event_bus
-            .emit_message_created(message_id.clone(), conversation_id, version, payload);
+        self.event_bus.emit_message_created(
+            message_id.clone(),
+            recipient,
+            sender,
+            version,
+            payload,
+        );
         Ok((message_id, version))
     }
 
@@ -841,7 +854,8 @@ impl StoreWithEvents {
     ) -> Result<VersionNumber, StoreError> {
         let old_message = self.inner.get_message(id).await.ok().map(|v| v.item);
         let new_message = message.clone();
-        let conversation_id = message.conversation_id.clone();
+        let recipient = message.recipient.clone();
+        let sender = message.sender.clone();
         let version = self.inner.update_message(id, message, &actor).await?;
         let payload = Arc::new(MutationPayload::Message {
             old: old_message,
@@ -849,7 +863,7 @@ impl StoreWithEvents {
             actor,
         });
         self.event_bus
-            .emit_message_updated(id.clone(), conversation_id, version, payload);
+            .emit_message_updated(id.clone(), recipient, sender, version, payload);
         Ok(version)
     }
 }
@@ -1056,17 +1070,9 @@ impl ReadOnlyStore for StoreWithEvents {
 
     async fn list_messages(
         &self,
-        conversation_id: &str,
-        before: Option<&MessageId>,
-        limit: u32,
+        query: &SearchMessagesQuery,
     ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
-        self.inner
-            .list_messages(conversation_id, before, limit)
-            .await
-    }
-
-    async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
-        self.inner.list_conversations(actor_id).await
+        self.inner.list_messages(query).await
     }
 }
 
@@ -1621,11 +1627,15 @@ mod tests {
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
 
+        let recipient = crate::domain::actors::ActorId::Issue(
+            "i-abcdef".parse::<metis_common::IssueId>().unwrap(),
+        );
+        let sender = crate::domain::actors::ActorId::Username(
+            crate::domain::users::Username::from("alice").into(),
+        );
         let message = Message::new(
-            "a-i-abc+u-alice".to_string(),
-            crate::domain::actors::ActorId::Username(
-                crate::domain::users::Username::from("alice").into(),
-            ),
+            Some(sender.clone()),
+            recipient.clone(),
             "hello world".to_string(),
         );
 
@@ -1640,13 +1650,15 @@ mod tests {
         match &event {
             ServerEvent::MessageCreated {
                 message_id: id,
-                conversation_id,
+                recipient: r,
+                sender: s,
                 version: v,
                 payload,
                 ..
             } => {
                 assert_eq!(*id, message_id);
-                assert_eq!(conversation_id, "a-i-abc+u-alice");
+                assert_eq!(*r, recipient);
+                assert_eq!(*s, Some(sender));
                 assert_eq!(*v, 1);
                 match payload.as_ref() {
                     MutationPayload::Message { old, new, .. } => {
@@ -1667,11 +1679,15 @@ mod tests {
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
 
+        let recipient = crate::domain::actors::ActorId::Issue(
+            "i-abcdef".parse::<metis_common::IssueId>().unwrap(),
+        );
+        let sender = crate::domain::actors::ActorId::Username(
+            crate::domain::users::Username::from("alice").into(),
+        );
         let message = Message::new(
-            "a-i-abc+u-alice".to_string(),
-            crate::domain::actors::ActorId::Username(
-                crate::domain::users::Username::from("alice").into(),
-            ),
+            Some(sender.clone()),
+            recipient.clone(),
             "original".to_string(),
         );
 
@@ -1682,10 +1698,8 @@ mod tests {
         let _ = rx.recv().await.unwrap(); // consume MessageCreated
 
         let updated_message = Message::new(
-            "a-i-abc+u-alice".to_string(),
-            crate::domain::actors::ActorId::Username(
-                crate::domain::users::Username::from("alice").into(),
-            ),
+            Some(sender.clone()),
+            recipient.clone(),
             "updated".to_string(),
         );
 
@@ -1700,13 +1714,15 @@ mod tests {
         match &event {
             ServerEvent::MessageUpdated {
                 message_id: id,
-                conversation_id,
+                recipient: r,
+                sender: s,
                 version: v,
                 payload,
                 ..
             } => {
                 assert_eq!(*id, message_id);
-                assert_eq!(conversation_id, "a-i-abc+u-alice");
+                assert_eq!(*r, recipient);
+                assert_eq!(*s, Some(sender));
                 assert_eq!(*v, 2);
                 match payload.as_ref() {
                     MutationPayload::Message { old, new, .. } => {

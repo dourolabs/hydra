@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use super::issue_graph::IssueGraphContext;
 use super::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog};
 use crate::domain::{
-    actors::{Actor, ActorId, ActorRef},
+    actors::{Actor, ActorRef},
     documents::Document,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
@@ -18,6 +18,7 @@ use crate::domain::{
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -56,8 +57,6 @@ pub struct MemoryStore {
     actors: DashMap<String, Vec<Versioned<Actor>>>,
     /// Maps message IDs to their versioned Message data
     messages: DashMap<MessageId, Vec<Versioned<Message>>>,
-    /// Maps conversation IDs to the set of message IDs in each conversation
-    conversation_messages: DashMap<String, Vec<MessageId>>,
 }
 
 impl MemoryStore {
@@ -77,7 +76,6 @@ impl MemoryStore {
             users: DashMap::new(),
             actors: DashMap::new(),
             messages: DashMap::new(),
-            conversation_messages: DashMap::new(),
         }
     }
 
@@ -917,57 +915,62 @@ impl ReadOnlyStore for MemoryStore {
 
     async fn list_messages(
         &self,
-        conversation_id: &str,
-        before: Option<&MessageId>,
-        limit: u32,
+        query: &SearchMessagesQuery,
     ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
-        let msg_ids = match self.conversation_messages.get(conversation_id) {
-            Some(ids) => ids.value().clone(),
-            None => return Ok(Vec::new()),
-        };
+        let limit = query.limit.unwrap_or(50) as usize;
+        let include_deleted = query.include_deleted.unwrap_or(false);
 
-        // msg_ids are stored in insertion order (ascending). We iterate in reverse
-        // for descending order (most recent first).
-        let mut results = Vec::new();
-        let mut past_cursor = before.is_none();
+        // Collect all messages with their latest versions
+        let mut all_messages: Vec<(MessageId, Versioned<Message>)> = Vec::new();
+        for entry in self.messages.iter() {
+            let msg_id = entry.key().clone();
+            let versions = entry.value();
+            if let Some(latest) = Self::latest_versioned(versions) {
+                let msg = &latest.item;
 
-        for msg_id in msg_ids.iter().rev() {
-            if !past_cursor {
-                if Some(msg_id) == before {
-                    past_cursor = true;
+                // Filter by deleted
+                if msg.deleted && !include_deleted {
+                    continue;
                 }
-                continue;
-            }
 
-            if let Some(versions) = self.messages.get(msg_id) {
-                if let Some(latest) = Self::latest_versioned(versions.value()) {
-                    results.push((msg_id.clone(), latest));
-                    if results.len() >= limit as usize {
-                        break;
+                // Filter by sender
+                if let Some(ref sender_filter) = query.sender {
+                    match &msg.sender {
+                        Some(sender) if sender.to_string() == *sender_filter => {}
+                        _ => continue,
                     }
                 }
-            }
-        }
 
-        Ok(results)
-    }
-
-    async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
-        let actor_name = actor_id.to_string();
-
-        let mut conversations = Vec::new();
-        for entry in self.conversation_messages.iter() {
-            let conv_id = entry.key();
-            if conv_id.contains(&actor_name) {
-                // Verify the actor name appears as a full segment (before or after the +)
-                let parts: Vec<&str> = conv_id.split('+').collect();
-                if parts.iter().any(|p| *p == actor_name) {
-                    conversations.push(conv_id.clone());
+                // Filter by recipient
+                if let Some(ref recipient_filter) = query.recipient {
+                    if msg.recipient.to_string() != *recipient_filter {
+                        continue;
+                    }
                 }
+
+                // Filter by after timestamp
+                if let Some(ref after_ts) = query.after {
+                    if latest.timestamp <= *after_ts {
+                        continue;
+                    }
+                }
+
+                // Filter by before timestamp
+                if let Some(ref before_ts) = query.before {
+                    if latest.timestamp >= *before_ts {
+                        continue;
+                    }
+                }
+
+                all_messages.push((msg_id, latest));
             }
         }
-        conversations.sort();
-        Ok(conversations)
+
+        // Sort by timestamp descending (newest first)
+        all_messages.sort_by(|a, b| b.1.timestamp.cmp(&a.1.timestamp));
+        all_messages.truncate(limit);
+
+        Ok(all_messages)
     }
 }
 
@@ -1383,17 +1386,10 @@ impl Store for MemoryStore {
             len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
         };
 
-        let conversation_id = message.conversation_id.clone();
         self.messages.insert(
             id.clone(),
             vec![Self::versioned_now_with_actor(message, 1, actor)],
         );
-
-        // Maintain the conversation index
-        self.conversation_messages
-            .entry(conversation_id)
-            .or_default()
-            .push(id.clone());
 
         Ok((id, 1))
     }
