@@ -29,6 +29,10 @@ pub struct EventsQuery {
     /// Comma-separated document IDs to filter.
     #[serde(default)]
     pub document_ids: Option<String>,
+
+    /// Comma-separated message IDs to filter.
+    #[serde(default)]
+    pub message_ids: Option<String>,
 }
 
 impl EventsQuery {
@@ -49,6 +53,9 @@ impl EventsQuery {
         }
         if let Some(ref ids) = self.document_ids {
             params.push(("document_ids", ids.clone()));
+        }
+        if let Some(ref ids) = self.message_ids {
+            params.push(("message_ids", ids.clone()));
         }
         params
     }
@@ -71,6 +78,8 @@ pub enum SseEventType {
     DocumentCreated,
     DocumentUpdated,
     DocumentDeleted,
+    MessageCreated,
+    MessageUpdated,
     Snapshot,
     Resync,
     Heartbeat,
@@ -90,6 +99,8 @@ impl SseEventType {
             Self::DocumentCreated => "document_created",
             Self::DocumentUpdated => "document_updated",
             Self::DocumentDeleted => "document_deleted",
+            Self::MessageCreated => "message_created",
+            Self::MessageUpdated => "message_updated",
             Self::Snapshot => "snapshot",
             Self::Resync => "resync",
             Self::Heartbeat => "heartbeat",
@@ -113,6 +124,8 @@ impl std::str::FromStr for SseEventType {
             "document_created" => Ok(Self::DocumentCreated),
             "document_updated" => Ok(Self::DocumentUpdated),
             "document_deleted" => Ok(Self::DocumentDeleted),
+            "message_created" => Ok(Self::MessageCreated),
+            "message_updated" => Ok(Self::MessageUpdated),
             "snapshot" => Ok(Self::Snapshot),
             "resync" => Ok(Self::Resync),
             "heartbeat" => Ok(Self::Heartbeat),
