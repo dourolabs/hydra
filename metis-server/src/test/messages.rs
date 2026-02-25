@@ -397,7 +397,7 @@ async fn list_messages_allows_any_authenticated_actor() -> anyhow::Result<()> {
         .post(format!("{base}/v1/messages"))
         .json(&SendMessageRequest::new(
             recipient_id,
-            "secret message".to_string(),
+            "test message".to_string(),
         ))
         .send()
         .await?
@@ -425,7 +425,7 @@ async fn list_messages_allows_any_authenticated_actor() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(list.messages.len(), 1);
-    assert_eq!(list.messages[0].message.body, "secret message");
+    assert_eq!(list.messages[0].message.body, "test message");
 
     Ok(())
 }
