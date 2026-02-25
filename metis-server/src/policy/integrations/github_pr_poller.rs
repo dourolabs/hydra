@@ -220,7 +220,12 @@ async fn sync_patch_from_github(
         )
         .await?;
 
-    let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
+    let github_reviews = build_review_entries(
+        reviews,
+        review_comments,
+        issue_comments,
+        patch.creator.as_str(),
+    );
 
     let latest_patch = state.get_patch(patch_id, false).await?;
     let latest_patch = latest_patch.item;
@@ -311,6 +316,7 @@ fn build_review_entries(
     reviews: Vec<PullRequestReview>,
     review_comments: Vec<PullRequestComment>,
     issue_comments: Vec<IssueComment>,
+    creator: &str,
 ) -> Vec<Review> {
     let mut entries = Vec::new();
 
@@ -325,6 +331,15 @@ fn build_review_entries(
         let Some(author) = review.user.as_ref().map(|user| user.login.clone()) else {
             continue;
         };
+
+        if !author.eq_ignore_ascii_case(creator) {
+            debug!(
+                author = %author,
+                creator = %creator,
+                "filtering out review from non-creator author"
+            );
+            continue;
+        }
 
         entries.push(Review::new(
             body,
@@ -348,6 +363,15 @@ fn build_review_entries(
             continue;
         };
 
+        if !author.eq_ignore_ascii_case(creator) {
+            debug!(
+                author = %author,
+                creator = %creator,
+                "filtering out review comment from non-creator author"
+            );
+            continue;
+        }
+
         entries.push(Review::new(
             body.to_string(),
             false,
@@ -361,6 +385,16 @@ fn build_review_entries(
             continue;
         };
         if body.is_empty() {
+            continue;
+        }
+
+        let author = &comment.user.login;
+        if !author.eq_ignore_ascii_case(creator) {
+            debug!(
+                author = %author,
+                creator = %creator,
+                "filtering out issue comment from non-creator author"
+            );
             continue;
         }
 
@@ -1076,5 +1110,164 @@ mod tests {
             .expect("select should not error without app");
 
         assert!(client.is_none());
+    }
+
+    fn make_github_user(login: &str) -> serde_json::Value {
+        json!({
+            "login": login,
+            "id": 1,
+            "node_id": "NODEID",
+            "avatar_url": "https://example.com/avatar",
+            "gravatar_id": "",
+            "url": "https://example.com/user",
+            "html_url": "https://example.com/user",
+            "followers_url": "https://example.com/followers",
+            "following_url": "https://example.com/following",
+            "gists_url": "https://example.com/gists",
+            "starred_url": "https://example.com/starred",
+            "subscriptions_url": "https://example.com/subscriptions",
+            "organizations_url": "https://example.com/orgs",
+            "repos_url": "https://example.com/repos",
+            "events_url": "https://example.com/events",
+            "received_events_url": "https://example.com/received_events",
+            "type": "User",
+            "site_admin": false,
+            "name": null,
+            "patch_url": null,
+            "email": null
+        })
+    }
+
+    fn make_pr_review(login: &str, body: &str, state: &str) -> PullRequestReview {
+        serde_json::from_value(json!({
+            "id": 101,
+            "node_id": "NODEID",
+            "html_url": "https://example.com/reviews/101",
+            "user": make_github_user(login),
+            "body": body,
+            "state": state,
+            "submitted_at": "2024-01-01T00:00:00Z",
+            "pull_request_url": "https://example.com/pr/1"
+        }))
+        .unwrap()
+    }
+
+    fn make_pr_comment(login: &str, body: &str) -> PullRequestComment {
+        serde_json::from_value(json!({
+            "url": "https://api.example.com/repos/owner/repo/pulls/comments/1",
+            "pull_request_review_id": null,
+            "id": 1,
+            "node_id": "NODEID",
+            "diff_hunk": "@@ -1,3 +1,3 @@",
+            "path": "README.md",
+            "position": null,
+            "original_position": null,
+            "commit_id": "abc123",
+            "original_commit_id": "abc123",
+            "in_reply_to_id": null,
+            "user": make_github_user(login),
+            "body": body,
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-01T00:00:00Z",
+            "html_url": "https://example.com/pr/comments/1",
+            "author_association": null,
+            "_links": {
+                "self": { "href": "https://example.com" },
+                "html": { "href": "https://example.com" },
+                "pull_request": { "href": "https://example.com" }
+            },
+            "start_line": null,
+            "original_start_line": null,
+            "start_side": null,
+            "line": null,
+            "original_line": null,
+            "side": null
+        }))
+        .unwrap()
+    }
+
+    fn make_issue_comment(login: &str, body: &str) -> IssueComment {
+        serde_json::from_value(json!({
+            "id": 1,
+            "node_id": "NODEID",
+            "url": "https://api.example.com/repos/owner/repo/issues/comments/1",
+            "html_url": "https://example.com/issues/comments/1",
+            "issue_url": null,
+            "body": body,
+            "body_text": null,
+            "body_html": null,
+            "author_association": null,
+            "user": make_github_user(login),
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": null
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn build_review_entries_keeps_creator_reviews() {
+        let reviews = vec![make_pr_review("alice", "looks good", "APPROVED")];
+        let result = build_review_entries(reviews, vec![], vec![], "alice");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].author, "alice");
+        assert!(result[0].is_approved);
+    }
+
+    #[test]
+    fn build_review_entries_filters_out_third_party_reviews() {
+        let reviews = vec![
+            make_pr_review("alice", "creator review", "COMMENTED"),
+            make_pr_review("bob", "third party review", "CHANGES_REQUESTED"),
+        ];
+        let result = build_review_entries(reviews, vec![], vec![], "alice");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].author, "alice");
+        assert_eq!(result[0].contents, "creator review");
+    }
+
+    #[test]
+    fn build_review_entries_case_insensitive_matching() {
+        let reviews = vec![make_pr_review("Alice", "review body", "COMMENTED")];
+        let review_comments = vec![make_pr_comment("ALICE", "comment body")];
+        let issue_comments = vec![make_issue_comment("aLiCe", "issue comment")];
+
+        let result = build_review_entries(reviews, review_comments, issue_comments, "alice");
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn build_review_entries_filters_third_party_review_comments() {
+        let review_comments = vec![
+            make_pr_comment("alice", "creator comment"),
+            make_pr_comment("bob", "third party comment"),
+        ];
+        let result = build_review_entries(vec![], review_comments, vec![], "alice");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].author, "alice");
+    }
+
+    #[test]
+    fn build_review_entries_filters_third_party_issue_comments() {
+        let issue_comments = vec![
+            make_issue_comment("alice", "creator comment"),
+            make_issue_comment("bob", "third party comment"),
+        ];
+        let result = build_review_entries(vec![], vec![], issue_comments, "alice");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].author, "alice");
+    }
+
+    #[test]
+    fn build_review_entries_with_no_creator_reviews_returns_empty() {
+        let reviews = vec![make_pr_review(
+            "bob",
+            "not the creator",
+            "CHANGES_REQUESTED",
+        )];
+        let review_comments = vec![make_pr_comment("charlie", "also not creator")];
+        let issue_comments = vec![make_issue_comment("dave", "nope")];
+
+        let result = build_review_entries(reviews, review_comments, issue_comments, "alice");
+        assert!(result.is_empty());
     }
 }
