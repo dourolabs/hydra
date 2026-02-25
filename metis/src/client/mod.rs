@@ -1983,6 +1983,7 @@ mod tests {
                 "https://example.com/repo.git".to_string(),
                 Some("main".to_string()),
                 Some("ghcr.io/example/repo:main".to_string()),
+                None,
             ),
         )];
         let payload = ListRepositoriesResponse::new(repositories);
@@ -2019,6 +2020,7 @@ mod tests {
                 "https://example.com/new-repo.git".to_string(),
                 Some("main".to_string()),
                 Some("ghcr.io/example/new-repo:main".to_string()),
+                None,
             ),
         );
         let response_body = UpsertRepositoryResponse::new(RepositoryRecord::new(
@@ -2057,6 +2059,7 @@ mod tests {
         let repo_name = RepoName::from_str("dourolabs/missing")?;
         let request = UpdateRepositoryRequest::new(Repository::new(
             "https://example.com/updated.git".to_string(),
+            None,
             None,
             None,
         ));

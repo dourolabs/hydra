@@ -52,19 +52,15 @@ impl Repository {
         remote_url: String,
         default_branch: Option<String>,
         default_image: Option<String>,
+        patch_workflow: Option<RepoWorkflowConfig>,
     ) -> Self {
         Self {
             remote_url,
             default_branch,
             default_image,
             deleted: false,
-            patch_workflow: None,
+            patch_workflow,
         }
-    }
-
-    pub fn with_patch_workflow(mut self, config: RepoWorkflowConfig) -> Self {
-        self.patch_workflow = Some(config);
-        self
     }
 }
 
@@ -222,8 +218,8 @@ mod tests {
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             None,
-        )
-        .with_patch_workflow(config.clone());
+            Some(config.clone()),
+        );
 
         let serialized = serde_json::to_value(&repo).unwrap();
         let deserialized: Repository = serde_json::from_value(serialized).unwrap();
@@ -232,7 +228,7 @@ mod tests {
 
     #[test]
     fn patch_workflow_none_is_omitted_from_serialized_json() {
-        let repo = Repository::new("https://example.com/repo.git".to_string(), None, None);
+        let repo = Repository::new("https://example.com/repo.git".to_string(), None, None, None);
         let serialized = serde_json::to_value(&repo).unwrap();
         assert!(
             !serialized
@@ -251,15 +247,19 @@ mod tests {
     }
 
     #[test]
-    fn with_patch_workflow_builder_sets_field() {
+    fn new_with_patch_workflow_sets_field() {
         let config = RepoWorkflowConfig {
             review_requests: vec![ReviewRequestConfig {
                 assignee: "reviewer".to_string(),
             }],
             merge_request: None,
         };
-        let repo = Repository::new("https://example.com/repo.git".to_string(), None, None)
-            .with_patch_workflow(config.clone());
+        let repo = Repository::new(
+            "https://example.com/repo.git".to_string(),
+            None,
+            None,
+            Some(config.clone()),
+        );
         assert_eq!(repo.patch_workflow, Some(config));
     }
 }

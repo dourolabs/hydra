@@ -298,8 +298,12 @@ async fn build_update_request(
         }
     };
 
-    let mut repo = Repository::new(remote_url, default_branch, default_image);
-    repo.patch_workflow = current.patch_workflow;
+    let repo = Repository::new(
+        remote_url,
+        default_branch,
+        default_image,
+        current.patch_workflow,
+    );
 
     Ok((args.name.clone(), UpdateRepositoryRequest::new(repo)))
 }
@@ -337,6 +341,7 @@ fn build_repository_config(
             "default image",
             "--clear-default-image",
         )?,
+        None,
     ))
 }
 
@@ -415,6 +420,7 @@ mod tests {
                 "https://example.com/metis.git".to_string(),
                 Some("main".to_string()),
                 Some("ghcr.io/dourolabs/metis:latest".to_string()),
+                None,
             ),
         )
     }
@@ -431,7 +437,12 @@ mod tests {
             sample_repository_info(&repo_name),
             RepositoryRecord::new(
                 RepoName::from_str("dourolabs/api").unwrap(),
-                Repository::new("git@github.com:dourolabs/api.git".to_string(), None, None),
+                Repository::new(
+                    "git@github.com:dourolabs/api.git".to_string(),
+                    None,
+                    None,
+                    None,
+                ),
             ),
         ]);
         let server = MockServer::start();
@@ -545,6 +556,7 @@ mod tests {
                         args.remote_url.clone().unwrap(),
                         None,
                         args.default_image.clone(),
+                        None,
                     ),
                 )));
         });
@@ -591,6 +603,7 @@ mod tests {
                         "https://example.com/metis.git".to_string(),
                         Some("main".to_string()),
                         args.default_image.clone(),
+                        None,
                     ),
                 )));
         });
@@ -673,6 +686,7 @@ mod tests {
                         "https://example.com/metis.git".to_string(),
                         Some("main".to_string()),
                         Some("ghcr.io/dourolabs/metis:canary".to_string()),
+                        None,
                     ),
                 )));
         });
@@ -727,6 +741,7 @@ mod tests {
                         "https://example.com/metis.git".to_string(),
                         None,
                         Some("ghcr.io/dourolabs/metis:latest".to_string()),
+                        None,
                     ),
                 )));
         });
@@ -773,6 +788,7 @@ mod tests {
                     Repository::new(
                         "https://example.com/metis.git".to_string(),
                         Some("main".to_string()),
+                        None,
                         None,
                     ),
                 )));

@@ -24,6 +24,7 @@ pub(crate) fn service_repository() -> (RepoName, Repository) {
         format!("https://example.com/{}.git", name.as_str()),
         Some("develop".to_string()),
         Some("ghcr.io/example/repo:main".to_string()),
+        None,
     );
 
     (name, repository)
