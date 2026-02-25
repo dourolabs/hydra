@@ -5,12 +5,12 @@ use harness::{test_job_settings, TestHarness};
 use metis_common::task_status::Status;
 use std::str::FromStr;
 
-/// Scenario: Worker switches to a non-default branch using `metis git checkout`.
+/// Scenario: Worker switches to a non-default branch using `git checkout`.
 ///
 /// 1. Creates a git remote with a feature branch containing a unique file.
 /// 2. Registers the repo and creates an issue targeting main.
 /// 3. Spawns a task and runs a worker on main.
-/// 4. The worker uses `metis git checkout <branch>` to switch branches.
+/// 4. The worker uses `git checkout <branch>` to switch branches.
 /// 5. Verifies the feature-branch file is present in the working tree.
 /// 6. Makes a commit and creates a patch from the feature branch.
 /// 7. Validates job completion and patch contents.
@@ -44,13 +44,14 @@ async fn worker_checks_out_non_default_branch() -> Result<()> {
     assert_eq!(task_ids.len(), 1, "should spawn exactly one task");
     let job_id = &task_ids[0];
 
-    // Worker starts on main, switches to feature-xyz, verifies the file,
-    // makes a change, commits, and creates a patch.
+    // Worker starts on main, switches to feature-xyz using git checkout
+    // (all remote branches are already fetched during worker init),
+    // verifies the file, makes a change, commits, and creates a patch.
     let result = harness
         .run_worker(
             job_id,
             vec![
-                "metis git checkout feature-xyz",
+                "git checkout feature-xyz",
                 "test -f feature.txt",
                 "cat feature.txt",
                 "echo 'additional work' >> feature.txt",
