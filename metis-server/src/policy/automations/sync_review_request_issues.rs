@@ -1,13 +1,11 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::actors::ActorRef;
 use crate::domain::issues::{IssueStatus, IssueType};
-use crate::domain::patches::{Patch, Review};
+use crate::policy::automations::review_helpers;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
-use metis_common::versioning::Versioned;
 
 const AUTOMATION_NAME: &str = "sync_review_request_issues";
 
@@ -66,7 +64,8 @@ impl Automation for SyncReviewRequestIssuesAutomation {
                 "failed to get patch versions for {patch_id}: {e}"
             ))
         })?;
-        let staleness_cutoff = find_last_commit_range_change_timestamp(&patch_versions);
+        let staleness_cutoff =
+            review_helpers::find_last_commit_range_change_timestamp(&patch_versions);
 
         let issue_ids = store.get_issues_for_patch(patch_id).await.map_err(|e| {
             AutomationError::Other(anyhow::anyhow!(
@@ -100,8 +99,11 @@ impl Automation for SyncReviewRequestIssuesAutomation {
             };
 
             // Find the latest non-stale review from the assignee (case-insensitive)
-            let latest_review =
-                find_latest_review_by_author(&new.reviews, &assignee, staleness_cutoff);
+            let latest_review = review_helpers::find_latest_review_by_author(
+                &new.reviews,
+                &assignee,
+                staleness_cutoff,
+            );
 
             let Some(review) = latest_review else {
                 continue;
@@ -142,44 +144,6 @@ impl Automation for SyncReviewRequestIssuesAutomation {
 
         Ok(())
     }
-}
-
-/// Finds the latest non-stale review by a given author.
-///
-/// Converts domain `Review` types to API types and delegates to the shared
-/// implementation in `metis_common::review_utils`.
-fn find_latest_review_by_author(
-    reviews: &[Review],
-    author: &str,
-    staleness_cutoff: Option<DateTime<Utc>>,
-) -> Option<metis_common::api::v1::patches::Review> {
-    let api_reviews: Vec<metis_common::api::v1::patches::Review> =
-        reviews.iter().cloned().map(Into::into).collect();
-    metis_common::review_utils::find_latest_review_by_author(&api_reviews, author, staleness_cutoff)
-        .cloned()
-}
-
-/// Finds the timestamp of the last version where the patch's `commit_range` changed.
-///
-/// Converts domain `Versioned<Patch>` to `PatchVersionRecord` and delegates to the
-/// shared implementation in `metis_common::review_utils`.
-fn find_last_commit_range_change_timestamp(versions: &[Versioned<Patch>]) -> Option<DateTime<Utc>> {
-    // Use a dummy patch_id; the shared function only inspects commit_range and timestamp.
-    let dummy_patch_id = metis_common::PatchId::new();
-    let api_versions: Vec<metis_common::api::v1::patches::PatchVersionRecord> = versions
-        .iter()
-        .map(|v| {
-            metis_common::api::v1::patches::PatchVersionRecord::new(
-                dummy_patch_id.clone(),
-                v.version,
-                v.timestamp,
-                v.item.clone().into(),
-                v.actor.clone(),
-                v.creation_time,
-            )
-        })
-        .collect();
-    metis_common::review_utils::find_last_commit_range_change_timestamp(&api_versions)
 }
 
 #[cfg(test)]
