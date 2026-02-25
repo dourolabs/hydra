@@ -643,6 +643,13 @@ fn write_repository_details(repository: &RepositoryRecord, writer: &mut impl Wri
         "  default_image: {}",
         config.default_image.as_deref().unwrap_or("<none>")
     )?;
+    if let Some(ref pw) = config.patch_workflow {
+        writeln!(
+            writer,
+            "  patch_workflow: {}",
+            serde_json::to_string(pw).unwrap_or_else(|_| "<error>".to_string())
+        )?;
+    }
     Ok(())
 }
 

@@ -6,8 +6,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::repositories::{
-    CreateRepositoryRequest, Repository, RepositoryRecord, SearchRepositoriesQuery,
-    UpdateRepositoryRequest,
+    CreateRepositoryRequest, RepoWorkflowConfig, Repository, RepositoryRecord,
+    SearchRepositoriesQuery, UpdateRepositoryRequest,
 };
 use metis_common::RepoName;
 use std::io;
@@ -74,6 +74,10 @@ pub struct CreateRepositoryArgs {
     /// Clear the configured default image.
     #[arg(long = "clear-default-image")]
     pub clear_default_image: bool,
+
+    /// Patch workflow configuration as a JSON string (e.g. '{"review_requests": [{"assignee": "alice"}], "merge_request": {"assignee": "$patch_creator"}}').
+    #[arg(long = "patch-workflow", value_name = "JSON")]
+    pub patch_workflow: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -109,6 +113,18 @@ pub struct UpdateRepositoryArgs {
     /// Clear the configured default image.
     #[arg(long = "clear-default-image")]
     pub clear_default_image: bool,
+
+    /// Patch workflow configuration as a JSON string (e.g. '{"review_requests": [{"assignee": "alice"}], "merge_request": {"assignee": "$patch_creator"}}').
+    #[arg(
+        long = "patch-workflow",
+        value_name = "JSON",
+        conflicts_with = "clear_patch_workflow"
+    )]
+    pub patch_workflow: Option<String>,
+
+    /// Clear the configured patch workflow.
+    #[arg(long = "clear-patch-workflow")]
+    pub clear_patch_workflow: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -241,16 +257,17 @@ async fn clone_repository(
 }
 
 fn build_create_request(args: &CreateRepositoryArgs) -> Result<CreateRepositoryRequest> {
-    Ok(CreateRepositoryRequest::new(
-        args.name.clone(),
-        build_repository_config(
-            parse_required(&args.remote_url, "remote URL")?,
-            &args.default_branch,
-            args.clear_default_branch,
-            &args.default_image,
-            args.clear_default_image,
-        )?,
-    ))
+    let mut repo = build_repository_config(
+        parse_required(&args.remote_url, "remote URL")?,
+        &args.default_branch,
+        args.clear_default_branch,
+        &args.default_image,
+        args.clear_default_image,
+    )?;
+    if let Some(ref json) = args.patch_workflow {
+        repo.patch_workflow = Some(parse_patch_workflow(json)?);
+    }
+    Ok(CreateRepositoryRequest::new(args.name.clone(), repo))
 }
 
 async fn build_update_request(
@@ -298,12 +315,16 @@ async fn build_update_request(
         }
     };
 
-    let repo = Repository::new(
-        remote_url,
-        default_branch,
-        default_image,
-        current.patch_workflow,
-    );
+    let patch_workflow = if args.clear_patch_workflow {
+        None
+    } else {
+        match &args.patch_workflow {
+            Some(json) => Some(parse_patch_workflow(json)?),
+            None => current.patch_workflow,
+        }
+    };
+
+    let repo = Repository::new(remote_url, default_branch, default_image, patch_workflow);
 
     Ok((args.name.clone(), UpdateRepositoryRequest::new(repo)))
 }
@@ -343,6 +364,10 @@ fn build_repository_config(
         )?,
         None,
     ))
+}
+
+fn parse_patch_workflow(json: &str) -> Result<RepoWorkflowConfig> {
+    serde_json::from_str(json).context("invalid --patch-workflow JSON")
 }
 
 fn parse_required(value: &str, field: &str) -> Result<String> {
@@ -399,6 +424,7 @@ mod tests {
             clear_default_branch: false,
             default_image: Some("ghcr.io/dourolabs/metis:latest".to_string()),
             clear_default_image: false,
+            patch_workflow: None,
         }
     }
 
@@ -410,6 +436,8 @@ mod tests {
             clear_default_branch: false,
             default_image: Some("ghcr.io/dourolabs/metis:latest".to_string()),
             clear_default_image: false,
+            patch_workflow: None,
+            clear_patch_workflow: false,
         }
     }
 
@@ -854,5 +882,218 @@ mod tests {
             .clone()
             .unwrap_or_else(|| PathBuf::from(args.name.to_string()));
         assert_eq!(destination, PathBuf::from("/tmp/my-clone"));
+    }
+
+    fn sample_workflow_json() -> String {
+        r#"{"review_requests":[{"assignee":"alice"}],"merge_request":{"assignee":"$patch_creator"}}"#
+            .to_string()
+    }
+
+    fn sample_workflow_config() -> RepoWorkflowConfig {
+        serde_json::from_str(&sample_workflow_json()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn create_repository_with_patch_workflow() {
+        let mut args = sample_create_args();
+        args.patch_workflow = Some(sample_workflow_json());
+        let server = MockServer::start();
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/repositories").json_body(json!({
+                "name": "dourolabs/metis",
+                "remote_url": "https://example.com/metis.git",
+                "default_branch": "main",
+                "default_image": "ghcr.io/dourolabs/metis:latest",
+                "patch_workflow": {
+                    "review_requests": [{"assignee": "alice"}],
+                    "merge_request": {"assignee": "$patch_creator"}
+                }
+            }));
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
+                    args.name.clone(),
+                    Repository::new(
+                        args.remote_url.clone(),
+                        args.default_branch.clone(),
+                        args.default_image.clone(),
+                        Some(sample_workflow_config()),
+                    ),
+                )));
+        });
+        let client = mock_client(&server);
+
+        let repository = create_repository(&client, args).await.unwrap();
+        assert!(repository.repository.patch_workflow.is_some());
+
+        create_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn create_repository_rejects_invalid_patch_workflow_json() {
+        let server = MockServer::start();
+        let client = mock_client(&server);
+        let mut args = sample_create_args();
+        args.patch_workflow = Some("not valid json".to_string());
+
+        let error = create_repository(&client, args).await.unwrap_err();
+        assert!(
+            error.to_string().contains("invalid --patch-workflow JSON"),
+            "error should mention invalid JSON: {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_repository_with_patch_workflow() {
+        let mut args = sample_update_args();
+        args.patch_workflow = Some(sample_workflow_json());
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![
+                    sample_repository_info(&args.name),
+                ]));
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/metis")
+                .json_body(json!({
+                    "remote_url": "https://example.com/metis.git",
+                    "default_branch": "main",
+                    "default_image": "ghcr.io/dourolabs/metis:latest",
+                    "patch_workflow": {
+                        "review_requests": [{"assignee": "alice"}],
+                        "merge_request": {"assignee": "$patch_creator"}
+                    }
+                }));
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
+                    args.name.clone(),
+                    Repository::new(
+                        args.remote_url.clone().unwrap(),
+                        args.default_branch.clone(),
+                        args.default_image.clone(),
+                        Some(sample_workflow_config()),
+                    ),
+                )));
+        });
+        let client = mock_client(&server);
+
+        let repository = update_repository(&client, args).await.unwrap();
+        assert!(repository.repository.patch_workflow.is_some());
+
+        list_mock.assert();
+        update_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn update_repository_clear_patch_workflow() {
+        let mut args = sample_update_args();
+        args.clear_patch_workflow = true;
+        let server = MockServer::start();
+        let mut existing = sample_repository_info(&args.name);
+        existing.repository.patch_workflow = Some(sample_workflow_config());
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![existing]));
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/metis")
+                .json_body(json!({
+                    "remote_url": "https://example.com/metis.git",
+                    "default_branch": "main",
+                    "default_image": "ghcr.io/dourolabs/metis:latest"
+                }));
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
+                    args.name.clone(),
+                    Repository::new(
+                        args.remote_url.clone().unwrap(),
+                        args.default_branch.clone(),
+                        args.default_image.clone(),
+                        None,
+                    ),
+                )));
+        });
+        let client = mock_client(&server);
+
+        let repository = update_repository(&client, args).await.unwrap();
+        assert!(repository.repository.patch_workflow.is_none());
+
+        list_mock.assert();
+        update_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn update_repository_preserves_patch_workflow_when_unmodified() {
+        let mut args = sample_update_args();
+        args.default_image = Some("ghcr.io/dourolabs/metis:canary".to_string());
+        let server = MockServer::start();
+        let mut existing = sample_repository_info(&args.name);
+        existing.repository.patch_workflow = Some(sample_workflow_config());
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![existing]));
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/metis")
+                .json_body(json!({
+                    "remote_url": "https://example.com/metis.git",
+                    "default_branch": "main",
+                    "default_image": "ghcr.io/dourolabs/metis:canary",
+                    "patch_workflow": {
+                        "review_requests": [{"assignee": "alice"}],
+                        "merge_request": {"assignee": "$patch_creator"}
+                    }
+                }));
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
+                    args.name.clone(),
+                    Repository::new(
+                        args.remote_url.clone().unwrap(),
+                        args.default_branch.clone(),
+                        args.default_image.clone(),
+                        Some(sample_workflow_config()),
+                    ),
+                )));
+        });
+        let client = mock_client(&server);
+
+        let repository = update_repository(&client, args).await.unwrap();
+        assert!(repository.repository.patch_workflow.is_some());
+
+        list_mock.assert();
+        update_mock.assert();
+    }
+
+    #[test]
+    fn list_repositories_shows_patch_workflow_in_pretty_output() {
+        let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
+        let mut repo_info = sample_repository_info(&repo_name);
+        repo_info.repository.patch_workflow = Some(sample_workflow_config());
+
+        let mut output = Vec::new();
+        render_repository_records(ResolvedOutputFormat::Pretty, &[repo_info], &mut output).unwrap();
+        let output = String::from_utf8(output).unwrap();
+
+        assert!(output.contains("patch_workflow:"));
+        assert!(output.contains("alice"));
+        assert!(output.contains("$patch_creator"));
+    }
+
+    #[test]
+    fn list_repositories_omits_patch_workflow_when_none() {
+        let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
+        let repo_info = sample_repository_info(&repo_name);
+
+        let mut output = Vec::new();
+        render_repository_records(ResolvedOutputFormat::Pretty, &[repo_info], &mut output).unwrap();
+        let output = String::from_utf8(output).unwrap();
+
+        assert!(!output.contains("patch_workflow"));
     }
 }
