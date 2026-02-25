@@ -1,6 +1,6 @@
 use crate::{
     domain::actors::{ActorId, ActorRef},
-    domain::messages::{ConversationId, Message},
+    domain::messages::Message,
     store::{ReadOnlyStore, StoreError},
 };
 use metis_common::{MessageId, VersionNumber, Versioned};
@@ -23,8 +23,8 @@ pub enum SendMessageError {
 impl AppState {
     /// Send a message from the authenticated actor to a recipient.
     ///
-    /// Validates that the recipient exists, builds the conversation ID,
-    /// creates the message, and stores it (emitting a MessageCreated event).
+    /// Validates that the recipient exists, creates the message, and stores it
+    /// (emitting a MessageCreated event).
     pub async fn send_message(
         &self,
         sender: &ActorId,
@@ -42,8 +42,7 @@ impl AppState {
             }
         })?;
 
-        let conversation_id = ConversationId::from_pair(sender, recipient);
-        let message = Message::new(conversation_id.to_string(), sender.clone(), body);
+        let message = Message::new(Some(sender.clone()), recipient.clone(), body);
 
         let (message_id, _version) = self
             .store

@@ -1,5 +1,5 @@
 use crate::domain::{
-    actors::{Actor, ActorError, ActorId, ActorRef},
+    actors::{Actor, ActorError, ActorRef},
     documents::Document,
     issues::{Issue, IssueGraphFilter},
     messages::Message,
@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -360,20 +361,12 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Retrieves a message by its MessageId. Returns the latest version.
     async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError>;
 
-    /// Lists messages in a conversation, returning the latest version of each
-    /// message in descending order (most recent first).
-    ///
-    /// `before` is an optional cursor for pagination (messages before this ID).
-    /// `limit` is the maximum number of messages to return.
+    /// Lists messages matching the search query, returning the latest version
+    /// of each message in descending order (most recent first).
     async fn list_messages(
         &self,
-        conversation_id: &str,
-        before: Option<&MessageId>,
-        limit: u32,
+        query: &SearchMessagesQuery,
     ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError>;
-
-    /// Lists all conversation IDs that the given actor participates in.
-    async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError>;
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.

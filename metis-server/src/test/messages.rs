@@ -58,7 +58,7 @@ async fn send_message_creates_and_returns_versioned_response() -> anyhow::Result
     assert!(!created.message_id.as_ref().is_empty());
     assert_eq!(created.version, 1);
     assert_eq!(created.message.body, "hello from test");
-    assert!(!created.message.conversation_id.is_empty());
+    assert!(created.message.sender.is_some());
 
     Ok(())
 }
@@ -120,9 +120,9 @@ async fn list_messages_returns_messages_in_descending_order() -> anyhow::Result<
         .json()
         .await?;
 
-    // List with participant filter
+    // List with recipient filter
     let list: ListMessagesResponse = client
-        .get(format!("{base}/v1/messages?participant={recipient_name}"))
+        .get(format!("{base}/v1/messages?recipient={recipient_name}"))
         .send()
         .await?
         .json()
@@ -143,7 +143,7 @@ async fn list_messages_returns_messages_in_descending_order() -> anyhow::Result<
 }
 
 #[tokio::test]
-async fn list_messages_without_participant_returns_all_conversations() -> anyhow::Result<()> {
+async fn list_messages_without_filter_returns_all_messages() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let store = handles.store.clone();
 
@@ -183,7 +183,7 @@ async fn list_messages_without_participant_returns_all_conversations() -> anyhow
         .json()
         .await?;
 
-    // List without participant — should get messages from both conversations
+    // List without any filter — should get all messages
     let list: ListMessagesResponse = client
         .get(format!("{base}/v1/messages"))
         .send()
@@ -205,60 +205,28 @@ async fn list_messages_without_participant_returns_all_conversations() -> anyhow
 }
 
 #[tokio::test]
-async fn list_messages_pagination_with_before_cursor() -> anyhow::Result<()> {
+async fn list_messages_with_limit() -> anyhow::Result<()> {
     let (server, client, recipient_id, recipient_name) = setup_with_recipient().await?;
     let base = server.base_url();
 
     // Send 3 messages
-    let _msg1: SendMessageResponse = client
-        .post(format!("{base}/v1/messages"))
-        .json(&SendMessageRequest::new(
-            recipient_id.clone(),
-            "first".to_string(),
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    let _msg2: SendMessageResponse = client
-        .post(format!("{base}/v1/messages"))
-        .json(&SendMessageRequest::new(
-            recipient_id.clone(),
-            "second".to_string(),
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    let msg3: SendMessageResponse = client
-        .post(format!("{base}/v1/messages"))
-        .json(&SendMessageRequest::new(recipient_id, "third".to_string()))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    // List with before=msg3 should return messages before the third
-    let list: ListMessagesResponse = client
-        .get(format!(
-            "{base}/v1/messages?participant={recipient_name}&before={}&limit=10",
-            msg3.message_id
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    assert_eq!(list.messages.len(), 2);
-    assert_eq!(list.messages[0].message.body, "second");
-    assert_eq!(list.messages[1].message.body, "first");
+    for body in &["first", "second", "third"] {
+        let _: SendMessageResponse = client
+            .post(format!("{base}/v1/messages"))
+            .json(&SendMessageRequest::new(
+                recipient_id.clone(),
+                body.to_string(),
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+    }
 
     // List with limit=1
     let list: ListMessagesResponse = client
         .get(format!(
-            "{base}/v1/messages?participant={recipient_name}&limit=1"
+            "{base}/v1/messages?recipient={recipient_name}&limit=1"
         ))
         .send()
         .await?
@@ -278,7 +246,7 @@ async fn wait_for_message_returns_on_new_message() -> anyhow::Result<()> {
 
     // Start the wait in a background task
     let wait_client = test_client();
-    let wait_url = format!("{base_url}/v1/messages/wait?participant={recipient_name}&timeout=10");
+    let wait_url = format!("{base_url}/v1/messages/wait?recipient={recipient_name}&timeout=10");
     let wait_handle = tokio::spawn(async move {
         let response: ListMessagesResponse = wait_client
             .get(wait_url)
@@ -322,7 +290,7 @@ async fn wait_for_message_times_out_with_empty_response() -> anyhow::Result<()> 
     let start = std::time::Instant::now();
     let wait_result: ListMessagesResponse = client
         .get(format!(
-            "{base}/v1/messages/wait?participant={recipient_name}&timeout=1"
+            "{base}/v1/messages/wait?recipient={recipient_name}&timeout=1"
         ))
         .send()
         .await?
@@ -371,7 +339,7 @@ async fn wait_returns_existing_messages_after_cursor() -> anyhow::Result<()> {
     // Wait with after=msg1 — should return msg2 immediately
     let wait_result: ListMessagesResponse = client
         .get(format!(
-            "{base}/v1/messages/wait?participant={recipient_name}&after={}&timeout=1",
+            "{base}/v1/messages/wait?recipient={recipient_name}&after={}&timeout=1",
             msg1.message_id
         ))
         .send()
@@ -386,56 +354,33 @@ async fn wait_returns_existing_messages_after_cursor() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn authorization_actor_cannot_see_other_conversations() -> anyhow::Result<()> {
-    let handles = test_state_handles();
-    let store = handles.store.clone();
-
-    // Create two actors
-    let issue_id_1 = IssueId::from_str("i-alicx")?;
-    let (actor1, _) = Actor::new_for_issue(issue_id_1, Username::from("test-creator"));
-    store.add_actor(actor1.clone(), &ActorRef::test()).await?;
-
-    let issue_id_2 = IssueId::from_str("i-bobx")?;
-    let (actor2, _) = Actor::new_for_issue(issue_id_2, Username::from("test-creator"));
-    store.add_actor(actor2.clone(), &ActorRef::test()).await?;
-
-    let server = spawn_test_server_with_state(handles.state, store).await?;
-    let client = test_client();
+async fn list_messages_is_unauthenticated() -> anyhow::Result<()> {
+    let (server, client, recipient_id, recipient_name) = setup_with_recipient().await?;
     let base = server.base_url();
 
-    // Send a message from the test client to actor1
+    // Send a message (authenticated)
     let _: SendMessageResponse = client
         .post(format!("{base}/v1/messages"))
         .json(&SendMessageRequest::new(
-            actor1.actor_id.clone(),
-            "message to alice".to_string(),
+            recipient_id,
+            "test message".to_string(),
         ))
         .send()
         .await?
         .json()
         .await?;
 
-    // Try to list messages filtering by actor2 (the test client has no conversation with actor2)
-    let list: ListMessagesResponse = client
-        .get(format!("{base}/v1/messages?participant={}", actor2.name()))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    // The test client has no conversation with actor2, so no messages
-    assert!(list.messages.is_empty());
-
-    // The test client should see messages with actor1
-    let list: ListMessagesResponse = client
-        .get(format!("{base}/v1/messages?participant={}", actor1.name()))
+    // List messages without authentication (using a plain client with no auth headers)
+    let unauthenticated_client = reqwest::Client::new();
+    let list: ListMessagesResponse = unauthenticated_client
+        .get(format!("{base}/v1/messages?recipient={recipient_name}"))
         .send()
         .await?
         .json()
         .await?;
 
     assert_eq!(list.messages.len(), 1);
-    assert_eq!(list.messages[0].message.body, "message to alice");
+    assert_eq!(list.messages[0].message.body, "test message");
 
     Ok(())
 }

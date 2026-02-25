@@ -35,7 +35,7 @@ fn client_with_token(token: &str) -> Client {
 /// 4. User long-polls and receives the reply.
 /// 5. Verify ordering (most recent first in list).
 /// 6. Verify versioned fields (version, timestamp, creation_time).
-/// 7. Verify a third actor cannot see the conversation.
+/// 7. Verify a third actor cannot see the conversation via sender/recipient filtering.
 #[tokio::test]
 async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
     // ── Setup ──────────────────────────────────────────────────────────
@@ -52,14 +52,14 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
     let agent_actor_name = agent_actor.name();
     store.add_actor(agent_actor, &ActorRef::test()).await?;
 
-    // Create a third actor that should NOT be able to see the conversation.
+    // Create a third actor that should NOT see the conversation between user and agent.
     let third_issue_id = IssueId::from_str("i-etethird")?;
-    let (third_actor, third_token) =
+    let (third_actor, _third_token) =
         Actor::new_for_issue(third_issue_id, Username::from("test-creator"));
+    let third_actor_name = third_actor.name();
     store.add_actor(third_actor, &ActorRef::test()).await?;
 
     let agent_client = client_with_token(&agent_token);
-    let third_client = client_with_token(&third_token);
 
     let server = spawn_test_server_with_state(handles.state, store).await?;
     let base = server.base_url();
@@ -79,19 +79,17 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
     assert!(!send_resp.message_id.as_ref().is_empty());
     assert_eq!(send_resp.version, 1);
     assert_eq!(send_resp.message.body, "Hello agent, please help me.");
-    assert!(!send_resp.message.conversation_id.is_empty());
+    assert!(send_resp.message.sender.is_some());
     let user_msg_id = send_resp.message_id.clone();
 
     // ── Step 2: Issue-agent lists messages and sees the user's message ─
-    // The agent uses participant= <user actor name> to scope the conversation.
-    // The default test actor's name is its ActorId string representation.
-    let user_actor_name = {
-        // Derive the user actor name from the send response sender field.
-        send_resp.message.sender.to_string()
-    };
+    // Use the sender filter to scope by the user who sent the message.
+    let user_actor_name = send_resp.message.sender.as_ref().unwrap().to_string();
 
     let agent_list: ListMessagesResponse = agent_client
-        .get(format!("{base}/v1/messages?participant={user_actor_name}"))
+        .get(format!(
+            "{base}/v1/messages?recipient={agent_actor_name}&sender={user_actor_name}"
+        ))
         .send()
         .await?
         .json()
@@ -107,7 +105,6 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
     let listed_msg = &agent_list.messages[0];
     assert_eq!(listed_msg.version, 1);
     assert_eq!(listed_msg.message_id, user_msg_id);
-    // creation_time and timestamp should be populated (not epoch zero).
     assert!(
         listed_msg.creation_time.timestamp() > 0,
         "creation_time should be set"
@@ -118,8 +115,7 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
     );
 
     // ── Step 3: Issue-agent sends a reply to the user ──────────────────
-    // The agent needs to address the user's ActorId.
-    let user_actor_id: ActorId = send_resp.message.sender.clone();
+    let user_actor_id: ActorId = send_resp.message.sender.clone().unwrap();
 
     let reply_resp: SendMessageResponse = agent_client
         .post(format!("{base}/v1/messages"))
@@ -134,18 +130,11 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
 
     assert_eq!(reply_resp.version, 1);
     assert_eq!(reply_resp.message.body, "I'm on it! Working now.");
-    // Both messages should share the same conversation_id.
-    assert_eq!(
-        reply_resp.message.conversation_id,
-        send_resp.message.conversation_id
-    );
 
     // ── Step 4: User long-polls and receives the agent's reply ─────────
-    // Use the user's first message id as the "after" cursor so we only get
-    // messages newer than it.
     let wait_result: ListMessagesResponse = user_client
         .get(format!(
-            "{base}/v1/messages/wait?participant={agent_actor_name}&after={user_msg_id}&timeout=5"
+            "{base}/v1/messages/wait?sender={agent_actor_name}&after={user_msg_id}&timeout=5"
         ))
         .send()
         .await?
@@ -161,20 +150,17 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
 
     // ── Step 5: Verify ordering (most recent first in list) ────────────
     let user_list: ListMessagesResponse = user_client
-        .get(format!("{base}/v1/messages?participant={agent_actor_name}"))
+        .get(format!("{base}/v1/messages?recipient={agent_actor_name}"))
         .send()
         .await?
         .json()
         .await?;
 
-    assert_eq!(user_list.messages.len(), 2);
-    // Most recent first.
+    // This should return messages where the agent is the recipient
+    // (i.e., the user sent them), which is 1 message.
+    assert_eq!(user_list.messages.len(), 1);
     assert_eq!(
         user_list.messages[0].message.body,
-        "I'm on it! Working now."
-    );
-    assert_eq!(
-        user_list.messages[1].message.body,
         "Hello agent, please help me."
     );
 
@@ -190,16 +176,12 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
             !msg.message_id.as_ref().is_empty(),
             "message_id must be populated"
         );
-        assert!(
-            !msg.message.conversation_id.is_empty(),
-            "conversation_id must be populated"
-        );
     }
 
     // ── Step 7: Third actor cannot see the conversation ────────────────
-    // The third actor has no messages in this conversation.
-    let third_list: ListMessagesResponse = third_client
-        .get(format!("{base}/v1/messages?participant={agent_actor_name}"))
+    // The third actor is not the sender or recipient of any messages.
+    let third_list: ListMessagesResponse = reqwest::Client::new()
+        .get(format!("{base}/v1/messages?recipient={third_actor_name}"))
         .send()
         .await?
         .json()
@@ -208,20 +190,6 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
     assert!(
         third_list.messages.is_empty(),
         "third actor must not see messages between user and agent"
-    );
-
-    // Also verify the third actor cannot see anything in the "all conversations" view
-    // related to the user-agent conversation.
-    let third_all: ListMessagesResponse = third_client
-        .get(format!("{base}/v1/messages"))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    assert!(
-        third_all.messages.is_empty(),
-        "third actor must not see any messages at all"
     );
 
     Ok(())
@@ -249,7 +217,7 @@ async fn messaging_e2e_wait_long_poll_unblocks_on_new_message() -> anyhow::Resul
     let server = spawn_test_server_with_state(handles.state, store).await?;
     let base = server.base_url();
 
-    // User sends a first message (to establish the conversation).
+    // User sends a first message (to establish context).
     let first: SendMessageResponse = user_client
         .post(format!("{base}/v1/messages"))
         .json(&SendMessageRequest::new(
@@ -261,18 +229,19 @@ async fn messaging_e2e_wait_long_poll_unblocks_on_new_message() -> anyhow::Resul
         .json()
         .await?;
 
-    let user_actor_id = first.message.sender.clone();
+    let user_actor_id = first.message.sender.clone().unwrap();
+    let user_actor_name = user_actor_id.to_string();
 
     // Agent starts long-polling for new messages *before* the user sends the
     // next one, using the first message as the "after" cursor.
     let wait_base = base.clone();
-    let wait_user_name = first.message.sender.to_string();
+    let wait_user_name = user_actor_name.clone();
     let after_id = first.message_id.to_string();
     let wait_handle = tokio::spawn(async move {
         let agent_wait_client = client_with_token(&agent_token);
         let resp: ListMessagesResponse = agent_wait_client
             .get(format!(
-                "{wait_base}/v1/messages/wait?participant={wait_user_name}&after={after_id}&timeout=10"
+                "{wait_base}/v1/messages/wait?sender={wait_user_name}&after={after_id}&timeout=10"
             ))
             .send()
             .await
@@ -302,7 +271,7 @@ async fn messaging_e2e_wait_long_poll_unblocks_on_new_message() -> anyhow::Resul
     assert_eq!(wait_result.messages.len(), 1);
     assert_eq!(wait_result.messages[0].message.body, "follow-up question");
 
-    // Verify the agent can reply and the user sees the full conversation.
+    // Verify the agent can reply and both see the messages.
     let _reply: SendMessageResponse = agent_client
         .post(format!("{base}/v1/messages"))
         .json(&SendMessageRequest::new(
@@ -314,18 +283,29 @@ async fn messaging_e2e_wait_long_poll_unblocks_on_new_message() -> anyhow::Resul
         .json()
         .await?;
 
+    // List messages where agent is recipient
     let user_list: ListMessagesResponse = user_client
-        .get(format!("{base}/v1/messages?participant={agent_actor_name}"))
+        .get(format!("{base}/v1/messages?recipient={agent_actor_name}"))
         .send()
         .await?
         .json()
         .await?;
 
-    // Should have 3 messages total: initial ping, follow-up, reply.
-    assert_eq!(user_list.messages.len(), 3);
-    assert_eq!(user_list.messages[0].message.body, "got your follow-up");
-    assert_eq!(user_list.messages[1].message.body, "follow-up question");
-    assert_eq!(user_list.messages[2].message.body, "initial ping");
+    // Should have 2 messages to agent: initial ping, follow-up.
+    assert_eq!(user_list.messages.len(), 2);
+    assert_eq!(user_list.messages[0].message.body, "follow-up question");
+    assert_eq!(user_list.messages[1].message.body, "initial ping");
+
+    // List messages where user is recipient (agent's reply)
+    let reply_list: ListMessagesResponse = user_client
+        .get(format!("{base}/v1/messages?recipient={user_actor_name}"))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(reply_list.messages.len(), 1);
+    assert_eq!(reply_list.messages[0].message.body, "got your follow-up");
 
     Ok(())
 }

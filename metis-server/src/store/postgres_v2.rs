@@ -25,6 +25,7 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -672,17 +673,18 @@ impl PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for message '{id}'"))
         })?;
 
-        let sender_name = message.sender.to_string();
+        let sender_name = message.sender.as_ref().map(|s| s.to_string());
+        let recipient_name = message.recipient.to_string();
 
         let query = format!(
-            "INSERT INTO {TABLE_MESSAGES_V2} (id, version_number, conversation_id, sender, body, deleted, actor)
+            "INSERT INTO {TABLE_MESSAGES_V2} (id, version_number, sender, recipient, body, deleted, actor)
              VALUES ($1, $2, $3, $4, $5, $6, $7)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(&message.conversation_id)
             .bind(&sender_name)
+            .bind(&recipient_name)
             .bind(&message.body)
             .bind(message.deleted)
             .bind(actor)
@@ -694,16 +696,29 @@ impl PostgresStoreV2 {
     }
 
     fn row_to_message(&self, row: &MessageRow) -> Result<Message, StoreError> {
-        let sender = crate::domain::actors::Actor::parse_name(&row.sender).map_err(|_| {
+        let sender = row
+            .sender
+            .as_deref()
+            .map(|s| {
+                crate::domain::actors::Actor::parse_name(s).map_err(|_| {
+                    StoreError::Internal(format!(
+                        "invalid sender '{}' stored for message '{}'",
+                        s, row.id
+                    ))
+                })
+            })
+            .transpose()?;
+
+        let recipient = crate::domain::actors::Actor::parse_name(&row.recipient).map_err(|_| {
             StoreError::Internal(format!(
-                "invalid sender '{}' stored for message '{}'",
-                row.sender, row.id
+                "invalid recipient '{}' stored for message '{}'",
+                row.recipient, row.id
             ))
         })?;
 
         Ok(Message {
-            conversation_id: row.conversation_id.clone(),
             sender,
+            recipient,
             body: row.body.clone(),
             deleted: row.deleted,
         })
@@ -1024,8 +1039,8 @@ struct ActorRow {
 struct MessageRow {
     id: String,
     version_number: i64,
-    conversation_id: String,
-    sender: String,
+    sender: Option<String>,
+    recipient: String,
     body: String,
     deleted: bool,
     actor: Option<Value>,
@@ -2244,7 +2259,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, conversation_id, sender, body, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, sender, recipient, body, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_MESSAGES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_MESSAGES_V2}
              WHERE id = $1
@@ -2276,43 +2291,66 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn list_messages(
         &self,
-        conversation_id: &str,
-        before: Option<&MessageId>,
-        limit: u32,
+        query: &SearchMessagesQuery,
     ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
-        let limit_i64 = i64::from(limit);
+        let limit = i64::from(query.limit.unwrap_or(50));
+        let include_deleted = query.include_deleted.unwrap_or(false);
+
+        // Build the base subquery that gets the latest version of each message
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, conversation_id, sender, body, deleted, actor, created_at, updated_at, \
+            "SELECT DISTINCT ON (id) id, version_number, sender, recipient, body, deleted, actor, created_at, updated_at, \
              MIN(created_at) OVER (PARTITION BY id) AS creation_time \
-             FROM {TABLE_MESSAGES_V2} WHERE conversation_id = $1 ORDER BY id DESC, version_number DESC"
+             FROM {TABLE_MESSAGES_V2} ORDER BY id, version_number DESC"
         );
 
-        let (sql, bind_before) = if let Some(before_id) = before {
-            let sql = format!(
-                "SELECT * FROM ({subquery}) AS latest WHERE id < $2 ORDER BY id DESC LIMIT $3"
-            );
-            (sql, Some(before_id.as_ref().to_string()))
+        let mut conditions = Vec::new();
+        let mut param_idx = 1u32;
+
+        if !include_deleted {
+            conditions.push("deleted = false".to_string());
+        }
+
+        let sender_val = query.sender.clone();
+        if sender_val.is_some() {
+            conditions.push(format!("sender = ${param_idx}"));
+            param_idx += 1;
+        }
+
+        let recipient_val = query.recipient.clone();
+        if recipient_val.is_some() {
+            conditions.push(format!("recipient = ${param_idx}"));
+            param_idx += 1;
+        }
+
+        let after_val = query.after;
+        if after_val.is_some() {
+            conditions.push(format!("created_at > ${param_idx}"));
+            param_idx += 1;
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
         } else {
-            let sql = format!("SELECT * FROM ({subquery}) AS latest ORDER BY id DESC LIMIT $2");
-            (sql, None)
+            format!(" WHERE {}", conditions.join(" AND "))
         };
 
-        let rows = if let Some(ref before_val) = bind_before {
-            sqlx::query_as::<_, MessageRow>(&sql)
-                .bind(conversation_id)
-                .bind(before_val)
-                .bind(limit_i64)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(map_sqlx_error)?
-        } else {
-            sqlx::query_as::<_, MessageRow>(&sql)
-                .bind(conversation_id)
-                .bind(limit_i64)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(map_sqlx_error)?
-        };
+        let sql = format!(
+            "SELECT * FROM ({subquery}) AS latest{where_clause} ORDER BY created_at DESC LIMIT ${param_idx}"
+        );
+
+        let mut qb = sqlx::query_as::<_, MessageRow>(&sql);
+        if let Some(ref s) = sender_val {
+            qb = qb.bind(s);
+        }
+        if let Some(ref r) = recipient_val {
+            qb = qb.bind(r);
+        }
+        if let Some(ref a) = after_val {
+            qb = qb.bind(a);
+        }
+        qb = qb.bind(limit);
+
+        let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
 
         let mut messages = Vec::with_capacity(rows.len());
         for row in rows {
@@ -2337,28 +2375,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
         }
 
         Ok(messages)
-    }
-
-    async fn list_conversations(&self, actor_id: &ActorId) -> Result<Vec<String>, StoreError> {
-        let actor_name = actor_id.to_string();
-
-        let query = format!(
-            "SELECT DISTINCT conversation_id FROM {TABLE_MESSAGES_V2} \
-             WHERE conversation_id LIKE $1 OR conversation_id LIKE $2 \
-             ORDER BY conversation_id"
-        );
-        // Match actor as first or second participant in the canonical conversation ID
-        let prefix_pattern = format!("{actor_name}+%");
-        let suffix_pattern = format!("%+{actor_name}");
-
-        let rows = sqlx::query_scalar::<_, String>(&query)
-            .bind(&prefix_pattern)
-            .bind(&suffix_pattern)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        Ok(rows)
     }
 }
 
