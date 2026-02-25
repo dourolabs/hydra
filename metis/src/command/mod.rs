@@ -3,6 +3,7 @@ pub mod caches;
 pub mod chat;
 pub mod dashboard;
 pub mod documents;
+pub mod git;
 pub mod issues;
 pub mod jobs;
 pub mod output;

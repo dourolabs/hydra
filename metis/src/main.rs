@@ -116,6 +116,11 @@ enum Commands {
         #[command(subcommand)]
         command: command::users::UsersCommand,
     },
+    /// Git operations for the current repository.
+    Git {
+        #[command(subcommand)]
+        command: command::git::GitCommand,
+    },
     /// Chat with a Codex agent that can call the metis CLI.
     Chat {
         /// Run a single-turn conversation by forwarding this prompt to Codex non-interactively.
@@ -223,6 +228,7 @@ async fn dispatch(
         Commands::Issues { command } => command::issues::run(client, command, context).await?,
         Commands::Repos { command } => command::repos::run(client, command, context).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
+        Commands::Git { command } => command::git::run(client, command).await?,
         Commands::Chat {
             prompt,
             model,
