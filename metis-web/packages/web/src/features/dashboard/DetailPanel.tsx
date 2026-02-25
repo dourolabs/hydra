@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Avatar, Badge, Button, MarkdownViewer, Select, Spinner, Textarea } from "@metis/ui";
+import { Avatar, Badge, Button, DiffViewer, MarkdownViewer, Select, Spinner, Textarea } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
 import type { PatchVersionRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
@@ -10,7 +10,6 @@ import { useDocumentByPath } from "../documents/useDocumentByPath";
 import { useIssue } from "../issues/useIssue";
 import { usePatchesByIssue } from "../patches/usePatchesByIssue";
 import { useToast } from "../toast/useToast";
-import { DiffViewer } from "./DiffViewer";
 import styles from "./DetailPanel.module.css";
 
 /** Regex to detect document paths in issue text. */
@@ -218,7 +217,7 @@ function PatchPreview({ record, issueId }: { record: PatchVersionRecord; issueId
         </div>
       )}
 
-      {patch.diff && <DiffViewer diff={patch.diff} />}
+      {patch.diff && <DiffViewer diff={patch.diff} className={styles.diffViewer} />}
     </div>
   );
 }

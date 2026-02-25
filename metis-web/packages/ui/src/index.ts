@@ -51,3 +51,6 @@ export type { ToastProps, ToastVariant } from "./components/Toast";
 
 export { JobStatusIndicator } from "./components/JobStatusIndicator";
 export type { JobStatusIndicatorProps, JobSummary, JobStatus } from "./components/JobStatusIndicator";
+
+export { DiffViewer } from "./components/DiffViewer";
+export type { DiffViewerProps } from "./components/DiffViewer";
