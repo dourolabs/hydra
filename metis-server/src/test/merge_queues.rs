@@ -36,6 +36,7 @@ async fn state_with_repo(repo_name: &str) -> anyhow::Result<(TestStateHandles, T
                     .to_string(),
                 None,
                 None,
+                None,
             ),
             ActorRef::test(),
         )
@@ -62,6 +63,7 @@ async fn state_with_repo_and_patch(
                     .expect("tempdir path is valid utf-8")
                     .to_string(),
                 Some("main".to_string()),
+                None,
                 None,
             ),
             ActorRef::test(),

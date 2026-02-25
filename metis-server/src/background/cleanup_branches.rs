@@ -482,6 +482,7 @@ mod tests {
                 "https://gitlab.com/org/repo.git".to_string(),
                 None,
                 None,
+                None,
             ),
         )
         .await?;
