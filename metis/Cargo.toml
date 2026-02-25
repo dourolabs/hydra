@@ -41,11 +41,11 @@ git2 = { workspace = true }
 shlex = "1.3"
 thiserror = "1.0"
 unicode-width = "0.1.14"
+octocrab = "0.49"
 openssl-sys = { workspace = true }
 
 [dev-dependencies]
 httpmock = "0.7"
 metis-server = { path = "../metis-server", features = ["test-utils"] }
-octocrab = "0.49"
 jsonwebtoken = "10"
 openssl = "0.10"
