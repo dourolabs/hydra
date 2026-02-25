@@ -10,7 +10,6 @@ use metis_common::{
     api::v1::messages::{
         SearchMessagesQuery, SendMessageRequest, SendMessageResponse, WaitMessagesQuery,
     },
-    whoami::ActorIdentity,
 };
 use std::io::{self, Write};
 
@@ -79,7 +78,7 @@ pub async fn run(
         } => {
             let recipient = match recipient {
                 Some(r) => Some(r),
-                None => Some(current_actor_id(client).await?),
+                None => Some(client.current_actor_id().await?.to_string()),
             };
             let mut query = SearchMessagesQuery::default();
             query.sender = sender;
@@ -159,19 +158,4 @@ async fn send_message(
         .send_message(&request)
         .await
         .context("failed to send message")
-}
-
-/// Resolve the current actor's ID string from the auth context.
-async fn current_actor_id(client: &dyn MetisClientInterface) -> Result<String> {
-    let whoami = client
-        .whoami()
-        .await
-        .context("failed to fetch current actor")?;
-    let actor_id = match whoami.actor {
-        ActorIdentity::User { username } => ActorId::Username(username),
-        ActorIdentity::Task { task_id, .. } => ActorId::Task(task_id),
-        ActorIdentity::Issue { issue_id, .. } => ActorId::Issue(issue_id),
-        _ => anyhow::bail!("unsupported actor type"),
-    };
-    Ok(actor_id.to_string())
 }
