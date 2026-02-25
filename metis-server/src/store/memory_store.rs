@@ -955,6 +955,13 @@ impl ReadOnlyStore for MemoryStore {
                     }
                 }
 
+                // Filter by before timestamp
+                if let Some(ref before_ts) = query.before {
+                    if latest.timestamp >= *before_ts {
+                        continue;
+                    }
+                }
+
                 all_messages.push((msg_id, latest));
             }
         }

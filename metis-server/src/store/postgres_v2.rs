@@ -2328,6 +2328,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             param_idx += 1;
         }
 
+        let before_val = query.before;
+        if before_val.is_some() {
+            conditions.push(format!("created_at < ${param_idx}"));
+            param_idx += 1;
+        }
+
         let where_clause = if conditions.is_empty() {
             String::new()
         } else {
@@ -2347,6 +2353,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
         }
         if let Some(ref a) = after_val {
             qb = qb.bind(a);
+        }
+        if let Some(ref b) = before_val {
+            qb = qb.bind(b);
         }
         qb = qb.bind(limit);
 

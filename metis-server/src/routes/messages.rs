@@ -50,12 +50,13 @@ pub async fn send_message(
     )))
 }
 
-/// GET /v1/messages — list messages (unauthenticated).
+/// GET /v1/messages — list messages (authenticated, any actor may query any messages).
 ///
-/// Accepts query params: sender, recipient, after (timestamp), include_deleted, limit.
-/// Returns messages in reverse chronological order (newest first).
+/// Accepts query params: sender, recipient, after (timestamp), before (timestamp),
+/// include_deleted, limit. Returns messages in reverse chronological order (newest first).
 pub async fn list_messages(
     State(state): State<AppState>,
+    Extension(_actor): Extension<Actor>,
     Query(query): Query<SearchMessagesQuery>,
 ) -> Result<Json<ListMessagesResponse>, ApiError> {
     info!("list_messages invoked");
@@ -64,6 +65,7 @@ pub async fn list_messages(
     store_query.sender = query.sender;
     store_query.recipient = query.recipient;
     store_query.after = query.after;
+    store_query.before = query.before;
     store_query.include_deleted = query.include_deleted;
     store_query.limit = Some(query.limit.unwrap_or(DEFAULT_LIMIT));
 

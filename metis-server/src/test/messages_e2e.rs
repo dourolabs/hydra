@@ -54,7 +54,7 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
 
     // Create a third actor that should NOT see the conversation between user and agent.
     let third_issue_id = IssueId::from_str("i-etethird")?;
-    let (third_actor, _third_token) =
+    let (third_actor, third_token) =
         Actor::new_for_issue(third_issue_id, Username::from("test-creator"));
     let third_actor_name = third_actor.name();
     store.add_actor(third_actor, &ActorRef::test()).await?;
@@ -180,7 +180,8 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
 
     // ── Step 7: Third actor cannot see the conversation ────────────────
     // The third actor is not the sender or recipient of any messages.
-    let third_list: ListMessagesResponse = reqwest::Client::new()
+    let third_client = client_with_token(&third_token);
+    let third_list: ListMessagesResponse = third_client
         .get(format!("{base}/v1/messages?recipient={third_actor_name}"))
         .send()
         .await?

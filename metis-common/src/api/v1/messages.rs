@@ -92,6 +92,8 @@ pub struct SearchMessagesQuery {
     #[serde(default)]
     pub after: Option<DateTime<Utc>>,
     #[serde(default)]
+    pub before: Option<DateTime<Utc>>,
+    #[serde(default)]
     pub include_deleted: Option<bool>,
     #[serde(default)]
     pub limit: Option<u32>,
@@ -239,6 +241,7 @@ mod tests {
         assert_eq!(query.sender, None);
         assert_eq!(query.recipient, None);
         assert_eq!(query.after, None);
+        assert_eq!(query.before, None);
         assert_eq!(query.include_deleted, None);
         assert_eq!(query.limit, None);
     }

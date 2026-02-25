@@ -84,10 +84,10 @@ done
 The messaging HTTP API lives under `/v1/messages`:
 
 - **POST /v1/messages** — Send a message. Body: `{ "recipient": <ActorId>, "body": "..." }`. Returns `SendMessageResponse` with `message_id`, `version`, `message`, and `timestamp`.
-- **GET /v1/messages?participant=<name>&before=<id>&limit=<n>** — List messages. Returns messages in descending order (most recent first). Omit `participant` to list across all conversations.
-- **GET /v1/messages/wait?participant=<name>&after=<id>&timeout=<secs>** — Long-poll for new messages. Returns immediately if messages exist after the cursor; otherwise blocks until a new message arrives or the timeout expires (default 30s, max 120s).
+- **GET /v1/messages?sender=<name>&recipient=<name>&after=<ts>&before=<ts>&limit=<n>** — List messages. Returns messages in descending order (most recent first). All query params are optional; any authenticated actor may query any messages.
+- **GET /v1/messages/wait?sender=<name>&recipient=<name>&after=<id>&timeout=<secs>** — Long-poll for new messages. Returns immediately if messages exist after the cursor; otherwise blocks until a new message arrives or the timeout expires (default 30s, max 120s).
 
-All endpoints require Bearer token authentication. Actors can only see messages in their own conversations.
+All endpoints require Bearer token authentication. Any authenticated actor may list any set of messages (no restriction to own conversations).
 
 ## Configuration & Security Notes
 Never commit secrets. Use the sample config files (`config.toml.sample` or `config.yaml.sample`) as templates and load them via `METIS_CONFIG` or env vars such as `OPENAI_API_KEY`. Confirm Docker images reference the intended worker image and namespace before publishing. Add new external integrations to `metis-common` so sensitive values stay centralized and masked.

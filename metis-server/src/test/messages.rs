@@ -354,25 +354,70 @@ async fn wait_returns_existing_messages_after_cursor() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn list_messages_is_unauthenticated() -> anyhow::Result<()> {
-    let (server, client, recipient_id, recipient_name) = setup_with_recipient().await?;
+async fn list_messages_requires_authentication() -> anyhow::Result<()> {
+    let (server, _client, _recipient_id, recipient_name) = setup_with_recipient().await?;
     let base = server.base_url();
 
-    // Send a message (authenticated)
+    // List messages without authentication — should be rejected
+    let unauthenticated_client = reqwest::Client::new();
+    let response = unauthenticated_client
+        .get(format!("{base}/v1/messages?recipient={recipient_name}"))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_messages_allows_any_authenticated_actor() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let store = handles.store.clone();
+
+    // Create a recipient actor
+    let issue_id = IssueId::from_str("i-recpx")?;
+    let (recipient_actor, _) = Actor::new_for_issue(issue_id, Username::from("test-creator"));
+    let recipient_name = recipient_actor.name();
+    let recipient_id = recipient_actor.actor_id.clone();
+    store.add_actor(recipient_actor, &ActorRef::test()).await?;
+
+    // Create a second (different) actor with its own auth token
+    let issue_id_2 = IssueId::from_str("i-other")?;
+    let (other_actor, other_token) =
+        Actor::new_for_issue(issue_id_2, Username::from("other-creator"));
+    store.add_actor(other_actor, &ActorRef::test()).await?;
+
+    let server = spawn_test_server_with_state(handles.state, store).await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // Send a message as the default test actor to the recipient
     let _: SendMessageResponse = client
         .post(format!("{base}/v1/messages"))
         .json(&SendMessageRequest::new(
             recipient_id,
-            "test message".to_string(),
+            "secret message".to_string(),
         ))
         .send()
         .await?
         .json()
         .await?;
 
-    // List messages without authentication (using a plain client with no auth headers)
-    let unauthenticated_client = reqwest::Client::new();
-    let list: ListMessagesResponse = unauthenticated_client
+    // List messages as the other actor — should succeed and see the message
+    let other_client = {
+        let mut headers = reqwest::header::HeaderMap::new();
+        let auth_value = format!("Bearer {other_token}");
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&auth_value)?,
+        );
+        reqwest::Client::builder()
+            .default_headers(headers)
+            .build()?
+    };
+
+    let list: ListMessagesResponse = other_client
         .get(format!("{base}/v1/messages?recipient={recipient_name}"))
         .send()
         .await?
@@ -380,7 +425,7 @@ async fn list_messages_is_unauthenticated() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(list.messages.len(), 1);
-    assert_eq!(list.messages[0].message.body, "test message");
+    assert_eq!(list.messages[0].message.body, "secret message");
 
     Ok(())
 }

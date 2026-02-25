@@ -1502,12 +1502,11 @@ impl MetisClient {
             .context("failed to decode send message response")
     }
 
-    /// Call `GET /v1/messages` to list messages (unauthenticated endpoint).
+    /// Call `GET /v1/messages` to list messages (authenticated endpoint).
     pub async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse> {
         let url = self.endpoint("/v1/messages")?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .query(query)
             .send()
             .await

@@ -57,8 +57,7 @@ pub async fn run_with_state(
         .route(
             "/v1/github/app/client-id",
             get(routes::github::get_github_app_client_id),
-        )
-        .route("/v1/messages", get(routes::messages::list_messages));
+        );
 
     let protected_routes = Router::new()
         .route(
@@ -184,7 +183,10 @@ pub async fn run_with_state(
             "/v1/jobs/:job_id/context",
             get(routes::jobs::context::get_job_context),
         )
-        .route("/v1/messages", post(routes::messages::send_message))
+        .route(
+            "/v1/messages",
+            get(routes::messages::list_messages).post(routes::messages::send_message),
+        )
         .route("/v1/messages/wait", get(routes::messages::wait_for_message))
         .route("/v1/whoami", get(routes::whoami::whoami))
         .route("/v1/users/:username", get(routes::users::get_user))
