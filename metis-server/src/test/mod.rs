@@ -10,6 +10,7 @@ mod issues;
 mod jobs;
 mod login;
 pub(crate) mod merge_queues;
+mod messages;
 mod patches;
 mod repositories;
 mod users;

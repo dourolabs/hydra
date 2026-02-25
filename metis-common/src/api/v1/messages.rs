@@ -93,6 +93,20 @@ pub struct ListMessagesQuery {
     pub limit: Option<u32>,
 }
 
+/// Query parameters for long-poll waiting for new messages.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct WaitMessagesQuery {
+    #[serde(default)]
+    pub participant: Option<String>,
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub timeout: Option<u32>,
+}
+
 /// Response after sending a message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
