@@ -10,27 +10,10 @@ use crate::domain::users::Username;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 
+// Re-export config types from metis-common for backward compatibility.
+pub use metis_common::repositories::{MergeRequestConfig, RepoWorkflowConfig, ReviewRequestConfig};
+
 const AUTOMATION_NAME: &str = "patch_workflow";
-
-/// Configuration for a single review request entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReviewRequestConfig {
-    pub assignee: String,
-}
-
-/// Configuration for the merge request issue.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MergeRequestConfig {
-    pub assignee: Option<String>,
-}
-
-/// Per-repo workflow configuration override.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct RepoWorkflowConfig {
-    pub review_requests: Vec<ReviewRequestConfig>,
-    pub merge_request: Option<MergeRequestConfig>,
-}
 
 /// Top-level configuration for the patch_workflow automation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
