@@ -11,7 +11,7 @@ import {
 import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus, TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
-import { isNodeActive, treeHasActiveNode } from "./watchingUtils";
+import { treeHasActiveNode } from "./watchingUtils";
 import styles from "./WatchingTree.module.css";
 
 interface WatchingTreeProps {
@@ -48,28 +48,6 @@ function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
 
   walk(node);
   return summary;
-}
-
-function collectActiveChildren(
-  node: IssueTreeNode,
-  jobsByIssue: Map<string, JobSummaryRecord[]>,
-): IssueTreeNode[] {
-  const result: IssueTreeNode[] = [];
-  const seen = new Set<string>();
-
-  function walk(n: IssueTreeNode) {
-    for (const child of n.children) {
-      if (child.hardBlocked) continue;
-      if (!seen.has(child.id) && isNodeActive(child, jobsByIssue)) {
-        seen.add(child.id);
-        result.push(child);
-      }
-      walk(child);
-    }
-  }
-
-  walk(node);
-  return result.sort((a, b) => new Date(b.issue.creation_time).getTime() - new Date(a.issue.creation_time).getTime());
 }
 
 function formatSummary(summary: SubtreeSummary): string {
@@ -235,7 +213,6 @@ function RootItem({
   username,
 }: RootItemProps) {
   const summary = useMemo(() => summarizeSubtree(root), [root]);
-  const activeChildren = useMemo(() => collectActiveChildren(root, jobsByIssue), [root, jobsByIssue]);
 
   const summaryText = formatSummary(summary);
   const totalChildren = summary.open + summary.inProgress + summary.closed;
@@ -253,20 +230,8 @@ function RootItem({
       username,
     );
   } else {
-    // Collapsed: show flat list of active descendants
-    childNodes = activeChildren.map((child) => ({
-      id: child.id,
-      label: (
-        <IssueRow
-          record={child.issue}
-          blocked={child.blocked}
-          blockedBy={child.blockedBy}
-          jobs={jobsByIssue.get(child.id)}
-          onJobClick={handleJobClick}
-        />
-      ),
-      className: child.issue.issue.assignee === username ? styles.assignedToMe : undefined,
-    }));
+    // Collapsed: hide all children; the summary text provides status at a glance
+    childNodes = [];
   }
 
   // Root node styling
@@ -320,7 +285,7 @@ function RootItem({
         <div className={styles.summary}>{summaryText}</div>
       )}
       {childNodes.length > 0 && (
-        <div className={expanded ? styles.children : styles.inProgressSection}>
+        <div className={styles.children}>
           <TreeView
             nodes={childNodes}
             onNodeClick={onSelect}

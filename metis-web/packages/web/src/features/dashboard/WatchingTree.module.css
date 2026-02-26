@@ -90,11 +90,6 @@
   color: var(--color-text-secondary);
 }
 
-.inProgressSection {
-  border-left: 1px solid var(--color-border);
-  margin-left: 24px;
-}
-
 .children {
   border-left: 1px solid var(--color-border);
   margin-left: 24px;
@@ -177,10 +172,6 @@
 
   .summary {
     padding-left: var(--space-3);
-  }
-
-  .inProgressSection {
-    margin-left: 12px;
   }
 
   .children {
