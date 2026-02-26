@@ -35,7 +35,7 @@ fn client_with_token(token: &str) -> Client {
 /// 4. User long-polls and receives the reply.
 /// 5. Verify ordering (most recent first in list).
 /// 6. Verify versioned fields (version, timestamp, creation_time).
-/// 7. Verify a third actor cannot see the conversation via sender/recipient filtering.
+/// 7. Verify filtering by a third actor's recipient name returns no results (no messages addressed to them).
 #[tokio::test]
 async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
     // ── Setup ──────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
     let agent_actor_name = agent_actor.name();
     store.add_actor(agent_actor, &ActorRef::test()).await?;
 
-    // Create a third actor that should NOT see the conversation between user and agent.
+    // Create a third actor — no messages will be addressed to it, so recipient filtering returns empty.
     let third_issue_id = IssueId::from_str("i-etethird")?;
     let (third_actor, third_token) =
         Actor::new_for_issue(third_issue_id, Username::from("test-creator"));
@@ -178,7 +178,7 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
         );
     }
 
-    // ── Step 7: Third actor cannot see the conversation ────────────────
+    // ── Step 7: Third actor filters by own recipient name — gets empty results ──
     // The third actor is not the sender or recipient of any messages.
     let third_client = client_with_token(&third_token);
     let third_list: ListMessagesResponse = third_client
@@ -190,7 +190,7 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
 
     assert!(
         third_list.messages.is_empty(),
-        "third actor must not see messages between user and agent"
+        "no messages have the third actor as recipient"
     );
 
     Ok(())
