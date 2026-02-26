@@ -43,6 +43,14 @@ pub enum MessagesCommand {
         #[arg(long, value_name = "TIMESTAMP")]
         after: Option<DateTime<Utc>>,
 
+        /// Only show read messages.
+        #[arg(long, conflicts_with = "unread")]
+        read: bool,
+
+        /// Only show unread messages.
+        #[arg(long, conflicts_with = "read")]
+        unread: bool,
+
         /// Maximum number of messages to return.
         #[arg(long, value_name = "LIMIT", default_value_t = 50)]
         limit: u32,
@@ -82,16 +90,26 @@ pub async fn run(
             sender,
             recipient,
             after,
+            read,
+            unread,
             limit,
         } => {
             let recipient = match recipient {
                 Some(r) => Some(r),
                 None => Some(client.current_actor_id().await?.to_string()),
             };
+            let is_read = if read {
+                Some(true)
+            } else if unread {
+                Some(false)
+            } else {
+                None
+            };
             let mut query = SearchMessagesQuery::default();
             query.sender = sender;
             query.recipient = recipient;
             query.after = after;
+            query.is_read = is_read;
             query.limit = Some(limit);
             let response = client
                 .list_messages(&query)

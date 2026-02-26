@@ -73,6 +73,7 @@ pub async fn list_messages(
     store_query.after = query.after;
     store_query.before = query.before;
     store_query.include_deleted = query.include_deleted;
+    store_query.is_read = query.is_read;
     store_query.limit = Some(query.limit.unwrap_or(DEFAULT_LIMIT));
 
     let results = state
