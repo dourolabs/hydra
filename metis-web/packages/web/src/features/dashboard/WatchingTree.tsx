@@ -11,7 +11,7 @@ import {
 import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus, TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
-import { isNodeActive, pruneTree } from "./watchingUtils";
+import { isNodeActive, treeHasActiveNode } from "./watchingUtils";
 import styles from "./WatchingTree.module.css";
 
 interface WatchingTreeProps {
@@ -80,34 +80,131 @@ function formatSummary(summary: SubtreeSummary): string {
   return parts.join(", ");
 }
 
+function formatTerminalSummary(nodes: IssueTreeNode[]): string {
+  const counts: Record<string, number> = {};
+  for (const node of nodes) {
+    const status = node.issue.issue.status;
+    counts[status] = (counts[status] || 0) + 1;
+  }
+  const order = ["closed", "failed", "dropped", "rejected"];
+  const parts: string[] = [];
+  for (const status of order) {
+    if (counts[status]) {
+      parts.push(`${counts[status]} ${status}`);
+    }
+  }
+  return parts.join(", ");
+}
+
+interface TerminalToggleOpts {
+  expandedTerminalIds: Set<string>;
+  onToggleTerminal: (id: string) => void;
+}
+
 /**
  * Convert IssueTreeNodes to TreeView-compatible TreeNodes using IssueRow labels.
+ * Terminal-state children are hidden by default behind an expandable summary.
  */
 function issueNodesToTreeNodes(
   nodes: IssueTreeNode[],
+  parentId: string,
   jobsByIssue: Map<string, JobSummaryRecord[]>,
   onJobClick: (issueId: string, jobId: string) => void,
+  terminalOpts: TerminalToggleOpts,
   username: string,
 ): TreeNode[] {
-  return nodes
-    .filter((node) => !node.hardBlocked)
-    .map((node) => ({
-      id: node.id,
+  const visible = nodes.filter((n) => !n.hardBlocked);
+  const activeNodes = visible.filter(
+    (n) => !TERMINAL_STATUSES.has(n.issue.issue.status),
+  );
+  const terminalNodes = visible.filter((n) =>
+    TERMINAL_STATUSES.has(n.issue.issue.status),
+  );
+
+  const result: TreeNode[] = activeNodes.map((node) => ({
+    id: node.id,
+    label: (
+      <IssueRow
+        record={node.issue}
+        blocked={node.blocked}
+        blockedBy={node.blockedBy}
+        jobs={jobsByIssue.get(node.id)}
+        onJobClick={onJobClick}
+      />
+    ),
+    className: node.issue.issue.assignee === username ? styles.assignedToMe : undefined,
+    children:
+      node.children.length > 0
+        ? issueNodesToTreeNodes(
+            node.children,
+            node.id,
+            jobsByIssue,
+            onJobClick,
+            terminalOpts,
+            username,
+          )
+        : undefined,
+  }));
+
+  if (terminalNodes.length > 0) {
+    const terminalExpanded = terminalOpts.expandedTerminalIds.has(parentId);
+    const summaryText = formatTerminalSummary(terminalNodes);
+
+    result.push({
+      id: `${parentId}--terminal`,
       label: (
-        <IssueRow
-          record={node.issue}
-          blocked={node.blocked}
-          blockedBy={node.blockedBy}
-          jobs={jobsByIssue.get(node.id)}
-          onJobClick={onJobClick}
-        />
+        <span
+          className={styles.terminalSummary}
+          onClick={(e) => {
+            e.stopPropagation();
+            terminalOpts.onToggleTerminal(parentId);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              e.stopPropagation();
+              terminalOpts.onToggleTerminal(parentId);
+            }
+          }}
+          role="button"
+          tabIndex={0}
+        >
+          {terminalExpanded ? "\u25BE" : "\u25B8"} {summaryText}
+        </span>
       ),
-      className: node.issue.issue.assignee === username ? styles.assignedToMe : undefined,
-      children:
-        node.children.length > 0
-          ? issueNodesToTreeNodes(node.children, jobsByIssue, onJobClick, username)
-          : undefined,
-    }));
+    });
+
+    if (terminalExpanded) {
+      for (const node of terminalNodes) {
+        result.push({
+          id: node.id,
+          label: (
+            <IssueRow
+              record={node.issue}
+              blocked={node.blocked}
+              blockedBy={node.blockedBy}
+              jobs={jobsByIssue.get(node.id)}
+              onJobClick={onJobClick}
+            />
+          ),
+          className: node.issue.issue.assignee === username ? styles.assignedToMe : undefined,
+          children:
+            node.children.length > 0
+              ? issueNodesToTreeNodes(
+                  node.children,
+                  node.id,
+                  jobsByIssue,
+                  onJobClick,
+                  terminalOpts,
+                  username,
+                )
+              : undefined,
+        });
+      }
+    }
+  }
+
+  return result;
 }
 
 interface RootItemProps {
@@ -120,6 +217,7 @@ interface RootItemProps {
   subtreeCollapsedIds: Set<string>;
   handleSubtreeToggle: (id: string) => void;
   handleJobClick: (issueId: string, jobId: string) => void;
+  terminalOpts: TerminalToggleOpts;
   username: string;
 }
 
@@ -133,11 +231,11 @@ function RootItem({
   subtreeCollapsedIds,
   handleSubtreeToggle,
   handleJobClick,
+  terminalOpts,
   username,
 }: RootItemProps) {
   const summary = useMemo(() => summarizeSubtree(root), [root]);
   const activeChildren = useMemo(() => collectActiveChildren(root, jobsByIssue), [root, jobsByIssue]);
-  const prunedNode = useMemo(() => pruneTree(root, jobsByIssue), [root, jobsByIssue]);
 
   const summaryText = formatSummary(summary);
   const totalChildren = summary.open + summary.inProgress + summary.closed;
@@ -145,10 +243,15 @@ function RootItem({
   // Build child TreeNodes based on expanded/collapsed state
   let childNodes: TreeNode[];
   if (expanded) {
-    // Expanded: show full pruned tree
-    childNodes = prunedNode
-      ? issueNodesToTreeNodes(prunedNode.children, jobsByIssue, handleJobClick, username)
-      : [];
+    // Expanded: show full tree with terminal children hidden behind summaries
+    childNodes = issueNodesToTreeNodes(
+      root.children,
+      root.id,
+      jobsByIssue,
+      handleJobClick,
+      terminalOpts,
+      username,
+    );
   } else {
     // Collapsed: show flat list of active descendants
     childNodes = activeChildren.map((child) => ({
@@ -243,6 +346,7 @@ export function WatchingTree({
   const [expandedRoots, setExpandedRoots] = useState<Set<string>>(new Set());
   // Stable collapse state for subtree nodes — survives SSE-driven re-renders
   const [subtreeCollapsedIds, setSubtreeCollapsedIds] = useState<Set<string>>(new Set());
+  const [expandedTerminalIds, setExpandedTerminalIds] = useState<Set<string>>(new Set());
 
   const handleJobClick = useCallback(
     (issueId: string, jobId: string) => {
@@ -250,6 +354,18 @@ export function WatchingTree({
     },
     [navigate],
   );
+
+  const handleToggleTerminal = useCallback((id: string) => {
+    setExpandedTerminalIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
 
   const handleSubtreeToggle = useCallback((id: string) => {
     setSubtreeCollapsedIds((prev) => {
@@ -278,7 +394,7 @@ export function WatchingTree({
   const watchingRoots = useMemo(() => {
     const tree = buildIssueTree(issues);
     return tree
-      .filter((root) => !root.hardBlocked && root.issue.issue.creator === username && pruneTree(root, jobsByIssue) !== null)
+      .filter((root) => !root.hardBlocked && root.issue.issue.creator === username && treeHasActiveNode(root, jobsByIssue))
       .sort((a, b) => new Date(b.issue.creation_time).getTime() - new Date(a.issue.creation_time).getTime());
   }, [issues, jobsByIssue, username]);
 
@@ -300,6 +416,7 @@ export function WatchingTree({
           subtreeCollapsedIds={subtreeCollapsedIds}
           handleSubtreeToggle={handleSubtreeToggle}
           handleJobClick={handleJobClick}
+          terminalOpts={{ expandedTerminalIds, onToggleTerminal: handleToggleTerminal }}
           username={username}
         />
       ))}
