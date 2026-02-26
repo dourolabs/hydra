@@ -189,6 +189,9 @@ mod ts_export {
             .expect("ListPatchVersionsResponse");
 
         // API v1: repositories
+        crate::repositories::RepoWorkflowConfig::export_all(&cfg).expect("RepoWorkflowConfig");
+        crate::repositories::ReviewRequestConfig::export_all(&cfg).expect("ReviewRequestConfig");
+        crate::repositories::MergeRequestConfig::export_all(&cfg).expect("MergeRequestConfig");
         crate::Repository::export_all(&cfg).expect("Repository");
         crate::RepositoryRecord::export_all(&cfg).expect("RepositoryRecord");
         crate::CreateRepositoryRequest::export_all(&cfg).expect("CreateRepositoryRequest");

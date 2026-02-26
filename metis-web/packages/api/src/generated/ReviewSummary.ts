@@ -3,4 +3,4 @@
 /**
  * Compact review information for patch list views.
  */
-export type ReviewSummary = { count: number, approved: boolean, };
+export type ReviewSummary = { count: number; approved: boolean };

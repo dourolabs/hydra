@@ -4,9 +4,14 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Data payload for entity mutation events.
  */
-export type EntityEventData = { entity_type: string, entity_id: string, version: bigint, timestamp: string, 
-/**
- * Full entity state after the mutation, serialized as a version record
- * (e.g., `IssueVersionRecord`, `JobVersionRecord`, etc.).
- */
-entity?: JsonValue | null, };
+export type EntityEventData = {
+  entity_type: string;
+  entity_id: string;
+  version: bigint;
+  timestamp: string;
+  /**
+   * Full entity state after the mutation, serialized as a version record
+   * (e.g., `IssueVersionRecord`, `JobVersionRecord`, etc.).
+   */
+  entity?: JsonValue | null;
+};

@@ -2,4 +2,4 @@
 import type { IssueDependencyType } from "./IssueDependencyType";
 import type { IssueId } from "./IssueId";
 
-export type IssueDependency = { type: IssueDependencyType, issue_id: IssueId, };
+export type IssueDependency = { type: IssueDependencyType; issue_id: IssueId };
