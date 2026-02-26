@@ -110,6 +110,127 @@ function issueNodesToTreeNodes(
     }));
 }
 
+interface RootItemProps {
+  root: IssueTreeNode;
+  jobsByIssue: Map<string, JobSummaryRecord[]>;
+  selectedId: string | null;
+  onSelect: (issueId: string) => void;
+  expanded: boolean;
+  toggleRoot: (id: string) => void;
+  subtreeCollapsedIds: Set<string>;
+  handleSubtreeToggle: (id: string) => void;
+  handleJobClick: (issueId: string, jobId: string) => void;
+  username: string;
+}
+
+function RootItem({
+  root,
+  jobsByIssue,
+  selectedId,
+  onSelect,
+  expanded,
+  toggleRoot,
+  subtreeCollapsedIds,
+  handleSubtreeToggle,
+  handleJobClick,
+  username,
+}: RootItemProps) {
+  const summary = useMemo(() => summarizeSubtree(root), [root]);
+  const activeChildren = useMemo(() => collectActiveChildren(root, jobsByIssue), [root, jobsByIssue]);
+  const prunedNode = useMemo(() => pruneTree(root, jobsByIssue), [root, jobsByIssue]);
+
+  const summaryText = formatSummary(summary);
+  const totalChildren = summary.open + summary.inProgress + summary.closed;
+
+  // Build child TreeNodes based on expanded/collapsed state
+  let childNodes: TreeNode[];
+  if (expanded) {
+    // Expanded: show full pruned tree
+    childNodes = prunedNode
+      ? issueNodesToTreeNodes(prunedNode.children, jobsByIssue, handleJobClick, username)
+      : [];
+  } else {
+    // Collapsed: show flat list of active descendants
+    childNodes = activeChildren.map((child) => ({
+      id: child.id,
+      label: (
+        <IssueRow
+          record={child.issue}
+          blocked={child.blocked}
+          blockedBy={child.blockedBy}
+          jobs={jobsByIssue.get(child.id)}
+          onJobClick={handleJobClick}
+        />
+      ),
+      className: child.issue.issue.assignee === username ? styles.assignedToMe : undefined,
+    }));
+  }
+
+  // Root node styling
+  const rootClassNames = [styles.node];
+  if (root.id === selectedId) rootClassNames.push(styles.active);
+  if (root.blocked) rootClassNames.push(styles.blocked);
+  if (root.issue.issue.assignee === username) rootClassNames.push(styles.assignedToMe);
+
+  const jobs = jobsByIssue.get(root.id);
+  const jobSummaries = jobs?.map(toJobSummary);
+
+  return (
+    <li className={styles.rootItem}>
+      <button
+        className={rootClassNames.join(" ")}
+        onClick={() => onSelect(root.id)}
+        type="button"
+      >
+        <span className={styles.topRow}>
+          <span
+            className={styles.chevron}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleRoot(root.id);
+            }}
+            role="button"
+            tabIndex={-1}
+          >
+            {totalChildren > 0 ? (expanded ? "\u25BE" : "\u25B8") : " "}
+          </span>
+          <Badge status={issueToBadgeStatus(root.issue.issue.status)} />
+          {jobSummaries && jobSummaries.length > 0 && (
+            <span
+              className={styles.jobIndicator}
+              onClick={(e) => e.stopPropagation()}
+              role="presentation"
+            >
+              <JobStatusIndicator jobs={jobSummaries} onJobClick={(jobId) => handleJobClick(root.id, jobId)} />
+            </span>
+          )}
+          <span className={styles.id}>{root.id}</span>
+        </span>
+        <span className={styles.desc}>
+          {descriptionSnippet(root.issue.issue.description, 50)}
+        </span>
+        {root.blocked && root.blockedBy.length > 0 && (
+          <span className={styles.blockedBy}>blocked by {root.blockedBy.join(", ")}</span>
+        )}
+      </button>
+      {summaryText && (
+        <div className={styles.summary}>{summaryText}</div>
+      )}
+      {childNodes.length > 0 && (
+        <div className={expanded ? styles.children : styles.inProgressSection}>
+          <TreeView
+            nodes={childNodes}
+            onNodeClick={onSelect}
+            collapsedIds={subtreeCollapsedIds}
+            onToggle={handleSubtreeToggle}
+            selectedId={selectedId ?? undefined}
+          />
+        </div>
+      )}
+    </li>
+  );
+}
+
 export function WatchingTree({
   issues,
   jobsByIssue,
@@ -167,102 +288,21 @@ export function WatchingTree({
 
   return (
     <ul className={styles.list}>
-      {watchingRoots.map((root) => {
-        const expanded = expandedRoots.has(root.id);
-        const summary = summarizeSubtree(root);
-        const summaryText = formatSummary(summary);
-        const totalChildren = summary.open + summary.inProgress + summary.closed;
-
-        // Build child TreeNodes based on expanded/collapsed state
-        let childNodes: TreeNode[];
-        if (expanded) {
-          // Expanded: show full pruned tree
-          const prunedNode = pruneTree(root, jobsByIssue);
-          childNodes = prunedNode
-            ? issueNodesToTreeNodes(prunedNode.children, jobsByIssue, handleJobClick, username)
-            : [];
-        } else {
-          // Collapsed: show flat list of active descendants
-          const activeChildren = collectActiveChildren(root, jobsByIssue);
-          childNodes = activeChildren.map((child) => ({
-            id: child.id,
-            label: (
-              <IssueRow
-                record={child.issue}
-                blocked={child.blocked}
-                blockedBy={child.blockedBy}
-                jobs={jobsByIssue.get(child.id)}
-                onJobClick={handleJobClick}
-              />
-            ),
-            className: child.issue.issue.assignee === username ? styles.assignedToMe : undefined,
-          }));
-        }
-
-        // Root node styling
-        const rootClassNames = [styles.node];
-        if (root.id === selectedId) rootClassNames.push(styles.active);
-        if (root.blocked) rootClassNames.push(styles.blocked);
-        if (root.issue.issue.assignee === username) rootClassNames.push(styles.assignedToMe);
-
-        const jobs = jobsByIssue.get(root.id);
-        const jobSummaries = jobs?.map(toJobSummary);
-
-        return (
-          <li key={root.id} className={styles.rootItem}>
-            <button
-              className={rootClassNames.join(" ")}
-              onClick={() => onSelect(root.id)}
-              type="button"
-            >
-              <span className={styles.topRow}>
-                <span
-                  className={styles.chevron}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleRoot(root.id);
-                  }}
-                  role="button"
-                  tabIndex={-1}
-                >
-                  {totalChildren > 0 ? (expanded ? "\u25BE" : "\u25B8") : " "}
-                </span>
-                <Badge status={issueToBadgeStatus(root.issue.issue.status)} />
-                {jobSummaries && jobSummaries.length > 0 && (
-                  <span
-                    className={styles.jobIndicator}
-                    onClick={(e) => e.stopPropagation()}
-                    role="presentation"
-                  >
-                    <JobStatusIndicator jobs={jobSummaries} onJobClick={(jobId) => handleJobClick(root.id, jobId)} />
-                  </span>
-                )}
-                <span className={styles.id}>{root.id}</span>
-              </span>
-              <span className={styles.desc}>
-                {descriptionSnippet(root.issue.issue.description, 50)}
-              </span>
-              {root.blocked && root.blockedBy.length > 0 && (
-                <span className={styles.blockedBy}>blocked by {root.blockedBy.join(", ")}</span>
-              )}
-            </button>
-            {summaryText && (
-              <div className={styles.summary}>{summaryText}</div>
-            )}
-            {childNodes.length > 0 && (
-              <div className={expanded ? styles.children : styles.inProgressSection}>
-                <TreeView
-                  nodes={childNodes}
-                  onNodeClick={onSelect}
-                  collapsedIds={subtreeCollapsedIds}
-                  onToggle={handleSubtreeToggle}
-                  selectedId={selectedId ?? undefined}
-                />
-              </div>
-            )}
-          </li>
-        );
-      })}
+      {watchingRoots.map((root) => (
+        <RootItem
+          key={root.id}
+          root={root}
+          jobsByIssue={jobsByIssue}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          expanded={expandedRoots.has(root.id)}
+          toggleRoot={toggleRoot}
+          subtreeCollapsedIds={subtreeCollapsedIds}
+          handleSubtreeToggle={handleSubtreeToggle}
+          handleJobClick={handleJobClick}
+          username={username}
+        />
+      ))}
     </ul>
   );
 }
