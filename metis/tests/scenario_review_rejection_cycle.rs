@@ -4,9 +4,9 @@
 //! 1. SWE creates patch via worker → patch_workflow creates ReviewRequest + MergeRequest
 //! 2. Reviewer submits non-approving review (changes requested)
 //! 3. step_github_sync() → patch status → ChangesRequested
-//! 4. close_merge_request_issues fails MergeRequest; sync_review_request_issues fails ReviewRequest
+//! 4. close_merge_request_issues fails MergeRequest and ReviewRequest
 //! 5. Patch re-opened (ChangesRequested → Open)
-//! 6. patch_workflow creates new ReviewRequest + MergeRequest
+//! 6. patch_workflow creates new ReviewRequest + MergeRequest (dedup allows it since old ones are Failed)
 //! 7. Reviewer approves → patch merged → all workflow issues terminal
 //! 8. Old (Failed) and new (Closed/Dropped) workflow issues coexist
 
@@ -210,16 +210,14 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         "old MergeRequest should be Failed after ChangesRequested"
     );
 
-    // ── Step 8: Verify old ReviewRequest remains Open ───────────────
-    // The github_pr_poller now only syncs reviews from the patch creator,
-    // so the reviewer's CHANGES_REQUESTED review is not present in the
-    // patch's review list. sync_review_request_issues finds no matching
-    // review for the "reviewer" assignee and leaves the issue unchanged.
+    // ── Step 8: Verify old ReviewRequest → Failed ───────────────────
+    // close_merge_request_issues now fails active ReviewRequest issues
+    // when the patch transitions to ChangesRequested.
     let old_rr_after = client.get_issue(old_rr_id, false).await?;
     assert_eq!(
         old_rr_after.issue.status,
-        IssueStatus::Open,
-        "old ReviewRequest should remain Open (no reviewer review synced from GitHub)"
+        IssueStatus::Failed,
+        "old ReviewRequest should be Failed after ChangesRequested"
     );
 
     // ── Step 9: Re-open the patch via a worker (ChangesRequested → Open) ──
@@ -250,8 +248,8 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     }
 
     // ── Step 10: Verify patch_workflow re-fires → new workflow issues ──
-    // The old ReviewRequest stayed Open (not Failed), so there are now 2 Open
-    // ReviewRequests: the original one and the newly created one.
+    // The old ReviewRequest was Failed in step 8, so dedup allows a new one.
+    // There should be exactly 1 open ReviewRequest (the new one).
     let all_issues = harness.default_user().list_issues().await?;
     let open_rr_children = find_summary_children_by_type_and_status(
         &all_issues.issues,
@@ -268,8 +266,8 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
 
     assert_eq!(
         open_rr_children.len(),
-        2,
-        "should have 2 open ReviewRequests (old stayed open + new created)"
+        1,
+        "should have 1 open ReviewRequest (new one; old was Failed)"
     );
     assert_eq!(
         new_mr_children.len(),
@@ -277,11 +275,7 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         "patch_workflow should create 1 new MergeRequest issue after re-open"
     );
 
-    let new_rr_id = &open_rr_children
-        .iter()
-        .find(|rr| rr.issue_id != *old_rr_id)
-        .expect("should find a new ReviewRequest distinct from old")
-        .issue_id;
+    let new_rr_id = &open_rr_children[0].issue_id;
     let new_mr_id = &new_mr_children[0].issue_id;
 
     assert_ne!(
@@ -373,17 +367,13 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         "should have 2 MergeRequest issues (old Failed + new Closed)"
     );
 
-    // Verify old issue statuses. The old ReviewRequest was not Failed by
-    // sync_review_request_issues (no reviewer review synced from GitHub) and
-    // instead got Closed via the CLI review in step 11.
+    // Verify old issue statuses. The old ReviewRequest was Failed by
+    // close_merge_request_issues when the patch transitioned to ChangesRequested.
     let old_rr_check = client.get_issue(old_rr_id, false).await?;
-    assert!(
-        matches!(
-            old_rr_check.issue.status,
-            IssueStatus::Closed | IssueStatus::Dropped
-        ),
-        "old ReviewRequest should be Closed or Dropped, got {:?}",
-        old_rr_check.issue.status
+    assert_eq!(
+        old_rr_check.issue.status,
+        IssueStatus::Failed,
+        "old ReviewRequest should be Failed"
     );
     let old_mr_check = client.get_issue(old_mr_id, false).await?;
     assert_eq!(old_mr_check.issue.status, IssueStatus::Failed);

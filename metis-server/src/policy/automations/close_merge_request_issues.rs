@@ -12,10 +12,12 @@ const AUTOMATION_NAME: &str = "close_merge_request_issues";
 /// When a patch status changes to Closed/Merged/ChangesRequested, close or fail
 /// all associated MergeRequest issues. Additionally, when a patch reaches a
 /// terminal status (Merged/Closed), drop any open ReviewRequest issues.
+/// When a patch transitions to ChangesRequested, fail active ReviewRequest issues.
 ///
 /// - Merged → close MergeRequest issues (success), drop ReviewRequest issues
 /// - Closed/ChangesRequested → fail MergeRequest issues
 /// - Closed → also drop ReviewRequest issues
+/// - ChangesRequested → fail ReviewRequest issues
 pub struct CloseMergeRequestIssuesAutomation;
 
 impl CloseMergeRequestIssuesAutomation {
@@ -82,6 +84,7 @@ impl Automation for CloseMergeRequestIssuesAutomation {
 
         let mut updated_mr_ids = Vec::new();
         let mut dropped_rr_ids = Vec::new();
+        let mut failed_rr_ids = Vec::new();
 
         for issue_id in issue_ids {
             let issue = store.get_issue(&issue_id, false).await.map_err(|e| {
@@ -144,6 +147,27 @@ impl Automation for CloseMergeRequestIssuesAutomation {
 
                     dropped_rr_ids.push(issue_id);
                 }
+                IssueType::ReviewRequest if now_changes_requested => {
+                    issue.status = IssueStatus::Failed;
+
+                    ctx.app_state
+                        .upsert_issue(
+                            Some(issue_id.clone()),
+                            metis_common::api::v1::issues::UpsertIssueRequest::new(
+                                issue.into(),
+                                None,
+                            ),
+                            actor.clone(),
+                        )
+                        .await
+                        .map_err(|e| {
+                            AutomationError::Other(anyhow::anyhow!(
+                                "failed to fail review-request issue {issue_id}: {e}"
+                            ))
+                        })?;
+
+                    failed_rr_ids.push(issue_id);
+                }
                 _ => continue,
             }
         }
@@ -177,6 +201,19 @@ impl Automation for CloseMergeRequestIssuesAutomation {
                 patch_id = %patch_id,
                 issues = %issues,
                 "dropped review-request issues for patch"
+            );
+        }
+
+        if !failed_rr_ids.is_empty() {
+            let issues = failed_rr_ids
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            tracing::info!(
+                patch_id = %patch_id,
+                issues = %issues,
+                "failed review-request issues for patch"
             );
         }
 
@@ -567,5 +604,79 @@ mod tests {
 
         let rr_failed_result = store.get_issue(&rr_failed_id, false).await.unwrap();
         assert_eq!(rr_failed_result.item.status, IssueStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn fails_review_request_issues_on_changes_requested() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let patch = make_patch(PatchStatus::Open);
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
+
+        let parent = Issue::new(
+            IssueType::Task,
+            "parent".to_string(),
+            Username::from("tester"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            vec![patch_id.clone()],
+        );
+        let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
+
+        let mr_issue = make_merge_request_issue(&patch_id, &parent_id);
+        let (mr_id, _) = store.add_issue(mr_issue, &ActorRef::test()).await.unwrap();
+
+        let rr_open = make_review_request_issue(&patch_id, &parent_id, IssueStatus::Open);
+        let (rr_open_id, _) = store.add_issue(rr_open, &ActorRef::test()).await.unwrap();
+
+        let rr_in_progress =
+            make_review_request_issue(&patch_id, &parent_id, IssueStatus::InProgress);
+        let (rr_in_progress_id, _) = store
+            .add_issue(rr_in_progress, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Simulate patch transitioning Open → ChangesRequested
+        let old_patch = make_patch(PatchStatus::Open);
+        let new_patch = make_patch(PatchStatus::ChangesRequested);
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: Some(old_patch),
+            new: new_patch,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchUpdated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = CloseMergeRequestIssuesAutomation;
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        // MergeRequest should be Failed
+        let mr_result = store.get_issue(&mr_id, false).await.unwrap();
+        assert_eq!(mr_result.item.status, IssueStatus::Failed);
+
+        // Both ReviewRequest issues should be Failed
+        let rr_open_result = store.get_issue(&rr_open_id, false).await.unwrap();
+        assert_eq!(rr_open_result.item.status, IssueStatus::Failed);
+
+        let rr_in_progress_result = store.get_issue(&rr_in_progress_id, false).await.unwrap();
+        assert_eq!(rr_in_progress_result.item.status, IssueStatus::Failed);
     }
 }
