@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Input, Select } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
-import type { IssueFilterValues as IssueFilterState, SortOption } from "./useIssueFilters";
+import type { IssueFilterValues as IssueFilterState } from "./useIssueFilters";
 import styles from "./IssueFilters.module.css";
 
 interface IssueFiltersProps {
@@ -27,13 +27,6 @@ const TYPE_OPTIONS: SelectOption[] = [
   { value: "chore", label: "Chore" },
 ];
 
-const SORT_OPTIONS: SelectOption[] = [
-  { value: "newest", label: "Newest first" },
-  { value: "oldest", label: "Oldest first" },
-  { value: "updated", label: "Recently updated" },
-  { value: "status", label: "By status" },
-];
-
 function buildAssigneeOptions(assignees: string[]): SelectOption[] {
   return [
     { value: "", label: "All assignees" },
@@ -47,8 +40,7 @@ export function IssueFilters({ filters, assignees, onFilterChange }: IssueFilter
   const activeFilterCount =
     (filters.statuses.length > 0 ? 1 : 0) +
     (filters.assignee ? 1 : 0) +
-    (filters.type ? 1 : 0) +
-    (filters.sort !== "newest" ? 1 : 0);
+    (filters.type ? 1 : 0);
 
   return (
     <div className={styles.filters}>
@@ -107,12 +99,6 @@ export function IssueFilters({ filters, assignees, onFilterChange }: IssueFilter
           options={TYPE_OPTIONS}
           value={filters.type}
           onChange={(e) => onFilterChange({ type: e.target.value })}
-        />
-        <Select
-          label="Sort"
-          options={SORT_OPTIONS}
-          value={filters.sort}
-          onChange={(e) => onFilterChange({ sort: e.target.value as SortOption })}
         />
       </div>
     </div>
