@@ -5,6 +5,7 @@ import type {
   RepositoryRecord,
   CreateRepositoryRequest,
   UpdateRepositoryRequest,
+  RepoWorkflowConfig,
 } from "@metis/api";
 import { apiClient } from "../api/client";
 import { useRepositories } from "../hooks/useRepositories";
@@ -54,6 +55,7 @@ export function SettingsPage() {
                 <th>Remote URL</th>
                 <th>Default Branch</th>
                 <th>Default Image</th>
+                <th>Patch Workflow</th>
                 <th />
               </tr>
             </thead>
@@ -102,6 +104,18 @@ interface RepositoryRowProps {
 }
 
 function RepositoryRow({ repo, onEdit, onDelete }: RepositoryRowProps) {
+  const pw = repo.repository.patch_workflow;
+  const reviewerCount = pw?.review_requests?.length ?? 0;
+  const hasMerge = !!pw?.merge_request?.assignee;
+  const parts: string[] = [];
+  if (reviewerCount > 0) {
+    parts.push(`${reviewerCount} reviewer${reviewerCount === 1 ? "" : "s"}`);
+  }
+  if (hasMerge) {
+    parts.push("merge");
+  }
+  const workflowSummary = parts.length > 0 ? parts.join(", ") : null;
+
   return (
     <tr>
       <td>
@@ -124,6 +138,13 @@ function RepositoryRow({ repo, onEdit, onDelete }: RepositoryRowProps) {
           <span className={styles.repoImage}>
             {repo.repository.default_image}
           </span>
+        ) : (
+          <span className={styles.dimText}>—</span>
+        )}
+      </td>
+      <td>
+        {workflowSummary ? (
+          <span className={styles.repoBranch}>{workflowSummary}</span>
         ) : (
           <span className={styles.dimText}>—</span>
         )}
@@ -159,12 +180,16 @@ function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalProps) {
   const [remoteUrl, setRemoteUrl] = useState("");
   const [defaultBranch, setDefaultBranch] = useState("");
   const [defaultImage, setDefaultImage] = useState("");
+  const [reviewerAssignees, setReviewerAssignees] = useState<string[]>([]);
+  const [mergeAssignee, setMergeAssignee] = useState("");
 
   const resetForm = useCallback(() => {
     setName("");
     setRemoteUrl("");
     setDefaultBranch("");
     setDefaultImage("");
+    setReviewerAssignees([]);
+    setMergeAssignee("");
   }, []);
 
   const mutation = useMutation({
@@ -193,13 +218,37 @@ function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalProps) {
 
   const handleSubmit = useCallback(() => {
     if (!isValid) return;
+    const filteredReviewers = reviewerAssignees
+      .map((r) => r.trim())
+      .filter((r) => r.length > 0);
+    const trimmedMergeAssignee = mergeAssignee.trim();
+    const hasPatchWorkflow =
+      filteredReviewers.length > 0 || trimmedMergeAssignee.length > 0;
+    const patch_workflow: RepoWorkflowConfig | undefined = hasPatchWorkflow
+      ? {
+          review_requests: filteredReviewers.map((assignee) => ({ assignee })),
+          merge_request: trimmedMergeAssignee
+            ? { assignee: trimmedMergeAssignee }
+            : null,
+        }
+      : undefined;
     mutation.mutate({
       name: name.trim(),
       remote_url: remoteUrl.trim(),
       default_branch: defaultBranch.trim() || null,
       default_image: defaultImage.trim() || null,
+      patch_workflow,
     });
-  }, [name, remoteUrl, defaultBranch, defaultImage, isValid, mutation]);
+  }, [
+    name,
+    remoteUrl,
+    defaultBranch,
+    defaultImage,
+    reviewerAssignees,
+    mergeAssignee,
+    isValid,
+    mutation,
+  ]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -250,6 +299,12 @@ function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalProps) {
           value={defaultImage}
           onChange={(e) => setDefaultImage(e.target.value)}
         />
+        <PatchWorkflowSection
+          reviewerAssignees={reviewerAssignees}
+          onReviewerAssigneesChange={setReviewerAssignees}
+          mergeAssignee={mergeAssignee}
+          onMergeAssigneeChange={setMergeAssignee}
+        />
         <div className={styles.formActions}>
           <Button
             variant="secondary"
@@ -294,6 +349,13 @@ function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModalProps) 
   const [defaultImage, setDefaultImage] = useState(
     repo.repository.default_image ?? "",
   );
+  const [reviewerAssignees, setReviewerAssignees] = useState<string[]>(
+    repo.repository.patch_workflow?.review_requests?.map((r) => r.assignee) ??
+      [],
+  );
+  const [mergeAssignee, setMergeAssignee] = useState(
+    repo.repository.patch_workflow?.merge_request?.assignee ?? "",
+  );
 
   const mutation = useMutation({
     mutationFn: (params: UpdateRepositoryRequest) =>
@@ -315,12 +377,35 @@ function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModalProps) 
 
   const handleSubmit = useCallback(() => {
     if (!isValid) return;
+    const filteredReviewers = reviewerAssignees
+      .map((r) => r.trim())
+      .filter((r) => r.length > 0);
+    const trimmedMergeAssignee = mergeAssignee.trim();
+    const hasPatchWorkflow =
+      filteredReviewers.length > 0 || trimmedMergeAssignee.length > 0;
+    const patch_workflow: RepoWorkflowConfig | undefined = hasPatchWorkflow
+      ? {
+          review_requests: filteredReviewers.map((assignee) => ({ assignee })),
+          merge_request: trimmedMergeAssignee
+            ? { assignee: trimmedMergeAssignee }
+            : null,
+        }
+      : undefined;
     mutation.mutate({
       remote_url: remoteUrl.trim(),
       default_branch: defaultBranch.trim() || null,
       default_image: defaultImage.trim() || null,
+      patch_workflow,
     });
-  }, [remoteUrl, defaultBranch, defaultImage, isValid, mutation]);
+  }, [
+    remoteUrl,
+    defaultBranch,
+    defaultImage,
+    reviewerAssignees,
+    mergeAssignee,
+    isValid,
+    mutation,
+  ]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -360,6 +445,12 @@ function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModalProps) 
           value={defaultImage}
           onChange={(e) => setDefaultImage(e.target.value)}
         />
+        <PatchWorkflowSection
+          reviewerAssignees={reviewerAssignees}
+          onReviewerAssigneesChange={setReviewerAssignees}
+          mergeAssignee={mergeAssignee}
+          onMergeAssigneeChange={setMergeAssignee}
+        />
         <div className={styles.formActions}>
           <Button
             variant="secondary"
@@ -380,6 +471,81 @@ function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModalProps) 
         </div>
       </div>
     </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Patch Workflow Form Section (shared between Create and Edit modals)
+// ---------------------------------------------------------------------------
+
+interface PatchWorkflowSectionProps {
+  reviewerAssignees: string[];
+  onReviewerAssigneesChange: (assignees: string[]) => void;
+  mergeAssignee: string;
+  onMergeAssigneeChange: (value: string) => void;
+}
+
+function PatchWorkflowSection({
+  reviewerAssignees,
+  onReviewerAssigneesChange,
+  mergeAssignee,
+  onMergeAssigneeChange,
+}: PatchWorkflowSectionProps) {
+  const addReviewer = useCallback(() => {
+    onReviewerAssigneesChange([...reviewerAssignees, ""]);
+  }, [reviewerAssignees, onReviewerAssigneesChange]);
+
+  const removeReviewer = useCallback(
+    (index: number) => {
+      onReviewerAssigneesChange(reviewerAssignees.filter((_, i) => i !== index));
+    },
+    [reviewerAssignees, onReviewerAssigneesChange],
+  );
+
+  const updateReviewer = useCallback(
+    (index: number, value: string) => {
+      const updated = [...reviewerAssignees];
+      updated[index] = value;
+      onReviewerAssigneesChange(updated);
+    },
+    [reviewerAssignees, onReviewerAssigneesChange],
+  );
+
+  return (
+    <div className={styles.workflowSection}>
+      <div className={styles.workflowHeader}>Patch Workflow</div>
+      <p className={styles.formHint}>
+        Use $patch_creator to auto-assign to the patch author
+      </p>
+      <div className={styles.reviewerList}>
+        {reviewerAssignees.map((assignee, index) => (
+          <div key={index} className={styles.reviewerRow}>
+            <Input
+              label={index === 0 ? "Review Assignees" : undefined}
+              placeholder="reviewer username or $patch_creator"
+              value={assignee}
+              onChange={(e) => updateReviewer(index, e.target.value)}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => removeReviewer(index)}
+            >
+              Remove
+            </Button>
+          </div>
+        ))}
+        <Button variant="secondary" size="sm" onClick={addReviewer}>
+          Add Reviewer
+        </Button>
+      </div>
+      <Input
+        label="Merge Request Assignee"
+        placeholder="username or $patch_creator"
+        value={mergeAssignee}
+        onChange={(e) => onMergeAssigneeChange(e.target.value)}
+      />
+    </div>
   );
 }
 
