@@ -1955,10 +1955,10 @@ merge_request:
         ] {
             let rr = Issue::new(
                 IssueType::ReviewRequest,
-                format!("old review request ({:?})", status),
+                format!("old review request ({status:?})"),
                 Username::from("tester"),
                 String::new(),
-                status.clone(),
+                status,
                 Some("reviewer".to_string()),
                 None,
                 Vec::new(),
@@ -1969,7 +1969,7 @@ merge_request:
 
             let mr = Issue::new(
                 IssueType::MergeRequest,
-                format!("old merge request ({:?})", status),
+                format!("old merge request ({status:?})"),
                 Username::from("tester"),
                 String::new(),
                 status,
