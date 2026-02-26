@@ -28,7 +28,6 @@ async fn patch_creator_resolves_to_user_for_direct_patch() -> Result<()> {
             merge_request: Some(MergeRequestConfig {
                 assignee: Some("$patch_creator".to_string()),
             }),
-            repos: Default::default(),
         })
         .build()
         .await?;
@@ -109,7 +108,6 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
             merge_request: Some(MergeRequestConfig {
                 assignee: Some("$patch_creator".to_string()),
             }),
-            repos: Default::default(),
         })
         .build()
         .await?;

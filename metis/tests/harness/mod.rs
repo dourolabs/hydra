@@ -63,8 +63,7 @@ pub use worker::{CommandOutput, WorkerFailure, WorkerResult};
 /// merge-request assignee.
 ///
 /// This covers the common test pattern where a patch creates one
-/// `ReviewRequest` and one `MergeRequest` issue. For configs that use
-/// `$patch_creator` or per-repo overrides, construct the struct directly.
+/// `ReviewRequest` and one `MergeRequest` issue.
 pub fn test_patch_workflow_config(
     reviewer: &str,
     merge_assignee: Option<&str>,
@@ -76,7 +75,6 @@ pub fn test_patch_workflow_config(
         merge_request: Some(MergeRequestConfig {
             assignee: merge_assignee.map(|s| s.to_string()),
         }),
-        repos: Default::default(),
     }
 }
 
