@@ -3774,4 +3774,268 @@ mod tests {
             "changed_unique_patch_title_xyz789"
         );
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_by_sender_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let alice = ActorId::Username(Username::from("alice").into());
+        let bob = ActorId::Username(Username::from("bob").into());
+        let recipient = ActorId::Username(Username::from("recipient").into());
+
+        let msg_alice = Message::new(Some(alice.clone()), recipient.clone(), "from alice".into());
+        let msg_bob = Message::new(Some(bob.clone()), recipient.clone(), "from bob".into());
+
+        let (id_alice, _) = store
+            .add_message(msg_alice, &ActorRef::test())
+            .await
+            .unwrap();
+        let (_id_bob, _) = store.add_message(msg_bob, &ActorRef::test()).await.unwrap();
+
+        let mut query = SearchMessagesQuery::default();
+        query.sender = Some(alice.to_string());
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id_alice);
+        assert_eq!(results[0].1.item.body, "from alice");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_by_recipient_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("sender").into());
+        let bob = ActorId::Username(Username::from("bob").into());
+        let carol = ActorId::Username(Username::from("carol").into());
+
+        let msg_to_bob = Message::new(Some(sender.clone()), bob.clone(), "to bob".into());
+        let msg_to_carol = Message::new(Some(sender.clone()), carol.clone(), "to carol".into());
+
+        let (id_bob, _) = store
+            .add_message(msg_to_bob, &ActorRef::test())
+            .await
+            .unwrap();
+        let (_id_carol, _) = store
+            .add_message(msg_to_carol, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchMessagesQuery::default();
+        query.recipient = Some(bob.to_string());
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id_bob);
+        assert_eq!(results[0].1.item.body, "to bob");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_by_before_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let msg_early = Message::new(Some(sender.clone()), recipient.clone(), "early".into());
+        store
+            .add_message(msg_early, &ActorRef::test())
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mid_time = Utc::now();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let msg_late = Message::new(Some(sender.clone()), recipient.clone(), "late".into());
+        store
+            .add_message(msg_late, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchMessagesQuery::default();
+        query.before = Some(mid_time);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.body, "early");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_by_after_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let msg_early = Message::new(Some(sender.clone()), recipient.clone(), "early".into());
+        store
+            .add_message(msg_early, &ActorRef::test())
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mid_time = Utc::now();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let msg_late = Message::new(Some(sender.clone()), recipient.clone(), "late".into());
+        store
+            .add_message(msg_late, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchMessagesQuery::default();
+        query.after = Some(mid_time);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.body, "late");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_exclude_deleted_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "will be deleted".into(),
+        );
+        let (msg_id, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
+
+        let alive_msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "still alive".into(),
+        );
+        let (alive_id, _) = store
+            .add_message(alive_msg, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Delete the first message by updating with deleted=true
+        let deleted = Message {
+            sender: Some(sender.clone()),
+            recipient: recipient.clone(),
+            body: "will be deleted".into(),
+            deleted: true,
+        };
+        store
+            .update_message(&msg_id, deleted, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Default query should exclude deleted messages
+        let query = SearchMessagesQuery::default();
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, alive_id);
+        assert_eq!(results[0].1.item.body, "still alive");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_include_deleted_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "will be deleted".into(),
+        );
+        let (msg_id, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
+
+        let alive_msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "still alive".into(),
+        );
+        store
+            .add_message(alive_msg, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Delete the first message
+        let deleted = Message {
+            sender: Some(sender.clone()),
+            recipient: recipient.clone(),
+            body: "will be deleted".into(),
+            deleted: true,
+        };
+        store
+            .update_message(&msg_id, deleted, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Query with include_deleted should return both
+        let mut query = SearchMessagesQuery::default();
+        query.include_deleted = Some(true);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_limit_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        for i in 0..5 {
+            let msg = Message::new(
+                Some(sender.clone()),
+                recipient.clone(),
+                format!("message {i}"),
+            );
+            store.add_message(msg, &ActorRef::test()).await.unwrap();
+        }
+
+        let mut query = SearchMessagesQuery::default();
+        query.limit = Some(2);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_search_only_matches_latest_version_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "original_body_abc123".into(),
+        );
+        let (msg_id, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
+
+        // Update the message body
+        let updated = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "changed_body_xyz789".into(),
+        );
+        store
+            .update_message(&msg_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Search should only return the latest version
+        let query = SearchMessagesQuery::default();
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, msg_id);
+        assert_eq!(results[0].1.item.body, "changed_body_xyz789");
+        assert_eq!(results[0].1.version, 2);
+    }
 }
