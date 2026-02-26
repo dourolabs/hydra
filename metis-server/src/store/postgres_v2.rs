@@ -629,9 +629,18 @@ impl PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for repository '{id}'"))
         })?;
 
+        let patch_workflow_json = repo
+            .patch_workflow
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to serialize patch_workflow: {e}"))
+            })?;
+
         let query = format!(
-            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)"
+            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         );
         sqlx::query(&query)
             .bind(id)
@@ -640,6 +649,7 @@ impl PostgresStoreV2 {
             .bind(repo.default_branch.as_deref())
             .bind(repo.default_image.as_deref())
             .bind(repo.deleted)
+            .bind(&patch_workflow_json)
             .bind(actor)
             .execute(&self.pool)
             .await
@@ -648,15 +658,25 @@ impl PostgresStoreV2 {
         Ok(())
     }
 
-    fn row_to_repository(&self, row: &RepositoryRow) -> Repository {
+    fn row_to_repository(&self, row: &RepositoryRow) -> Result<Repository, StoreError> {
+        let patch_workflow = row
+            .patch_workflow
+            .as_ref()
+            .map(|v| {
+                serde_json::from_value(v.clone()).map_err(|e| {
+                    StoreError::Internal(format!("failed to deserialize patch_workflow: {e}"))
+                })
+            })
+            .transpose()?;
+
         let mut repo = Repository::new(
             row.remote_url.clone(),
             row.default_branch.clone(),
             row.default_image.clone(),
-            None,
+            patch_workflow,
         );
         repo.deleted = row.deleted;
-        repo
+        Ok(repo)
     }
 
     // -------------------------------------------------------------------------
@@ -1003,6 +1023,7 @@ struct RepositoryRow {
     default_branch: Option<String>,
     default_image: Option<String>,
     deleted: bool,
+    patch_workflow: Option<Value>,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -1085,7 +1106,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let query = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1107,7 +1128,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 row.id
             ))
         })?;
-        let repo = self.row_to_repository(&row);
+        let repo = self.row_to_repository(&row)?;
         Ok(Versioned::with_optional_actor(
             repo,
             version,
@@ -1123,7 +1144,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         let include_deleted = query.include_deleted.unwrap_or(false);
         let sql = format!(
-            "SELECT DISTINCT ON (id) id, version_number, remote_url, default_branch, default_image, deleted, actor, created_at, updated_at
+            "SELECT DISTINCT ON (id) id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              ORDER BY id, version_number DESC"
         );
@@ -1148,7 +1169,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let name = RepoName::from_str(&row.id).map_err(|e| {
                 StoreError::Internal(format!("invalid repository id stored in database: {e}"))
             })?;
-            let repo = self.row_to_repository(&row);
+            let repo = self.row_to_repository(&row)?;
             results.push((
                 name,
                 Versioned::with_optional_actor(
@@ -2926,7 +2947,10 @@ mod tests {
     };
     use metis_common::{
         PatchId, RepoName, TaskId, VersionNumber, Versioned,
-        repositories::{Repository, SearchRepositoriesQuery},
+        repositories::{
+            MergeRequestConfig, RepoWorkflowConfig, Repository, ReviewRequestConfig,
+            SearchRepositoriesQuery,
+        },
     };
     use std::{collections::HashSet, str::FromStr, sync::Arc};
 
@@ -3024,7 +3048,19 @@ mod tests {
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             Some("image:latest".to_string()),
-            None,
+            Some(RepoWorkflowConfig {
+                review_requests: vec![
+                    ReviewRequestConfig {
+                        assignee: "alice".to_string(),
+                    },
+                    ReviewRequestConfig {
+                        assignee: "bob".to_string(),
+                    },
+                ],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("charlie".to_string()),
+                }),
+            }),
         )
     }
 
