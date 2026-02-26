@@ -9,6 +9,10 @@ use metis_common::{
     api::v1::error::ApiErrorBody,
     api::v1::events::EventsQuery,
     api::v1::login::{LoginRequest, LoginResponse},
+    api::v1::messages::{
+        ListMessagesResponse, SearchMessagesQuery, SendMessageRequest, SendMessageResponse,
+        WaitMessagesQuery,
+    },
     documents::{
         DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
         SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
@@ -38,7 +42,7 @@ use metis_common::{
     },
     users::UserSummary,
     whoami::WhoAmIResponse,
-    DocumentId, IssueId, PatchId, RelativeVersionNumber, RepoName, TaskId,
+    ActorId, DocumentId, IssueId, PatchId, RelativeVersionNumber, RepoName, TaskId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
 use sse::SseEventStream;
@@ -251,6 +255,19 @@ pub trait MetisClientInterface: Send + Sync {
         query: &EventsQuery,
         last_event_id: Option<u64>,
     ) -> Result<SseEventStream>;
+
+    async fn send_message(&self, request: &SendMessageRequest) -> Result<SendMessageResponse>;
+    async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse>;
+    async fn wait_for_message(&self, query: &WaitMessagesQuery) -> Result<ListMessagesResponse>;
+
+    /// Resolve the current actor's ID from the auth context.
+    async fn current_actor_id(&self) -> Result<ActorId> {
+        let whoami = self
+            .whoami()
+            .await
+            .context("failed to fetch current actor")?;
+        ActorId::try_from(whoami.actor).map_err(|e| anyhow!(e))
+    }
 }
 
 impl MetisClientUnauthenticated {
@@ -1476,6 +1493,63 @@ impl MetisClient {
         )))
     }
 
+    /// Call `POST /v1/messages` to send a new message.
+    pub async fn send_message(&self, request: &SendMessageRequest) -> Result<SendMessageResponse> {
+        let url = self.endpoint("/v1/messages")?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit send message request")?
+            .error_for_status_with_body("metis-server returned an error while sending message")
+            .await?;
+
+        response
+            .json::<SendMessageResponse>()
+            .await
+            .context("failed to decode send message response")
+    }
+
+    /// Call `GET /v1/messages` to list messages (authenticated endpoint).
+    pub async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse> {
+        let url = self.endpoint("/v1/messages")?;
+        let response = self
+            .authed(self.http.get(url))
+            .query(query)
+            .send()
+            .await
+            .context("failed to fetch messages list")?
+            .error_for_status_with_body("metis-server returned an error while listing messages")
+            .await?;
+
+        response
+            .json::<ListMessagesResponse>()
+            .await
+            .context("failed to decode list messages response")
+    }
+
+    /// Call `GET /v1/messages/wait` to long-poll for new messages.
+    pub async fn wait_for_message(
+        &self,
+        query: &WaitMessagesQuery,
+    ) -> Result<ListMessagesResponse> {
+        let url = self.endpoint("/v1/messages/wait")?;
+        let response = self
+            .authed(self.http.get(url))
+            .query(query)
+            .send()
+            .await
+            .context("failed to submit wait for message request")?
+            .error_for_status_with_body("metis-server returned an error while waiting for messages")
+            .await?;
+
+        response
+            .json::<ListMessagesResponse>()
+            .await
+            .context("failed to decode wait for message response")
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -1877,6 +1951,18 @@ impl MetisClientInterface for MetisClient {
     ) -> Result<SseEventStream> {
         MetisClient::subscribe_events(self, query, last_event_id).await
     }
+
+    async fn send_message(&self, request: &SendMessageRequest) -> Result<SendMessageResponse> {
+        MetisClient::send_message(self, request).await
+    }
+
+    async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse> {
+        MetisClient::list_messages(self, query).await
+    }
+
+    async fn wait_for_message(&self, query: &WaitMessagesQuery) -> Result<ListMessagesResponse> {
+        MetisClient::wait_for_message(self, query).await
+    }
 }
 
 #[cfg(test)]
@@ -1906,6 +1992,7 @@ mod tests {
                 "https://example.com/repo.git".to_string(),
                 Some("main".to_string()),
                 Some("ghcr.io/example/repo:main".to_string()),
+                None,
             ),
         )];
         let payload = ListRepositoriesResponse::new(repositories);
@@ -1942,6 +2029,7 @@ mod tests {
                 "https://example.com/new-repo.git".to_string(),
                 Some("main".to_string()),
                 Some("ghcr.io/example/new-repo:main".to_string()),
+                None,
             ),
         );
         let response_body = UpsertRepositoryResponse::new(RepositoryRecord::new(
@@ -1980,6 +2068,7 @@ mod tests {
         let repo_name = RepoName::from_str("dourolabs/missing")?;
         let request = UpdateRepositoryRequest::new(Repository::new(
             "https://example.com/updated.git".to_string(),
+            None,
             None,
             None,
         ));

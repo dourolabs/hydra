@@ -1,9 +1,10 @@
 import { useMemo } from "react";
 import styles from "./DiffViewer.module.css";
 
-interface DiffViewerProps {
+export interface DiffViewerProps {
   diff: string;
   maxLines?: number;
+  className?: string;
 }
 
 interface DiffLine {
@@ -38,7 +39,7 @@ function parseDiff(diff: string, maxLines: number): { lines: DiffLine[]; truncat
   return { lines, truncated: false };
 }
 
-export function DiffViewer({ diff, maxLines = 200 }: DiffViewerProps) {
+export function DiffViewer({ diff, maxLines = 200, className }: DiffViewerProps) {
   const { lines, truncated } = useMemo(() => parseDiff(diff, maxLines), [diff, maxLines]);
 
   if (lines.length === 0) {
@@ -46,7 +47,7 @@ export function DiffViewer({ diff, maxLines = 200 }: DiffViewerProps) {
   }
 
   return (
-    <div className={styles.container}>
+    <div className={`${styles.container}${className ? ` ${className}` : ""}`}>
       <pre className={styles.diff}>
         {lines.map((line, i) => (
           <span key={i} className={styles[line.type]}>

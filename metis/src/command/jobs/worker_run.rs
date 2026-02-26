@@ -20,8 +20,8 @@ use crate::build_cache::build_cache_client;
 use crate::command::documents::{push_documents, sync_documents, PushArgs, SyncArgs};
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
 use crate::git::{
-    clone_repo, commit_changes, configure_repo, push_branch, resolve_head_oid, stage_all_changes,
-    workdir_diff,
+    clone_repo, commit_changes, configure_repo, fetch_remote, push_branch, resolve_head_oid,
+    stage_all_changes, workdir_diff,
 };
 use crate::worker_commands::WorkerCommands;
 use crate::{client::MetisClientInterface, command::output::CommandContext};
@@ -82,6 +82,8 @@ pub async fn run(
                 .context("failed to clone repository")?;
             configure_repo(&repo_path, "Metis Worker", "metis-worker@example.com")
                 .context("failed to configure git repository")?;
+            fetch_remote(&repo_path, github_token.as_deref())
+                .context("failed to fetch all remote branches")?;
             resolve_head_oid(&repo_path).context("failed to resolve HEAD commit")?
         }
         _ => bail!("unsupported bundle type for worker context"),

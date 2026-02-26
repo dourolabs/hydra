@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::actors::ActorRef;
@@ -9,42 +8,29 @@ use crate::domain::patches::{Patch, PatchStatus};
 use crate::domain::users::Username;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
+use crate::store::ReadOnlyStore;
+
+// Re-export config types from metis-common for backward compatibility.
+pub use metis_common::repositories::{MergeRequestConfig, RepoWorkflowConfig, ReviewRequestConfig};
 
 const AUTOMATION_NAME: &str = "patch_workflow";
 
-/// Configuration for a single review request entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReviewRequestConfig {
-    pub assignee: String,
-}
-
-/// Configuration for the merge request issue.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MergeRequestConfig {
-    pub assignee: Option<String>,
-}
-
-/// Per-repo workflow configuration override.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct RepoWorkflowConfig {
-    pub review_requests: Vec<ReviewRequestConfig>,
-    pub merge_request: Option<MergeRequestConfig>,
-}
-
 /// Top-level configuration for the patch_workflow automation.
+///
+/// This provides global defaults for review and merge request creation.
+/// Per-repo configuration is managed via the `patch_workflow` field on the
+/// repository record in the Store (database), not via static YAML overrides.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PatchWorkflowConfig {
     pub review_requests: Vec<ReviewRequestConfig>,
     pub merge_request: Option<MergeRequestConfig>,
-    pub repos: HashMap<String, RepoWorkflowConfig>,
 }
 
 /// Resolved workflow config for a specific patch event (after per-repo lookup).
-struct ResolvedWorkflow<'a> {
-    review_requests: &'a [ReviewRequestConfig],
-    merge_request: Option<&'a MergeRequestConfig>,
+struct ResolvedWorkflow {
+    review_requests: Vec<ReviewRequestConfig>,
+    merge_request: Option<MergeRequestConfig>,
 }
 
 pub struct PatchWorkflowAutomation {
@@ -61,25 +47,44 @@ impl PatchWorkflowAutomation {
             PatchWorkflowConfig {
                 review_requests: Vec::new(),
                 merge_request: Some(MergeRequestConfig { assignee: None }),
-                repos: HashMap::new(),
             }
         };
         Ok(Self { config })
     }
 
     /// Resolve the effective workflow config for a given repo name.
-    /// Uses per-repo override if present, otherwise falls back to the top-level config.
-    fn resolve_config(&self, repo_name: &str) -> ResolvedWorkflow<'_> {
-        if let Some(repo_config) = self.config.repos.get(repo_name) {
-            ResolvedWorkflow {
-                review_requests: &repo_config.review_requests,
-                merge_request: repo_config.merge_request.as_ref(),
+    ///
+    /// Fallback chain:
+    /// 1. DB repo config (`patch_workflow` field on the repository record)
+    /// 2. Static global config in YAML (top-level `review_requests` / `merge_request`)
+    async fn resolve_config(
+        &self,
+        repo_name: &metis_common::RepoName,
+        store: &dyn ReadOnlyStore,
+    ) -> ResolvedWorkflow {
+        // 1. Try DB first
+        match store.get_repository(repo_name, false).await {
+            Ok(versioned_repo) => {
+                if let Some(db_config) = versioned_repo.item.patch_workflow {
+                    return ResolvedWorkflow {
+                        review_requests: db_config.review_requests,
+                        merge_request: db_config.merge_request,
+                    };
+                }
             }
-        } else {
-            ResolvedWorkflow {
-                review_requests: &self.config.review_requests,
-                merge_request: self.config.merge_request.as_ref(),
+            Err(e) => {
+                tracing::debug!(
+                    repo = %repo_name,
+                    error = %e,
+                    "could not fetch repository from store; falling back to static config"
+                );
             }
+        }
+
+        // 2. Fall back to static global config in YAML
+        ResolvedWorkflow {
+            review_requests: self.config.review_requests.clone(),
+            merge_request: self.config.merge_request.clone(),
         }
     }
 
@@ -120,37 +125,72 @@ impl Automation for PatchWorkflowAutomation {
     }
 
     async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
-        match ctx.event {
+        let (patch_id, new) = match ctx.event {
             ServerEvent::PatchCreated {
                 patch_id, payload, ..
-            } => self.handle_patch_created(ctx, patch_id, payload).await,
+            } => {
+                let MutationPayload::Patch { new, .. } = payload.as_ref() else {
+                    return Ok(());
+                };
+                (patch_id, new)
+            }
             ServerEvent::PatchUpdated {
                 patch_id, payload, ..
-            } => self.handle_patch_updated(ctx, patch_id, payload).await,
-            _ => Ok(()),
-        }
+            } => {
+                let MutationPayload::Patch { new, .. } = payload.as_ref() else {
+                    return Ok(());
+                };
+                (patch_id, new)
+            }
+            _ => return Ok(()),
+        };
+
+        self.handle_patch_event(ctx, patch_id, new).await
     }
 }
 
 impl PatchWorkflowAutomation {
-    async fn handle_patch_created(
+    /// Shared handler for both PatchCreated and PatchUpdated events.
+    ///
+    /// Creates workflow issues (ReviewRequest and/or MergeRequest) when the patch
+    /// is Open and non-backup, has no non-stale approved review, and no existing
+    /// open/in-progress MergeRequest issue.
+    async fn handle_patch_event(
         &self,
         ctx: &AutomationContext<'_>,
         patch_id: &metis_common::PatchId,
-        payload: &std::sync::Arc<MutationPayload>,
+        patch: &Patch,
     ) -> Result<(), AutomationError> {
-        let MutationPayload::Patch { new, .. } = payload.as_ref() else {
-            return Ok(());
-        };
-
         // Only create issues for non-backup patches with Open status
-        if new.status != PatchStatus::Open || new.is_automatic_backup {
+        if patch.status != PatchStatus::Open || patch.is_automatic_backup {
             return Ok(());
         }
 
         let store = ctx.store;
 
-        // Check if there's already an open/in-progress merge request for this patch
+        // Primary guard: check if there is a non-stale approved review.
+        // If so, the patch can be merged and no new workflow issues are needed.
+        let patch_versions = store.get_patch_versions(patch_id).await.map_err(|e| {
+            AutomationError::Other(anyhow::anyhow!(
+                "failed to get patch versions for {patch_id}: {e}"
+            ))
+        })?;
+        let staleness_cutoff =
+            super::review_helpers::find_last_commit_range_change_timestamp(&patch_versions);
+
+        if super::review_helpers::has_approved_non_dismissed_review(
+            &patch.reviews,
+            staleness_cutoff,
+        ) {
+            tracing::info!(
+                patch_id = %patch_id,
+                "patch has non-stale approved review; skipping workflow issue creation"
+            );
+            return Ok(());
+        }
+
+        // Secondary guard: check if there's already an open/in-progress merge
+        // request for this patch to prevent duplicates.
         let existing_issue_ids = store.get_issues_for_patch(patch_id).await.map_err(|e| {
             AutomationError::Other(anyhow::anyhow!(
                 "failed to get issues for patch {patch_id}: {e}"
@@ -177,63 +217,9 @@ impl PatchWorkflowAutomation {
         }
 
         // Resolve the parent issue for this patch.
-        let parent_issue = self.resolve_parent_issue(ctx, patch_id, new).await?;
+        let parent_issue = self.resolve_parent_issue(ctx, patch_id, patch).await?;
 
-        self.create_workflow_issues(ctx, patch_id, new, parent_issue.as_ref())
-            .await
-    }
-
-    async fn handle_patch_updated(
-        &self,
-        ctx: &AutomationContext<'_>,
-        patch_id: &metis_common::PatchId,
-        payload: &std::sync::Arc<MutationPayload>,
-    ) -> Result<(), AutomationError> {
-        let MutationPayload::Patch {
-            old: Some(old),
-            new,
-            ..
-        } = payload.as_ref()
-        else {
-            return Ok(());
-        };
-
-        // Only trigger when status changes from ChangesRequested to Open
-        if old.status != PatchStatus::ChangesRequested || new.status != PatchStatus::Open {
-            return Ok(());
-        }
-
-        let store = ctx.store;
-
-        // Check if there's already an open/in-progress merge request for this patch
-        let issue_ids = store.get_issues_for_patch(patch_id).await.map_err(|e| {
-            AutomationError::Other(anyhow::anyhow!(
-                "failed to get issues for patch {patch_id}: {e}"
-            ))
-        })?;
-
-        for issue_id in &issue_ids {
-            let issue = store.get_issue(issue_id, false).await.map_err(|e| {
-                AutomationError::Other(anyhow::anyhow!("failed to fetch issue {issue_id}: {e}"))
-            })?;
-            if issue.item.issue_type == IssueType::MergeRequest
-                && matches!(
-                    issue.item.status,
-                    IssueStatus::Open | IssueStatus::InProgress
-                )
-            {
-                tracing::info!(
-                    patch_id = %patch_id,
-                    "merge-request issue already open for patch; skipping"
-                );
-                return Ok(());
-            }
-        }
-
-        // Resolve parent issue from scratch
-        let parent_issue = self.resolve_parent_issue(ctx, patch_id, new).await?;
-
-        self.create_workflow_issues(ctx, patch_id, new, parent_issue.as_ref())
+        self.create_workflow_issues(ctx, patch_id, patch, parent_issue.as_ref())
             .await
     }
 
@@ -245,8 +231,9 @@ impl PatchWorkflowAutomation {
         patch: &Patch,
         parent_issue: Option<&ParentIssueInfo>,
     ) -> Result<(), AutomationError> {
-        let repo_name = patch.service_repo_name.to_string();
-        let workflow = self.resolve_config(&repo_name);
+        let workflow = self
+            .resolve_config(&patch.service_repo_name, ctx.store)
+            .await;
 
         let (creator, job_settings, parent_dependencies) = if let Some(parent) = parent_issue {
             (
@@ -461,12 +448,13 @@ mod tests {
     use super::*;
     use crate::app::event_bus::MutationPayload;
     use crate::domain::actors::ActorRef;
-    use crate::domain::patches::{Patch, PatchStatus};
+    use crate::domain::patches::{CommitRange, GitOid, Patch, PatchStatus, Review};
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::test_utils;
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
     use metis_common::RepoName;
+    use std::str::FromStr;
     use std::sync::Arc;
 
     fn make_patch(status: PatchStatus) -> Patch {
@@ -833,28 +821,17 @@ mod tests {
     #[test]
     fn config_deserializes_from_yaml() {
         let yaml_str = r#"
+review_requests:
+  - assignee: "jayantk"
 merge_request:
   assignee: "$patch_creator"
-repos:
-  "dourolabs/metis":
-    review_requests:
-      - assignee: "jayantk"
-    merge_request:
-      assignee: "swe"
         "#;
         let config: PatchWorkflowConfig = serde_yaml_ng::from_str(yaml_str).unwrap();
-        assert!(config.review_requests.is_empty());
+        assert_eq!(config.review_requests.len(), 1);
+        assert_eq!(config.review_requests[0].assignee, "jayantk");
         assert_eq!(
             config.merge_request.as_ref().unwrap().assignee,
             Some("$patch_creator".to_string())
-        );
-        assert_eq!(config.repos.len(), 1);
-        let repo_config = config.repos.get("dourolabs/metis").unwrap();
-        assert_eq!(repo_config.review_requests.len(), 1);
-        assert_eq!(repo_config.review_requests[0].assignee, "jayantk");
-        assert_eq!(
-            repo_config.merge_request.as_ref().unwrap().assignee,
-            Some("swe".to_string())
         );
     }
 
@@ -864,7 +841,6 @@ repos:
         let config: PatchWorkflowConfig = serde_yaml_ng::from_str(yaml_str).unwrap();
         assert!(config.review_requests.is_empty());
         assert!(config.merge_request.is_none());
-        assert!(config.repos.is_empty());
     }
 
     #[test]
@@ -883,20 +859,10 @@ repos:
         assert!(automation.config.review_requests.is_empty());
     }
 
-    #[test]
-    fn per_repo_config_selected_when_present() {
-        let mut repos = HashMap::new();
-        repos.insert(
-            "test/repo".to_string(),
-            RepoWorkflowConfig {
-                review_requests: vec![ReviewRequestConfig {
-                    assignee: "repo-reviewer".to_string(),
-                }],
-                merge_request: Some(MergeRequestConfig {
-                    assignee: Some("repo-merger".to_string()),
-                }),
-            },
-        );
+    #[tokio::test]
+    async fn falls_back_to_global_config_when_repo_not_in_db() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
 
         let automation = PatchWorkflowAutomation {
             config: PatchWorkflowConfig {
@@ -906,39 +872,149 @@ repos:
                 merge_request: Some(MergeRequestConfig {
                     assignee: Some("global-merger".to_string()),
                 }),
-                repos,
             },
         };
 
-        let resolved = automation.resolve_config("test/repo");
-        assert_eq!(resolved.review_requests.len(), 1);
-        assert_eq!(resolved.review_requests[0].assignee, "repo-reviewer");
-        assert_eq!(
-            resolved.merge_request.unwrap().assignee,
-            Some("repo-merger".to_string())
-        );
-    }
-
-    #[test]
-    fn falls_back_to_global_config_when_repo_not_found() {
-        let automation = PatchWorkflowAutomation {
-            config: PatchWorkflowConfig {
-                review_requests: vec![ReviewRequestConfig {
-                    assignee: "global-reviewer".to_string(),
-                }],
-                merge_request: Some(MergeRequestConfig {
-                    assignee: Some("global-merger".to_string()),
-                }),
-                repos: HashMap::new(),
-            },
-        };
-
-        let resolved = automation.resolve_config("unknown/repo");
+        let repo_name = RepoName::new("unknown", "repo").unwrap();
+        let resolved = automation.resolve_config(&repo_name, store.as_ref()).await;
         assert_eq!(resolved.review_requests.len(), 1);
         assert_eq!(resolved.review_requests[0].assignee, "global-reviewer");
         assert_eq!(
             resolved.merge_request.unwrap().assignee,
             Some("global-merger".to_string())
+        );
+    }
+
+    // ---- Tests for DB-first resolve_config fallback behavior ----
+
+    #[tokio::test]
+    async fn db_config_used_when_present() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        // Add a repository with patch_workflow config in the DB
+        let repo_name = RepoName::new("test", "repo").unwrap();
+        let repo = metis_common::Repository::new(
+            "https://example.com/repo.git".to_string(),
+            None,
+            None,
+            Some(RepoWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "db-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("db-merger".to_string()),
+                }),
+            }),
+        );
+        store
+            .add_repository(repo_name.clone(), repo, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Static config should NOT be used since DB has config
+        let automation = PatchWorkflowAutomation {
+            config: PatchWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "global-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("global-merger".to_string()),
+                }),
+            },
+        };
+
+        let resolved = automation.resolve_config(&repo_name, store.as_ref()).await;
+        assert_eq!(resolved.review_requests.len(), 1);
+        assert_eq!(resolved.review_requests[0].assignee, "db-reviewer");
+        assert_eq!(
+            resolved.merge_request.unwrap().assignee,
+            Some("db-merger".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_global_config_when_db_has_no_patch_workflow() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        // Add a repository WITHOUT patch_workflow config
+        let repo_name = RepoName::new("test", "repo").unwrap();
+        let repo = metis_common::Repository::new(
+            "https://example.com/repo.git".to_string(),
+            None,
+            None,
+            None,
+        );
+        store
+            .add_repository(repo_name.clone(), repo, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Global config should be used as fallback when DB has no patch_workflow
+        let automation = PatchWorkflowAutomation {
+            config: PatchWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "global-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("global-merger".to_string()),
+                }),
+            },
+        };
+
+        let resolved = automation.resolve_config(&repo_name, store.as_ref()).await;
+        assert_eq!(resolved.review_requests.len(), 1);
+        assert_eq!(resolved.review_requests[0].assignee, "global-reviewer");
+        assert_eq!(
+            resolved.merge_request.unwrap().assignee,
+            Some("global-merger".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn db_config_takes_precedence_over_global_config() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        // Add a repository WITH patch_workflow config in DB
+        let repo_name = RepoName::new("test", "repo").unwrap();
+        let repo = metis_common::Repository::new(
+            "https://example.com/repo.git".to_string(),
+            None,
+            None,
+            Some(RepoWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "db-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("db-merger".to_string()),
+                }),
+            }),
+        );
+        store
+            .add_repository(repo_name.clone(), repo, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let automation = PatchWorkflowAutomation {
+            config: PatchWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "global-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("global-merger".to_string()),
+                }),
+            },
+        };
+
+        // DB config should take precedence over global YAML config
+        let resolved = automation.resolve_config(&repo_name, store.as_ref()).await;
+        assert_eq!(resolved.review_requests.len(), 1);
+        assert_eq!(resolved.review_requests[0].assignee, "db-reviewer");
+        assert_eq!(
+            resolved.merge_request.unwrap().assignee,
+            Some("db-merger".to_string())
         );
     }
 
@@ -1182,77 +1258,6 @@ merge_request:
     }
 
     #[tokio::test]
-    async fn per_repo_config_used_for_matching_repo() {
-        let handles = test_utils::test_state_handles();
-        let store = handles.store.clone();
-
-        // Make a patch for "test/repo"
-        let patch = make_patch(PatchStatus::Open);
-        let (patch_id, _) = store
-            .add_patch(patch.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let payload = Arc::new(MutationPayload::Patch {
-            old: None,
-            new: patch,
-            actor: ActorRef::test(),
-        });
-
-        let event = ServerEvent::PatchCreated {
-            seq: 1,
-            patch_id: patch_id.clone(),
-            version: 1,
-            timestamp: Utc::now(),
-            payload,
-        };
-
-        // Configure with per-repo override for "test/repo"
-        let params: serde_yaml_ng::Value = serde_yaml_ng::from_str(
-            r#"
-merge_request:
-  assignee: "global-merger"
-repos:
-  "test/repo":
-    review_requests:
-      - assignee: "repo-reviewer"
-    merge_request:
-      assignee: "repo-merger"
-            "#,
-        )
-        .unwrap();
-
-        let automation = PatchWorkflowAutomation::new(Some(&params)).unwrap();
-        let ctx = AutomationContext {
-            event: &event,
-            app_state: &handles.state,
-            store: store.as_ref(),
-        };
-
-        automation.execute(&ctx).await.unwrap();
-
-        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
-        let mut rr_assignees = Vec::new();
-        let mut mr_assignee = None;
-
-        for issue_id in &issues {
-            let issue = store.get_issue(issue_id, false).await.unwrap();
-            match issue.item.issue_type {
-                IssueType::ReviewRequest => {
-                    rr_assignees.push(issue.item.assignee.clone());
-                }
-                IssueType::MergeRequest => {
-                    mr_assignee = issue.item.assignee.clone();
-                }
-                _ => {}
-            }
-        }
-
-        assert_eq!(rr_assignees, vec![Some("repo-reviewer".to_string())]);
-        assert_eq!(mr_assignee, Some("repo-merger".to_string()));
-    }
-
-    #[tokio::test]
     async fn patch_created_uses_configured_assignee() {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
@@ -1308,6 +1313,414 @@ merge_request:
         assert!(
             found,
             "expected a MergeRequest issue with configured assignee"
+        );
+    }
+
+    // ---- Tests for non-stale review check ----
+
+    fn make_patch_with_reviews_and_commit_range(
+        status: PatchStatus,
+        reviews: Vec<Review>,
+        commit_range: Option<CommitRange>,
+    ) -> Patch {
+        Patch::new(
+            "test patch".to_string(),
+            "desc".to_string(),
+            String::new(),
+            status,
+            false,
+            None,
+            Username::from("test-creator"),
+            reviews,
+            RepoName::new("test", "repo").unwrap(),
+            None,
+            None,
+            commit_range,
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn patch_updated_with_new_commits_no_review_creates_issues() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let range_v1 = Some(CommitRange::new(
+            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+            GitOid::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
+        ));
+        let range_v2 = Some(CommitRange::new(
+            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+            GitOid::from_str("cccccccccccccccccccccccccccccccccccccccc").unwrap(),
+        ));
+
+        // v1: initial patch with first commit range
+        let patch_v1 =
+            make_patch_with_reviews_and_commit_range(PatchStatus::Open, vec![], range_v1.clone());
+        let (patch_id, _) = store.add_patch(patch_v1, &ActorRef::test()).await.unwrap();
+
+        // v2: new commits pushed (commit range changed), no reviews
+        let patch_v2 =
+            make_patch_with_reviews_and_commit_range(PatchStatus::Open, vec![], range_v2);
+        store
+            .update_patch(&patch_id, patch_v2.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let old_patch =
+            make_patch_with_reviews_and_commit_range(PatchStatus::Open, vec![], range_v1);
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: Some(old_patch),
+            new: patch_v2,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchUpdated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = PatchWorkflowAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        let mut open_mr_count = 0;
+        for issue_id in &issues {
+            let issue = store.get_issue(issue_id, false).await.unwrap();
+            if issue.item.issue_type == IssueType::MergeRequest
+                && issue.item.status == IssueStatus::Open
+            {
+                open_mr_count += 1;
+            }
+        }
+        assert_eq!(
+            open_mr_count, 1,
+            "expected workflow issues created when no non-stale review exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_updated_with_new_commits_and_non_stale_review_skips() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let now = Utc::now();
+        let range_v1 = Some(CommitRange::new(
+            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+            GitOid::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
+        ));
+        let range_v2 = Some(CommitRange::new(
+            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+            GitOid::from_str("cccccccccccccccccccccccccccccccccccccccc").unwrap(),
+        ));
+
+        // v1: initial patch
+        let patch_v1 =
+            make_patch_with_reviews_and_commit_range(PatchStatus::Open, vec![], range_v1);
+        let (patch_id, _) = store.add_patch(patch_v1, &ActorRef::test()).await.unwrap();
+
+        // v2: new commits + a fresh approved review (submitted AFTER the commit range change)
+        let fresh_review = Review::new(
+            "LGTM".to_string(),
+            true,
+            "reviewer-a".to_string(),
+            Some(now + Duration::hours(1)),
+        );
+        let patch_v2 = make_patch_with_reviews_and_commit_range(
+            PatchStatus::Open,
+            vec![fresh_review],
+            range_v2.clone(),
+        );
+        store
+            .update_patch(&patch_id, patch_v2.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let old_patch =
+            make_patch_with_reviews_and_commit_range(PatchStatus::Open, vec![], range_v2);
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: Some(old_patch),
+            new: patch_v2,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchUpdated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = PatchWorkflowAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        for issue_id in &issues {
+            let issue = store.get_issue(issue_id, false).await.unwrap();
+            assert_ne!(
+                issue.item.issue_type,
+                IssueType::MergeRequest,
+                "should not create workflow issues when non-stale approved review exists"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn patch_updated_open_to_open_creates_issues_without_review() {
+        // Tests that Open→Open transitions (e.g., new commits pushed) also
+        // trigger workflow issue creation when there is no approved review.
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let patch = make_patch(PatchStatus::Open);
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let old_patch = make_patch(PatchStatus::Open);
+        let new_patch = make_patch(PatchStatus::Open);
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: Some(old_patch),
+            new: new_patch,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchUpdated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = PatchWorkflowAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        let mut open_mr_count = 0;
+        for issue_id in &issues {
+            let issue = store.get_issue(issue_id, false).await.unwrap();
+            if issue.item.issue_type == IssueType::MergeRequest
+                && issue.item.status == IssueStatus::Open
+            {
+                open_mr_count += 1;
+            }
+        }
+        assert_eq!(
+            open_mr_count, 1,
+            "Open→Open transition should create workflow issues when no review exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_updated_with_stale_review_creates_issues() {
+        // Tests that a stale review (submitted before commit range change) does
+        // not prevent workflow issue creation.
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let now = Utc::now();
+        let range_v1 = Some(CommitRange::new(
+            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+            GitOid::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
+        ));
+        let range_v2 = Some(CommitRange::new(
+            GitOid::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+            GitOid::from_str("cccccccccccccccccccccccccccccccccccccccc").unwrap(),
+        ));
+
+        // v1: initial patch
+        let patch_v1 =
+            make_patch_with_reviews_and_commit_range(PatchStatus::Open, vec![], range_v1);
+        let (patch_id, _) = store.add_patch(patch_v1, &ActorRef::test()).await.unwrap();
+
+        // v2: new commits + a stale review (submitted BEFORE the commit range change)
+        let stale_review = Review::new(
+            "LGTM".to_string(),
+            true,
+            "reviewer-a".to_string(),
+            Some(now - Duration::hours(2)),
+        );
+        let patch_v2 = make_patch_with_reviews_and_commit_range(
+            PatchStatus::Open,
+            vec![stale_review],
+            range_v2.clone(),
+        );
+        store
+            .update_patch(&patch_id, patch_v2.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let old_patch =
+            make_patch_with_reviews_and_commit_range(PatchStatus::Open, vec![], range_v2);
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: Some(old_patch),
+            new: patch_v2,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchUpdated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = PatchWorkflowAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        let mut open_mr_count = 0;
+        for issue_id in &issues {
+            let issue = store.get_issue(issue_id, false).await.unwrap();
+            if issue.item.issue_type == IssueType::MergeRequest
+                && issue.item.status == IssueStatus::Open
+            {
+                open_mr_count += 1;
+            }
+        }
+        assert_eq!(
+            open_mr_count, 1,
+            "stale review should not prevent workflow issue creation"
+        );
+    }
+
+    #[tokio::test]
+    async fn combined_handler_works_for_patch_created() {
+        // Verifies the shared handler works correctly when invoked via PatchCreated event.
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let patch = make_patch(PatchStatus::Open);
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: None,
+            new: patch,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchCreated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = PatchWorkflowAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        let mut open_mr_count = 0;
+        for issue_id in &issues {
+            let issue = store.get_issue(issue_id, false).await.unwrap();
+            if issue.item.issue_type == IssueType::MergeRequest
+                && issue.item.status == IssueStatus::Open
+            {
+                open_mr_count += 1;
+            }
+        }
+        assert_eq!(
+            open_mr_count, 1,
+            "PatchCreated should create workflow issues via shared handler"
+        );
+    }
+
+    #[tokio::test]
+    async fn combined_handler_works_for_patch_updated() {
+        // Verifies the shared handler works correctly when invoked via PatchUpdated event.
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let patch = make_patch(PatchStatus::Open);
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let old_patch = make_patch(PatchStatus::ChangesRequested);
+        let new_patch = make_patch(PatchStatus::Open);
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: Some(old_patch),
+            new: new_patch,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchUpdated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = PatchWorkflowAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        let mut open_mr_count = 0;
+        for issue_id in &issues {
+            let issue = store.get_issue(issue_id, false).await.unwrap();
+            if issue.item.issue_type == IssueType::MergeRequest
+                && issue.item.status == IssueStatus::Open
+            {
+                open_mr_count += 1;
+            }
+        }
+        assert_eq!(
+            open_mr_count, 1,
+            "PatchUpdated should create workflow issues via shared handler"
         );
     }
 }

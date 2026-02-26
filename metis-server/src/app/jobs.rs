@@ -257,7 +257,7 @@ impl AppState {
         let memory_request = job_config.memory_request.clone();
 
         let (task_actor, auth_token) = match self
-            .create_actor_for_task(task_id.clone(), actor.clone())
+            .create_actor_for_job(task_id.clone(), actor.clone())
             .await
         {
             Ok(values) => values,

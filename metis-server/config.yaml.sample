@@ -169,23 +169,22 @@ background:
 #   #         - "dropped"
 #   #         - "failed"
 #
-#   ## patch_workflow with per-repo config:
+#   ## patch_workflow with global config:
 #   #   - name: "patch_workflow"
 #   #     params:
+#   #       review_requests:
+#   #         - assignee: "reviewer-username"
 #   #       merge_request:
 #   #         assignee: "$patch_creator"
-#   #       repos:
-#   #         "myorg/myrepo":
-#   #           review_requests:
-#   #             - assignee: "reviewer-username"
-#   #           merge_request:
-#   #             assignee: "swe"
 #   #
 #   # Config keys:
 #   #   review_requests: list of { assignee } — creates ReviewRequest issues for the patch
 #   #   merge_request: { assignee } — creates a MergeRequest issue blocked-on all ReviewRequests
-#   #   repos: per-repo overrides keyed by "owner/repo" name
 #   #   $patch_creator in assignee strings resolves to the patch creator's username
+#   #
+#   # Per-repo overrides are managed via the repository's patch_workflow field in the
+#   # database (API), not in this static config. DB config takes precedence over
+#   # the global config defined here.
 #   #
 #   # Default (no params): creates a single MergeRequest issue with no assignee.
 

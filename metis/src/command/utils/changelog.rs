@@ -263,6 +263,7 @@ pub fn tracked_field_for_path(kind: &ActivityObjectKind, path: &str) -> Option<&
                     "/title" => Some("Title"),
                     "/description" => Some("Description"),
                     "/status" => Some("Status"),
+                    "/diff" => Some("Diff"),
                     "/service_repo_name" => Some("Repo"),
                     "/created_by" => Some("Created By Job"),
                     _ => None,
@@ -271,6 +272,9 @@ pub fn tracked_field_for_path(kind: &ActivityObjectKind, path: &str) -> Option<&
         }
         ActivityObjectKind::Job => match path {
             "/status" => Some("Status"),
+            "/prompt" => Some("Prompt"),
+            "/last_message" => Some("Last Message"),
+            "/error" => Some("Error"),
             _ => None,
         },
         ActivityObjectKind::Document => match path {
@@ -714,7 +718,15 @@ fn write_changelog_entry_pretty(
 }
 
 /// Large fields are printed as "changed" rather than showing the full value.
-const LARGE_FIELDS: &[&str] = &["Description", "Progress", "Body"];
+const LARGE_FIELDS: &[&str] = &[
+    "Description",
+    "Progress",
+    "Body",
+    "Prompt",
+    "Last Message",
+    "Error",
+    "Diff",
+];
 
 fn is_large_field(label: &str) -> bool {
     LARGE_FIELDS.contains(&label)

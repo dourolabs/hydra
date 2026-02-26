@@ -2,6 +2,7 @@ pub mod cascade_issue_status;
 pub mod close_merge_request_issues;
 pub mod kill_tasks_on_failure;
 pub mod patch_workflow;
+mod review_helpers;
 pub mod sync_review_request_issues;
 
 pub use cascade_issue_status::CascadeIssueStatusAutomation;

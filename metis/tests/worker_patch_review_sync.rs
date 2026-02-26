@@ -29,13 +29,14 @@ async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> 
         .create_branch(review_branch, "README.md", "base content\nreview change\n")
         .context("failed to create review branch")?;
 
-    // Reconfigure GitHub mock with a PR that has a CHANGES_REQUESTED review.
+    // Reconfigure GitHub mock with a PR that has a CHANGES_REQUESTED review
+    // from the patch creator. Only reviews from the patch creator are synced.
     let (_github_server, github_app) = GitHubMockBuilder::new()
         .with_pr(
             repo_owner,
             repo_name,
             MockPr::new(pr_number, review_branch, &head_sha).with_review(
-                MockReview::new("reviewer", "CHANGES_REQUESTED", "please update")
+                MockReview::new("default", "CHANGES_REQUESTED", "please update")
                     .with_author_id(1001),
             ),
         )
@@ -93,7 +94,7 @@ async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> 
         .patch
         .reviews
         .iter()
-        .any(|review| review.author == "reviewer" && review.contents == "please update"));
+        .any(|review| review.author == "default" && review.contents == "please update"));
 
     let merge_request_issue = user.get_issue(&merge_request_issue_id).await?;
     assert_eq!(merge_request_issue.issue.status, IssueStatus::Failed);

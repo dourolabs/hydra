@@ -12,6 +12,7 @@ use crate::{
             JobSettings, TodoItem,
         },
         jobs::{BundleSpec, Task},
+        messages::Message,
         patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
         task_status::{Status, TaskError},
         users::{User, Username},
@@ -24,10 +25,11 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use serde_json::Value;
@@ -93,6 +95,7 @@ const TABLE_USERS_V2: &str = "metis.users_v2";
 const TABLE_REPOSITORIES_V2: &str = "metis.repositories_v2";
 const TABLE_ACTORS_V2: &str = "metis.actors_v2";
 const TABLE_DOCUMENTS_V2: &str = "metis.documents_v2";
+const TABLE_MESSAGES_V2: &str = "metis.messages_v2";
 
 /// PostgresStoreV2 uses the v2 tables with proper column definitions.
 #[derive(Clone)]
@@ -650,9 +653,78 @@ impl PostgresStoreV2 {
             row.remote_url.clone(),
             row.default_branch.clone(),
             row.default_image.clone(),
+            None,
         );
         repo.deleted = row.deleted;
         repo
+    }
+
+    // -------------------------------------------------------------------------
+    // Message helpers
+    // -------------------------------------------------------------------------
+
+    async fn insert_message(
+        &self,
+        id: &MessageId,
+        version_number: VersionNumber,
+        message: &Message,
+        actor: Option<&Value>,
+    ) -> Result<(), StoreError> {
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for message '{id}'"))
+        })?;
+
+        let sender_name = message.sender.as_ref().map(|s| s.to_string());
+        let recipient_name = message.recipient.to_string();
+
+        let query = format!(
+            "INSERT INTO {TABLE_MESSAGES_V2} (id, version_number, sender, recipient, body, deleted, is_read, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(version_number)
+            .bind(&sender_name)
+            .bind(&recipient_name)
+            .bind(&message.body)
+            .bind(message.deleted)
+            .bind(message.is_read)
+            .bind(actor)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    fn row_to_message(&self, row: &MessageRow) -> Result<Message, StoreError> {
+        let sender = row
+            .sender
+            .as_deref()
+            .map(|s| {
+                crate::domain::actors::Actor::parse_name(s).map_err(|_| {
+                    StoreError::Internal(format!(
+                        "invalid sender '{}' stored for message '{}'",
+                        s, row.id
+                    ))
+                })
+            })
+            .transpose()?;
+
+        let recipient = crate::domain::actors::Actor::parse_name(&row.recipient).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid recipient '{}' stored for message '{}'",
+                row.recipient, row.id
+            ))
+        })?;
+
+        Ok(Message {
+            sender,
+            recipient,
+            body: row.body.clone(),
+            deleted: row.deleted,
+            is_read: row.is_read,
+        })
     }
 
     // -------------------------------------------------------------------------
@@ -964,6 +1036,23 @@ struct ActorRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct MessageRow {
+    id: String,
+    version_number: i64,
+    sender: Option<String>,
+    recipient: String,
+    body: String,
+    deleted: bool,
+    is_read: bool,
+    actor: Option<Value>,
+    created_at: DateTime<Utc>,
+    #[allow(dead_code)]
+    updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    creation_time: Option<DateTime<Utc>>,
 }
 
 fn map_sqlx_error(err: sqlx::Error) -> StoreError {
@@ -2167,6 +2256,139 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         self.fetch_latest_users(query).await
     }
+
+    // -------------------------------------------------------------------------
+    // Message methods (read-only)
+    // -------------------------------------------------------------------------
+
+    async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
+        let query = format!(
+            "SELECT id, version_number, sender, recipient, body, deleted, is_read, actor, created_at, updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_MESSAGES_V2} WHERE id = $1) AS creation_time
+             FROM {TABLE_MESSAGES_V2}
+             WHERE id = $1
+             ORDER BY version_number DESC
+             LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, MessageRow>(&query)
+            .bind(id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for message '{}'",
+                row.id
+            ))
+        })?;
+        let message = self.row_to_message(&row)?;
+        Ok(Versioned::with_optional_actor(
+            message,
+            version,
+            row.created_at,
+            parse_actor_json(row.actor)?,
+            row.creation_time.unwrap_or(row.created_at),
+        ))
+    }
+
+    async fn list_messages(
+        &self,
+        query: &SearchMessagesQuery,
+    ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
+        let limit = i64::from(query.limit.unwrap_or(50));
+        let include_deleted = query.include_deleted.unwrap_or(false);
+
+        // Build the base subquery that gets the latest version of each message
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, version_number, sender, recipient, body, deleted, is_read, actor, created_at, updated_at, \
+             MIN(created_at) OVER (PARTITION BY id) AS creation_time \
+             FROM {TABLE_MESSAGES_V2} ORDER BY id, version_number DESC"
+        );
+
+        let mut conditions = Vec::new();
+        let mut param_idx = 1u32;
+
+        if !include_deleted {
+            conditions.push("deleted = false".to_string());
+        }
+
+        let sender_val = query.sender.clone();
+        if sender_val.is_some() {
+            conditions.push(format!("sender = ${param_idx}"));
+            param_idx += 1;
+        }
+
+        let recipient_val = query.recipient.clone();
+        if recipient_val.is_some() {
+            conditions.push(format!("recipient = ${param_idx}"));
+            param_idx += 1;
+        }
+
+        let after_val = query.after;
+        if after_val.is_some() {
+            conditions.push(format!("created_at > ${param_idx}"));
+            param_idx += 1;
+        }
+
+        let before_val = query.before;
+        if before_val.is_some() {
+            conditions.push(format!("created_at < ${param_idx}"));
+            param_idx += 1;
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let sql = format!(
+            "SELECT * FROM ({subquery}) AS latest{where_clause} ORDER BY created_at DESC LIMIT ${param_idx}"
+        );
+
+        let mut qb = sqlx::query_as::<_, MessageRow>(&sql);
+        if let Some(ref s) = sender_val {
+            qb = qb.bind(s);
+        }
+        if let Some(ref r) = recipient_val {
+            qb = qb.bind(r);
+        }
+        if let Some(ref a) = after_val {
+            qb = qb.bind(a);
+        }
+        if let Some(ref b) = before_val {
+            qb = qb.bind(b);
+        }
+        qb = qb.bind(limit);
+
+        let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for message '{}'",
+                    row.id
+                ))
+            })?;
+            let message_id = row.id.parse::<MessageId>().map_err(|err| {
+                StoreError::Internal(format!("invalid message id stored in database: {err}"))
+            })?;
+            let message = self.row_to_message(&row)?;
+            let versioned = Versioned::with_optional_actor(
+                message,
+                version,
+                row.created_at,
+                parse_actor_json(row.actor)?,
+                row.creation_time.unwrap_or(row.created_at),
+            );
+            messages.push((message_id, versioned));
+        }
+
+        Ok(messages)
+    }
 }
 
 #[async_trait]
@@ -2627,6 +2849,53 @@ impl Store for PostgresStoreV2 {
         self.update_user(user, actor).await?;
         Ok(())
     }
+
+    // -------------------------------------------------------------------------
+    // Message methods
+    // -------------------------------------------------------------------------
+
+    async fn add_message(
+        &self,
+        message: Message,
+        actor: &ActorRef,
+    ) -> Result<(MessageId, VersionNumber), StoreError> {
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_MESSAGES_V2}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        let count = u64::try_from(count).unwrap_or(0);
+        let id = MessageId::new_for_count(count);
+        let actor_json = actor_to_json(actor);
+        self.insert_message(&id, 1, &message, Some(&actor_json))
+            .await?;
+        Ok((id, 1))
+    }
+
+    async fn update_message(
+        &self,
+        id: &MessageId,
+        message: Message,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.get_message(id).await?;
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_MESSAGES_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("message '{id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for message '{id}'"))
+        })?;
+
+        let actor_json = actor_to_json(actor);
+        self.insert_message(id, next_version, &message, Some(&actor_json))
+            .await?;
+        Ok(next_version)
+    }
 }
 
 #[cfg(test)]
@@ -2746,6 +3015,7 @@ mod tests {
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             Some("image:latest".to_string()),
+            None,
         )
     }
 
@@ -3506,5 +3776,271 @@ mod tests {
             new_results[0].1.item.title,
             "changed_unique_patch_title_xyz789"
         );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_by_sender_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let alice = ActorId::Username(Username::from("alice").into());
+        let bob = ActorId::Username(Username::from("bob").into());
+        let recipient = ActorId::Username(Username::from("recipient").into());
+
+        let msg_alice = Message::new(Some(alice.clone()), recipient.clone(), "from alice".into());
+        let msg_bob = Message::new(Some(bob.clone()), recipient.clone(), "from bob".into());
+
+        let (id_alice, _) = store
+            .add_message(msg_alice, &ActorRef::test())
+            .await
+            .unwrap();
+        let (_id_bob, _) = store.add_message(msg_bob, &ActorRef::test()).await.unwrap();
+
+        let mut query = SearchMessagesQuery::default();
+        query.sender = Some(alice.to_string());
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id_alice);
+        assert_eq!(results[0].1.item.body, "from alice");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_by_recipient_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("sender").into());
+        let bob = ActorId::Username(Username::from("bob").into());
+        let carol = ActorId::Username(Username::from("carol").into());
+
+        let msg_to_bob = Message::new(Some(sender.clone()), bob.clone(), "to bob".into());
+        let msg_to_carol = Message::new(Some(sender.clone()), carol.clone(), "to carol".into());
+
+        let (id_bob, _) = store
+            .add_message(msg_to_bob, &ActorRef::test())
+            .await
+            .unwrap();
+        let (_id_carol, _) = store
+            .add_message(msg_to_carol, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchMessagesQuery::default();
+        query.recipient = Some(bob.to_string());
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id_bob);
+        assert_eq!(results[0].1.item.body, "to bob");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_by_before_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let msg_early = Message::new(Some(sender.clone()), recipient.clone(), "early".into());
+        store
+            .add_message(msg_early, &ActorRef::test())
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mid_time = Utc::now();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let msg_late = Message::new(Some(sender.clone()), recipient.clone(), "late".into());
+        store
+            .add_message(msg_late, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchMessagesQuery::default();
+        query.before = Some(mid_time);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.body, "early");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_by_after_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let msg_early = Message::new(Some(sender.clone()), recipient.clone(), "early".into());
+        store
+            .add_message(msg_early, &ActorRef::test())
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mid_time = Utc::now();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let msg_late = Message::new(Some(sender.clone()), recipient.clone(), "late".into());
+        store
+            .add_message(msg_late, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchMessagesQuery::default();
+        query.after = Some(mid_time);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.body, "late");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_exclude_deleted_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "will be deleted".into(),
+        );
+        let (msg_id, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
+
+        let alive_msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "still alive".into(),
+        );
+        let (alive_id, _) = store
+            .add_message(alive_msg, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Delete the first message by updating with deleted=true
+        let deleted = Message {
+            sender: Some(sender.clone()),
+            recipient: recipient.clone(),
+            body: "will be deleted".into(),
+            deleted: true,
+            is_read: false,
+        };
+        store
+            .update_message(&msg_id, deleted, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Default query should exclude deleted messages
+        let query = SearchMessagesQuery::default();
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, alive_id);
+        assert_eq!(results[0].1.item.body, "still alive");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_include_deleted_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "will be deleted".into(),
+        );
+        let (msg_id, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
+
+        let alive_msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "still alive".into(),
+        );
+        store
+            .add_message(alive_msg, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Delete the first message
+        let deleted = Message {
+            sender: Some(sender.clone()),
+            recipient: recipient.clone(),
+            body: "will be deleted".into(),
+            deleted: true,
+            is_read: false,
+        };
+        store
+            .update_message(&msg_id, deleted, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Query with include_deleted should return both
+        let mut query = SearchMessagesQuery::default();
+        query.include_deleted = Some(true);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_limit_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        for i in 0..5 {
+            let msg = Message::new(
+                Some(sender.clone()),
+                recipient.clone(),
+                format!("message {i}"),
+            );
+            store.add_message(msg, &ActorRef::test()).await.unwrap();
+        }
+
+        let mut query = SearchMessagesQuery::default();
+        query.limit = Some(2);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_search_only_matches_latest_version_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "original_body_abc123".into(),
+        );
+        let (msg_id, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
+
+        // Update the message body
+        let updated = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "changed_body_xyz789".into(),
+        );
+        store
+            .update_message(&msg_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Search should only return the latest version
+        let query = SearchMessagesQuery::default();
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, msg_id);
+        assert_eq!(results[0].1.item.body, "changed_body_xyz789");
+        assert_eq!(results[0].1.version, 2);
     }
 }

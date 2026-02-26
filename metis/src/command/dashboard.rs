@@ -915,13 +915,15 @@ async fn handle_sse_event(
             }
             changed
         }
-        // Patch and document events are not displayed on the dashboard; ignore them.
+        // Patch, document, and message events are not displayed on the dashboard; ignore them.
         SseEventType::PatchCreated
         | SseEventType::PatchUpdated
         | SseEventType::PatchDeleted
         | SseEventType::DocumentCreated
         | SseEventType::DocumentUpdated
-        | SseEventType::DocumentDeleted => false,
+        | SseEventType::DocumentDeleted
+        | SseEventType::MessageCreated
+        | SseEventType::MessageUpdated => false,
     }
 }
 
@@ -4130,7 +4132,12 @@ mod tests {
     fn repo_record(name: &str) -> RepositoryRecord {
         RepositoryRecord::new(
             RepoName::from_str(name).expect("invalid repo name"),
-            Repository::new("git@github.com:example/repo.git".to_string(), None, None),
+            Repository::new(
+                "git@github.com:example/repo.git".to_string(),
+                None,
+                None,
+                None,
+            ),
         )
     }
 

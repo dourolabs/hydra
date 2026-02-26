@@ -1,20 +1,24 @@
 use crate::{
     client::MetisClientInterface,
-    command::output::{
-        render_document_records, render_document_summary_records, CommandContext,
-        ResolvedOutputFormat,
+    command::{
+        output::{
+            render_document_records, render_document_summary_records, CommandContext,
+            ResolvedOutputFormat,
+        },
+        utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
 };
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::{
+    activity_log_for_document_versions,
     constants::{ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ID},
     documents::{
         Document as DocumentPayload, DocumentSummaryRecord, DocumentVersionRecord,
         SearchDocumentsQuery, UpsertDocumentRequest,
     },
     versioning::VersionNumber,
-    DocumentId, RelativeVersionNumber, TaskId,
+    DocumentId, RelativeVersionNumber, TaskId, Versioned,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -53,6 +57,16 @@ pub enum DocumentsCommand {
         /// Document ID (e.g., d-abcdef) or path (e.g., docs/plan.md).
         #[arg(value_name = "ID_OR_PATH")]
         id_or_path: String,
+    },
+    /// Show changelog for a document (most recent first).
+    Changelog {
+        /// Document ID (e.g., d-abcdef) or path (e.g., docs/plan.md).
+        #[arg(value_name = "ID_OR_PATH")]
+        id_or_path: String,
+
+        /// Maximum number of changelog entries to show.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
     },
     /// Sync documents to a local directory.
     Sync(SyncArgs),
@@ -199,6 +213,9 @@ pub async fn run(
                 .with_context(|| format!("failed to delete document '{}'", document.document_id))?;
             println!("Deleted document '{}'", deleted.document_id);
         }
+        DocumentsCommand::Changelog { id_or_path, limit } => {
+            changelog_document(client, &id_or_path, context.output_format, limit).await?;
+        }
         DocumentsCommand::Sync(args) => {
             sync_documents(client, args).await?;
         }
@@ -309,6 +326,52 @@ async fn resolve_document_id(
             Ok(record.document_id)
         }
     }
+}
+
+async fn changelog_document(
+    client: &dyn MetisClientInterface,
+    id_or_path: &str,
+    output_format: ResolvedOutputFormat,
+    limit: usize,
+) -> Result<()> {
+    let document_id = resolve_document_id(client, id_or_path, false).await?;
+    let response = client
+        .list_document_versions(&document_id)
+        .await
+        .with_context(|| format!("failed to fetch versions for document '{document_id}'"))?;
+    let versions: Vec<Versioned<DocumentPayload>> = response
+        .versions
+        .into_iter()
+        .map(|record| {
+            Versioned::new(
+                record.document,
+                record.version,
+                record.timestamp,
+                record.creation_time,
+            )
+        })
+        .collect();
+    let entries = activity_log_for_document_versions(document_id, &versions);
+    let mut summaries = summarize_activity_log(&entries)?;
+    summaries.reverse();
+    summaries.truncate(limit);
+
+    let mut buffer = Vec::new();
+    match output_format {
+        ResolvedOutputFormat::Pretty => {
+            write_changelog_pretty(&summaries, &mut buffer)?;
+        }
+        ResolvedOutputFormat::Jsonl => {
+            for entry in &summaries {
+                serde_json::to_writer(&mut buffer, entry)?;
+                buffer.write_all(b"\n")?;
+            }
+        }
+    }
+    io::stdout().write_all(&buffer)?;
+    io::stdout().flush()?;
+
+    Ok(())
 }
 
 async fn list_documents(

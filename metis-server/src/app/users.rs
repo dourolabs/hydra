@@ -136,15 +136,34 @@ impl AppState {
         Ok((user, actor, auth_token))
     }
 
-    pub(crate) async fn create_actor_for_task(
+    pub(crate) async fn create_actor_for_job(
         &self,
         task_id: TaskId,
         lifecycle_actor: ActorRef,
     ) -> Result<(Actor, String), StoreError> {
         let task = self.get_task(&task_id).await?;
         let creator = task.creator;
-        let (actor, auth_token) = Actor::new_for_task(task_id, creator);
-        self.store.add_actor(actor.clone(), lifecycle_actor).await?;
+        let (actor, auth_token) = if let Some(issue_id) = task.spawned_from {
+            Actor::new_for_issue(issue_id, creator)
+        } else {
+            Actor::new_for_task(task_id, creator)
+        };
+        if let Err(err) = self
+            .store
+            .add_actor(actor.clone(), lifecycle_actor.clone())
+            .await
+        {
+            match err {
+                StoreError::ActorAlreadyExists(_) => {
+                    // Multiple tasks for the same issue share the same ActorId::Issue
+                    // but get separate auth tokens. Update the existing actor entry.
+                    self.store
+                        .update_actor(actor.clone(), lifecycle_actor)
+                        .await?;
+                }
+                other => return Err(other),
+            }
+        }
         Ok((actor, auth_token))
     }
 

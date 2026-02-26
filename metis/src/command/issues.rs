@@ -1,13 +1,13 @@
 use crate::{
     client::MetisClientInterface,
     command::{
-        changelog::{
-            summarize_activity_log, write_activity_log_pretty, write_changelog_pretty,
-            ActivityLogEntrySummary,
-        },
         output::{
             render_issue_records, render_issue_summary_records, CommandContext,
             ResolvedOutputFormat,
+        },
+        utils::changelog::{
+            summarize_activity_log, write_activity_log_pretty, write_changelog_pretty,
+            ActivityLogEntrySummary,
         },
     },
 };
@@ -1432,7 +1432,7 @@ async fn resolve_creator_username(client: &dyn MetisClientInterface) -> Result<U
         .context("failed to resolve authenticated actor")?;
     match response.actor {
         ActorIdentity::User { username } => Ok(username),
-        ActorIdentity::Task { creator, .. } => Ok(creator),
+        ActorIdentity::Task { creator, .. } | ActorIdentity::Issue { creator, .. } => Ok(creator),
         other => bail!("unexpected actor identity: {other:?}"),
     }
 }

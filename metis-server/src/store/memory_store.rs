@@ -11,16 +11,18 @@ use crate::domain::{
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
     },
+    messages::Message,
     patches::Patch,
     users::{User, Username},
 };
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 
@@ -53,6 +55,8 @@ pub struct MemoryStore {
     users: DashMap<Username, Vec<Versioned<User>>>,
     /// Maps actor names to their Actor data
     actors: DashMap<String, Vec<Versioned<Actor>>>,
+    /// Maps message IDs to their versioned Message data
+    messages: DashMap<MessageId, Vec<Versioned<Message>>>,
 }
 
 impl MemoryStore {
@@ -71,6 +75,7 @@ impl MemoryStore {
             documents_by_path: DashMap::new(),
             users: DashMap::new(),
             actors: DashMap::new(),
+            messages: DashMap::new(),
         }
     }
 
@@ -896,6 +901,77 @@ impl ReadOnlyStore for MemoryStore {
         users.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
         Ok(users)
     }
+
+    // ---- Message (read-only) ----
+
+    async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
+        let versions = self
+            .messages
+            .get(id)
+            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
+        Self::latest_versioned(versions.value())
+            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))
+    }
+
+    async fn list_messages(
+        &self,
+        query: &SearchMessagesQuery,
+    ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
+        let limit = query.limit.unwrap_or(50) as usize;
+        let include_deleted = query.include_deleted.unwrap_or(false);
+
+        // Collect all messages with their latest versions
+        let mut all_messages: Vec<(MessageId, Versioned<Message>)> = Vec::new();
+        for entry in self.messages.iter() {
+            let msg_id = entry.key().clone();
+            let versions = entry.value();
+            if let Some(latest) = Self::latest_versioned(versions) {
+                let msg = &latest.item;
+
+                // Filter by deleted
+                if msg.deleted && !include_deleted {
+                    continue;
+                }
+
+                // Filter by sender
+                if let Some(ref sender_filter) = query.sender {
+                    match &msg.sender {
+                        Some(sender) if sender.to_string() == *sender_filter => {}
+                        _ => continue,
+                    }
+                }
+
+                // Filter by recipient
+                if let Some(ref recipient_filter) = query.recipient {
+                    if msg.recipient.to_string() != *recipient_filter {
+                        continue;
+                    }
+                }
+
+                // Filter by after timestamp
+                if let Some(ref after_ts) = query.after {
+                    if latest.timestamp <= *after_ts {
+                        continue;
+                    }
+                }
+
+                // Filter by before timestamp
+                if let Some(ref before_ts) = query.before {
+                    if latest.timestamp >= *before_ts {
+                        continue;
+                    }
+                }
+
+                all_messages.push((msg_id, latest));
+            }
+        }
+
+        // Sort by timestamp descending (newest first)
+        all_messages.sort_by(|a, b| b.1.timestamp.cmp(&a.1.timestamp));
+        all_messages.truncate(limit);
+
+        Ok(all_messages)
+    }
 }
 
 #[async_trait]
@@ -1291,6 +1367,47 @@ impl Store for MemoryStore {
         self.update_user(user, actor).await?;
         Ok(())
     }
+
+    // ---- Message mutations ----
+
+    async fn add_message(
+        &self,
+        message: Message,
+        actor: &ActorRef,
+    ) -> Result<(MessageId, VersionNumber), StoreError> {
+        let count = self.messages.len() as u64;
+        let mut len = metis_common::ids::compute_random_len(count);
+        let id = loop {
+            let candidate =
+                MessageId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
+            if !self.messages.contains_key(&candidate) {
+                break candidate;
+            }
+            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
+        };
+
+        self.messages.insert(
+            id.clone(),
+            vec![Self::versioned_now_with_actor(message, 1, actor)],
+        );
+
+        Ok((id, 1))
+    }
+
+    async fn update_message(
+        &self,
+        id: &MessageId,
+        message: Message,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let mut versions = self
+            .messages
+            .get_mut(id)
+            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
+        let next_version = Self::next_version(&versions);
+        versions.push(Self::versioned_now_with_actor(message, next_version, actor));
+        Ok(next_version)
+    }
 }
 
 /// Helper function to check if an issue matches the provided filter criteria.
@@ -1372,6 +1489,7 @@ mod tests {
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             Some("image:latest".to_string()),
+            None,
         )
     }
 

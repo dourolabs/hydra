@@ -5,6 +5,7 @@ pub mod event_bus;
 mod issues;
 mod jobs;
 mod merge_queue;
+mod messages;
 mod patches;
 mod repositories;
 mod resolved_task;
@@ -29,6 +30,7 @@ pub use event_bus::{EventBus, ServerEvent, StoreWithEvents};
 pub use issues::{UpdateTodoListError, UpsertIssueError};
 pub use jobs::{CreateJobError, SetJobStatusError};
 pub(crate) use jobs::{WORKER_NAME_CLEANUP_ORPHANED_TASKS, WORKER_NAME_TASK_LIFECYCLE};
+pub use messages::SendMessageError;
 pub use metis_common::repositories::{Repository, RepositoryRecord};
 pub use patches::UpsertPatchError;
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
@@ -350,8 +352,12 @@ mod tests {
         let expected_head = commit_file(&remote_repo, "README.md", "hello", "init")?;
 
         let repo_name = RepoName::from_str("dourolabs/metis")?;
-        let repository =
-            Repository::new(remote_dir.path().to_str().unwrap().to_string(), None, None);
+        let repository = Repository::new(
+            remote_dir.path().to_str().unwrap().to_string(),
+            None,
+            None,
+            None,
+        );
 
         let (repo, _workdir) = connect_repository(&repo_name, &repository)?;
 

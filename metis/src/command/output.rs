@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::ValueEnum;
 use metis_common::{
     agents::AgentRecord,
+    api::v1::messages::VersionedMessage,
     documents::{DocumentSummaryRecord, DocumentVersionRecord},
     issues::{Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord},
     jobs::{JobSummary, JobSummaryRecord, JobVersionRecord, Task},
@@ -176,6 +177,17 @@ pub fn render_document_summary_records(
     match format {
         ResolvedOutputFormat::Jsonl => render_document_summary_records_jsonl(documents, writer),
         ResolvedOutputFormat::Pretty => render_document_summary_records_pretty(documents, writer),
+    }
+}
+
+pub fn render_versioned_messages(
+    format: ResolvedOutputFormat,
+    messages: &[VersionedMessage],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => render_versioned_messages_jsonl(messages, writer),
+        ResolvedOutputFormat::Pretty => render_versioned_messages_pretty(messages, writer),
     }
 }
 
@@ -631,6 +643,23 @@ fn write_repository_details(repository: &RepositoryRecord, writer: &mut impl Wri
         "  default_image: {}",
         config.default_image.as_deref().unwrap_or("<none>")
     )?;
+    if let Some(ref pw) = config.patch_workflow {
+        if !pw.review_requests.is_empty() {
+            let reviewers: Vec<&str> = pw
+                .review_requests
+                .iter()
+                .map(|r| r.assignee.as_str())
+                .collect();
+            writeln!(writer, "  reviewers: {}", reviewers.join(", "))?;
+        }
+        if let Some(ref mr) = pw.merge_request {
+            writeln!(
+                writer,
+                "  merger: {}",
+                mr.assignee.as_deref().unwrap_or("<none>")
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -738,6 +767,44 @@ fn render_document_records_pretty(
         }
 
         if index + 1 < documents.len() {
+            writeln!(writer)?;
+        }
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn render_versioned_messages_jsonl(
+    messages: &[VersionedMessage],
+    writer: &mut impl Write,
+) -> Result<()> {
+    for message in messages {
+        serde_json::to_writer(&mut *writer, message)?;
+        writer.write_all(b"\n")?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn render_versioned_messages_pretty(
+    messages: &[VersionedMessage],
+    writer: &mut impl Write,
+) -> Result<()> {
+    if messages.is_empty() {
+        writeln!(writer, "No messages found.")?;
+        writer.flush()?;
+        return Ok(());
+    }
+
+    for (index, msg) in messages.iter().enumerate() {
+        writeln!(writer, "Message {} (v{})", msg.message_id, msg.version)?;
+        if let Some(ref sender) = msg.message.sender {
+            writeln!(writer, "  sender: {sender}")?;
+        }
+        writeln!(writer, "  recipient: {}", msg.message.recipient)?;
+        writeln!(writer, "  timestamp: {}", msg.timestamp)?;
+        writeln!(writer, "  body: {}", msg.message.body)?;
+        if index + 1 < messages.len() {
             writeln!(writer)?;
         }
     }

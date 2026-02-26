@@ -63,8 +63,7 @@ pub use worker::{CommandOutput, WorkerFailure, WorkerResult};
 /// merge-request assignee.
 ///
 /// This covers the common test pattern where a patch creates one
-/// `ReviewRequest` and one `MergeRequest` issue. For configs that use
-/// `$patch_creator` or per-repo overrides, construct the struct directly.
+/// `ReviewRequest` and one `MergeRequest` issue.
 pub fn test_patch_workflow_config(
     reviewer: &str,
     merge_assignee: Option<&str>,
@@ -76,7 +75,6 @@ pub fn test_patch_workflow_config(
         merge_request: Some(MergeRequestConfig {
             assignee: merge_assignee.map(|s| s.to_string()),
         }),
-        repos: Default::default(),
     }
 }
 
@@ -551,8 +549,12 @@ impl TestHarnessBuilder {
                 .with_context(|| format!("failed to create git remote for '{repo_name_str}'"))?;
             let repo_name = RepoName::from_str(repo_name_str)
                 .with_context(|| format!("invalid repo name: '{repo_name_str}'"))?;
-            let repository =
-                Repository::new(git_remote.url().to_string(), Some("main".to_string()), None);
+            let repository = Repository::new(
+                git_remote.url().to_string(),
+                Some("main".to_string()),
+                None,
+                None,
+            );
             store
                 .add_repository(repo_name.clone(), repository, &ActorRef::test())
                 .await

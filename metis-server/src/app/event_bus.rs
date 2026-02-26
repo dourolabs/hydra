@@ -1,7 +1,8 @@
 use crate::domain::{
-    actors::{Actor, ActorRef},
+    actors::{Actor, ActorId, ActorRef},
     documents::Document,
     issues::{Issue, IssueGraphFilter},
+    messages::Message,
     patches::Patch,
     users::{User, Username},
 };
@@ -11,10 +12,11 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -49,6 +51,11 @@ pub enum MutationPayload {
         new: Document,
         actor: ActorRef,
     },
+    Message {
+        old: Option<Message>,
+        new: Message,
+        actor: ActorRef,
+    },
 }
 
 impl MutationPayload {
@@ -58,7 +65,8 @@ impl MutationPayload {
             MutationPayload::Issue { actor, .. }
             | MutationPayload::Patch { actor, .. }
             | MutationPayload::Job { actor, .. }
-            | MutationPayload::Document { actor, .. } => actor,
+            | MutationPayload::Document { actor, .. }
+            | MutationPayload::Message { actor, .. } => actor,
         }
     }
 }
@@ -78,6 +86,8 @@ pub enum EventType {
     DocumentCreated,
     DocumentUpdated,
     DocumentDeleted,
+    MessageCreated,
+    MessageUpdated,
 }
 
 /// Events emitted when server-side entities are mutated.
@@ -167,6 +177,24 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
+    MessageCreated {
+        seq: u64,
+        message_id: MessageId,
+        recipient: ActorId,
+        sender: Option<ActorId>,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
+    MessageUpdated {
+        seq: u64,
+        message_id: MessageId,
+        recipient: ActorId,
+        sender: Option<ActorId>,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
 }
 
 impl ServerEvent {
@@ -183,7 +211,9 @@ impl ServerEvent {
             | ServerEvent::JobUpdated { seq, .. }
             | ServerEvent::DocumentCreated { seq, .. }
             | ServerEvent::DocumentUpdated { seq, .. }
-            | ServerEvent::DocumentDeleted { seq, .. } => *seq,
+            | ServerEvent::DocumentDeleted { seq, .. }
+            | ServerEvent::MessageCreated { seq, .. }
+            | ServerEvent::MessageUpdated { seq, .. } => *seq,
         }
     }
 
@@ -200,7 +230,9 @@ impl ServerEvent {
             | ServerEvent::JobUpdated { payload, .. }
             | ServerEvent::DocumentCreated { payload, .. }
             | ServerEvent::DocumentUpdated { payload, .. }
-            | ServerEvent::DocumentDeleted { payload, .. } => payload,
+            | ServerEvent::DocumentDeleted { payload, .. }
+            | ServerEvent::MessageCreated { payload, .. }
+            | ServerEvent::MessageUpdated { payload, .. } => payload,
         }
     }
 
@@ -218,6 +250,8 @@ impl ServerEvent {
             ServerEvent::DocumentCreated { .. } => EventType::DocumentCreated,
             ServerEvent::DocumentUpdated { .. } => EventType::DocumentUpdated,
             ServerEvent::DocumentDeleted { .. } => EventType::DocumentDeleted,
+            ServerEvent::MessageCreated { .. } => EventType::MessageCreated,
+            ServerEvent::MessageUpdated { .. } => EventType::MessageUpdated,
         }
     }
 }
@@ -410,6 +444,44 @@ impl EventBus {
         self.send(ServerEvent::DocumentDeleted {
             seq: self.next_seq(),
             document_id,
+            version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_message_created(
+        &self,
+        message_id: MessageId,
+        recipient: ActorId,
+        sender: Option<ActorId>,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::MessageCreated {
+            seq: self.next_seq(),
+            message_id,
+            recipient,
+            sender,
+            version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_message_updated(
+        &self,
+        message_id: MessageId,
+        recipient: ActorId,
+        sender: Option<ActorId>,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::MessageUpdated {
+            seq: self.next_seq(),
+            message_id,
+            recipient,
+            sender,
             version,
             timestamp: Utc::now(),
             payload,
@@ -747,6 +819,53 @@ impl StoreWithEvents {
     ) -> Result<(), StoreError> {
         self.inner.delete_user(username, &actor).await
     }
+
+    // ---- Message mutations (inherent, with actor) ----
+
+    pub async fn add_message_with_actor(
+        &self,
+        message: Message,
+        actor: ActorRef,
+    ) -> Result<(MessageId, VersionNumber), StoreError> {
+        let new_message = message.clone();
+        let recipient = message.recipient.clone();
+        let sender = message.sender.clone();
+        let (message_id, version) = self.inner.add_message(message, &actor).await?;
+        let payload = Arc::new(MutationPayload::Message {
+            old: None,
+            new: new_message,
+            actor,
+        });
+        self.event_bus.emit_message_created(
+            message_id.clone(),
+            recipient,
+            sender,
+            version,
+            payload,
+        );
+        Ok((message_id, version))
+    }
+
+    pub async fn update_message_with_actor(
+        &self,
+        id: &MessageId,
+        message: Message,
+        actor: ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let old_message = self.inner.get_message(id).await.ok().map(|v| v.item);
+        let new_message = message.clone();
+        let recipient = message.recipient.clone();
+        let sender = message.sender.clone();
+        let version = self.inner.update_message(id, message, &actor).await?;
+        let payload = Arc::new(MutationPayload::Message {
+            old: old_message,
+            new: new_message,
+            actor,
+        });
+        self.event_bus
+            .emit_message_updated(id.clone(), recipient, sender, version, payload);
+        Ok(version)
+    }
 }
 
 #[async_trait]
@@ -941,6 +1060,19 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         self.inner.list_users(query).await
+    }
+
+    // ---- Message (read-only) ----
+
+    async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
+        self.inner.get_message(id).await
+    }
+
+    async fn list_messages(
+        &self,
+        query: &SearchMessagesQuery,
+    ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
+        self.inner.list_messages(query).await
     }
 }
 
@@ -1485,6 +1617,123 @@ mod tests {
                 );
             }
             other => panic!("expected IssueCreated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn store_with_events_emits_on_add_message() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+        let mut rx = bus.subscribe();
+
+        let recipient = crate::domain::actors::ActorId::Issue(
+            "i-abcdef".parse::<metis_common::IssueId>().unwrap(),
+        );
+        let sender = crate::domain::actors::ActorId::Username(
+            crate::domain::users::Username::from("alice").into(),
+        );
+        let message = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "hello world".to_string(),
+        );
+
+        let (message_id, version) = store
+            .add_message_with_actor(message, ActorRef::test())
+            .await
+            .unwrap();
+
+        assert_eq!(version, 1);
+
+        let event = rx.recv().await.expect("should receive MessageCreated");
+        match &event {
+            ServerEvent::MessageCreated {
+                message_id: id,
+                recipient: r,
+                sender: s,
+                version: v,
+                payload,
+                ..
+            } => {
+                assert_eq!(*id, message_id);
+                assert_eq!(*r, recipient);
+                assert_eq!(*s, Some(sender));
+                assert_eq!(*v, 1);
+                match payload.as_ref() {
+                    MutationPayload::Message { old, new, .. } => {
+                        assert!(old.is_none(), "create event should have no old state");
+                        assert_eq!(new.body, "hello world");
+                    }
+                    other => panic!("expected Message payload, got {other:?}"),
+                }
+            }
+            other => panic!("expected MessageCreated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn store_with_events_emits_on_update_message() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+        let mut rx = bus.subscribe();
+
+        let recipient = crate::domain::actors::ActorId::Issue(
+            "i-abcdef".parse::<metis_common::IssueId>().unwrap(),
+        );
+        let sender = crate::domain::actors::ActorId::Username(
+            crate::domain::users::Username::from("alice").into(),
+        );
+        let message = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "original".to_string(),
+        );
+
+        let (message_id, _) = store
+            .add_message_with_actor(message, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap(); // consume MessageCreated
+
+        let updated_message = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "updated".to_string(),
+        );
+
+        let version = store
+            .update_message_with_actor(&message_id, updated_message, ActorRef::test())
+            .await
+            .unwrap();
+
+        assert_eq!(version, 2);
+
+        let event = rx.recv().await.expect("should receive MessageUpdated");
+        match &event {
+            ServerEvent::MessageUpdated {
+                message_id: id,
+                recipient: r,
+                sender: s,
+                version: v,
+                payload,
+                ..
+            } => {
+                assert_eq!(*id, message_id);
+                assert_eq!(*r, recipient);
+                assert_eq!(*s, Some(sender));
+                assert_eq!(*v, 2);
+                match payload.as_ref() {
+                    MutationPayload::Message { old, new, .. } => {
+                        let old = old.as_ref().expect("update event should carry old state");
+                        assert_eq!(old.body, "original");
+                        assert_eq!(new.body, "updated");
+                    }
+                    other => panic!("expected Message payload, got {other:?}"),
+                }
+            }
+            other => panic!("expected MessageUpdated, got {other:?}"),
         }
     }
 }

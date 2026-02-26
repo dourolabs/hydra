@@ -4,6 +4,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::{Args, Subcommand};
 use metis_common::{
+    activity_log_for_patch_versions,
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     issues::{IssueId, UpsertIssueRequest},
     jobs::BundleSpec,
@@ -15,7 +16,7 @@ use metis_common::{
     review_utils::{find_last_commit_range_change_timestamp, has_approved_non_dismissed_review},
     users::Username,
     whoami::ActorIdentity,
-    PatchId, RelativeVersionNumber, RepoName, TaskId,
+    PatchId, RelativeVersionNumber, RepoName, TaskId, Versioned,
 };
 use serde::Serialize;
 
@@ -29,8 +30,12 @@ use crate::git::{
 };
 use crate::{
     client::MetisClientInterface,
-    command::output::{
-        render_patch_records, render_patch_summary_records, CommandContext, ResolvedOutputFormat,
+    command::{
+        output::{
+            render_patch_records, render_patch_summary_records, CommandContext,
+            ResolvedOutputFormat,
+        },
+        utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
 };
 #[derive(Subcommand, Debug)]
@@ -176,6 +181,16 @@ pub enum PatchesCommand {
         #[command(subcommand)]
         command: PatchAssetsCommand,
     },
+    /// Show changelog for a patch (most recent first).
+    Changelog {
+        /// Patch ID to show changelog for.
+        #[arg(value_name = "PATCH_ID")]
+        id: PatchId,
+
+        /// Maximum number of changelog entries to show.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Delete a patch.
     Delete {
         /// Patch ID to delete.
@@ -263,6 +278,9 @@ pub async fn run(
         PatchesCommand::Merge { patch_id, base } => merge_patch(client, patch_id, base).await,
         PatchesCommand::Assets { command } => {
             patch_assets(client, command, context.output_format).await
+        }
+        PatchesCommand::Changelog { id, limit } => {
+            changelog_patch(client, id, context.output_format, limit).await
         }
         PatchesCommand::Delete { id } => {
             let deleted = client
@@ -693,13 +711,52 @@ async fn merge_patch(
         );
     }
 
-    // 3. Resolve the branch name from the patch.
+    // 3. If the patch is linked to a GitHub PR, merge via the GitHub API.
+    if let Some(github_pr) = &patch.github {
+        let github_token = client
+            .get_github_token()
+            .await
+            .context("GitHub token required to merge via GitHub API")?;
+        let octocrab_client = metis_common::github::build_octocrab_client(&github_token)?;
+
+        let merge_result = octocrab_client
+            .pulls(&github_pr.owner, &github_pr.repo)
+            .merge(github_pr.number)
+            .method(octocrab::params::pulls::MergeMethod::Squash)
+            .title(format!("{} ({})", patch.title, patch_id))
+            .message(patch.description.clone())
+            .send()
+            .await;
+
+        match merge_result {
+            Ok(_) => {
+                let mut merged_patch = patch.clone();
+                merged_patch.status = PatchStatus::Merged;
+                client
+                    .update_patch(&patch_id, &UpsertPatchRequest::new(merged_patch))
+                    .await
+                    .with_context(|| {
+                        format!("failed to update patch '{patch_id}' status to Merged")
+                    })?;
+                println!("Patch '{patch_id}' merged successfully via GitHub API.");
+                return Ok(());
+            }
+            Err(e) => {
+                bail!(
+                    "Error: GitHub API merge failed for patch {patch_id} (PR #{}).\n\n{e}",
+                    github_pr.number
+                );
+            }
+        }
+    }
+
+    // 4. Resolve the branch name from the patch.
     let branch_name = patch
         .branch_name
         .as_deref()
         .ok_or_else(|| anyhow!("patch '{patch_id}' does not have a branch name set"))?;
 
-    // 4. Resolve the base branch.
+    // 5. Resolve the base branch.
     let base_branch = match &base_override {
         Some(b) => b.clone(),
         None => {
@@ -724,7 +781,7 @@ async fn merge_patch(
         }
     };
 
-    // 5. Ensure we are in a git repo and check working tree state.
+    // 6. Ensure we are in a git repo and check working tree state.
     let repo_root = git_repository_root()?;
 
     if git_has_uncommitted_changes(&repo_root)? {
@@ -738,7 +795,7 @@ async fn merge_patch(
     let github_token = client.get_github_token().await.ok();
     git_fetch_remote(&repo_root, github_token.as_deref())?;
 
-    // 6. Squash merge and push with retry loop to handle concurrent pushes.
+    // 7. Squash merge and push with retry loop to handle concurrent pushes.
     //
     // The squash merge creates a single commit containing all patch changes
     // on a temporary local branch. This branch is then pushed to
@@ -825,7 +882,7 @@ async fn merge_patch(
         eprintln!("Warning: failed to clean up temporary branch '{merge_branch}': {err}");
     }
 
-    // 8. Update the patch status to Merged.
+    // 9. Update the patch status to Merged.
     let mut merged_patch = patch.clone();
     merged_patch.status = PatchStatus::Merged;
     client
@@ -930,7 +987,7 @@ async fn resolve_creator_username(client: &dyn MetisClientInterface) -> Result<U
         .context("failed to resolve authenticated actor")?;
     match response.actor {
         ActorIdentity::User { username } => Ok(username),
-        ActorIdentity::Task { creator, .. } => Ok(creator),
+        ActorIdentity::Task { creator, .. } | ActorIdentity::Issue { creator, .. } => Ok(creator),
         other => bail!("unexpected actor identity: {other:?}"),
     }
 }
@@ -999,6 +1056,51 @@ async fn review_patch(
         .with_context(|| format!("failed to update patch '{id}' with review"))?;
 
     println!("{}", response.patch_id);
+    Ok(())
+}
+
+async fn changelog_patch(
+    client: &dyn MetisClientInterface,
+    id: PatchId,
+    output_format: ResolvedOutputFormat,
+    limit: usize,
+) -> Result<()> {
+    let response = client
+        .list_patch_versions(&id)
+        .await
+        .with_context(|| format!("failed to fetch versions for patch '{id}'"))?;
+    let versions: Vec<Versioned<Patch>> = response
+        .versions
+        .into_iter()
+        .map(|record| {
+            Versioned::new(
+                record.patch,
+                record.version,
+                record.timestamp,
+                record.creation_time,
+            )
+        })
+        .collect();
+    let entries = activity_log_for_patch_versions(id, &versions);
+    let mut summaries = summarize_activity_log(&entries)?;
+    summaries.reverse();
+    summaries.truncate(limit);
+
+    let mut buffer = Vec::new();
+    match output_format {
+        ResolvedOutputFormat::Pretty => {
+            write_changelog_pretty(&summaries, &mut buffer)?;
+        }
+        ResolvedOutputFormat::Jsonl => {
+            for entry in &summaries {
+                serde_json::to_writer(&mut buffer, entry)?;
+                buffer.write_all(b"\n")?;
+            }
+        }
+    }
+    std::io::stdout().write_all(&buffer)?;
+    std::io::stdout().flush()?;
+
     Ok(())
 }
 

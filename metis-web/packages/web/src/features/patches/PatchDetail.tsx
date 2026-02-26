@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@metis/ui";
+import { Avatar, Badge, DiffViewer, MarkdownViewer, Panel, Tabs } from "@metis/ui";
 import type { PatchVersionRecord } from "@metis/api";
 import { patchToBadgeStatus, ciToBadgeStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
@@ -13,12 +13,13 @@ interface PatchDetailProps {
 }
 
 const TABS = [
+  { id: "diff", label: "Diff" },
   { id: "reviews", label: "Reviews" },
   { id: "activity", label: "Activity" },
 ];
 
 export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
-  const [activeTab, setActiveTab] = useState("reviews");
+  const [activeTab, setActiveTab] = useState("diff");
   const { patch } = record;
 
   return (
@@ -166,6 +167,9 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
         }
       >
         <div className={styles.sectionBody}>
+          {activeTab === "diff" && (
+            <DiffViewer diff={patch.diff} maxLines={500} />
+          )}
           {activeTab === "reviews" && (
             <ReviewsList reviews={patch.reviews} />
           )}
