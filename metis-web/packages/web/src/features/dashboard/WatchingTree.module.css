@@ -75,6 +75,21 @@
   font-size: var(--font-size-xs);
 }
 
+.terminalSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  user-select: none;
+  padding: var(--space-1) 0;
+}
+
+.terminalSummary:hover {
+  color: var(--color-text-secondary);
+}
+
 .inProgressSection {
   border-left: 1px solid var(--color-border);
   margin-left: 24px;
