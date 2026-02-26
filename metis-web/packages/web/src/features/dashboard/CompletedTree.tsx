@@ -1,12 +1,12 @@
 import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge, JobStatusIndicator } from "@metis/ui";
-import type { JobSummary } from "@metis/ui";
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import {
   buildIssueTree,
   type IssueTreeNode,
 } from "../issues/useIssues";
+import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus, TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import styles from "./WatchingTree.module.css";
@@ -17,16 +17,6 @@ interface CompletedTreeProps {
   selectedId: string | null;
   onSelect: (issueId: string) => void;
   username: string;
-}
-
-function toJobSummary(record: JobSummaryRecord): JobSummary {
-  const status = record.task.status === "unknown" ? "created" : record.task.status;
-  return {
-    jobId: record.job_id,
-    status,
-    startTime: record.task.start_time,
-    endTime: record.task.end_time,
-  };
 }
 
 function TreeNodeRow({

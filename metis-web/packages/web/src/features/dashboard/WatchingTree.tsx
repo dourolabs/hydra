@@ -1,13 +1,14 @@
 import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge, JobStatusIndicator, TreeView } from "@metis/ui";
-import type { JobSummary, TreeNode } from "@metis/ui";
+import type { TreeNode } from "@metis/ui";
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import { IssueRow } from "../issues/IssueRow";
 import {
   buildIssueTree,
   type IssueTreeNode,
 } from "../issues/useIssues";
+import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus, TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { isNodeActive, pruneTree } from "./watchingUtils";
@@ -69,16 +70,6 @@ function collectActiveChildren(
 
   walk(node);
   return result.sort((a, b) => new Date(b.issue.creation_time).getTime() - new Date(a.issue.creation_time).getTime());
-}
-
-function toJobSummary(record: JobSummaryRecord): JobSummary {
-  const status = record.task.status === "unknown" ? "created" : record.task.status;
-  return {
-    jobId: record.job_id,
-    status,
-    startTime: record.task.start_time,
-    endTime: record.task.end_time,
-  };
 }
 
 function formatSummary(summary: SubtreeSummary): string {
