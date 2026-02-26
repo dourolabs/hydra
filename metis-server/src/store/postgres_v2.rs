@@ -2263,7 +2263,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, sender, recipient, body, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, sender, recipient, body, deleted, is_read, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_MESSAGES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_MESSAGES_V2}
              WHERE id = $1
@@ -2302,7 +2302,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         // Build the base subquery that gets the latest version of each message
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, sender, recipient, body, deleted, actor, created_at, updated_at, \
+            "SELECT DISTINCT ON (id) id, version_number, sender, recipient, body, deleted, is_read, actor, created_at, updated_at, \
              MIN(created_at) OVER (PARTITION BY id) AS creation_time \
              FROM {TABLE_MESSAGES_V2} ORDER BY id, version_number DESC"
         );
