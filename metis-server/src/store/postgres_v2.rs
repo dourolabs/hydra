@@ -678,8 +678,8 @@ impl PostgresStoreV2 {
         let recipient_name = message.recipient.to_string();
 
         let query = format!(
-            "INSERT INTO {TABLE_MESSAGES_V2} (id, version_number, sender, recipient, body, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)"
+            "INSERT INTO {TABLE_MESSAGES_V2} (id, version_number, sender, recipient, body, deleted, is_read, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -688,6 +688,7 @@ impl PostgresStoreV2 {
             .bind(&recipient_name)
             .bind(&message.body)
             .bind(message.deleted)
+            .bind(message.is_read)
             .bind(actor)
             .execute(&self.pool)
             .await
@@ -722,6 +723,7 @@ impl PostgresStoreV2 {
             recipient,
             body: row.body.clone(),
             deleted: row.deleted,
+            is_read: row.is_read,
         })
     }
 
@@ -1044,6 +1046,7 @@ struct MessageRow {
     recipient: String,
     body: String,
     deleted: bool,
+    is_read: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -2260,7 +2263,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, sender, recipient, body, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, sender, recipient, body, deleted, is_read, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_MESSAGES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_MESSAGES_V2}
              WHERE id = $1
@@ -2299,7 +2302,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         // Build the base subquery that gets the latest version of each message
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, sender, recipient, body, deleted, actor, created_at, updated_at, \
+            "SELECT DISTINCT ON (id) id, version_number, sender, recipient, body, deleted, is_read, actor, created_at, updated_at, \
              MIN(created_at) OVER (PARTITION BY id) AS creation_time \
              FROM {TABLE_MESSAGES_V2} ORDER BY id, version_number DESC"
         );
@@ -3923,6 +3926,7 @@ mod tests {
             recipient: recipient.clone(),
             body: "will be deleted".into(),
             deleted: true,
+            is_read: false,
         };
         store
             .update_message(&msg_id, deleted, &ActorRef::test())
@@ -3968,6 +3972,7 @@ mod tests {
             recipient: recipient.clone(),
             body: "will be deleted".into(),
             deleted: true,
+            is_read: false,
         };
         store
             .update_message(&msg_id, deleted, &ActorRef::test())

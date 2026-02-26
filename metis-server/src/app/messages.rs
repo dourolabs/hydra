@@ -30,6 +30,7 @@ impl AppState {
         sender: &ActorId,
         recipient: &ActorId,
         body: String,
+        is_read: bool,
         actor_ref: ActorRef,
     ) -> Result<(MessageId, VersionNumber, Versioned<Message>), SendMessageError> {
         let recipient_name = recipient.to_string();
@@ -42,7 +43,8 @@ impl AppState {
             }
         })?;
 
-        let message = Message::new(Some(sender.clone()), recipient.clone(), body);
+        let mut message = Message::new(Some(sender.clone()), recipient.clone(), body);
+        message.is_read = is_read;
 
         let (message_id, _version) = self
             .store
