@@ -894,16 +894,19 @@ merge_request:
 
         // Add a repository with patch_workflow config in the DB
         let repo_name = RepoName::new("test", "repo").unwrap();
-        let repo =
-            metis_common::Repository::new("https://example.com/repo.git".to_string(), None, None)
-                .with_patch_workflow(RepoWorkflowConfig {
-                    review_requests: vec![ReviewRequestConfig {
-                        assignee: "db-reviewer".to_string(),
-                    }],
-                    merge_request: Some(MergeRequestConfig {
-                        assignee: Some("db-merger".to_string()),
-                    }),
-                });
+        let repo = metis_common::Repository::new(
+            "https://example.com/repo.git".to_string(),
+            None,
+            None,
+            Some(RepoWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "db-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("db-merger".to_string()),
+                }),
+            }),
+        );
         store
             .add_repository(repo_name.clone(), repo, &ActorRef::test())
             .await
@@ -937,8 +940,12 @@ merge_request:
 
         // Add a repository WITHOUT patch_workflow config
         let repo_name = RepoName::new("test", "repo").unwrap();
-        let repo =
-            metis_common::Repository::new("https://example.com/repo.git".to_string(), None, None);
+        let repo = metis_common::Repository::new(
+            "https://example.com/repo.git".to_string(),
+            None,
+            None,
+            None,
+        );
         store
             .add_repository(repo_name.clone(), repo, &ActorRef::test())
             .await
@@ -972,16 +979,19 @@ merge_request:
 
         // Add a repository WITH patch_workflow config in DB
         let repo_name = RepoName::new("test", "repo").unwrap();
-        let repo =
-            metis_common::Repository::new("https://example.com/repo.git".to_string(), None, None)
-                .with_patch_workflow(RepoWorkflowConfig {
-                    review_requests: vec![ReviewRequestConfig {
-                        assignee: "db-reviewer".to_string(),
-                    }],
-                    merge_request: Some(MergeRequestConfig {
-                        assignee: Some("db-merger".to_string()),
-                    }),
-                });
+        let repo = metis_common::Repository::new(
+            "https://example.com/repo.git".to_string(),
+            None,
+            None,
+            Some(RepoWorkflowConfig {
+                review_requests: vec![ReviewRequestConfig {
+                    assignee: "db-reviewer".to_string(),
+                }],
+                merge_request: Some(MergeRequestConfig {
+                    assignee: Some("db-merger".to_string()),
+                }),
+            }),
+        );
         store
             .add_repository(repo_name.clone(), repo, &ActorRef::test())
             .await
