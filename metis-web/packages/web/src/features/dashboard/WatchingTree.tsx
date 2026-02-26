@@ -86,7 +86,7 @@ function formatTerminalSummary(nodes: IssueTreeNode[]): string {
     const status = node.issue.issue.status;
     counts[status] = (counts[status] || 0) + 1;
   }
-  const order = ["closed", "failed", "dropped", "rejected"];
+  const order = Array.from(TERMINAL_STATUSES);
   const parts: string[] = [];
   for (const status of order) {
     if (counts[status]) {
