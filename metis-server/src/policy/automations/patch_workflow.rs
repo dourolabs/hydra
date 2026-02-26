@@ -153,8 +153,8 @@ impl PatchWorkflowAutomation {
     /// Shared handler for both PatchCreated and PatchUpdated events.
     ///
     /// Creates workflow issues (ReviewRequest and/or MergeRequest) when the patch
-    /// is Open and non-backup, has no non-stale approved review, and no existing
-    /// open/in-progress MergeRequest issue.
+    /// is Open and non-backup and has no non-stale approved review. Deduplication
+    /// of individual issue types is handled in `create_workflow_issues`.
     async fn handle_patch_event(
         &self,
         ctx: &AutomationContext<'_>,
@@ -189,33 +189,6 @@ impl PatchWorkflowAutomation {
             return Ok(());
         }
 
-        // Secondary guard: check if there's already an open/in-progress merge
-        // request for this patch to prevent duplicates.
-        let existing_issue_ids = store.get_issues_for_patch(patch_id).await.map_err(|e| {
-            AutomationError::Other(anyhow::anyhow!(
-                "failed to get issues for patch {patch_id}: {e}"
-            ))
-        })?;
-
-        for issue_id in &existing_issue_ids {
-            let issue = store.get_issue(issue_id, false).await.map_err(|e| {
-                AutomationError::Other(anyhow::anyhow!("failed to fetch issue {issue_id}: {e}"))
-            })?;
-            if issue.item.issue_type == IssueType::MergeRequest
-                && matches!(
-                    issue.item.status,
-                    IssueStatus::Open | IssueStatus::InProgress
-                )
-            {
-                tracing::info!(
-                    patch_id = %patch_id,
-                    issue_id = %issue_id,
-                    "merge-request issue already open for patch; skipping"
-                );
-                return Ok(());
-            }
-        }
-
         // Resolve the parent issue for this patch.
         let parent_issue = self.resolve_parent_issue(ctx, patch_id, patch).await?;
 
@@ -224,6 +197,10 @@ impl PatchWorkflowAutomation {
     }
 
     /// Create the workflow issues (ReviewRequests and optionally MergeRequest) for a patch.
+    ///
+    /// Checks for existing open/in-progress ReviewRequest and MergeRequest issues
+    /// before creating new ones to prevent duplicates. Issues in terminal states
+    /// (Closed, Failed, Dropped, Rejected) do not block creation of new issues.
     async fn create_workflow_issues(
         &self,
         ctx: &AutomationContext<'_>,
@@ -231,6 +208,40 @@ impl PatchWorkflowAutomation {
         patch: &Patch,
         parent_issue: Option<&ParentIssueInfo>,
     ) -> Result<(), AutomationError> {
+        let store = ctx.store;
+
+        // Check for existing open/in-progress ReviewRequest and MergeRequest issues.
+        let existing_issue_ids = store.get_issues_for_patch(patch_id).await.map_err(|e| {
+            AutomationError::Other(anyhow::anyhow!(
+                "failed to get issues for patch {patch_id}: {e}"
+            ))
+        })?;
+
+        let mut has_active_review_request = false;
+        let mut has_active_merge_request = false;
+        let mut existing_active_rr_ids = Vec::new();
+
+        for issue_id in &existing_issue_ids {
+            let issue = store.get_issue(issue_id, false).await.map_err(|e| {
+                AutomationError::Other(anyhow::anyhow!("failed to fetch issue {issue_id}: {e}"))
+            })?;
+            if matches!(
+                issue.item.status,
+                IssueStatus::Open | IssueStatus::InProgress
+            ) {
+                match issue.item.issue_type {
+                    IssueType::ReviewRequest => {
+                        has_active_review_request = true;
+                        existing_active_rr_ids.push(issue_id.clone());
+                    }
+                    IssueType::MergeRequest => {
+                        has_active_merge_request = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         let workflow = self
             .resolve_config(&patch.service_repo_name, ctx.store)
             .await;
@@ -251,51 +262,65 @@ impl PatchWorkflowAutomation {
         let title = issue_title(patch);
         let actor = self.actor_ref(ctx);
 
-        // Create ReviewRequest issues
-        let mut review_request_issue_ids = Vec::new();
-
-        for rr_config in workflow.review_requests {
-            let assignee = self.resolve_assignee(&rr_config.assignee, Some(&patch.creator));
-
-            let description = format!("Review request for patch {}: {title}", patch_id.as_ref());
-            let issue = Issue::new(
-                IssueType::ReviewRequest,
-                description,
-                creator.clone(),
-                String::new(),
-                IssueStatus::Open,
-                assignee,
-                job_settings.clone(),
-                Vec::new(),
-                parent_dependencies.clone(),
-                vec![patch_id.clone()],
-            );
-
-            let (issue_id, _version) = ctx
-                .app_state
-                .upsert_issue(
-                    None,
-                    metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
-                    actor.clone(),
-                )
-                .await
-                .map_err(|e| {
-                    AutomationError::Other(anyhow::anyhow!(
-                        "failed to create review-request issue for patch {patch_id}: {e}"
-                    ))
-                })?;
-
+        // Create ReviewRequest issues, or reuse existing active ones for MR dependencies.
+        let review_request_issue_ids = if has_active_review_request {
             tracing::info!(
                 patch_id = %patch_id,
-                issue_id = %issue_id,
-                "created review-request issue for patch"
+                "open/in-progress review-request issues already exist for patch; skipping creation"
             );
+            existing_active_rr_ids
+        } else {
+            let mut ids = Vec::new();
+            for rr_config in workflow.review_requests {
+                let assignee = self.resolve_assignee(&rr_config.assignee, Some(&patch.creator));
 
-            review_request_issue_ids.push(issue_id);
-        }
+                let description =
+                    format!("Review request for patch {}: {title}", patch_id.as_ref());
+                let issue = Issue::new(
+                    IssueType::ReviewRequest,
+                    description,
+                    creator.clone(),
+                    String::new(),
+                    IssueStatus::Open,
+                    assignee,
+                    job_settings.clone(),
+                    Vec::new(),
+                    parent_dependencies.clone(),
+                    vec![patch_id.clone()],
+                );
 
-        // Create MergeRequest issue if configured
-        if let Some(mr_config) = workflow.merge_request {
+                let (issue_id, _version) = ctx
+                    .app_state
+                    .upsert_issue(
+                        None,
+                        metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
+                        actor.clone(),
+                    )
+                    .await
+                    .map_err(|e| {
+                        AutomationError::Other(anyhow::anyhow!(
+                            "failed to create review-request issue for patch {patch_id}: {e}"
+                        ))
+                    })?;
+
+                tracing::info!(
+                    patch_id = %patch_id,
+                    issue_id = %issue_id,
+                    "created review-request issue for patch"
+                );
+
+                ids.push(issue_id);
+            }
+            ids
+        };
+
+        // Create MergeRequest issue if configured and no active one exists.
+        if has_active_merge_request {
+            tracing::info!(
+                patch_id = %patch_id,
+                "open/in-progress merge-request issue already exists for patch; skipping creation"
+            );
+        } else if let Some(mr_config) = workflow.merge_request {
             let assignee = mr_config
                 .assignee
                 .as_ref()
@@ -1721,6 +1746,297 @@ merge_request:
         assert_eq!(
             open_mr_count, 1,
             "PatchUpdated should create workflow issues via shared handler"
+        );
+    }
+
+    // ---- Tests for deduplication of ReviewRequest and MergeRequest issues ----
+
+    #[tokio::test]
+    async fn skips_duplicate_review_request_when_open_one_exists() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let patch = make_patch(PatchStatus::Open);
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Pre-create an open ReviewRequest issue for this patch.
+        let existing_rr = Issue::new(
+            IssueType::ReviewRequest,
+            "existing review request".to_string(),
+            Username::from("tester"),
+            String::new(),
+            IssueStatus::Open,
+            Some("reviewer-a".to_string()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            vec![patch_id.clone()],
+        );
+        store
+            .add_issue(existing_rr, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: None,
+            new: patch,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchCreated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        // Configure with review requests and merge request.
+        let params: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+            r#"
+review_requests:
+  - assignee: "reviewer-a"
+  - assignee: "reviewer-b"
+merge_request:
+  assignee: "merger"
+            "#,
+        )
+        .unwrap();
+
+        let automation = PatchWorkflowAutomation::new(Some(&params)).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        let mut rr_count = 0;
+        let mut mr_count = 0;
+        for issue_id in &issues {
+            let issue = store.get_issue(issue_id, false).await.unwrap();
+            match issue.item.issue_type {
+                IssueType::ReviewRequest => rr_count += 1,
+                IssueType::MergeRequest => mr_count += 1,
+                _ => {}
+            }
+        }
+
+        // Should NOT create new ReviewRequests (one already exists).
+        assert_eq!(
+            rr_count, 1,
+            "should not create duplicate ReviewRequest issues when an open one exists"
+        );
+        // Should still create the MergeRequest since none existed.
+        assert_eq!(
+            mr_count, 1,
+            "should still create MergeRequest when no open one exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn creates_merge_request_when_review_requests_exist_but_no_open_mr() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let patch = make_patch(PatchStatus::Open);
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Pre-create an open ReviewRequest.
+        let existing_rr = Issue::new(
+            IssueType::ReviewRequest,
+            "existing review request".to_string(),
+            Username::from("tester"),
+            String::new(),
+            IssueStatus::InProgress,
+            Some("reviewer-a".to_string()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            vec![patch_id.clone()],
+        );
+        store
+            .add_issue(existing_rr, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Pre-create a Failed MergeRequest (terminal state, should not block).
+        let failed_mr = Issue::new(
+            IssueType::MergeRequest,
+            "old merge request".to_string(),
+            Username::from("tester"),
+            String::new(),
+            IssueStatus::Failed,
+            Some("merger".to_string()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            vec![patch_id.clone()],
+        );
+        store.add_issue(failed_mr, &ActorRef::test()).await.unwrap();
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: None,
+            new: patch,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchCreated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = PatchWorkflowAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        let mut open_mr_count = 0;
+        let mut failed_mr_count = 0;
+        let mut rr_count = 0;
+        for issue_id in &issues {
+            let issue = store.get_issue(issue_id, false).await.unwrap();
+            match issue.item.issue_type {
+                IssueType::MergeRequest if issue.item.status == IssueStatus::Open => {
+                    open_mr_count += 1;
+                }
+                IssueType::MergeRequest if issue.item.status == IssueStatus::Failed => {
+                    failed_mr_count += 1;
+                }
+                IssueType::ReviewRequest => rr_count += 1,
+                _ => {}
+            }
+        }
+
+        assert_eq!(
+            open_mr_count, 1,
+            "should create a new MergeRequest when previous one is in terminal state"
+        );
+        assert_eq!(failed_mr_count, 1, "failed MR should still exist");
+        assert_eq!(
+            rr_count, 1,
+            "should not create new ReviewRequests when active ones exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_state_issues_do_not_block_new_issue_creation() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let patch = make_patch(PatchStatus::Open);
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Pre-create terminal-state ReviewRequest and MergeRequest issues.
+        for status in [
+            IssueStatus::Closed,
+            IssueStatus::Failed,
+            IssueStatus::Dropped,
+            IssueStatus::Rejected,
+        ] {
+            let rr = Issue::new(
+                IssueType::ReviewRequest,
+                format!("old review request ({:?})", status),
+                Username::from("tester"),
+                String::new(),
+                status.clone(),
+                Some("reviewer".to_string()),
+                None,
+                Vec::new(),
+                Vec::new(),
+                vec![patch_id.clone()],
+            );
+            store.add_issue(rr, &ActorRef::test()).await.unwrap();
+
+            let mr = Issue::new(
+                IssueType::MergeRequest,
+                format!("old merge request ({:?})", status),
+                Username::from("tester"),
+                String::new(),
+                status,
+                Some("merger".to_string()),
+                None,
+                Vec::new(),
+                Vec::new(),
+                vec![patch_id.clone()],
+            );
+            store.add_issue(mr, &ActorRef::test()).await.unwrap();
+        }
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: None,
+            new: patch,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::PatchCreated {
+            seq: 1,
+            patch_id: patch_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        // Configure with review requests and merge request.
+        let params: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+            r#"
+review_requests:
+  - assignee: "new-reviewer"
+merge_request:
+  assignee: "new-merger"
+            "#,
+        )
+        .unwrap();
+
+        let automation = PatchWorkflowAutomation::new(Some(&params)).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        let mut new_open_rr_count = 0;
+        let mut new_open_mr_count = 0;
+        for issue_id in &issues {
+            let issue = store.get_issue(issue_id, false).await.unwrap();
+            if issue.item.status == IssueStatus::Open {
+                match issue.item.issue_type {
+                    IssueType::ReviewRequest => new_open_rr_count += 1,
+                    IssueType::MergeRequest => new_open_mr_count += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        assert_eq!(
+            new_open_rr_count, 1,
+            "terminal-state ReviewRequests should not block new ReviewRequest creation"
+        );
+        assert_eq!(
+            new_open_mr_count, 1,
+            "terminal-state MergeRequests should not block new MergeRequest creation"
         );
     }
 }
