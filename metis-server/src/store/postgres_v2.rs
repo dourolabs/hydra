@@ -1106,7 +1106,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let query = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1144,7 +1144,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         let include_deleted = query.include_deleted.unwrap_or(false);
         let sql = format!(
-            "SELECT DISTINCT ON (id) id, version_number, remote_url, default_branch, default_image, deleted, actor, created_at, updated_at
+            "SELECT DISTINCT ON (id) id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              ORDER BY id, version_number DESC"
         );
