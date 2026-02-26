@@ -53,7 +53,8 @@ export function buildIssueTree(issues: IssueSummaryRecord[]): IssueTreeNode[] {
     const childIds = childrenMap.get(record.issue_id) ?? [];
     const childRecords = childIds
       .map((id) => issueMap.get(id))
-      .filter((i): i is IssueSummaryRecord => i !== undefined);
+      .filter((i): i is IssueSummaryRecord => i !== undefined)
+      .sort((a, b) => new Date(b.creation_time).getTime() - new Date(a.creation_time).getTime());
     const children = topologicalSort(childRecords).map(buildNode);
 
     const status = computeBlockedStatus(record, issueMap);
@@ -68,6 +69,8 @@ export function buildIssueTree(issues: IssueSummaryRecord[]): IssueTreeNode[] {
   }
 
   // Root nodes are issues that have no parent (not in hasParent set)
-  const roots = issues.filter((i) => !hasParent.has(i.issue_id));
+  const roots = issues
+    .filter((i) => !hasParent.has(i.issue_id))
+    .sort((a, b) => new Date(b.creation_time).getTime() - new Date(a.creation_time).getTime());
   return topologicalSort(roots).map(buildNode);
 }

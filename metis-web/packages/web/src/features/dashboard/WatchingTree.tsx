@@ -68,7 +68,7 @@ function collectActiveChildren(
   }
 
   walk(node);
-  return result;
+  return result.sort((a, b) => new Date(b.issue.creation_time).getTime() - new Date(a.issue.creation_time).getTime());
 }
 
 function toJobSummary(record: JobSummaryRecord): JobSummary {
@@ -330,7 +330,9 @@ export function WatchingTree({
     // Keep full (unpruned) roots so that summarizeSubtree sees all children.
     // Use pruneTree only to decide whether the root has any active nodes.
     // Hide hard-blocked root issues entirely.
-    return tree.filter((root) => !root.hardBlocked && root.issue.issue.creator === username && pruneTree(root, jobsByIssue) !== null);
+    return tree
+      .filter((root) => !root.hardBlocked && root.issue.issue.creator === username && pruneTree(root, jobsByIssue) !== null)
+      .sort((a, b) => new Date(b.issue.creation_time).getTime() - new Date(a.issue.creation_time).getTime());
   }, [issues, jobsByIssue, username]);
 
   if (watchingRoots.length === 0) {
