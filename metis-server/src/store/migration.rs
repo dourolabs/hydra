@@ -842,11 +842,12 @@ async fn migrate_repositories_internal(pool: &PgStorePool) -> Result<u64> {
                 .unwrap_or("");
             let default_branch = row.payload.get("default_branch").and_then(|v| v.as_str());
             let default_image = row.payload.get("default_image").and_then(|v| v.as_str());
+            let patch_workflow = row.payload.get("patch_workflow").cloned();
 
             sqlx::query(&format!(
                 "INSERT INTO {V2_TABLE_REPOSITORIES}
-                 (id, version_number, remote_url, default_branch, default_image, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6)
+                 (id, version_number, remote_url, default_branch, default_image, patch_workflow, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                  ON CONFLICT (id, version_number) DO NOTHING"
             ))
             .bind(&row.id)
@@ -854,6 +855,7 @@ async fn migrate_repositories_internal(pool: &PgStorePool) -> Result<u64> {
             .bind(remote_url)
             .bind(default_branch)
             .bind(default_image)
+            .bind(&patch_workflow)
             .bind(row.created_at)
             .execute(pool)
             .await
