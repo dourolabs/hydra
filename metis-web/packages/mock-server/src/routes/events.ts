@@ -17,7 +17,7 @@ export function createEventRoutes(store: Store): Hono {
     const lastEventId = lastEventIdHeader ? Number(lastEventIdHeader) : 0;
 
     function matchesFilter(event: StoreEvent): boolean {
-      if (typesFilter && !typesFilter.includes(event.entityType)) return false;
+      if (typesFilter && !typesFilter.includes(event.eventType)) return false;
       if (issueIdsFilter && event.entityType === "issues" && !issueIdsFilter.includes(event.entityId)) return false;
       if (jobIdsFilter && event.entityType === "jobs" && !jobIdsFilter.includes(event.entityId)) return false;
       if (patchIdsFilter && event.entityType === "patches" && !patchIdsFilter.includes(event.entityId)) return false;

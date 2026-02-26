@@ -1,3 +1,9 @@
+// BigInt cannot be serialized by JSON.stringify by default.
+// The wire format uses regular numbers for these fields.
+(BigInt.prototype as unknown as { toJSON: () => number }).toJSON = function () {
+  return Number(this);
+};
+
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { Store, StoreError } from "./store.js";
