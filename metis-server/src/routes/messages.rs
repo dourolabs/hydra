@@ -103,8 +103,9 @@ pub async fn list_messages(
 /// GET /v1/messages/receive — receive unread messages for the current actor.
 ///
 /// Fetches all unread messages where the current authenticated actor is the recipient,
-/// marks them as read, and returns them. If no unread messages exist, long-polls until
-/// a new message arrives (up to the specified timeout). Optionally filters by sender.
+/// returns the original unread versions, then marks them as read. If no unread messages
+/// exist, long-polls until a new message arrives (up to the specified timeout).
+/// Optionally filters by sender.
 pub async fn receive_messages(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -162,12 +163,11 @@ pub async fn receive_messages(
                 .map_err(map_store_error)?;
         }
 
-        // Return messages with is_read=true reflected in the response
+        // Return the original unread versions of the messages
         let mut messages: Vec<VersionedMessage> = unread
             .into_iter()
             .map(|(id, v)| {
-                let mut msg: api_messages::Message = v.item.into();
-                msg.is_read = true;
+                let msg: api_messages::Message = v.item.into();
                 VersionedMessage::new(id, v.version, v.timestamp, msg, v.actor, v.creation_time)
             })
             .collect();
@@ -233,8 +233,7 @@ pub async fn receive_messages(
                             .map_err(map_store_error)?;
                     }
 
-                    let mut api_msg: api_messages::Message = msg.item.into();
-                    api_msg.is_read = true;
+                    let api_msg: api_messages::Message = msg.item.into();
                     let versioned = VersionedMessage::new(
                         message_id.clone(),
                         msg.version,

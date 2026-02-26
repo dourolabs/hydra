@@ -147,10 +147,10 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
         "I'm on it! Working now."
     );
     assert_eq!(receive_result.messages[0].message_id, reply_resp.message_id);
-    // Received messages should be marked as read
+    // Receive returns the original unread version of the message
     assert!(
-        receive_result.messages[0].message.is_read,
-        "received messages should be marked as read"
+        !receive_result.messages[0].message.is_read,
+        "received messages should return original unread version"
     );
 
     // ── Step 5: Verify ordering (most recent first in list) ────────────
@@ -282,10 +282,10 @@ async fn messaging_e2e_receive_long_poll_unblocks_on_new_message() -> anyhow::Re
         receive_result.messages[0].message.body,
         "follow-up question"
     );
-    // Message received via long-poll should also be marked as read
+    // Long-poll receive returns the original unread version of the message
     assert!(
-        receive_result.messages[0].message.is_read,
-        "received message should be marked as read"
+        !receive_result.messages[0].message.is_read,
+        "received message should return original unread version"
     );
 
     // Verify the agent can reply and both see the messages.
@@ -327,10 +327,10 @@ async fn messaging_e2e_receive_long_poll_unblocks_on_new_message() -> anyhow::Re
     Ok(())
 }
 
-/// End-to-end: receive endpoint returns existing unread messages and marks them as read.
+/// End-to-end: receive endpoint returns original unread messages and marks them as read.
 ///
 /// 1. User sends messages to an issue-agent.
-/// 2. Agent calls receive — gets unread messages, which are marked as read.
+/// 2. Agent calls receive — gets original unread messages (is_read=false), server marks them as read.
 /// 3. Agent lists messages again — all messages now have is_read=true.
 /// 4. Agent calls receive again — no unread messages, times out with empty response.
 #[tokio::test]
@@ -371,7 +371,7 @@ async fn messaging_e2e_receive_marks_as_read() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // ── Step 2: Agent receives messages — they should be marked as read ─
+    // ── Step 2: Agent receives messages — returns original unread versions ─
     let receive_resp: ListMessagesResponse = agent_client
         .get(format!("{base}/v1/messages/receive?timeout=5"))
         .send()
@@ -385,8 +385,8 @@ async fn messaging_e2e_receive_marks_as_read() -> anyhow::Result<()> {
     assert_eq!(receive_resp.messages[1].message.body, "second message");
     for msg in &receive_resp.messages {
         assert!(
-            msg.message.is_read,
-            "received messages should show is_read=true"
+            !msg.message.is_read,
+            "received messages should return original unread version"
         );
     }
 

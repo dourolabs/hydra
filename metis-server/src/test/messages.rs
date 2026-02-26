@@ -301,8 +301,8 @@ async fn receive_messages_returns_on_new_message() -> anyhow::Result<()> {
     assert_eq!(receive_result.messages.len(), 1);
     assert_eq!(receive_result.messages[0].message.body, "wake up!");
     assert!(
-        receive_result.messages[0].message.is_read,
-        "received message should be marked as read"
+        !receive_result.messages[0].message.is_read,
+        "received message should return original unread version"
     );
 
     Ok(())
@@ -397,8 +397,8 @@ async fn receive_returns_existing_unread_messages() -> anyhow::Result<()> {
     assert_eq!(receive_result.messages[1].message.body, "newer message");
     for msg in &receive_result.messages {
         assert!(
-            msg.message.is_read,
-            "received messages should be marked as read"
+            !msg.message.is_read,
+            "received messages should return original unread version"
         );
     }
 
