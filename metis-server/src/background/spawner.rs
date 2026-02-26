@@ -6,15 +6,17 @@ use crate::{
     app::AppState,
     config::AgentQueueConfig,
     domain::{
+        actors::ActorId,
         issues::{Issue, IssueDependencyType, IssueStatus},
         jobs::BundleSpec,
     },
-    store::{Status, StoreError, Task},
+    store::{ReadOnlyStore, Status, StoreError, Task},
 };
 use anyhow::Context;
 use async_trait::async_trait;
 #[cfg(test)]
 use metis_common::RepoName;
+use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::{IssueId, VersionNumber};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
@@ -35,6 +37,7 @@ struct SpawnAttempt {
     status: IssueStatus,
     attempts: u32,
     children_snapshot: HashMap<IssueId, VersionNumber>,
+    had_unread_messages: bool,
 }
 
 pub struct AgentQueue {
@@ -141,6 +144,7 @@ impl AgentQueue {
         issue_id: &IssueId,
         status: IssueStatus,
         children_snapshot: HashMap<IssueId, VersionNumber>,
+        had_unread_messages: bool,
         max_tries: u32,
     ) -> bool {
         let mut attempts = self.spawn_attempts.write().await;
@@ -148,17 +152,22 @@ impl AgentQueue {
             status,
             attempts: 0,
             children_snapshot: HashMap::new(),
+            had_unread_messages: false,
         });
 
         let status_changed = entry.status != status;
         let children_changed = entry.children_snapshot != children_snapshot;
+        let new_unread_messages = !entry.had_unread_messages && had_unread_messages;
 
-        if status_changed || children_changed {
+        if status_changed || children_changed || new_unread_messages {
             *entry = SpawnAttempt {
                 status,
                 attempts: 0,
                 children_snapshot,
+                had_unread_messages,
             };
+        } else {
+            entry.had_unread_messages = had_unread_messages;
         }
 
         if entry.attempts >= max_tries {
@@ -233,7 +242,10 @@ impl Spawner for AgentQueue {
                 .is_issue_ready(&issue_id)
                 .await
                 .context("failed to determine if issue is ready")?;
-            if !is_ready {
+            let has_unread = has_unread_messages(state, &issue_id)
+                .await
+                .context("failed to check for unread messages")?;
+            if !is_ready && !has_unread {
                 continue;
             }
 
@@ -246,10 +258,6 @@ impl Spawner for AgentQueue {
             }
 
             if parent_has_running_task(state, &issue).await? {
-                continue;
-            }
-
-            if children_have_running_task(state, &issue_id).await? {
                 continue;
             }
 
@@ -275,7 +283,13 @@ impl Spawner for AgentQueue {
                 snapshot
             };
             if !self
-                .register_spawn_attempt(&issue_id, issue.status, children_snapshot, max_tries)
+                .register_spawn_attempt(
+                    &issue_id,
+                    issue.status,
+                    children_snapshot,
+                    has_unread,
+                    max_tries,
+                )
                 .await
             {
                 continue;
@@ -336,6 +350,16 @@ async fn agent_task_state(
     Ok(task_state)
 }
 
+async fn has_unread_messages(state: &AppState, issue_id: &IssueId) -> Result<bool, StoreError> {
+    let recipient = ActorId::Issue(issue_id.clone()).to_string();
+    let mut query = SearchMessagesQuery::default();
+    query.recipient = Some(recipient);
+    let messages = state.store.list_messages(&query).await?;
+    Ok(messages
+        .iter()
+        .any(|(_, versioned)| !versioned.item.is_read))
+}
+
 async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool, StoreError> {
     for dependency in issue
         .dependencies
@@ -355,30 +379,13 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
     Ok(false)
 }
 
-async fn children_have_running_task(
-    state: &AppState,
-    issue_id: &IssueId,
-) -> Result<bool, StoreError> {
-    for child_id in state.get_issue_children(issue_id).await? {
-        for task_id in state.get_tasks_for_issue(&child_id).await? {
-            if matches!(
-                state.get_task(&task_id).await?.status,
-                Status::Pending | Status::Running
-            ) {
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
     use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
+    use crate::domain::messages::Message;
     use crate::domain::patches::{Patch, PatchStatus, Review};
     use crate::{
         app::Repository,
@@ -882,84 +889,6 @@ mod tests {
         let queue = queue("agent-a");
         let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn does_not_spawn_parent_when_child_task_running() -> anyhow::Result<()> {
-        let (handles, repo_name) = state_with_repository().await?;
-
-        // Create parent issue (InProgress, all children stuck so it would be ready)
-        let (parent_id, _) = handles
-            .store
-            .add_issue(
-                issue(
-                    "Parent issue",
-                    IssueStatus::InProgress,
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ),
-                &ActorRef::test(),
-            )
-            .await?;
-
-        // Create child issue with a running task
-        let (child_id, _) = handles
-            .store
-            .add_issue(
-                issue(
-                    "Child issue",
-                    IssueStatus::Open,
-                    Some("agent-a"),
-                    vec![IssueDependency::new(
-                        IssueDependencyType::ChildOf,
-                        parent_id.clone(),
-                    )],
-                    &repo_name,
-                ),
-                &ActorRef::test(),
-            )
-            .await?;
-
-        // Create a running task for the child
-        let (task_id, _) = handles
-            .store
-            .add_task(
-                task(
-                    "Child task",
-                    BundleSpec::None,
-                    Some(child_id.clone()),
-                    Some("metis-worker:latest"),
-                    HashMap::from([
-                        (ISSUE_ID_ENV_VAR.to_string(), child_id.to_string()),
-                        (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
-                    ]),
-                ),
-                Utc::now(),
-                &ActorRef::test(),
-            )
-            .await?;
-        handles
-            .state
-            .transition_task_to_pending(&task_id, ActorRef::test())
-            .await?;
-
-        let queue = queue("agent-a");
-        let tasks = queue.spawn(&handles.state).await?;
-
-        // Parent should not spawn because child has a running task.
-        // The child is also already tracked in existing_issue_ids, so it won't spawn either.
-        // Only the child's existing task should prevent the parent from spawning.
-        let spawned_issue_ids: HashSet<_> = tasks
-            .iter()
-            .filter_map(|t| t.env_vars.get(ISSUE_ID_ENV_VAR).cloned())
-            .collect();
-        assert!(
-            !spawned_issue_ids.contains(&parent_id.to_string()),
-            "parent should not spawn when child has a running task"
-        );
 
         Ok(())
     }
@@ -1695,6 +1624,195 @@ mod tests {
 
         let task = &tasks[0];
         assert!(task.secrets.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unread_message_triggers_spawn_for_not_ready_issue() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+
+        // Create a blocker so the issue is not ready by normal rules.
+        let (blocker_id, _) = handles
+            .store
+            .add_issue(
+                issue("Blocker", IssueStatus::Open, None, vec![], &repo_name),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Blocked but has messages",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::BlockedOn,
+                        blocker_id,
+                    )],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Without unread messages, should not spawn.
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert!(tasks.is_empty(), "should not spawn without unread messages");
+
+        // Add an unread message for the issue.
+        let recipient = ActorId::Issue(issue_id.clone());
+        let msg = Message::new(None, recipient, "please look at this".to_string());
+        handles.store.add_message(msg, &ActorRef::test()).await?;
+
+        // Now should spawn despite not being ready.
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
+            Some(issue_id.as_ref())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_messages_do_not_trigger_spawn() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+
+        // Create a blocker so the issue is not ready by normal rules.
+        let (blocker_id, _) = handles
+            .store
+            .add_issue(
+                issue("Blocker", IssueStatus::Open, None, vec![], &repo_name),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Blocked with read messages",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::BlockedOn,
+                        blocker_id,
+                    )],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Add a message that is already read.
+        let recipient = ActorId::Issue(issue_id);
+        let mut msg = Message::new(None, recipient, "already read".to_string());
+        msg.is_read = true;
+        handles.store.add_message(msg, &ActorRef::test()).await?;
+
+        // Should not spawn because the only message is read.
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unread_messages_with_active_task_do_not_trigger_duplicate() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Issue with active task",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Create an active task for this issue.
+        let (task_id, _) = handles
+            .store
+            .add_task(
+                task(
+                    "Existing task",
+                    BundleSpec::None,
+                    Some(issue_id.clone()),
+                    Some("metis-worker:latest"),
+                    HashMap::from([
+                        (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
+                        (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
+                    ]),
+                ),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await?;
+        handles
+            .state
+            .transition_task_to_pending(&task_id, ActorRef::test())
+            .await?;
+
+        // Add an unread message.
+        let recipient = ActorId::Issue(issue_id);
+        let msg = Message::new(None, recipient, "new message".to_string());
+        handles.store.add_message(msg, &ActorRef::test()).await?;
+
+        // Should not spawn a duplicate task even with unread messages.
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn retry_counter_resets_on_new_unread_message() -> anyhow::Result<()> {
+        let mut queue = queue("agent-a");
+        queue.max_tries = 1;
+
+        let (handles, repo_name) = state_with_repository().await?;
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Retry with messages",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // First spawn attempt succeeds (attempt 1 of 1).
+        let mut tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        record_completed_task(&handles, tasks.remove(0)).await?;
+
+        // Second attempt should be blocked (max_tries=1 reached).
+        assert!(queue.spawn(&handles.state).await?.is_empty());
+
+        // Send an unread message — this should reset the retry counter.
+        let recipient = ActorId::Issue(issue_id.clone());
+        let msg = Message::new(None, recipient, "new info".to_string());
+        handles.store.add_message(msg, &ActorRef::test()).await?;
+
+        // Now the counter should have reset, so spawning succeeds again.
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
+            Some(issue_id.as_ref())
+        );
 
         Ok(())
     }
