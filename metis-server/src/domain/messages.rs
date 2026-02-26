@@ -9,6 +9,8 @@ pub struct Message {
     pub body: String,
     #[serde(default)]
     pub deleted: bool,
+    #[serde(default)]
+    pub is_read: bool,
 }
 
 impl Message {
@@ -18,6 +20,7 @@ impl Message {
             recipient,
             body,
             deleted: false,
+            is_read: false,
         }
     }
 }
@@ -32,6 +35,7 @@ impl From<api::messages::Message> for Message {
             recipient: value.recipient,
             body: value.body,
             deleted: value.deleted,
+            is_read: value.is_read,
         }
     }
 }
@@ -40,6 +44,7 @@ impl From<Message> for api::messages::Message {
     fn from(value: Message) -> Self {
         let mut msg = api::messages::Message::new(value.sender, value.recipient, value.body);
         msg.deleted = value.deleted;
+        msg.is_read = value.is_read;
         msg
     }
 }
@@ -89,6 +94,47 @@ mod tests {
         let domain_msg: Message = api_msg.clone().into();
         let back: api::messages::Message = domain_msg.into();
 
+        assert_eq!(back, api_msg);
+    }
+
+    #[test]
+    fn message_is_read_defaults_to_false() {
+        let msg = Message::new(
+            Some(ActorId::Username(Username::from("alice").into())),
+            ActorId::Issue("i-abcdef".parse::<IssueId>().unwrap()),
+            "hello".to_string(),
+        );
+        assert!(!msg.is_read);
+    }
+
+    #[test]
+    fn message_is_read_roundtrip() {
+        let mut msg = Message::new(
+            Some(ActorId::Username(Username::from("alice").into())),
+            ActorId::Issue("i-abcdef".parse::<IssueId>().unwrap()),
+            "hello".to_string(),
+        );
+        msg.is_read = true;
+
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let decoded: Message = serde_json::from_str(&json).expect("deserialize");
+        assert!(decoded.is_read);
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn message_is_read_api_domain_roundtrip() {
+        let mut api_msg = api::messages::Message::new(
+            Some(ActorId::Username(Username::from("alice").into())),
+            ActorId::Issue("i-abcdef".parse::<IssueId>().unwrap()),
+            "hello".to_string(),
+        );
+        api_msg.is_read = true;
+
+        let domain_msg: Message = api_msg.clone().into();
+        assert!(domain_msg.is_read);
+
+        let back: api::messages::Message = domain_msg.into();
         assert_eq!(back, api_msg);
     }
 }

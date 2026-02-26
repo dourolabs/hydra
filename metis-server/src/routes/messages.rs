@@ -34,7 +34,13 @@ pub async fn send_message(
     let actor_ref = ActorRef::from(&actor);
 
     let (message_id, version, versioned) = state
-        .send_message(&sender_id, &payload.recipient, payload.body, actor_ref)
+        .send_message(
+            &sender_id,
+            &payload.recipient,
+            payload.body,
+            payload.is_read,
+            actor_ref,
+        )
         .await
         .map_err(map_send_message_error)?;
 

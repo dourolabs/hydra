@@ -678,8 +678,8 @@ impl PostgresStoreV2 {
         let recipient_name = message.recipient.to_string();
 
         let query = format!(
-            "INSERT INTO {TABLE_MESSAGES_V2} (id, version_number, sender, recipient, body, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)"
+            "INSERT INTO {TABLE_MESSAGES_V2} (id, version_number, sender, recipient, body, deleted, is_read, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -688,6 +688,7 @@ impl PostgresStoreV2 {
             .bind(&recipient_name)
             .bind(&message.body)
             .bind(message.deleted)
+            .bind(message.is_read)
             .bind(actor)
             .execute(&self.pool)
             .await
@@ -722,6 +723,7 @@ impl PostgresStoreV2 {
             recipient,
             body: row.body.clone(),
             deleted: row.deleted,
+            is_read: row.is_read,
         })
     }
 
@@ -1044,6 +1046,7 @@ struct MessageRow {
     recipient: String,
     body: String,
     deleted: bool,
+    is_read: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -3923,6 +3926,7 @@ mod tests {
             recipient: recipient.clone(),
             body: "will be deleted".into(),
             deleted: true,
+            is_read: false,
         };
         store
             .update_message(&msg_id, deleted, &ActorRef::test())
@@ -3968,6 +3972,7 @@ mod tests {
             recipient: recipient.clone(),
             body: "will be deleted".into(),
             deleted: true,
+            is_read: false,
         };
         store
             .update_message(&msg_id, deleted, &ActorRef::test())

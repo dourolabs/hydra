@@ -24,6 +24,10 @@ pub enum MessagesCommand {
         /// Message body.
         #[arg(value_name = "BODY")]
         body: String,
+
+        /// Mark the message as already read.
+        #[arg(long = "read")]
+        is_read: bool,
     },
     /// List recent messages.
     List {
@@ -66,8 +70,12 @@ pub async fn run(
 ) -> Result<()> {
     let mut stdout = io::stdout().lock();
     match command {
-        MessagesCommand::Send { recipient, body } => {
-            let response = send_message(client, recipient, body).await?;
+        MessagesCommand::Send {
+            recipient,
+            body,
+            is_read,
+        } => {
+            let response = send_message(client, recipient, body, is_read).await?;
             render_send_response(context, &response, &mut stdout)?;
         }
         MessagesCommand::List {
@@ -152,8 +160,10 @@ async fn send_message(
     client: &dyn MetisClientInterface,
     recipient: ActorId,
     body: String,
+    is_read: bool,
 ) -> Result<SendMessageResponse> {
-    let request = SendMessageRequest::new(recipient, body);
+    let mut request = SendMessageRequest::new(recipient, body);
+    request.is_read = is_read;
     client
         .send_message(&request)
         .await

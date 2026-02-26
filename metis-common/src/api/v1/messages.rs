@@ -14,6 +14,8 @@ pub struct Message {
     pub body: String,
     #[serde(default)]
     pub deleted: bool,
+    #[serde(default)]
+    pub is_read: bool,
 }
 
 impl Message {
@@ -23,6 +25,7 @@ impl Message {
             recipient,
             body,
             deleted: false,
+            is_read: false,
         }
     }
 }
@@ -71,11 +74,17 @@ impl VersionedMessage {
 pub struct SendMessageRequest {
     pub recipient: ActorId,
     pub body: String,
+    #[serde(default)]
+    pub is_read: bool,
 }
 
 impl SendMessageRequest {
     pub fn new(recipient: ActorId, body: String) -> Self {
-        Self { recipient, body }
+        Self {
+            recipient,
+            body,
+            is_read: false,
+        }
     }
 }
 
@@ -251,5 +260,58 @@ mod tests {
         let json = r#"{"sender":{"Username":"alice"},"recipient":{"Username":"bob"},"body":"hi"}"#;
         let msg: Message = serde_json::from_str(json).expect("deserialize");
         assert!(!msg.deleted);
+    }
+
+    #[test]
+    fn message_is_read_defaults_to_false() {
+        let json = r#"{"sender":{"Username":"alice"},"recipient":{"Username":"bob"},"body":"hi"}"#;
+        let msg: Message = serde_json::from_str(json).expect("deserialize");
+        assert!(!msg.is_read);
+    }
+
+    #[test]
+    fn message_is_read_round_trip() {
+        let mut msg = Message::new(
+            Some(ActorId::Username(Username::from("alice"))),
+            ActorId::Issue(crate::IssueId::new()),
+            "hello".to_string(),
+        );
+        msg.is_read = true;
+
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let decoded: Message = serde_json::from_str(&json).expect("deserialize");
+        assert!(decoded.is_read);
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn message_new_defaults_is_read_to_false() {
+        let msg = Message::new(
+            Some(ActorId::Username(Username::from("alice"))),
+            ActorId::Issue(crate::IssueId::new()),
+            "hello".to_string(),
+        );
+        assert!(!msg.is_read);
+    }
+
+    #[test]
+    fn send_message_request_is_read_defaults_to_false() {
+        let json = r#"{"recipient":{"Username":"bob"},"body":"hi"}"#;
+        let req: SendMessageRequest = serde_json::from_str(json).expect("deserialize");
+        assert!(!req.is_read);
+    }
+
+    #[test]
+    fn send_message_request_is_read_round_trip() {
+        let mut req = SendMessageRequest::new(
+            ActorId::Issue(crate::IssueId::new()),
+            "test body".to_string(),
+        );
+        req.is_read = true;
+
+        let json = serde_json::to_string(&req).expect("serialize");
+        let decoded: SendMessageRequest = serde_json::from_str(&json).expect("deserialize");
+        assert!(decoded.is_read);
+        assert_eq!(decoded, req);
     }
 }
