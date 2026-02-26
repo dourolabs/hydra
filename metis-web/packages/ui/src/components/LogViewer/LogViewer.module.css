@@ -43,14 +43,16 @@
 
 @media (max-width: 768px) {
   .logViewer {
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-xxs);
   }
 
   .lineNumber {
-    padding: 0 var(--space-1);
+    display: none;
   }
 
   .lineContent {
     padding: 0 var(--space-2);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 }
