@@ -5,7 +5,8 @@ export function actorDisplayName(actor: ActorRef): string {
   if ("Authenticated" in actor) {
     const id = actor.Authenticated.actor_id;
     if ("Username" in id) return id.Username;
-    return id.Task;
+    if ("Task" in id) return id.Task;
+    return id.Issue;
   }
   if ("System" in actor) {
     const { worker_name, on_behalf_of } = actor.System;
@@ -13,7 +14,9 @@ export function actorDisplayName(actor: ActorRef): string {
       const name =
         "Username" in on_behalf_of
           ? on_behalf_of.Username
-          : on_behalf_of.Task;
+          : "Task" in on_behalf_of
+            ? on_behalf_of.Task
+            : on_behalf_of.Issue;
       return `${worker_name} (on behalf of ${name})`;
     }
     return worker_name;
@@ -33,7 +36,8 @@ export function actorAvatarName(actor: ActorRef): string {
   if ("Authenticated" in actor) {
     const id = actor.Authenticated.actor_id;
     if ("Username" in id) return id.Username;
-    return id.Task;
+    if ("Task" in id) return id.Task;
+    return id.Issue;
   }
   if ("System" in actor) return actor.System.worker_name;
   if ("Automation" in actor) return actor.Automation.automation_name;

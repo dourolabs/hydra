@@ -3,4 +3,4 @@
 /**
  * Data payload for the resync event sent when the client has fallen behind.
  */
-export type ResyncEventData = { reason: string, current_seq: bigint, };
+export type ResyncEventData = { reason: string; current_seq: bigint };
