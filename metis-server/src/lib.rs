@@ -187,7 +187,10 @@ pub async fn run_with_state(
             "/v1/messages",
             get(routes::messages::list_messages).post(routes::messages::send_message),
         )
-        .route("/v1/messages/wait", get(routes::messages::wait_for_message))
+        .route(
+            "/v1/messages/receive",
+            get(routes::messages::receive_messages),
+        )
         .route("/v1/whoami", get(routes::whoami::whoami))
         .route("/v1/users/:username", get(routes::users::get_user))
         .route("/v1/events", get(routes::events::get_events))

@@ -32,7 +32,7 @@ fn client_with_token(token: &str) -> Client {
 /// 1. User sends a message to issue-agent.
 /// 2. Issue-agent lists messages and sees the user's message.
 /// 3. Issue-agent sends a reply.
-/// 4. User long-polls and receives the reply.
+/// 4. User receives the reply via the receive endpoint.
 /// 5. Verify ordering (most recent first in list).
 /// 6. Verify versioned fields (version, timestamp, creation_time).
 /// 7. Verify filtering by a third actor's recipient name returns no results (no messages addressed to them).
@@ -131,22 +131,27 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
     assert_eq!(reply_resp.version, 1);
     assert_eq!(reply_resp.message.body, "I'm on it! Working now.");
 
-    // ── Step 4: User long-polls and receives the agent's reply ─────────
-    let wait_result: ListMessagesResponse = user_client
+    // ── Step 4: User receives the agent's reply via the receive endpoint ─
+    let receive_result: ListMessagesResponse = user_client
         .get(format!(
-            "{base}/v1/messages/wait?sender={agent_actor_name}&after={user_msg_id}&timeout=5"
+            "{base}/v1/messages/receive?sender={agent_actor_name}&timeout=5"
         ))
         .send()
         .await?
         .json()
         .await?;
 
-    assert_eq!(wait_result.messages.len(), 1);
+    assert_eq!(receive_result.messages.len(), 1);
     assert_eq!(
-        wait_result.messages[0].message.body,
+        receive_result.messages[0].message.body,
         "I'm on it! Working now."
     );
-    assert_eq!(wait_result.messages[0].message_id, reply_resp.message_id);
+    assert_eq!(receive_result.messages[0].message_id, reply_resp.message_id);
+    // Received messages should be marked as read
+    assert!(
+        receive_result.messages[0].message.is_read,
+        "received messages should be marked as read"
+    );
 
     // ── Step 5: Verify ordering (most recent first in list) ────────────
     let user_list: ListMessagesResponse = user_client
@@ -196,12 +201,12 @@ async fn messaging_e2e_full_conversation_flow() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// End-to-end: long-poll wait unblocks on a new message delivered asynchronously.
+/// End-to-end: receive long-polls and unblocks on a new message delivered asynchronously.
 ///
-/// This tests the event-bus driven long-poll (rather than cursor-based
-/// early return) where the wait starts before the message is sent.
+/// This tests the event-bus driven long-poll (rather than existing unread messages)
+/// where the receive starts before the message is sent.
 #[tokio::test]
-async fn messaging_e2e_wait_long_poll_unblocks_on_new_message() -> anyhow::Result<()> {
+async fn messaging_e2e_receive_long_poll_unblocks_on_new_message() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let store = handles.store.clone();
 
@@ -218,13 +223,16 @@ async fn messaging_e2e_wait_long_poll_unblocks_on_new_message() -> anyhow::Resul
     let server = spawn_test_server_with_state(handles.state, store).await?;
     let base = server.base_url();
 
-    // User sends a first message (to establish context).
+    // User sends a first message — we mark it as already read so it doesn't
+    // interfere with the agent's receive call below.
     let first: SendMessageResponse = user_client
         .post(format!("{base}/v1/messages"))
-        .json(&SendMessageRequest::new(
-            agent_actor_id.clone(),
-            "initial ping".to_string(),
-        ))
+        .json(&{
+            let mut req =
+                SendMessageRequest::new(agent_actor_id.clone(), "initial ping".to_string());
+            req.is_read = true;
+            req
+        })
         .send()
         .await?
         .json()
@@ -233,30 +241,30 @@ async fn messaging_e2e_wait_long_poll_unblocks_on_new_message() -> anyhow::Resul
     let user_actor_id = first.message.sender.clone().unwrap();
     let user_actor_name = user_actor_id.to_string();
 
-    // Agent starts long-polling for new messages *before* the user sends the
-    // next one, using the first message as the "after" cursor.
+    // Agent starts long-polling via receive *before* the user sends the
+    // next message. Because the first message is already read, the receive
+    // endpoint has no unread messages and will long-poll.
     let wait_base = base.clone();
     let wait_user_name = user_actor_name.clone();
-    let after_id = first.message_id.to_string();
     let wait_handle = tokio::spawn(async move {
         let agent_wait_client = client_with_token(&agent_token);
         let resp: ListMessagesResponse = agent_wait_client
             .get(format!(
-                "{wait_base}/v1/messages/wait?sender={wait_user_name}&after={after_id}&timeout=10"
+                "{wait_base}/v1/messages/receive?sender={wait_user_name}&timeout=10"
             ))
             .send()
             .await
-            .expect("wait should succeed")
+            .expect("receive should succeed")
             .json()
             .await
-            .expect("parse wait response");
+            .expect("parse receive response");
         resp
     });
 
-    // Give the wait request time to establish.
+    // Give the receive request time to establish.
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    // User sends another message — this should unblock the agent's wait.
+    // User sends another message — this should unblock the agent's receive.
     let _second: SendMessageResponse = user_client
         .post(format!("{base}/v1/messages"))
         .json(&SendMessageRequest::new(
@@ -268,9 +276,17 @@ async fn messaging_e2e_wait_long_poll_unblocks_on_new_message() -> anyhow::Resul
         .json()
         .await?;
 
-    let wait_result = wait_handle.await?;
-    assert_eq!(wait_result.messages.len(), 1);
-    assert_eq!(wait_result.messages[0].message.body, "follow-up question");
+    let receive_result = wait_handle.await?;
+    assert_eq!(receive_result.messages.len(), 1);
+    assert_eq!(
+        receive_result.messages[0].message.body,
+        "follow-up question"
+    );
+    // Message received via long-poll should also be marked as read
+    assert!(
+        receive_result.messages[0].message.is_read,
+        "received message should be marked as read"
+    );
 
     // Verify the agent can reply and both see the messages.
     let _reply: SendMessageResponse = agent_client
@@ -311,23 +327,22 @@ async fn messaging_e2e_wait_long_poll_unblocks_on_new_message() -> anyhow::Resul
     Ok(())
 }
 
-/// End-to-end: mark_as_read flag on list messages.
+/// End-to-end: receive endpoint returns existing unread messages and marks them as read.
 ///
 /// 1. User sends messages to an issue-agent.
-/// 2. Agent lists messages with mark_as_read=true — messages are returned and marked as read.
+/// 2. Agent calls receive — gets unread messages, which are marked as read.
 /// 3. Agent lists messages again — all messages now have is_read=true.
-/// 4. Verify mark_as_read without matching recipient returns 400.
+/// 4. Agent calls receive again — no unread messages, times out with empty response.
 #[tokio::test]
-async fn messaging_e2e_mark_as_read() -> anyhow::Result<()> {
+async fn messaging_e2e_receive_marks_as_read() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let store = handles.store.clone();
 
     let user_client = test_client();
 
-    let issue_id = IssueId::from_str("i-eteread")?;
+    let issue_id = IssueId::from_str("i-eterecv")?;
     let (agent_actor, agent_token) = Actor::new_for_issue(issue_id, Username::from("test-creator"));
     let agent_actor_id = agent_actor.actor_id.clone();
-    let agent_actor_name = agent_actor.name();
     store.add_actor(agent_actor, &ActorRef::test()).await?;
 
     let agent_client = client_with_token(&agent_token);
@@ -356,32 +371,27 @@ async fn messaging_e2e_mark_as_read() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // ── Step 2: Agent lists messages — initially is_read=false ────────
-    let initial_list: ListMessagesResponse = agent_client
-        .get(format!("{base}/v1/messages?recipient={agent_actor_name}"))
+    // ── Step 2: Agent receives messages — they should be marked as read ─
+    let receive_resp: ListMessagesResponse = agent_client
+        .get(format!("{base}/v1/messages/receive?timeout=5"))
         .send()
         .await?
         .json()
         .await?;
 
-    assert_eq!(initial_list.messages.len(), 2);
-    for msg in &initial_list.messages {
-        assert!(!msg.message.is_read, "messages should initially be unread");
+    assert_eq!(receive_resp.messages.len(), 2);
+    // Receive returns in ascending order (oldest first)
+    assert_eq!(receive_resp.messages[0].message.body, "first message");
+    assert_eq!(receive_resp.messages[1].message.body, "second message");
+    for msg in &receive_resp.messages {
+        assert!(
+            msg.message.is_read,
+            "received messages should show is_read=true"
+        );
     }
 
-    // ── Step 3: Agent lists messages with mark_as_read=true ──────────
-    let mark_list: ListMessagesResponse = agent_client
-        .get(format!(
-            "{base}/v1/messages?recipient={agent_actor_name}&mark_as_read=true"
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    assert_eq!(mark_list.messages.len(), 2);
-
-    // ── Step 4: Agent lists again — all messages now have is_read=true
+    // ── Step 3: Agent lists messages — all should have is_read=true ──
+    let agent_actor_name = agent_actor_id.to_string();
     let after_list: ListMessagesResponse = agent_client
         .get(format!("{base}/v1/messages?recipient={agent_actor_name}"))
         .send()
@@ -394,30 +404,17 @@ async fn messaging_e2e_mark_as_read() -> anyhow::Result<()> {
         assert!(msg.message.is_read, "messages should be marked as read");
     }
 
-    // ── Step 5: mark_as_read without matching recipient returns 400 ──
-    let bad_resp = agent_client
-        .get(format!("{base}/v1/messages?mark_as_read=true"))
+    // ── Step 4: Agent receives again — no unread messages, should time out ─
+    let second_receive: ListMessagesResponse = agent_client
+        .get(format!("{base}/v1/messages/receive?timeout=1"))
         .send()
+        .await?
+        .json()
         .await?;
 
-    assert_eq!(
-        bad_resp.status(),
-        reqwest::StatusCode::BAD_REQUEST,
-        "mark_as_read without matching recipient should return 400"
-    );
-
-    // Also verify with a different recipient
-    let bad_resp2 = agent_client
-        .get(format!(
-            "{base}/v1/messages?recipient=u-someone-else&mark_as_read=true"
-        ))
-        .send()
-        .await?;
-
-    assert_eq!(
-        bad_resp2.status(),
-        reqwest::StatusCode::BAD_REQUEST,
-        "mark_as_read with non-matching recipient should return 400"
+    assert!(
+        second_receive.messages.is_empty(),
+        "no unread messages, should return empty on timeout"
     );
 
     Ok(())

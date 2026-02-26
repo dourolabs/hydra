@@ -106,22 +106,20 @@ pub struct SearchMessagesQuery {
     pub include_deleted: Option<bool>,
     #[serde(default)]
     pub limit: Option<u32>,
-    #[serde(default)]
-    pub mark_as_read: Option<bool>,
 }
 
-/// Query parameters for long-poll waiting for new messages.
+/// Query parameters for receiving (consuming) unread messages.
+///
+/// Fetches all unread messages for the current authenticated actor (as recipient),
+/// marks them as read, and returns them. If no unread messages exist, long-polls
+/// until a new message arrives (up to the specified timeout).
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct WaitMessagesQuery {
+pub struct ReceiveMessagesQuery {
     #[serde(default)]
     pub sender: Option<String>,
-    #[serde(default)]
-    pub recipient: Option<String>,
-    #[serde(default)]
-    pub after: Option<String>,
     #[serde(default)]
     pub timeout: Option<u32>,
 }
@@ -255,7 +253,6 @@ mod tests {
         assert_eq!(query.before, None);
         assert_eq!(query.include_deleted, None);
         assert_eq!(query.limit, None);
-        assert_eq!(query.mark_as_read, None);
     }
 
     #[test]

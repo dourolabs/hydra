@@ -8,7 +8,7 @@ use clap::Subcommand;
 use metis_common::{
     actor_ref::ActorId,
     api::v1::messages::{
-        SearchMessagesQuery, SendMessageRequest, SendMessageResponse, WaitMessagesQuery,
+        ReceiveMessagesQuery, SearchMessagesQuery, SendMessageRequest, SendMessageResponse,
     },
 };
 use std::io::{self, Write};
@@ -46,22 +46,14 @@ pub enum MessagesCommand {
         /// Maximum number of messages to return.
         #[arg(long, value_name = "LIMIT", default_value_t = 50)]
         limit: u32,
-
-        /// Mark all returned messages as read.
-        #[arg(long = "mark-read")]
-        mark_read: bool,
     },
-    /// Block until a new message arrives (long-poll).
-    Wait {
+    /// Receive unread messages, marking them as read. Long-polls if none are available.
+    Receive {
         /// Filter by sender (e.g. "u-alice" or "a-i-abc").
         #[arg(long, value_name = "SENDER")]
         sender: Option<String>,
 
-        /// Filter by recipient (e.g. "u-alice" or "a-i-abc").
-        #[arg(long, value_name = "RECIPIENT")]
-        recipient: Option<String>,
-
-        /// Timeout in seconds.
+        /// Timeout in seconds for long-polling when no unread messages exist.
         #[arg(long, value_name = "SECONDS", default_value_t = 30)]
         timeout: u32,
     },
@@ -87,7 +79,6 @@ pub async fn run(
             recipient,
             after,
             limit,
-            mark_read,
         } => {
             let recipient = match recipient {
                 Some(r) => Some(r),
@@ -98,28 +89,20 @@ pub async fn run(
             query.recipient = recipient;
             query.after = after;
             query.limit = Some(limit);
-            if mark_read {
-                query.mark_as_read = Some(true);
-            }
             let response = client
                 .list_messages(&query)
                 .await
                 .context("failed to list messages")?;
             render_versioned_messages(context.output_format, &response.messages, &mut stdout)?;
         }
-        MessagesCommand::Wait {
-            sender,
-            recipient,
-            timeout,
-        } => {
-            let mut query = WaitMessagesQuery::default();
+        MessagesCommand::Receive { sender, timeout } => {
+            let mut query = ReceiveMessagesQuery::default();
             query.sender = sender;
-            query.recipient = recipient;
             query.timeout = Some(timeout);
             let response = client
-                .wait_for_message(&query)
+                .receive_messages(&query)
                 .await
-                .context("failed to wait for messages")?;
+                .context("failed to receive messages")?;
             if response.messages.is_empty() {
                 if matches!(
                     context.output_format,

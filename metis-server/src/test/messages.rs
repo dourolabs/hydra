@@ -240,30 +240,52 @@ async fn list_messages_with_limit() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn wait_for_message_returns_on_new_message() -> anyhow::Result<()> {
-    let (server, client, recipient_id, recipient_name) = setup_with_recipient().await?;
+async fn receive_messages_returns_on_new_message() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let store = handles.store.clone();
+
+    // Create the recipient (issue actor) who will call receive.
+    let issue_id = IssueId::from_str("i-recvnew")?;
+    let (recipient_actor, recipient_token) =
+        Actor::new_for_issue(issue_id, Username::from("test-creator"));
+    let recipient_id = recipient_actor.actor_id.clone();
+    store.add_actor(recipient_actor, &ActorRef::test()).await?;
+
+    let server = spawn_test_server_with_state(handles.state, store).await?;
+    let sender_client = test_client();
     let base_url = server.base_url();
 
-    // Start the wait in a background task
-    let wait_client = test_client();
-    let wait_url = format!("{base_url}/v1/messages/wait?recipient={recipient_name}&timeout=10");
-    let wait_handle = tokio::spawn(async move {
-        let response: ListMessagesResponse = wait_client
-            .get(wait_url)
+    // Recipient starts receive in a background task (no unread messages, so it long-polls)
+    let recv_base = base_url.clone();
+    let recv_handle = tokio::spawn(async move {
+        let recipient_client = {
+            let mut headers = reqwest::header::HeaderMap::new();
+            let auth_value = format!("Bearer {recipient_token}");
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                reqwest::header::HeaderValue::from_str(&auth_value).unwrap(),
+            );
+            reqwest::Client::builder()
+                .default_headers(headers)
+                .build()
+                .unwrap()
+        };
+        let response: ListMessagesResponse = recipient_client
+            .get(format!("{recv_base}/v1/messages/receive?timeout=10"))
             .send()
             .await
-            .expect("wait request should succeed")
+            .expect("receive request should succeed")
             .json()
             .await
-            .expect("wait response should parse");
+            .expect("receive response should parse");
         response
     });
 
-    // Give the wait request time to establish
+    // Give the receive request time to establish
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    // Send a message — this should unblock the wait
-    let _: SendMessageResponse = client
+    // Sender sends a message to the recipient — this should unblock the receive
+    let _: SendMessageResponse = sender_client
         .post(format!("{base_url}/v1/messages"))
         .json(&SendMessageRequest::new(
             recipient_id,
@@ -274,47 +296,61 @@ async fn wait_for_message_returns_on_new_message() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    // The wait should complete with the new message
-    let wait_result = wait_handle.await?;
-    assert_eq!(wait_result.messages.len(), 1);
-    assert_eq!(wait_result.messages[0].message.body, "wake up!");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn wait_for_message_times_out_with_empty_response() -> anyhow::Result<()> {
-    let (server, client, _recipient_id, recipient_name) = setup_with_recipient().await?;
-    let base = server.base_url();
-
-    let start = std::time::Instant::now();
-    let wait_result: ListMessagesResponse = client
-        .get(format!(
-            "{base}/v1/messages/wait?recipient={recipient_name}&timeout=1"
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    let elapsed = start.elapsed();
-
-    assert!(wait_result.messages.is_empty());
-    // Should have waited approximately 1 second
+    // The receive should complete with the new message
+    let receive_result = recv_handle.await?;
+    assert_eq!(receive_result.messages.len(), 1);
+    assert_eq!(receive_result.messages[0].message.body, "wake up!");
     assert!(
-        elapsed.as_millis() >= 800,
-        "wait should block for approximately the timeout duration"
+        receive_result.messages[0].message.is_read,
+        "received message should be marked as read"
     );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn wait_returns_existing_messages_after_cursor() -> anyhow::Result<()> {
-    let (server, client, recipient_id, recipient_name) = setup_with_recipient().await?;
+async fn receive_messages_times_out_with_empty_response() -> anyhow::Result<()> {
+    let (server, client, _recipient_id, _recipient_name) = setup_with_recipient().await?;
     let base = server.base_url();
 
-    // Send two messages
-    let msg1: SendMessageResponse = client
+    // The default test actor has no messages, so receive should time out
+    let start = std::time::Instant::now();
+    let receive_result: ListMessagesResponse = client
+        .get(format!("{base}/v1/messages/receive?timeout=1"))
+        .send()
+        .await?
+        .json()
+        .await?;
+    let elapsed = start.elapsed();
+
+    assert!(receive_result.messages.is_empty());
+    // Should have waited approximately 1 second
+    assert!(
+        elapsed.as_millis() >= 800,
+        "receive should block for approximately the timeout duration"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn receive_returns_existing_unread_messages() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let store = handles.store.clone();
+
+    // Create the recipient (issue actor) who will call receive.
+    let issue_id = IssueId::from_str("i-recvunr")?;
+    let (recipient_actor, recipient_token) =
+        Actor::new_for_issue(issue_id, Username::from("test-creator"));
+    let recipient_id = recipient_actor.actor_id.clone();
+    store.add_actor(recipient_actor, &ActorRef::test()).await?;
+
+    let server = spawn_test_server_with_state(handles.state, store).await?;
+    let sender_client = test_client();
+    let base = server.base_url();
+
+    // Send two messages to the recipient (both unread by default)
+    let _msg1: SendMessageResponse = sender_client
         .post(format!("{base}/v1/messages"))
         .json(&SendMessageRequest::new(
             recipient_id.clone(),
@@ -325,7 +361,7 @@ async fn wait_returns_existing_messages_after_cursor() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    let _msg2: SendMessageResponse = client
+    let _msg2: SendMessageResponse = sender_client
         .post(format!("{base}/v1/messages"))
         .json(&SendMessageRequest::new(
             recipient_id,
@@ -336,19 +372,35 @@ async fn wait_returns_existing_messages_after_cursor() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    // Wait with after=msg1 — should return msg2 immediately
-    let wait_result: ListMessagesResponse = client
-        .get(format!(
-            "{base}/v1/messages/wait?recipient={recipient_name}&after={}&timeout=1",
-            msg1.message_id
-        ))
+    // Recipient calls receive — should return both unread messages immediately (oldest first)
+    let recipient_client = {
+        let mut headers = reqwest::header::HeaderMap::new();
+        let auth_value = format!("Bearer {recipient_token}");
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&auth_value)?,
+        );
+        reqwest::Client::builder()
+            .default_headers(headers)
+            .build()?
+    };
+
+    let receive_result: ListMessagesResponse = recipient_client
+        .get(format!("{base}/v1/messages/receive?timeout=1"))
         .send()
         .await?
         .json()
         .await?;
 
-    assert_eq!(wait_result.messages.len(), 1);
-    assert_eq!(wait_result.messages[0].message.body, "newer message");
+    assert_eq!(receive_result.messages.len(), 2);
+    assert_eq!(receive_result.messages[0].message.body, "older message");
+    assert_eq!(receive_result.messages[1].message.body, "newer message");
+    for msg in &receive_result.messages {
+        assert!(
+            msg.message.is_read,
+            "received messages should be marked as read"
+        );
+    }
 
     Ok(())
 }

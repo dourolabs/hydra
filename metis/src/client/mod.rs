@@ -10,8 +10,8 @@ use metis_common::{
     api::v1::events::EventsQuery,
     api::v1::login::{LoginRequest, LoginResponse},
     api::v1::messages::{
-        ListMessagesResponse, SearchMessagesQuery, SendMessageRequest, SendMessageResponse,
-        WaitMessagesQuery,
+        ListMessagesResponse, ReceiveMessagesQuery, SearchMessagesQuery, SendMessageRequest,
+        SendMessageResponse,
     },
     documents::{
         DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
@@ -258,7 +258,7 @@ pub trait MetisClientInterface: Send + Sync {
 
     async fn send_message(&self, request: &SendMessageRequest) -> Result<SendMessageResponse>;
     async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse>;
-    async fn wait_for_message(&self, query: &WaitMessagesQuery) -> Result<ListMessagesResponse>;
+    async fn receive_messages(&self, query: &ReceiveMessagesQuery) -> Result<ListMessagesResponse>;
 
     /// Resolve the current actor's ID from the auth context.
     async fn current_actor_id(&self) -> Result<ActorId> {
@@ -1529,25 +1529,25 @@ impl MetisClient {
             .context("failed to decode list messages response")
     }
 
-    /// Call `GET /v1/messages/wait` to long-poll for new messages.
-    pub async fn wait_for_message(
+    /// Call `GET /v1/messages/receive` to receive unread messages.
+    pub async fn receive_messages(
         &self,
-        query: &WaitMessagesQuery,
+        query: &ReceiveMessagesQuery,
     ) -> Result<ListMessagesResponse> {
-        let url = self.endpoint("/v1/messages/wait")?;
+        let url = self.endpoint("/v1/messages/receive")?;
         let response = self
             .authed(self.http.get(url))
             .query(query)
             .send()
             .await
-            .context("failed to submit wait for message request")?
-            .error_for_status_with_body("metis-server returned an error while waiting for messages")
+            .context("failed to submit receive messages request")?
+            .error_for_status_with_body("metis-server returned an error while receiving messages")
             .await?;
 
         response
             .json::<ListMessagesResponse>()
             .await
-            .context("failed to decode wait for message response")
+            .context("failed to decode receive messages response")
     }
 
     fn endpoint(&self, path: &str) -> Result<Url> {
@@ -1960,8 +1960,8 @@ impl MetisClientInterface for MetisClient {
         MetisClient::list_messages(self, query).await
     }
 
-    async fn wait_for_message(&self, query: &WaitMessagesQuery) -> Result<ListMessagesResponse> {
-        MetisClient::wait_for_message(self, query).await
+    async fn receive_messages(&self, query: &ReceiveMessagesQuery) -> Result<ListMessagesResponse> {
+        MetisClient::receive_messages(self, query).await
     }
 }
 
