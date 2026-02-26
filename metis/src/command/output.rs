@@ -643,6 +643,23 @@ fn write_repository_details(repository: &RepositoryRecord, writer: &mut impl Wri
         "  default_image: {}",
         config.default_image.as_deref().unwrap_or("<none>")
     )?;
+    if let Some(ref pw) = config.patch_workflow {
+        if !pw.review_requests.is_empty() {
+            let reviewers: Vec<&str> = pw
+                .review_requests
+                .iter()
+                .map(|r| r.assignee.as_str())
+                .collect();
+            writeln!(writer, "  reviewers: {}", reviewers.join(", "))?;
+        }
+        if let Some(ref mr) = pw.merge_request {
+            writeln!(
+                writer,
+                "  merger: {}",
+                mr.assignee.as_deref().unwrap_or("<none>")
+            )?;
+        }
+    }
     Ok(())
 }
 
