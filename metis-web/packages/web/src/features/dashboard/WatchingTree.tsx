@@ -7,7 +7,7 @@ import {
   buildIssueTree,
   type IssueTreeNode,
 } from "../issues/useIssues";
-import { issueToBadgeStatus } from "../../utils/statusMapping";
+import { issueToBadgeStatus, TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { isNodeActive, pruneTree } from "./watchingUtils";
 import styles from "./WatchingTree.module.css";
@@ -28,7 +28,6 @@ interface SubtreeSummary {
 
 function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
   const summary: SubtreeSummary = { open: 0, inProgress: 0, closed: 0 };
-  const TERMINAL_STATUSES = new Set(["closed", "failed", "dropped", "rejected"]);
 
   function walk(n: IssueTreeNode) {
     for (const child of n.children) {

@@ -1,5 +1,12 @@
 import type { BadgeStatus } from "@metis/ui";
 
+export const TERMINAL_STATUSES: Set<string> = new Set([
+  "closed",
+  "failed",
+  "dropped",
+  "rejected",
+]);
+
 const validStatuses: Set<string> = new Set([
   "open",
   "in-progress",

@@ -7,11 +7,9 @@ import {
   buildIssueTree,
   type IssueTreeNode,
 } from "../issues/useIssues";
-import { issueToBadgeStatus } from "../../utils/statusMapping";
+import { issueToBadgeStatus, TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import styles from "./WatchingTree.module.css";
-
-const TERMINAL_STATUSES = new Set(["closed", "failed", "dropped", "rejected"]);
 
 interface CompletedTreeProps {
   issues: IssueSummaryRecord[];

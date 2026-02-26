@@ -1,8 +1,7 @@
 import { useMemo } from "react";
 import type { IssueSummaryRecord } from "@metis/api";
 import { buildIssueTree } from "../issues/useIssues";
-
-const TERMINAL_STATUSES = new Set(["closed", "failed", "dropped", "rejected"]);
+import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 
 export function useCompletedCount(
   issues: IssueSummaryRecord[] | undefined,
