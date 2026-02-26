@@ -114,7 +114,6 @@ function issueNodesToTreeNodes(
         node.children.length > 0
           ? issueNodesToTreeNodes(node.children, jobsByIssue, onJobClick)
           : undefined,
-      defaultExpanded: true,
     }));
 }
 
