@@ -15,6 +15,8 @@ export interface TreeViewProps {
   collapsedIds?: Set<string>;
   /** Called when the expand/collapse chevron is clicked (controlled mode). Receives the node ID. */
   onToggle?: (id: string) => void;
+  /** When provided, the node with this ID will be visually highlighted as selected. */
+  selectedId?: string;
   className?: string;
 }
 
@@ -24,9 +26,10 @@ interface TreeNodeItemProps {
   onNodeClick?: (id: string) => void;
   collapsedIds?: Set<string>;
   onToggle?: (id: string) => void;
+  selectedId?: string;
 }
 
-function TreeNodeItem({ node, depth, onNodeClick, collapsedIds, onToggle }: TreeNodeItemProps) {
+function TreeNodeItem({ node, depth, onNodeClick, collapsedIds, onToggle, selectedId }: TreeNodeItemProps) {
   const controlled = collapsedIds !== undefined;
   const [localExpanded, setLocalExpanded] = useState(node.defaultExpanded ?? true);
   const expanded = controlled ? !collapsedIds.has(node.id) : localExpanded;
@@ -46,10 +49,12 @@ function TreeNodeItem({ node, depth, onNodeClick, collapsedIds, onToggle }: Tree
     onNodeClick?.(node.id);
   }, [node.id, onNodeClick]);
 
+  const isSelected = node.id === selectedId;
+
   return (
     <li className={styles.nodeItem}>
       <div
-        className={styles.nodeRow}
+        className={[styles.nodeRow, isSelected && styles.selected].filter(Boolean).join(" ")}
         style={{ "--tree-depth": depth } as React.CSSProperties}
         onClick={handleClick}
         role="treeitem"
@@ -74,7 +79,7 @@ function TreeNodeItem({ node, depth, onNodeClick, collapsedIds, onToggle }: Tree
       {hasChildren && expanded && (
         <ul className={styles.children} role="group">
           {node.children!.map((child) => (
-            <TreeNodeItem key={child.id} node={child} depth={depth + 1} onNodeClick={onNodeClick} collapsedIds={collapsedIds} onToggle={onToggle} />
+            <TreeNodeItem key={child.id} node={child} depth={depth + 1} onNodeClick={onNodeClick} collapsedIds={collapsedIds} onToggle={onToggle} selectedId={selectedId} />
           ))}
         </ul>
       )}
@@ -82,13 +87,13 @@ function TreeNodeItem({ node, depth, onNodeClick, collapsedIds, onToggle }: Tree
   );
 }
 
-export function TreeView({ nodes, onNodeClick, collapsedIds, onToggle, className }: TreeViewProps) {
+export function TreeView({ nodes, onNodeClick, collapsedIds, onToggle, selectedId, className }: TreeViewProps) {
   const cls = [styles.tree, className].filter(Boolean).join(" ");
 
   return (
     <ul className={cls} role="tree">
       {nodes.map((node) => (
-        <TreeNodeItem key={node.id} node={node} depth={0} onNodeClick={onNodeClick} collapsedIds={collapsedIds} onToggle={onToggle} />
+        <TreeNodeItem key={node.id} node={node} depth={0} onNodeClick={onNodeClick} collapsedIds={collapsedIds} onToggle={onToggle} selectedId={selectedId} />
       ))}
     </ul>
   );

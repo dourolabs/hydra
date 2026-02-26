@@ -263,6 +263,7 @@ export function WatchingTree({
                   onNodeClick={onSelect}
                   collapsedIds={subtreeCollapsedIds}
                   onToggle={handleSubtreeToggle}
+                  selectedId={selectedId ?? undefined}
                 />
               </div>
             )}
