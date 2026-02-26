@@ -1,0 +1,185 @@
+.page { composes: page from './page.module.css'; }
+.center { composes: center from './page.module.css'; }
+.error { composes: error from './page.module.css'; }
+.empty { composes: empty from './page.module.css'; }
+
+.pageHeader {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-4);
+}
+
+.sectionTitle {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Repository table */
+.repoTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.repoTable th {
+  text-align: left;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.repoTable td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  vertical-align: middle;
+}
+
+.repoTable tr:last-child td {
+  border-bottom: none;
+}
+
+.repoTable tbody tr:hover {
+  background-color: var(--color-bg-tertiary);
+}
+
+.repoName {
+  font-weight: 500;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+}
+
+.repoUrl {
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+}
+
+.repoBranch {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.repoImage {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.dimText {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.rowActions {
+  display: flex;
+  gap: var(--space-2);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.repoTable tbody tr:hover .rowActions {
+  opacity: 1;
+}
+
+/* Form / modal styles */
+.formFields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.formHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-top: var(--space-1);
+}
+
+/* Delete confirmation modal */
+.deleteModalContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.deleteMessage {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  margin: 0;
+}
+
+.deleteRepoName {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  font-family: var(--font-family-mono);
+  margin: 0;
+}
+
+.deleteActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .repoTable thead {
+    display: none;
+  }
+
+  .repoTable,
+  .repoTable tbody,
+  .repoTable tr,
+  .repoTable td {
+    display: block;
+  }
+
+  .repoTable tr {
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .repoTable td {
+    padding: var(--space-1) var(--space-3);
+    border-bottom: none;
+  }
+
+  .repoUrl {
+    max-width: 100%;
+  }
+
+  .repoImage {
+    max-width: 100%;
+  }
+
+  .rowActions {
+    opacity: 1;
+    padding-top: var(--space-2);
+  }
+}
