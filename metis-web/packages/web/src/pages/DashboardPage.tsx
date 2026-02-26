@@ -11,7 +11,9 @@ import { actorDisplayName } from "../api/auth";
 import { SplitLayout } from "../layout/SplitLayout";
 import { InboxList } from "../features/dashboard/InboxList";
 import { WatchingTree } from "../features/dashboard/WatchingTree";
+import { CompletedTree } from "../features/dashboard/CompletedTree";
 import { useWatchingCount } from "../features/dashboard/useWatchingCount";
+import { useCompletedCount } from "../features/dashboard/useCompletedCount";
 import { DetailPanel, DetailPanelEmpty } from "../features/dashboard/DetailPanel";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import styles from "./DashboardPage.module.css";
@@ -124,13 +126,15 @@ export function DashboardPage() {
   }, [selectedId, issues, selectedExists, setSelectedId]);
 
   const watchingCount = useWatchingCount(issues, jobsByIssue, username);
+  const completedCount = useCompletedCount(issues, username);
 
   const tabs = useMemo(
     () => [
       { id: "inbox", label: `Inbox (${inboxIssues.length})` },
       { id: "watching", label: `Watching (${watchingCount})` },
+      { id: "completed", label: `Completed (${completedCount})` },
     ],
-    [inboxIssues.length, watchingCount],
+    [inboxIssues.length, watchingCount, completedCount],
   );
 
   if (isLoading) {
@@ -158,6 +162,15 @@ export function DashboardPage() {
       )}
       {activeTab === "watching" && (
         <WatchingTree
+          issues={issues ?? []}
+          jobsByIssue={jobsByIssue ?? new Map()}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          username={username}
+        />
+      )}
+      {activeTab === "completed" && (
+        <CompletedTree
           issues={issues ?? []}
           jobsByIssue={jobsByIssue ?? new Map()}
           selectedId={selectedId}
