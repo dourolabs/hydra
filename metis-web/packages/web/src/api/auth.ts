@@ -3,7 +3,9 @@ import { apiFetch } from "./client";
 
 /** Extract a display name from any actor identity. */
 export function actorDisplayName(actor: ActorIdentity): string {
-  return actor.type === "user" ? actor.username : actor.task_id;
+  if (actor.type === "user") return actor.username;
+  if (actor.type === "task") return actor.task_id;
+  return actor.issue_id;
 }
 
 export function login(token: string): Promise<WhoAmIResponse> {
