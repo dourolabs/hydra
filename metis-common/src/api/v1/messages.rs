@@ -106,6 +106,8 @@ pub struct SearchMessagesQuery {
     pub include_deleted: Option<bool>,
     #[serde(default)]
     pub limit: Option<u32>,
+    #[serde(default)]
+    pub mark_as_read: Option<bool>,
 }
 
 /// Query parameters for long-poll waiting for new messages.
@@ -253,6 +255,7 @@ mod tests {
         assert_eq!(query.before, None);
         assert_eq!(query.include_deleted, None);
         assert_eq!(query.limit, None);
+        assert_eq!(query.mark_as_read, None);
     }
 
     #[test]

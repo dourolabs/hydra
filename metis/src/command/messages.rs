@@ -46,6 +46,10 @@ pub enum MessagesCommand {
         /// Maximum number of messages to return.
         #[arg(long, value_name = "LIMIT", default_value_t = 50)]
         limit: u32,
+
+        /// Mark all returned messages as read.
+        #[arg(long = "mark-read")]
+        mark_read: bool,
     },
     /// Block until a new message arrives (long-poll).
     Wait {
@@ -83,6 +87,7 @@ pub async fn run(
             recipient,
             after,
             limit,
+            mark_read,
         } => {
             let recipient = match recipient {
                 Some(r) => Some(r),
@@ -93,6 +98,9 @@ pub async fn run(
             query.recipient = recipient;
             query.after = after;
             query.limit = Some(limit);
+            if mark_read {
+                query.mark_as_read = Some(true);
+            }
             let response = client
                 .list_messages(&query)
                 .await

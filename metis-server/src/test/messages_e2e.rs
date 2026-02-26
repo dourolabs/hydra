@@ -310,3 +310,115 @@ async fn messaging_e2e_wait_long_poll_unblocks_on_new_message() -> anyhow::Resul
 
     Ok(())
 }
+
+/// End-to-end: mark_as_read flag on list messages.
+///
+/// 1. User sends messages to an issue-agent.
+/// 2. Agent lists messages with mark_as_read=true — messages are returned and marked as read.
+/// 3. Agent lists messages again — all messages now have is_read=true.
+/// 4. Verify mark_as_read without matching recipient returns 400.
+#[tokio::test]
+async fn messaging_e2e_mark_as_read() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let store = handles.store.clone();
+
+    let user_client = test_client();
+
+    let issue_id = IssueId::from_str("i-eteread")?;
+    let (agent_actor, agent_token) = Actor::new_for_issue(issue_id, Username::from("test-creator"));
+    let agent_actor_id = agent_actor.actor_id.clone();
+    let agent_actor_name = agent_actor.name();
+    store.add_actor(agent_actor, &ActorRef::test()).await?;
+
+    let agent_client = client_with_token(&agent_token);
+
+    let server = spawn_test_server_with_state(handles.state, store).await?;
+    let base = server.base_url();
+
+    // ── Step 1: User sends two messages to the agent ─────────────────
+    user_client
+        .post(format!("{base}/v1/messages"))
+        .json(&SendMessageRequest::new(
+            agent_actor_id.clone(),
+            "first message".to_string(),
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    user_client
+        .post(format!("{base}/v1/messages"))
+        .json(&SendMessageRequest::new(
+            agent_actor_id.clone(),
+            "second message".to_string(),
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // ── Step 2: Agent lists messages — initially is_read=false ────────
+    let initial_list: ListMessagesResponse = agent_client
+        .get(format!("{base}/v1/messages?recipient={agent_actor_name}"))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(initial_list.messages.len(), 2);
+    for msg in &initial_list.messages {
+        assert!(!msg.message.is_read, "messages should initially be unread");
+    }
+
+    // ── Step 3: Agent lists messages with mark_as_read=true ──────────
+    let mark_list: ListMessagesResponse = agent_client
+        .get(format!(
+            "{base}/v1/messages?recipient={agent_actor_name}&mark_as_read=true"
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(mark_list.messages.len(), 2);
+
+    // ── Step 4: Agent lists again — all messages now have is_read=true
+    let after_list: ListMessagesResponse = agent_client
+        .get(format!("{base}/v1/messages?recipient={agent_actor_name}"))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(after_list.messages.len(), 2);
+    for msg in &after_list.messages {
+        assert!(msg.message.is_read, "messages should be marked as read");
+    }
+
+    // ── Step 5: mark_as_read without matching recipient returns 400 ──
+    let bad_resp = agent_client
+        .get(format!("{base}/v1/messages?mark_as_read=true"))
+        .send()
+        .await?;
+
+    assert_eq!(
+        bad_resp.status(),
+        reqwest::StatusCode::BAD_REQUEST,
+        "mark_as_read without matching recipient should return 400"
+    );
+
+    // Also verify with a different recipient
+    let bad_resp2 = agent_client
+        .get(format!(
+            "{base}/v1/messages?recipient=u-someone-else&mark_as_read=true"
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(
+        bad_resp2.status(),
+        reqwest::StatusCode::BAD_REQUEST,
+        "mark_as_read with non-matching recipient should return 400"
+    );
+
+    Ok(())
+}

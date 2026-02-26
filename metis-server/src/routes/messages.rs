@@ -59,13 +59,30 @@ pub async fn send_message(
 /// GET /v1/messages — list messages (authenticated, any actor may query any messages).
 ///
 /// Accepts query params: sender, recipient, after (timestamp), before (timestamp),
-/// include_deleted, limit. Returns messages in reverse chronological order (newest first).
+/// include_deleted, limit, mark_as_read. Returns messages in reverse chronological order
+/// (newest first). When `mark_as_read=true`, all returned unread messages are marked as read;
+/// this requires `recipient` to match the current authenticated actor.
 pub async fn list_messages(
     State(state): State<AppState>,
-    Extension(_actor): Extension<Actor>,
+    Extension(actor): Extension<Actor>,
     Query(query): Query<SearchMessagesQuery>,
 ) -> Result<Json<ListMessagesResponse>, ApiError> {
     info!("list_messages invoked");
+
+    let mark_as_read = query.mark_as_read.unwrap_or(false);
+
+    if mark_as_read {
+        let actor_name = actor.name();
+        match &query.recipient {
+            Some(r) if r == &actor_name => {}
+            _ => {
+                return Err(ApiError::bad_request(
+                    "mark_as_read requires recipient to match the current authenticated actor"
+                        .to_string(),
+                ));
+            }
+        }
+    }
 
     let mut store_query = SearchMessagesQuery::default();
     store_query.sender = query.sender;
@@ -80,6 +97,21 @@ pub async fn list_messages(
         .list_messages(&store_query)
         .await
         .map_err(map_store_error)?;
+
+    if mark_as_read {
+        let actor_ref = ActorRef::from(&actor);
+        for (id, v) in &results {
+            if !v.item.is_read {
+                let mut updated = v.item.clone();
+                updated.is_read = true;
+                state
+                    .store
+                    .update_message_with_actor(id, updated, actor_ref.clone())
+                    .await
+                    .map_err(map_store_error)?;
+            }
+        }
+    }
 
     let messages: Vec<VersionedMessage> = results
         .into_iter()
