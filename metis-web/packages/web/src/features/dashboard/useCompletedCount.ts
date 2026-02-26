@@ -13,6 +13,7 @@ export function useCompletedCount(
     const tree = buildIssueTree(issues);
     return tree.filter(
       (root) =>
+        !root.hardBlocked &&
         root.issue.issue.creator === username &&
         TERMINAL_STATUSES.has(root.issue.issue.status),
     ).length;

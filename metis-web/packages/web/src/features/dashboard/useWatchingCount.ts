@@ -12,6 +12,6 @@ export function useWatchingCount(
     if (!issues) return 0;
     const jobs = jobsByIssue ?? new Map<string, JobSummaryRecord[]>();
     const tree = buildIssueTree(issues);
-    return tree.filter((root) => root.issue.issue.creator === username && pruneTree(root, jobs) !== null).length;
+    return tree.filter((root) => !root.hardBlocked && root.issue.issue.creator === username && pruneTree(root, jobs) !== null).length;
   }, [issues, jobsByIssue, username]);
 }
