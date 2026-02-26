@@ -105,6 +105,8 @@ pub struct SearchMessagesQuery {
     #[serde(default)]
     pub include_deleted: Option<bool>,
     #[serde(default)]
+    pub is_read: Option<bool>,
+    #[serde(default)]
     pub limit: Option<u32>,
 }
 
@@ -252,7 +254,39 @@ mod tests {
         assert_eq!(query.after, None);
         assert_eq!(query.before, None);
         assert_eq!(query.include_deleted, None);
+        assert_eq!(query.is_read, None);
         assert_eq!(query.limit, None);
+    }
+
+    #[test]
+    fn search_messages_query_is_read_serde_round_trip() {
+        let query = SearchMessagesQuery {
+            is_read: Some(true),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&query).expect("serialize");
+        let decoded: SearchMessagesQuery = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.is_read, Some(true));
+        assert_eq!(decoded, query);
+
+        // Also test with false
+        let query_false = SearchMessagesQuery {
+            is_read: Some(false),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&query_false).expect("serialize");
+        let decoded: SearchMessagesQuery = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.is_read, Some(false));
+        assert_eq!(decoded, query_false);
+    }
+
+    #[test]
+    fn search_messages_query_is_read_defaults_to_none() {
+        let json = r#"{}"#;
+        let query: SearchMessagesQuery = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(query.is_read, None);
     }
 
     #[test]

@@ -2338,6 +2338,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             param_idx += 1;
         }
 
+        let is_read_val = query.is_read;
+        if is_read_val.is_some() {
+            conditions.push(format!("is_read = ${param_idx}"));
+            param_idx += 1;
+        }
+
         let where_clause = if conditions.is_empty() {
             String::new()
         } else {
@@ -2360,6 +2366,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
         }
         if let Some(ref b) = before_val {
             qb = qb.bind(b);
+        }
+        if let Some(ref ir) = is_read_val {
+            qb = qb.bind(ir);
         }
         qb = qb.bind(limit);
 
@@ -4042,5 +4051,67 @@ mod tests {
         assert_eq!(results[0].0, msg_id);
         assert_eq!(results[0].1.item.body, "changed_body_xyz789");
         assert_eq!(results[0].1.version, 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn message_filter_by_is_read_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        // Create an unread message (default)
+        let msg_unread = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "unread message".into(),
+        );
+        let (_id_unread, _) = store
+            .add_message(msg_unread, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Create a message and mark it as read
+        let msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "read message".into(),
+        );
+        let (id_read, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
+
+        let read_msg = Message {
+            sender: Some(sender.clone()),
+            recipient: recipient.clone(),
+            body: "read message".into(),
+            deleted: false,
+            is_read: true,
+        };
+        store
+            .update_message(&id_read, read_msg, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Filter for read messages only
+        let mut query = SearchMessagesQuery::default();
+        query.is_read = Some(true);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id_read);
+        assert_eq!(results[0].1.item.body, "read message");
+        assert!(results[0].1.item.is_read);
+
+        // Filter for unread messages only
+        let mut query = SearchMessagesQuery::default();
+        query.is_read = Some(false);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.body, "unread message");
+        assert!(!results[0].1.item.is_read);
+
+        // No filter returns all messages
+        let query = SearchMessagesQuery::default();
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
     }
 }

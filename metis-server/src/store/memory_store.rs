@@ -962,6 +962,13 @@ impl ReadOnlyStore for MemoryStore {
                     }
                 }
 
+                // Filter by is_read
+                if let Some(is_read_filter) = query.is_read {
+                    if msg.is_read != is_read_filter {
+                        continue;
+                    }
+                }
+
                 all_messages.push((msg_id, latest));
             }
         }
@@ -4804,5 +4811,66 @@ mod tests {
         let query = SearchPatchesQuery::new(None, None, vec![], Some("feature/foo".to_string()));
         let patches = store.list_patches(&query).await.unwrap();
         assert!(patches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn message_filter_by_is_read() {
+        let store = MemoryStore::new();
+
+        let sender = ActorId::Username(Username::from("alice").into());
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        // Create an unread message (default)
+        let msg_unread = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "unread message".into(),
+        );
+        let (_id_unread, _) = store
+            .add_message(msg_unread, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Create a message and mark it as read
+        let msg = Message::new(
+            Some(sender.clone()),
+            recipient.clone(),
+            "read message".into(),
+        );
+        let (id_read, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
+
+        let read_msg = Message {
+            sender: Some(sender.clone()),
+            recipient: recipient.clone(),
+            body: "read message".into(),
+            deleted: false,
+            is_read: true,
+        };
+        store
+            .update_message(&id_read, read_msg, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Filter for read messages only
+        let mut query = SearchMessagesQuery::default();
+        query.is_read = Some(true);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id_read);
+        assert_eq!(results[0].1.item.body, "read message");
+        assert!(results[0].1.item.is_read);
+
+        // Filter for unread messages only
+        let mut query = SearchMessagesQuery::default();
+        query.is_read = Some(false);
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.body, "unread message");
+        assert!(!results[0].1.item.is_read);
+
+        // No filter returns all messages
+        let query = SearchMessagesQuery::default();
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
     }
 }
