@@ -8,8 +8,8 @@ use axum::{Extension, Json, extract::Query, extract::State};
 use metis_common::api::v1::{
     ApiError,
     messages::{
-        self as api_messages, ListMessagesResponse, SearchMessagesQuery, SendMessageRequest,
-        SendMessageResponse, VersionedMessage, WaitMessagesQuery,
+        self as api_messages, ListMessagesResponse, ReceiveMessagesQuery, SearchMessagesQuery,
+        SendMessageRequest, SendMessageResponse, VersionedMessage,
     },
 };
 use std::time::Duration;
@@ -19,8 +19,8 @@ use tracing::{error, info};
 use crate::app::event_bus::ServerEvent;
 
 const DEFAULT_LIMIT: u32 = 50;
-const DEFAULT_WAIT_TIMEOUT_SECS: u32 = 30;
-const MAX_WAIT_TIMEOUT_SECS: u32 = 120;
+const DEFAULT_RECEIVE_TIMEOUT_SECS: u32 = 30;
+const MAX_RECEIVE_TIMEOUT_SECS: u32 = 120;
 
 /// POST /v1/messages — send a message to a recipient.
 pub async fn send_message(
@@ -101,20 +101,24 @@ pub async fn list_messages(
     Ok(Json(ListMessagesResponse::new(messages)))
 }
 
-/// GET /v1/messages/wait — long-poll for the next message.
-pub async fn wait_for_message(
+/// GET /v1/messages/receive — receive unread messages for the current actor.
+///
+/// Fetches all unread messages where the current authenticated actor is the recipient,
+/// returns the original unread versions, then marks them as read. If no unread messages
+/// exist, long-polls until a new message arrives (up to the specified timeout).
+/// Optionally filters by sender.
+pub async fn receive_messages(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
-    Query(query): Query<WaitMessagesQuery>,
+    Query(query): Query<ReceiveMessagesQuery>,
 ) -> Result<Json<ListMessagesResponse>, ApiError> {
-    info!(actor = %actor.name(), "wait_for_message invoked");
+    info!(actor = %actor.name(), "receive_messages invoked");
 
-    let actor_id = actor.actor_id.clone();
-    let actor_name = actor_id.to_string();
+    let actor_name = actor.name();
     let timeout_secs = query
         .timeout
-        .unwrap_or(DEFAULT_WAIT_TIMEOUT_SECS)
-        .min(MAX_WAIT_TIMEOUT_SECS);
+        .unwrap_or(DEFAULT_RECEIVE_TIMEOUT_SECS)
+        .min(MAX_RECEIVE_TIMEOUT_SECS);
     let timeout_duration = Duration::from_secs(timeout_secs as u64);
 
     let sender_filter = query
@@ -126,44 +130,67 @@ pub async fn wait_for_message(
         })
         .transpose()?;
 
-    let recipient_filter = query
-        .recipient
-        .as_deref()
-        .map(|r| {
-            parse_actor_name(r)
-                .ok_or_else(|| ApiError::bad_request(format!("invalid recipient actor name: {r}")))
-        })
-        .transpose()?;
-
     // Subscribe FIRST (before checking store) to avoid missing events
     let mut receiver = state.subscribe();
 
-    // Check for existing messages after the cursor
-    let existing = check_existing_messages_after_cursor(
-        &state,
-        &actor_id,
-        sender_filter.as_ref(),
-        recipient_filter.as_ref(),
-        query.after.as_deref(),
-    )
-    .await?;
+    // Check for existing unread messages addressed to the current actor
+    let mut store_query = SearchMessagesQuery::default();
+    store_query.recipient = Some(actor_name.clone());
+    store_query.sender = sender_filter.as_ref().map(|s| s.to_string());
+    store_query.limit = Some(DEFAULT_LIMIT);
 
-    if !existing.is_empty() {
+    let results = state
+        .store
+        .list_messages(&store_query)
+        .await
+        .map_err(map_store_error)?;
+
+    // Filter for unread messages
+    let unread: Vec<_> = results
+        .into_iter()
+        .filter(|(_, v)| !v.item.is_read)
+        .collect();
+
+    if !unread.is_empty() {
+        // Mark all unread messages as read
+        let actor_ref = ActorRef::from(&actor);
+        for (id, v) in &unread {
+            let mut updated = v.item.clone();
+            updated.is_read = true;
+            state
+                .store
+                .update_message_with_actor(id, updated, actor_ref.clone())
+                .await
+                .map_err(map_store_error)?;
+        }
+
+        // Return the original unread versions of the messages
+        let mut messages: Vec<VersionedMessage> = unread
+            .into_iter()
+            .map(|(id, v)| {
+                let msg: api_messages::Message = v.item.into();
+                VersionedMessage::new(id, v.version, v.timestamp, msg, v.actor, v.creation_time)
+            })
+            .collect();
+
+        // Sort ascending by timestamp (oldest first)
+        messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
         info!(
             actor = %actor.name(),
-            count = existing.len(),
-            "wait_for_message returning existing messages"
+            count = messages.len(),
+            "receive_messages returning existing unread messages"
         );
-        return Ok(Json(ListMessagesResponse::new(existing)));
+        return Ok(Json(ListMessagesResponse::new(messages)));
     }
 
-    // No existing messages — wait for new ones via event bus
+    // No unread messages — wait for new ones via event bus
     let deadline = tokio::time::Instant::now() + timeout_duration;
 
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
-            info!(actor = %actor.name(), "wait_for_message timed out");
+            info!(actor = %actor.name(), "receive_messages timed out");
             return Ok(Json(ListMessagesResponse::new(vec![])));
         }
 
@@ -176,11 +203,8 @@ pub async fn wait_for_message(
                     ..
                 } = &event
                 {
-                    // Check if this event involves the authenticated actor
-                    let involves_actor = recipient.to_string() == actor_name
-                        || sender.as_ref().map(|s| s.to_string()) == Some(actor_name.clone());
-
-                    if !involves_actor {
+                    // Must be addressed to the current actor
+                    if recipient.to_string() != actor_name {
                         continue;
                     }
 
@@ -191,25 +215,31 @@ pub async fn wait_for_message(
                         }
                     }
 
-                    // Check recipient filter
-                    if let Some(ref rf) = recipient_filter {
-                        if *recipient != *rf {
-                            continue;
-                        }
-                    }
-
-                    // Found a matching message — return it
+                    // Found a matching message — mark it as read and return it
                     let msg = state
                         .store
                         .get_message(message_id)
                         .await
                         .map_err(map_store_error)?;
 
+                    // Mark as read
+                    let actor_ref = ActorRef::from(&actor);
+                    if !msg.item.is_read {
+                        let mut updated = msg.item.clone();
+                        updated.is_read = true;
+                        state
+                            .store
+                            .update_message_with_actor(message_id, updated, actor_ref)
+                            .await
+                            .map_err(map_store_error)?;
+                    }
+
+                    let api_msg: api_messages::Message = msg.item.into();
                     let versioned = VersionedMessage::new(
                         message_id.clone(),
                         msg.version,
                         msg.timestamp,
-                        msg.item.into(),
+                        api_msg,
                         msg.actor,
                         msg.creation_time,
                     );
@@ -217,116 +247,23 @@ pub async fn wait_for_message(
                     info!(
                         actor = %actor.name(),
                         message_id = %message_id,
-                        "wait_for_message returning new message"
+                        "receive_messages returning new message"
                     );
                     return Ok(Json(ListMessagesResponse::new(vec![versioned])));
                 }
             }
             Ok(Err(broadcast::error::RecvError::Lagged(_))) => continue,
             Ok(Err(broadcast::error::RecvError::Closed)) => {
-                info!(actor = %actor.name(), "wait_for_message event bus closed");
+                info!(actor = %actor.name(), "receive_messages event bus closed");
                 return Ok(Json(ListMessagesResponse::new(vec![])));
             }
             Err(_) => {
                 // Timeout
-                info!(actor = %actor.name(), "wait_for_message timed out");
+                info!(actor = %actor.name(), "receive_messages timed out");
                 return Ok(Json(ListMessagesResponse::new(vec![])));
             }
         }
     }
-}
-
-/// Check if there are messages after the given cursor in the relevant conversations.
-///
-/// Returns messages in ascending order (oldest new message first) for the wait endpoint.
-async fn check_existing_messages_after_cursor(
-    state: &AppState,
-    actor_id: &crate::domain::actors::ActorId,
-    sender_filter: Option<&crate::domain::actors::ActorId>,
-    recipient_filter: Option<&crate::domain::actors::ActorId>,
-    after_cursor: Option<&str>,
-) -> Result<Vec<VersionedMessage>, ApiError> {
-    // If no cursor, no need to check for existing messages
-    let Some(after_str) = after_cursor else {
-        return Ok(vec![]);
-    };
-
-    let after_id: metis_common::MessageId = after_str
-        .parse()
-        .map_err(|_| ApiError::bad_request(format!("invalid after cursor: {after_str}")))?;
-
-    // Fetch the cursor message to get its timestamp
-    let cursor_msg = state
-        .store
-        .get_message(&after_id)
-        .await
-        .map_err(map_store_error)?;
-    let after_timestamp = cursor_msg.timestamp;
-
-    let actor_name = actor_id.to_string();
-
-    // Build a query for messages after the cursor timestamp involving this actor
-    // We check both as sender and as recipient
-    let mut new_messages = Vec::new();
-
-    // Messages where actor is recipient
-    let mut query_as_recipient = SearchMessagesQuery::default();
-    query_as_recipient.sender = sender_filter.map(|s| s.to_string());
-    query_as_recipient.recipient = Some(
-        recipient_filter
-            .map(|r| r.to_string())
-            .unwrap_or_else(|| actor_name.clone()),
-    );
-    query_as_recipient.after = Some(after_timestamp);
-    query_as_recipient.limit = Some(DEFAULT_LIMIT);
-    let results = state
-        .store
-        .list_messages(&query_as_recipient)
-        .await
-        .map_err(map_store_error)?;
-    for (id, v) in results {
-        if id != after_id {
-            new_messages.push(VersionedMessage::new(
-                id,
-                v.version,
-                v.timestamp,
-                v.item.into(),
-                v.actor,
-                v.creation_time,
-            ));
-        }
-    }
-
-    // Also check messages where actor is sender (unless sender filter is specified)
-    if sender_filter.is_none() {
-        let mut query_as_sender = SearchMessagesQuery::default();
-        query_as_sender.sender = Some(actor_name);
-        query_as_sender.recipient = recipient_filter.map(|r| r.to_string());
-        query_as_sender.after = Some(after_timestamp);
-        query_as_sender.limit = Some(DEFAULT_LIMIT);
-        let results = state
-            .store
-            .list_messages(&query_as_sender)
-            .await
-            .map_err(map_store_error)?;
-        for (id, v) in results {
-            if id != after_id && !new_messages.iter().any(|m| m.message_id == id) {
-                new_messages.push(VersionedMessage::new(
-                    id,
-                    v.version,
-                    v.timestamp,
-                    v.item.into(),
-                    v.actor,
-                    v.creation_time,
-                ));
-            }
-        }
-    }
-
-    // Sort ascending by timestamp (oldest first) for the wait response
-    new_messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-
-    Ok(new_messages)
 }
 
 fn map_send_message_error(err: SendMessageError) -> ApiError {

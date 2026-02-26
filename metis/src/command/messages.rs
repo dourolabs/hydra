@@ -8,7 +8,7 @@ use clap::Subcommand;
 use metis_common::{
     actor_ref::ActorId,
     api::v1::messages::{
-        SearchMessagesQuery, SendMessageRequest, SendMessageResponse, WaitMessagesQuery,
+        ReceiveMessagesQuery, SearchMessagesQuery, SendMessageRequest, SendMessageResponse,
     },
 };
 use std::io::{self, Write};
@@ -55,17 +55,13 @@ pub enum MessagesCommand {
         #[arg(long, value_name = "LIMIT", default_value_t = 50)]
         limit: u32,
     },
-    /// Block until a new message arrives (long-poll).
-    Wait {
+    /// Receive unread messages, marking them as read. Long-polls if none are available.
+    Receive {
         /// Filter by sender (e.g. "u-alice" or "a-i-abc").
         #[arg(long, value_name = "SENDER")]
         sender: Option<String>,
 
-        /// Filter by recipient (e.g. "u-alice" or "a-i-abc").
-        #[arg(long, value_name = "RECIPIENT")]
-        recipient: Option<String>,
-
-        /// Timeout in seconds.
+        /// Timeout in seconds for long-polling when no unread messages exist.
         #[arg(long, value_name = "SECONDS", default_value_t = 30)]
         timeout: u32,
     },
@@ -117,19 +113,14 @@ pub async fn run(
                 .context("failed to list messages")?;
             render_versioned_messages(context.output_format, &response.messages, &mut stdout)?;
         }
-        MessagesCommand::Wait {
-            sender,
-            recipient,
-            timeout,
-        } => {
-            let mut query = WaitMessagesQuery::default();
+        MessagesCommand::Receive { sender, timeout } => {
+            let mut query = ReceiveMessagesQuery::default();
             query.sender = sender;
-            query.recipient = recipient;
             query.timeout = Some(timeout);
             let response = client
-                .wait_for_message(&query)
+                .receive_messages(&query)
                 .await
-                .context("failed to wait for messages")?;
+                .context("failed to receive messages")?;
             if response.messages.is_empty() {
                 if matches!(
                     context.output_format,
