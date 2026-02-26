@@ -261,10 +261,6 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            if children_have_running_task(state, &issue_id).await? {
-                continue;
-            }
-
             let maybe_task = self
                 .build_task(state, &issue_id, &issue, is_assignment_agent)
                 .await?;
@@ -371,24 +367,6 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
         .filter(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
     {
         for task_id in state.get_tasks_for_issue(&dependency.issue_id).await? {
-            if matches!(
-                state.get_task(&task_id).await?.status,
-                Status::Pending | Status::Running
-            ) {
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
-}
-
-async fn children_have_running_task(
-    state: &AppState,
-    issue_id: &IssueId,
-) -> Result<bool, StoreError> {
-    for child_id in state.get_issue_children(issue_id).await? {
-        for task_id in state.get_tasks_for_issue(&child_id).await? {
             if matches!(
                 state.get_task(&task_id).await?.status,
                 Status::Pending | Status::Running
@@ -911,84 +889,6 @@ mod tests {
         let queue = queue("agent-a");
         let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn does_not_spawn_parent_when_child_task_running() -> anyhow::Result<()> {
-        let (handles, repo_name) = state_with_repository().await?;
-
-        // Create parent issue (InProgress, all children stuck so it would be ready)
-        let (parent_id, _) = handles
-            .store
-            .add_issue(
-                issue(
-                    "Parent issue",
-                    IssueStatus::InProgress,
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ),
-                &ActorRef::test(),
-            )
-            .await?;
-
-        // Create child issue with a running task
-        let (child_id, _) = handles
-            .store
-            .add_issue(
-                issue(
-                    "Child issue",
-                    IssueStatus::Open,
-                    Some("agent-a"),
-                    vec![IssueDependency::new(
-                        IssueDependencyType::ChildOf,
-                        parent_id.clone(),
-                    )],
-                    &repo_name,
-                ),
-                &ActorRef::test(),
-            )
-            .await?;
-
-        // Create a running task for the child
-        let (task_id, _) = handles
-            .store
-            .add_task(
-                task(
-                    "Child task",
-                    BundleSpec::None,
-                    Some(child_id.clone()),
-                    Some("metis-worker:latest"),
-                    HashMap::from([
-                        (ISSUE_ID_ENV_VAR.to_string(), child_id.to_string()),
-                        (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
-                    ]),
-                ),
-                Utc::now(),
-                &ActorRef::test(),
-            )
-            .await?;
-        handles
-            .state
-            .transition_task_to_pending(&task_id, ActorRef::test())
-            .await?;
-
-        let queue = queue("agent-a");
-        let tasks = queue.spawn(&handles.state).await?;
-
-        // Parent should not spawn because child has a running task.
-        // The child is also already tracked in existing_issue_ids, so it won't spawn either.
-        // Only the child's existing task should prevent the parent from spawning.
-        let spawned_issue_ids: HashSet<_> = tasks
-            .iter()
-            .filter_map(|t| t.env_vars.get(ISSUE_ID_ENV_VAR).cloned())
-            .collect();
-        assert!(
-            !spawned_issue_ids.contains(&parent_id.to_string()),
-            "parent should not spawn when child has a running task"
-        );
 
         Ok(())
     }
