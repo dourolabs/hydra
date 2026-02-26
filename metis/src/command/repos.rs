@@ -6,8 +6,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::repositories::{
-    CreateRepositoryRequest, RepoWorkflowConfig, Repository, RepositoryRecord,
-    SearchRepositoriesQuery, UpdateRepositoryRequest,
+    CreateRepositoryRequest, MergeRequestConfig, RepoWorkflowConfig, Repository, RepositoryRecord,
+    ReviewRequestConfig, SearchRepositoriesQuery, UpdateRepositoryRequest,
 };
 use metis_common::RepoName;
 use std::io;
@@ -75,9 +75,13 @@ pub struct CreateRepositoryArgs {
     #[arg(long = "clear-default-image")]
     pub clear_default_image: bool,
 
-    /// Patch workflow configuration as a JSON string (e.g. '{"review_requests": [{"assignee": "alice"}], "merge_request": {"assignee": "$patch_creator"}}').
-    #[arg(long = "patch-workflow", value_name = "JSON")]
-    pub patch_workflow: Option<String>,
+    /// Add a reviewer to the patch workflow. Can be specified multiple times for multiple reviewers.
+    #[arg(long = "reviewer", value_name = "ASSIGNEE")]
+    pub reviewer: Vec<String>,
+
+    /// Set the merger for the patch workflow.
+    #[arg(long = "merger", value_name = "ASSIGNEE")]
+    pub merger: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -114,13 +118,21 @@ pub struct UpdateRepositoryArgs {
     #[arg(long = "clear-default-image")]
     pub clear_default_image: bool,
 
-    /// Patch workflow configuration as a JSON string (e.g. '{"review_requests": [{"assignee": "alice"}], "merge_request": {"assignee": "$patch_creator"}}').
+    /// Add a reviewer to the patch workflow. Can be specified multiple times for multiple reviewers.
     #[arg(
-        long = "patch-workflow",
-        value_name = "JSON",
+        long = "reviewer",
+        value_name = "ASSIGNEE",
         conflicts_with = "clear_patch_workflow"
     )]
-    pub patch_workflow: Option<String>,
+    pub reviewer: Vec<String>,
+
+    /// Set the merger for the patch workflow.
+    #[arg(
+        long = "merger",
+        value_name = "ASSIGNEE",
+        conflicts_with = "clear_patch_workflow"
+    )]
+    pub merger: Option<String>,
 
     /// Clear the configured patch workflow.
     #[arg(long = "clear-patch-workflow")]
@@ -264,9 +276,7 @@ fn build_create_request(args: &CreateRepositoryArgs) -> Result<CreateRepositoryR
         &args.default_image,
         args.clear_default_image,
     )?;
-    if let Some(ref json) = args.patch_workflow {
-        repo.patch_workflow = Some(parse_patch_workflow(json)?);
-    }
+    repo.patch_workflow = build_patch_workflow(&args.reviewer, &args.merger);
     Ok(CreateRepositoryRequest::new(args.name.clone(), repo))
 }
 
@@ -318,10 +328,8 @@ async fn build_update_request(
     let patch_workflow = if args.clear_patch_workflow {
         None
     } else {
-        match &args.patch_workflow {
-            Some(json) => Some(parse_patch_workflow(json)?),
-            None => current.patch_workflow,
-        }
+        let new_workflow = build_patch_workflow(&args.reviewer, &args.merger);
+        new_workflow.or(current.patch_workflow)
     };
 
     let repo = Repository::new(remote_url, default_branch, default_image, patch_workflow);
@@ -366,8 +374,26 @@ fn build_repository_config(
     ))
 }
 
-fn parse_patch_workflow(json: &str) -> Result<RepoWorkflowConfig> {
-    serde_json::from_str(json).context("invalid --patch-workflow JSON")
+fn build_patch_workflow(
+    reviewers: &[String],
+    merger: &Option<String>,
+) -> Option<RepoWorkflowConfig> {
+    if reviewers.is_empty() && merger.is_none() {
+        return None;
+    }
+    let review_requests = reviewers
+        .iter()
+        .map(|assignee| ReviewRequestConfig {
+            assignee: assignee.clone(),
+        })
+        .collect();
+    let merge_request = merger.as_ref().map(|assignee| MergeRequestConfig {
+        assignee: Some(assignee.clone()),
+    });
+    Some(RepoWorkflowConfig {
+        review_requests,
+        merge_request,
+    })
 }
 
 fn parse_required(value: &str, field: &str) -> Result<String> {
@@ -424,7 +450,8 @@ mod tests {
             clear_default_branch: false,
             default_image: Some("ghcr.io/dourolabs/metis:latest".to_string()),
             clear_default_image: false,
-            patch_workflow: None,
+            reviewer: vec![],
+            merger: None,
         }
     }
 
@@ -436,7 +463,8 @@ mod tests {
             clear_default_branch: false,
             default_image: Some("ghcr.io/dourolabs/metis:latest".to_string()),
             clear_default_image: false,
-            patch_workflow: None,
+            reviewer: vec![],
+            merger: None,
             clear_patch_workflow: false,
         }
     }
@@ -884,19 +912,22 @@ mod tests {
         assert_eq!(destination, PathBuf::from("/tmp/my-clone"));
     }
 
-    fn sample_workflow_json() -> String {
-        r#"{"review_requests":[{"assignee":"alice"}],"merge_request":{"assignee":"$patch_creator"}}"#
-            .to_string()
-    }
-
     fn sample_workflow_config() -> RepoWorkflowConfig {
-        serde_json::from_str(&sample_workflow_json()).unwrap()
+        RepoWorkflowConfig {
+            review_requests: vec![ReviewRequestConfig {
+                assignee: "alice".to_string(),
+            }],
+            merge_request: Some(MergeRequestConfig {
+                assignee: Some("$patch_creator".to_string()),
+            }),
+        }
     }
 
     #[tokio::test]
     async fn create_repository_with_patch_workflow() {
         let mut args = sample_create_args();
-        args.patch_workflow = Some(sample_workflow_json());
+        args.reviewer = vec!["alice".to_string()];
+        args.merger = Some("$patch_creator".to_string());
         let server = MockServer::start();
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/repositories").json_body(json!({
@@ -929,23 +960,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_repository_rejects_invalid_patch_workflow_json() {
+    async fn create_repository_without_patch_workflow() {
+        let args = sample_create_args();
         let server = MockServer::start();
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/repositories").json_body(json!({
+                "name": "dourolabs/metis",
+                "remote_url": "https://example.com/metis.git",
+                "default_branch": "main",
+                "default_image": "ghcr.io/dourolabs/metis:latest"
+            }));
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
+                    args.name.clone(),
+                    Repository::new(
+                        args.remote_url.clone(),
+                        args.default_branch.clone(),
+                        args.default_image.clone(),
+                        None,
+                    ),
+                )));
+        });
         let client = mock_client(&server);
-        let mut args = sample_create_args();
-        args.patch_workflow = Some("not valid json".to_string());
 
-        let error = create_repository(&client, args).await.unwrap_err();
-        assert!(
-            error.to_string().contains("invalid --patch-workflow JSON"),
-            "error should mention invalid JSON: {error:?}"
-        );
+        let repository = create_repository(&client, args).await.unwrap();
+        assert!(repository.repository.patch_workflow.is_none());
+
+        create_mock.assert();
     }
 
     #[tokio::test]
     async fn update_repository_with_patch_workflow() {
         let mut args = sample_update_args();
-        args.patch_workflow = Some(sample_workflow_json());
+        args.reviewer = vec!["alice".to_string()];
+        args.merger = Some("$patch_creator".to_string());
         let server = MockServer::start();
         let list_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/repositories");
@@ -1080,9 +1128,8 @@ mod tests {
         render_repository_records(ResolvedOutputFormat::Pretty, &[repo_info], &mut output).unwrap();
         let output = String::from_utf8(output).unwrap();
 
-        assert!(output.contains("patch_workflow:"));
-        assert!(output.contains("alice"));
-        assert!(output.contains("$patch_creator"));
+        assert!(output.contains("reviewers: alice"));
+        assert!(output.contains("merger: $patch_creator"));
     }
 
     #[test]
@@ -1094,6 +1141,7 @@ mod tests {
         render_repository_records(ResolvedOutputFormat::Pretty, &[repo_info], &mut output).unwrap();
         let output = String::from_utf8(output).unwrap();
 
-        assert!(!output.contains("patch_workflow"));
+        assert!(!output.contains("reviewers:"));
+        assert!(!output.contains("merger:"));
     }
 }
