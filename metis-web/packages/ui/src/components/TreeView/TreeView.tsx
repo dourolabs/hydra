@@ -6,6 +6,7 @@ export interface TreeNode {
   label: ReactNode;
   children?: TreeNode[];
   defaultExpanded?: boolean;
+  className?: string;
 }
 
 export interface TreeViewProps {
@@ -54,7 +55,7 @@ function TreeNodeItem({ node, depth, onNodeClick, collapsedIds, onToggle, select
   return (
     <li className={styles.nodeItem}>
       <div
-        className={[styles.nodeRow, isSelected && styles.selected].filter(Boolean).join(" ")}
+        className={[styles.nodeRow, isSelected && styles.selected, node.className].filter(Boolean).join(" ")}
         style={{ "--tree-depth": depth } as React.CSSProperties}
         onClick={handleClick}
         role="treeitem"

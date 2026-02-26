@@ -87,6 +87,7 @@ function issueNodesToTreeNodes(
   nodes: IssueTreeNode[],
   jobsByIssue: Map<string, JobSummaryRecord[]>,
   onJobClick: (issueId: string, jobId: string) => void,
+  username: string,
 ): TreeNode[] {
   return nodes
     .filter((node) => !node.hardBlocked)
@@ -101,9 +102,10 @@ function issueNodesToTreeNodes(
           onJobClick={onJobClick}
         />
       ),
+      className: node.issue.issue.assignee === username ? styles.assignedToMe : undefined,
       children:
         node.children.length > 0
-          ? issueNodesToTreeNodes(node.children, jobsByIssue, onJobClick)
+          ? issueNodesToTreeNodes(node.children, jobsByIssue, onJobClick, username)
           : undefined,
     }));
 }
@@ -177,7 +179,7 @@ export function WatchingTree({
           // Expanded: show full pruned tree
           const prunedNode = pruneTree(root, jobsByIssue);
           childNodes = prunedNode
-            ? issueNodesToTreeNodes(prunedNode.children, jobsByIssue, handleJobClick)
+            ? issueNodesToTreeNodes(prunedNode.children, jobsByIssue, handleJobClick, username)
             : [];
         } else {
           // Collapsed: show flat list of active descendants
@@ -193,6 +195,7 @@ export function WatchingTree({
                 onJobClick={handleJobClick}
               />
             ),
+            className: child.issue.issue.assignee === username ? styles.assignedToMe : undefined,
           }));
         }
 
