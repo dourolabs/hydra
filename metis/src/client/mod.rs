@@ -42,7 +42,7 @@ use metis_common::{
     },
     users::UserSummary,
     whoami::WhoAmIResponse,
-    DocumentId, IssueId, PatchId, RelativeVersionNumber, RepoName, TaskId,
+    ActorId, DocumentId, IssueId, PatchId, RelativeVersionNumber, RepoName, TaskId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
 use sse::SseEventStream;
@@ -259,6 +259,15 @@ pub trait MetisClientInterface: Send + Sync {
     async fn send_message(&self, request: &SendMessageRequest) -> Result<SendMessageResponse>;
     async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse>;
     async fn wait_for_message(&self, query: &WaitMessagesQuery) -> Result<ListMessagesResponse>;
+
+    /// Resolve the current actor's ID from the auth context.
+    async fn current_actor_id(&self) -> Result<ActorId> {
+        let whoami = self
+            .whoami()
+            .await
+            .context("failed to fetch current actor")?;
+        ActorId::try_from(whoami.actor).map_err(|e| anyhow!(e))
+    }
 }
 
 impl MetisClientUnauthenticated {

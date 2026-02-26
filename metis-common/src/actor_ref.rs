@@ -1,5 +1,6 @@
 use crate::api::v1::users::Username;
 use crate::ids::{IssueId, TaskId};
+use crate::whoami::ActorIdentity;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -125,6 +126,20 @@ impl FromStr for ActorId {
         }
 
         Ok(ActorId::Username(Username::from(trimmed)))
+    }
+}
+
+impl TryFrom<ActorIdentity> for ActorId {
+    type Error = String;
+
+    fn try_from(identity: ActorIdentity) -> Result<Self, Self::Error> {
+        #[allow(unreachable_patterns)]
+        match identity {
+            ActorIdentity::User { username } => Ok(ActorId::Username(username)),
+            ActorIdentity::Task { task_id, .. } => Ok(ActorId::Task(task_id)),
+            ActorIdentity::Issue { issue_id, .. } => Ok(ActorId::Issue(issue_id)),
+            _ => Err("unsupported actor identity type".to_string()),
+        }
     }
 }
 
@@ -364,5 +379,36 @@ mod tests {
             ActorId::Username(username) => assert_eq!(username.as_str(), "bob"),
             other => panic!("expected ActorId::Username, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn try_from_actor_identity_user() {
+        let identity = ActorIdentity::User {
+            username: Username::from("alice"),
+        };
+        let actor_id = ActorId::try_from(identity).unwrap();
+        assert_eq!(actor_id, ActorId::Username(Username::from("alice")));
+    }
+
+    #[test]
+    fn try_from_actor_identity_task() {
+        let task_id = TaskId::from_str("t-abcdef").unwrap();
+        let identity = ActorIdentity::Task {
+            task_id: task_id.clone(),
+            creator: Username::from("bob"),
+        };
+        let actor_id = ActorId::try_from(identity).unwrap();
+        assert_eq!(actor_id, ActorId::Task(task_id));
+    }
+
+    #[test]
+    fn try_from_actor_identity_issue() {
+        let issue_id = IssueId::from_str("i-abcdef").unwrap();
+        let identity = ActorIdentity::Issue {
+            issue_id: issue_id.clone(),
+            creator: Username::from("carol"),
+        };
+        let actor_id = ActorId::try_from(identity).unwrap();
+        assert_eq!(actor_id, ActorId::Issue(issue_id));
     }
 }
