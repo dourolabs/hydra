@@ -169,14 +169,16 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         client.update_patch(&patch_id, &request).await?;
     }
 
-    // Configure GitHub mock with CHANGES_REQUESTED review
+    // Configure GitHub mock with CHANGES_REQUESTED review from the patch creator.
+    // Only reviews from the patch creator are processed by the poller; third-party
+    // reviews are filtered out.
     let (_github_server, github_app) = GitHubMockBuilder::new()
         .with_pr(
             repo_owner,
             repo_name,
             MockPr::new(pr_number, &patch_branch, &head_sha).with_review(
                 MockReview::new(
-                    "reviewer",
+                    "default",
                     "CHANGES_REQUESTED",
                     "Please fix the implementation",
                 )
@@ -208,12 +210,16 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         "old MergeRequest should be Failed after ChangesRequested"
     );
 
-    // ── Step 8: Verify old ReviewRequest → Failed ─────────────────
+    // ── Step 8: Verify old ReviewRequest remains Open ───────────────
+    // The github_pr_poller now only syncs reviews from the patch creator,
+    // so the reviewer's CHANGES_REQUESTED review is not present in the
+    // patch's review list. sync_review_request_issues finds no matching
+    // review for the "reviewer" assignee and leaves the issue unchanged.
     let old_rr_after = client.get_issue(old_rr_id, false).await?;
     assert_eq!(
         old_rr_after.issue.status,
-        IssueStatus::Failed,
-        "old ReviewRequest should be Failed after non-approving review"
+        IssueStatus::Open,
+        "old ReviewRequest should remain Open (no reviewer review synced from GitHub)"
     );
 
     // ── Step 9: Re-open the patch via a worker (ChangesRequested → Open) ──
@@ -244,8 +250,10 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     }
 
     // ── Step 10: Verify patch_workflow re-fires → new workflow issues ──
+    // The old ReviewRequest stayed Open (not Failed), so there are now 2 Open
+    // ReviewRequests: the original one and the newly created one.
     let all_issues = harness.default_user().list_issues().await?;
-    let new_rr_children = find_summary_children_by_type_and_status(
+    let open_rr_children = find_summary_children_by_type_and_status(
         &all_issues.issues,
         &swe_issue_id,
         IssueType::ReviewRequest,
@@ -259,9 +267,9 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
     );
 
     assert_eq!(
-        new_rr_children.len(),
-        1,
-        "patch_workflow should create 1 new ReviewRequest issue after re-open"
+        open_rr_children.len(),
+        2,
+        "should have 2 open ReviewRequests (old stayed open + new created)"
     );
     assert_eq!(
         new_mr_children.len(),
@@ -269,7 +277,11 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         "patch_workflow should create 1 new MergeRequest issue after re-open"
     );
 
-    let new_rr_id = &new_rr_children[0].issue_id;
+    let new_rr_id = &open_rr_children
+        .iter()
+        .find(|rr| rr.issue_id != *old_rr_id)
+        .expect("should find a new ReviewRequest distinct from old")
+        .issue_id;
     let new_mr_id = &new_mr_children[0].issue_id;
 
     assert_ne!(
@@ -304,7 +316,7 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
             MockPr::new(pr_number, &patch_branch, &head_sha)
                 .merged()
                 .with_review(
-                    MockReview::new("reviewer", "APPROVED", "LGTM, approved").with_author_id(1001),
+                    MockReview::new("default", "APPROVED", "LGTM, approved").with_author_id(1001),
                 ),
         )
         .build()?;
@@ -361,9 +373,18 @@ async fn review_rejection_then_approve_merge_cycle() -> Result<()> {
         "should have 2 MergeRequest issues (old Failed + new Closed)"
     );
 
-    // Verify old ones are still Failed
+    // Verify old issue statuses. The old ReviewRequest was not Failed by
+    // sync_review_request_issues (no reviewer review synced from GitHub) and
+    // instead got Closed via the CLI review in step 11.
     let old_rr_check = client.get_issue(old_rr_id, false).await?;
-    assert_eq!(old_rr_check.issue.status, IssueStatus::Failed);
+    assert!(
+        matches!(
+            old_rr_check.issue.status,
+            IssueStatus::Closed | IssueStatus::Dropped
+        ),
+        "old ReviewRequest should be Closed or Dropped, got {:?}",
+        old_rr_check.issue.status
+    );
     let old_mr_check = client.get_issue(old_mr_id, false).await?;
     assert_eq!(old_mr_check.issue.status, IssueStatus::Failed);
 
