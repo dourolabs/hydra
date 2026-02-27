@@ -35,6 +35,10 @@ export function IssueRow({ record, dimmed, blocked, blockedBy, jobs, onJobClick 
     <span className={classNames.join(" ")}>
       <span className={styles.topRow}>
         <Badge status={issueToBadgeStatus(issue.status)} />
+        <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
+      </span>
+      <span className={styles.bottomRow}>
+        <span className={styles.id}>{record.issue_id}</span>
         {jobSummaries && jobSummaries.length > 0 && (
           <span
             className={styles.jobIndicator}
@@ -44,13 +48,11 @@ export function IssueRow({ record, dimmed, blocked, blockedBy, jobs, onJobClick 
             <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
           </span>
         )}
-        <span className={styles.id}>{record.issue_id}</span>
         {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
+        {blocked && blockedBy && blockedBy.length > 0 && (
+          <span className={styles.blockedBy}>blocked by {blockedBy.join(", ")}</span>
+        )}
       </span>
-      <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
-      {blocked && blockedBy && blockedBy.length > 0 && (
-        <span className={styles.blockedBy}>blocked by {blockedBy.join(", ")}</span>
-      )}
     </span>
   );
 }
