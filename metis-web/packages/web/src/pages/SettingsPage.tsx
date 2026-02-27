@@ -48,29 +48,15 @@ export function SettingsPage() {
             <span className={styles.sectionTitle}>Repositories</span>
           }
         >
-          <div className={styles.tableWrapper}>
-            <table className={styles.repoTable}>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Remote URL</th>
-                  <th>Default Branch</th>
-                  <th>Default Image</th>
-                  <th>Patch Workflow</th>
-                  <th className={styles.repoActions} />
-                </tr>
-              </thead>
-              <tbody>
-                {repositories.map((repo) => (
-                  <RepositoryRow
-                    key={repo.name}
-                    repo={repo}
-                    onEdit={() => setEditTarget(repo)}
-                    onDelete={() => setDeleteTarget(repo)}
-                  />
-                ))}
-              </tbody>
-            </table>
+          <div className={styles.repoList}>
+            {repositories.map((repo) => (
+              <RepositoryRow
+                key={repo.name}
+                repo={repo}
+                onEdit={() => setEditTarget(repo)}
+                onDelete={() => setDeleteTarget(repo)}
+              />
+            ))}
           </div>
         </Panel>
       )}
@@ -106,6 +92,8 @@ interface RepositoryRowProps {
 }
 
 function RepositoryRow({ repo, onEdit, onDelete }: RepositoryRowProps) {
+  const [expanded, setExpanded] = useState(false);
+
   const pw = repo.repository.patch_workflow;
   const reviewerCount = pw?.review_requests?.length ?? 0;
   const hasMerge = !!pw?.merge_request?.assignee;
@@ -119,49 +107,73 @@ function RepositoryRow({ repo, onEdit, onDelete }: RepositoryRowProps) {
   const workflowSummary = parts.length > 0 ? parts.join(", ") : null;
 
   return (
-    <tr>
-      <td>
+    <div className={styles.repoItem}>
+      <button
+        type="button"
+        className={styles.repoHeader}
+        onClick={() => setExpanded((prev) => !prev)}
+        aria-expanded={expanded}
+      >
+        <span className={styles.chevron} aria-hidden="true">
+          {expanded ? "▾" : "▸"}
+        </span>
         <span className={styles.repoName}>{repo.name}</span>
-      </td>
-      <td>
-        <span className={styles.repoUrl}>{repo.repository.remote_url}</span>
-      </td>
-      <td>
-        {repo.repository.default_branch ? (
-          <span className={styles.repoBranch}>
-            {repo.repository.default_branch}
-          </span>
-        ) : (
-          <span className={styles.dimText}>—</span>
-        )}
-      </td>
-      <td>
-        {repo.repository.default_image ? (
-          <span className={styles.repoImage}>
-            {repo.repository.default_image}
-          </span>
-        ) : (
-          <span className={styles.dimText}>—</span>
-        )}
-      </td>
-      <td>
-        {workflowSummary ? (
-          <span className={styles.repoBranch}>{workflowSummary}</span>
-        ) : (
-          <span className={styles.dimText}>—</span>
-        )}
-      </td>
-      <td className={styles.repoActions}>
         <div className={styles.rowActions}>
-          <Button variant="ghost" size="sm" onClick={onEdit}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit();
+            }}
+          >
             Edit
           </Button>
-          <Button variant="ghost" size="sm" onClick={onDelete}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+          >
             Delete
           </Button>
         </div>
-      </td>
-    </tr>
+      </button>
+      {expanded && (
+        <div className={styles.repoDetails}>
+          <div className={styles.detailRow}>
+            <span className={styles.detailLabel}>Remote URL</span>
+            <span className={styles.detailValueMono}>
+              {repo.repository.remote_url}
+            </span>
+          </div>
+          <div className={styles.detailRow}>
+            <span className={styles.detailLabel}>Default Branch</span>
+            <span className={styles.detailValue}>
+              {repo.repository.default_branch ?? (
+                <span className={styles.dimText}>—</span>
+              )}
+            </span>
+          </div>
+          <div className={styles.detailRow}>
+            <span className={styles.detailLabel}>Default Image</span>
+            <span className={styles.detailValueMono}>
+              {repo.repository.default_image ?? (
+                <span className={styles.dimText}>—</span>
+              )}
+            </span>
+          </div>
+          <div className={styles.detailRow}>
+            <span className={styles.detailLabel}>Patch Workflow</span>
+            <span className={styles.detailValue}>
+              {workflowSummary ?? <span className={styles.dimText}>—</span>}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
