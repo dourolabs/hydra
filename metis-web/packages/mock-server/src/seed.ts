@@ -43,11 +43,11 @@ export function loadSeedData(store: Store): void {
   }
 
   for (const [id, repo] of Object.entries(seed.repositories)) {
-    store.create<Repository>("repositories", id, repo, "repository");
+    store.create<Repository>("repositories", id, repo, null);
   }
 
   for (const [id, agent] of Object.entries(seed.agents)) {
-    store.create<AgentRecord>("agents", id, agent, "agent");
+    store.create<AgentRecord>("agents", id, agent, null);
   }
 
   console.log(
