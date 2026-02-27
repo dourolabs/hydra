@@ -10,7 +10,6 @@ interface IssueRowProps {
   record: IssueSummaryRecord;
   dimmed?: boolean;
   blocked?: boolean;
-  blockedBy?: string[];
   jobs?: JobSummaryRecord[];
   onJobClick?: (issueId: string, jobId: string) => void;
 }
