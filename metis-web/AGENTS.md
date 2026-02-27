@@ -92,14 +92,15 @@ Before submitting a patch, verify your changes using the dev testing stack.
 ### Quick start
 
 1. Install dependencies: `cd metis-web && pnpm install`
-2. Start the dev stack: `./scripts/dev-test.sh`
+2. Install Playwright browsers (not needed in the worker Docker image): `pnpm --filter @metis/web exec playwright install chromium`
+3. Start the dev stack: `./scripts/dev-test.sh`
    - Mock server: http://localhost:8080
    - BFF: http://localhost:4000
    - Frontend: http://localhost:3000
-3. Make your code changes
-4. Run E2E tests: `pnpm e2e`
-5. If tests fail, check screenshots in `packages/web/test-results/`
-6. If tests pass, create your patch
+4. Make your code changes
+5. Run E2E tests: `pnpm e2e`
+6. If tests fail, check screenshots in `packages/web/test-results/`
+7. If tests pass, create your patch
 
 Alternatively, run `./scripts/dev-test.sh --test` to start the stack and run E2E tests in one command.
 
