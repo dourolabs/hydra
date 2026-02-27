@@ -136,6 +136,16 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ts-build-dist
+          path: |
+            metis-web/packages/api/dist
+            metis-web/packages/ui/dist
+            metis-web/packages/web/dist
+          retention-days: 1
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -177,8 +187,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build packages
-        run: pnpm build
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ts-build-dist
+          path: metis-web/packages
 
       - name: Get Playwright version
         id: playwright-version
