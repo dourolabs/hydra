@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Badge, JobStatusIndicator } from "@metis/ui";
+import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import {
   buildIssueTree,
@@ -62,36 +62,41 @@ function TreeNodeRow({
       onClick={() => onSelect(node.id)}
       type="button"
     >
-      <span className={styles.topRow}>
-        <span
-          className={styles.chevron}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle();
-          }}
-          role="button"
-          tabIndex={-1}
-        >
-          {hasChildren ? (expanded ? "\u25BE" : "\u25B8") : " "}
-        </span>
-        <Badge status={issueToBadgeStatus(node.issue.issue.status)} />
-        {jobSummaries && jobSummaries.length > 0 && (
-          <span
-            className={styles.jobIndicator}
-            onClick={(e) => e.stopPropagation()}
-            role="presentation"
-          >
-            <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
+      <span
+        className={styles.chevron}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle();
+        }}
+        role="button"
+        tabIndex={-1}
+      >
+        {hasChildren ? (expanded ? "\u25BE" : "\u25B8") : " "}
+      </span>
+      <span className={styles.cardContent}>
+        <span className={styles.top}>
+          <Badge status={issueToBadgeStatus(node.issue.issue.status)} />
+          <span className={styles.desc}>
+            {descriptionSnippet(node.issue.issue.description, 60)}
           </span>
-        )}
-        <span className={styles.id}>{node.id}</span>
+        </span>
+        <span className={styles.bottom}>
+          <span className={styles.id}>{node.id}</span>
+          {jobSummaries && jobSummaries.length > 0 && (
+            <span
+              className={styles.jobIndicator}
+              onClick={(e) => e.stopPropagation()}
+              role="presentation"
+            >
+              <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
+            </span>
+          )}
+          {node.issue.issue.assignee && <Avatar name={node.issue.issue.assignee} size="sm" />}
+          {node.blocked && node.blockedBy.length > 0 && (
+            <span className={styles.blockedBy}>blocked by {node.blockedBy.join(", ")}</span>
+          )}
+        </span>
       </span>
-      <span className={styles.desc}>
-        {descriptionSnippet(node.issue.issue.description, 50)}
-      </span>
-      {node.blocked && node.blockedBy.length > 0 && (
-        <span className={styles.blockedBy}>blocked by {node.blockedBy.join(", ")}</span>
-      )}
     </button>
   );
 }

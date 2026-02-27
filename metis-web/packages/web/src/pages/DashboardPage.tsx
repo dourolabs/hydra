@@ -156,8 +156,10 @@ export function DashboardPage() {
       {activeTab === "inbox" && (
         <InboxList
           issues={inboxIssues}
+          jobsByIssue={jobsByIssue}
           selectedId={selectedId}
           onSelect={setSelectedId}
+          onJobClick={(issueId, jobId) => navigate(`/issues/${issueId}/jobs/${jobId}/logs`)}
         />
       )}
       {activeTab === "watching" && (
