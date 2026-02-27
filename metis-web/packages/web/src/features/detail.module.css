@@ -50,10 +50,37 @@
   padding: var(--space-4);
 }
 
+.progressBody {
+  padding: var(--space-4);
+  background: var(--color-bg-tertiary);
+  border-left: 2px solid var(--color-accent-dim);
+}
+
 .empty {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   margin: 0;
+}
+
+.emptyText {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.emptyHint {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.emptyCode {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  padding: 1px 4px;
+  border-radius: 2px;
 }
 
 .error {

@@ -79,7 +79,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
       {/* Progress */}
       {issue.progress && (
         <Panel header={<span className={styles.sectionTitle}>Progress</span>}>
-          <div className={styles.sectionBody}>
+          <div className={styles.progressBody}>
             <MarkdownViewer content={issue.progress} />
           </div>
         </Panel>
