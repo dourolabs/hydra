@@ -71,7 +71,8 @@
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
   overflow: hidden;
-  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .children {

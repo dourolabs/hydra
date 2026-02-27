@@ -5,10 +5,10 @@ test.describe("Issue List", () => {
     await page.goto("/issues");
     // Seed data contains issues like "Platform v2.0 Migration" and "Migrate authentication to OAuth2"
     await expect(
-      page.getByText("i-seed00001", { exact: true })
+      page.getByText(/Platform v2\.0 Migration/)
     ).toBeVisible();
     await expect(
-      page.getByText("i-seed00002", { exact: true })
+      page.getByText(/Migrate authentication to OAuth2/)
     ).toBeVisible();
   });
 
@@ -16,22 +16,22 @@ test.describe("Issue List", () => {
     await page.goto("/issues");
     // Wait for issue tree to load
     await expect(
-      page.getByText("i-seed00001", { exact: true })
+      page.getByText(/Platform v2\.0 Migration/)
     ).toBeVisible();
 
     // Verify badges for specific seeded issues across all status types
     // i-seed00001 = open, i-seed00002 = in-progress, i-seed00004 = closed,
     // i-seed00006 = failed, i-seed00010 = dropped
     const cases = [
-      { id: "i-seed00001", status: "open" },
-      { id: "i-seed00002", status: "in-progress" },
-      { id: "i-seed00004", status: "closed" },
-      { id: "i-seed00006", status: "failed" },
-      { id: "i-seed00010", status: "dropped" },
+      { desc: "Platform v2.0 Migration", status: "open" },
+      { desc: "Migrate authentication to OAuth2", status: "in-progress" },
+      { desc: "Add OAuth2 scopes and permissions support", status: "closed" },
+      { desc: "Implement API rate limiting", status: "failed" },
+      { desc: "Update deployment documentation", status: "dropped" },
     ];
 
-    for (const { id, status } of cases) {
-      const row = page.getByRole("treeitem").filter({ hasText: id });
+    for (const { desc, status } of cases) {
+      const row = page.getByRole("treeitem").filter({ hasText: desc });
       await expect(row.getByText(status, { exact: true })).toBeVisible();
     }
   });
@@ -49,9 +49,9 @@ test.describe("Issue List", () => {
   }) => {
     await page.goto("/issues");
     await expect(
-      page.getByText("i-seed00001", { exact: true })
+      page.getByText(/Platform v2\.0 Migration/)
     ).toBeVisible();
-    await page.getByText("i-seed00001", { exact: true }).click();
+    await page.getByText(/Platform v2\.0 Migration/).click();
     await expect(page).toHaveURL(/\/issues\/i-seed00001/);
   });
 });

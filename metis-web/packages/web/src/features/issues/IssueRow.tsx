@@ -15,7 +15,7 @@ interface IssueRowProps {
   onJobClick?: (issueId: string, jobId: string) => void;
 }
 
-export function IssueRow({ record, dimmed, blocked, blockedBy, jobs, onJobClick }: IssueRowProps) {
+export function IssueRow({ record, dimmed, blocked, jobs, onJobClick }: IssueRowProps) {
   const { issue } = record;
 
   const handleJobClick = useCallback(
@@ -33,26 +33,18 @@ export function IssueRow({ record, dimmed, blocked, blockedBy, jobs, onJobClick 
 
   return (
     <span className={classNames.join(" ")}>
-      <span className={styles.topRow}>
-        <Badge status={issueToBadgeStatus(issue.status)} />
-        <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
-      </span>
-      <span className={styles.bottomRow}>
-        <span className={styles.id}>{record.issue_id}</span>
-        {jobSummaries && jobSummaries.length > 0 && (
-          <span
-            className={styles.jobIndicator}
-            onClick={(e) => e.stopPropagation()}
-            role="presentation"
-          >
-            <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
-          </span>
-        )}
-        {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
-        {blocked && blockedBy && blockedBy.length > 0 && (
-          <span className={styles.blockedBy}>blocked by {blockedBy.join(", ")}</span>
-        )}
-      </span>
+      <Badge status={issueToBadgeStatus(issue.status)} />
+      <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
+      {jobSummaries && jobSummaries.length > 0 && (
+        <span
+          className={styles.jobIndicator}
+          onClick={(e) => e.stopPropagation()}
+          role="presentation"
+        >
+          <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
+        </span>
+      )}
+      {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
     </span>
   );
 }
