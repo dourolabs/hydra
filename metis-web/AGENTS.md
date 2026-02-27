@@ -84,3 +84,56 @@ Run from the `metis-web/` directory:
 - **Dark terminal theme** — black background, green accent. Respect existing theme tokens.
 - **Check `utils/`** before writing new utility functions to avoid duplication.
 - **Do not export hooks and components from the same file.** Mixing component exports and hook exports in a single module breaks React Fast Refresh (HMR). Place hooks in their own `use<Name>.ts` file next to the component.
+
+## Testing Frontend Changes
+
+Before submitting a patch, verify your changes using the dev testing stack.
+
+### Quick start
+
+1. Install dependencies: `cd metis-web && pnpm install`
+2. Start the dev stack: `./scripts/dev-test.sh`
+   - Mock server: http://localhost:8080
+   - BFF: http://localhost:4000
+   - Frontend: http://localhost:3000
+3. Make your code changes
+4. Run E2E tests: `pnpm e2e`
+5. If tests fail, check screenshots in `packages/web/test-results/`
+6. If tests pass, create your patch
+
+Alternatively, run `./scripts/dev-test.sh --test` to start the stack and run E2E tests in one command.
+
+### Ports
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| Mock server | 8080 | Standalone TypeScript mock of the metis API |
+| BFF | 4000 | Hono backend-for-frontend (proxies to mock server) |
+| Frontend | 3000 | Vite React dev server |
+
+### Reset mock server state
+
+`POST http://localhost:8080/v1/dev/reset` reloads seed data. Use this between tests to restore a clean state.
+
+### Simulate server errors
+
+Add the `X-Mock-Error: <status-code>` header to any request to make the mock server return that HTTP status. This is useful for testing error handling in the frontend.
+
+### Run specific tests
+
+```bash
+pnpm e2e                                           # all E2E tests
+pnpm --filter @metis/web exec playwright test login # specific test file
+pnpm --filter @metis/web exec playwright test --headed  # visible browser
+```
+
+### Debugging test failures
+
+- Screenshots are saved to `packages/web/test-results/` on failure.
+- Traces are recorded on first retry (CI only by default). View with `pnpm --filter @metis/web exec playwright show-trace <trace-file>`.
+- Run with `--headed` to watch the browser during test execution.
+- Playwright uses the `webServer` config in `packages/web/playwright.config.ts` to auto-start all three servers when running tests directly via `playwright test`.
+
+### Contract tests
+
+The `@metis/mock-server` package includes contract tests that validate the mock server's responses against the `@metis/api` client types. These run as part of `pnpm test` in CI and catch drift between the mock and real server.
