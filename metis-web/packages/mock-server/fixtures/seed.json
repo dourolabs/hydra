@@ -233,6 +233,17 @@
       "creation_time": "2026-02-26T09:00:00.000Z",
       "start_time": "2026-02-26T09:01:00.000Z",
       "end_time": "2026-02-26T09:12:00.000Z"
+    },
+    "t-seed00005": {
+      "prompt": "Lint and format check on the web-app repository before release.",
+      "context": {
+        "type": "service_repository",
+        "name": "acme/web-app",
+        "rev": "main"
+      },
+      "creator": "bob",
+      "status": "created",
+      "creation_time": "2026-02-27T09:00:00.000Z"
     }
   },
   "patches": {
