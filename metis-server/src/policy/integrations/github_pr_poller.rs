@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use anyhow::Context;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use metis_common::api::v1 as api;
 use metis_common::{PatchId, Versioned};
 use octocrab::{
@@ -25,7 +25,17 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 const AUTHENTICATED_RATE_LIMIT_PER_HOUR: u64 = 5_000;
+/// Conservative estimate: open patches use ~6 API calls (PR + CI status + CI checks +
+/// reviews + review comments + issue comments), non-open patches use ~3 (PR + CI status
+/// + CI checks). We use the higher value to stay within rate limits.
+///
+/// Non-open patches are bounded by a recency filter (see `NON_OPEN_PATCH_RECENCY`), so
+/// the working set stays manageable.
 const REQUESTS_PER_PATCH: u64 = 6;
+/// Only sync CI status for non-open (Closed/Merged) patches that were updated within
+/// this duration. This keeps the working set bounded as the total number of closed/merged
+/// patches grows over time.
+const NON_OPEN_PATCH_RECENCY: Duration = Duration::hours(1);
 const WORKER_NAME: &str = "github_poller";
 
 #[derive(Clone)]
@@ -55,8 +65,7 @@ impl ScheduledWorker for GithubPollerWorker {
         let mut start_from = self.start_from.lock().await;
 
         let outcome =
-            match sync_open_patches(&self.state, self.max_patches_per_cycle, &mut start_from).await
-            {
+            match sync_patches(&self.state, self.max_patches_per_cycle, &mut start_from).await {
                 Ok(stats) if stats.processed == 0 && stats.failed == 0 => WorkerOutcome::Idle,
                 Ok(stats) => WorkerOutcome::Progress {
                     processed: stats.processed,
@@ -106,44 +115,52 @@ fn max_patches_per_cycle(interval_secs: u64) -> usize {
     patches as usize
 }
 
-async fn sync_open_patches(
+/// Returns true if a patch should be included in the sync cycle.
+/// Open/ChangesRequested patches are always included; non-open patches are only
+/// included if they were updated after `recency_cutoff`.
+fn should_sync_patch(patch: &Versioned<Patch>, recency_cutoff: DateTime<Utc>) -> bool {
+    let is_open = matches!(
+        patch.item.status,
+        PatchStatus::Open | PatchStatus::ChangesRequested
+    );
+    is_open || patch.timestamp >= recency_cutoff
+}
+
+async fn sync_patches(
     state: &AppState,
     max_per_cycle: usize,
     start_from: &mut usize,
 ) -> anyhow::Result<SyncStats> {
-    let open_patches: Vec<(PatchId, Versioned<Patch>)> = state
+    let now = Utc::now();
+    let recency_cutoff = now - NON_OPEN_PATCH_RECENCY;
+    let github_patches: Vec<(PatchId, Versioned<Patch>)> = state
         .list_patches()
         .await?
         .into_iter()
-        .filter(|(_, patch)| {
-            matches!(
-                patch.item.status,
-                PatchStatus::Open | PatchStatus::ChangesRequested
-            )
-        })
         .filter(|(_, patch)| patch.item.github.is_some())
+        .filter(|(_, patch)| should_sync_patch(patch, recency_cutoff))
         .collect();
 
-    if open_patches.is_empty() {
+    if github_patches.is_empty() {
         *start_from = 0;
         return Ok(SyncStats::default());
     }
 
-    if *start_from >= open_patches.len() {
+    if *start_from >= github_patches.len() {
         *start_from = 0;
     }
 
-    let mut ordered = Vec::with_capacity(open_patches.len());
-    ordered.extend_from_slice(&open_patches[*start_from..]);
+    let mut ordered = Vec::with_capacity(github_patches.len());
+    ordered.extend_from_slice(&github_patches[*start_from..]);
     if *start_from > 0 {
-        ordered.extend_from_slice(&open_patches[..*start_from]);
+        ordered.extend_from_slice(&github_patches[..*start_from]);
     }
 
     let limit = max_per_cycle.max(1);
-    let planned = open_patches.len().min(limit);
+    let planned = github_patches.len().min(limit);
     info!(
         count = planned,
-        total = open_patches.len(),
+        total = github_patches.len(),
         "synchronizing GitHub patches"
     );
 
@@ -161,7 +178,7 @@ async fn sync_open_patches(
         attempted += 1;
     }
 
-    *start_from = (*start_from + attempted) % open_patches.len();
+    *start_from = (*start_from + attempted) % github_patches.len();
 
     Ok(stats)
 }
@@ -185,67 +202,76 @@ async fn sync_patch_from_github(
         return Ok(());
     };
 
+    // Note: `is_open` is derived from the snapshot passed into this function. The patch
+    // status could change between now and the later re-fetch of `latest_patch`, but this
+    // is harmless — worst case one cycle uses the wrong sync path (full vs CI-only).
+    let is_open = matches!(
+        patch.status,
+        PatchStatus::Open | PatchStatus::ChangesRequested
+    );
+
     let pr = client
         .pulls(&github.owner, &github.repo)
         .get(github.number)
         .await?;
-    let reviews = client
-        .all_pages(
-            client
-                .pulls(&github.owner, &github.repo)
-                .list_reviews(github.number)
-                .per_page(100)
-                .send()
-                .await?,
-        )
-        .await?;
-    let review_comments = client
-        .all_pages(
-            client
-                .pulls(&github.owner, &github.repo)
-                .list_comments(Some(github.number))
-                .per_page(100)
-                .send()
-                .await?,
-        )
-        .await?;
-    let issue_comments = client
-        .all_pages(
-            client
-                .issues(&github.owner, &github.repo)
-                .list_comments(github.number)
-                .per_page(100)
-                .send()
-                .await?,
-        )
-        .await?;
 
-    let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
-    let github_reviews = filter_reviews_by_creator(github_reviews, patch.creator.as_str());
+    let ci_status = fetch_ci_status(&client, &github, &pr).await?;
 
     let latest_patch = state.get_patch(patch_id, false).await?;
     let latest_patch = latest_patch.item;
-    if !matches!(
-        latest_patch.status,
-        PatchStatus::Open | PatchStatus::ChangesRequested
-    ) {
-        debug!(patch_id = %patch_id, "skipping GitHub sync for non-open patch");
-        return Ok(());
-    }
     if latest_patch.github.is_none() {
         debug!(patch_id = %patch_id, "skipping GitHub sync for patch without GitHub metadata");
         return Ok(());
     }
 
-    let ci_status = fetch_ci_status(&client, &github, &pr).await?;
-    let review_updates = review_updates(&latest_patch.reviews, github_reviews);
-    let updated_patch = apply_github_sync(
-        latest_patch.clone(),
-        &github,
-        &pr,
-        review_updates,
-        ci_status,
-    );
+    let updated_patch = if is_open {
+        // Full sync for open patches: fetch reviews and comments too.
+        let reviews = client
+            .all_pages(
+                client
+                    .pulls(&github.owner, &github.repo)
+                    .list_reviews(github.number)
+                    .per_page(100)
+                    .send()
+                    .await?,
+            )
+            .await?;
+        let review_comments = client
+            .all_pages(
+                client
+                    .pulls(&github.owner, &github.repo)
+                    .list_comments(Some(github.number))
+                    .per_page(100)
+                    .send()
+                    .await?,
+            )
+            .await?;
+        let issue_comments = client
+            .all_pages(
+                client
+                    .issues(&github.owner, &github.repo)
+                    .list_comments(github.number)
+                    .per_page(100)
+                    .send()
+                    .await?,
+            )
+            .await?;
+
+        let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
+        let github_reviews = filter_reviews_by_creator(github_reviews, patch.creator.as_str());
+        let review_updates = review_updates(&latest_patch.reviews, github_reviews);
+        apply_github_sync(
+            latest_patch.clone(),
+            &github,
+            &pr,
+            review_updates,
+            ci_status,
+        )
+    } else {
+        // CI-only sync for non-open patches (Closed/Merged): skip review API calls.
+        debug!(patch_id = %patch_id, status = ?patch.status, "CI-only sync for non-open patch");
+        apply_ci_only_sync(latest_patch.clone(), &github, &pr, ci_status)
+    };
 
     if updated_patch != latest_patch {
         state
@@ -494,6 +520,25 @@ fn apply_github_sync(
 
     latest_patch.reviews = merged_reviews;
     latest_patch.status = new_status;
+    let mut updated_github = latest_patch
+        .github
+        .clone()
+        .unwrap_or_else(|| github.clone());
+    updated_github.head_ref = Some(pr.head.ref_field.clone());
+    updated_github.base_ref = Some(pr.base.ref_field.clone());
+    updated_github.url = pr.html_url.as_ref().map(ToString::to_string);
+    updated_github.ci = Some(ci_status);
+    latest_patch.github = Some(updated_github);
+
+    latest_patch
+}
+
+fn apply_ci_only_sync(
+    mut latest_patch: Patch,
+    github: &GithubPr,
+    pr: &PullRequest,
+    ci_status: GithubCiStatus,
+) -> Patch {
     let mut updated_github = latest_patch
         .github
         .clone()
@@ -1265,6 +1310,298 @@ mod tests {
             filtered
                 .iter()
                 .all(|r| r.author.eq_ignore_ascii_case("alice"))
+        );
+    }
+
+    #[tokio::test]
+    async fn github_worker_includes_merged_patches_in_sync() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        handles
+            .store
+            .add_patch(
+                Patch::new(
+                    "test".to_string(),
+                    "desc".to_string(),
+                    sample_diff(),
+                    PatchStatus::Merged,
+                    false,
+                    None,
+                    Username::from("test-creator"),
+                    Vec::new(),
+                    RepoName::from_str("dourolabs/api")?,
+                    Some(GithubPr::new(
+                        "octo".to_string(),
+                        "repo".to_string(),
+                        1,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )),
+                    None,
+                    None,
+                    None,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+        let worker = GithubPollerWorker::new(handles.state, 60);
+
+        let outcome = worker.run_iteration().await;
+
+        assert_eq!(
+            outcome,
+            WorkerOutcome::Progress {
+                processed: 1,
+                failed: 0
+            }
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn github_worker_includes_closed_patches_in_sync() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        handles
+            .store
+            .add_patch(
+                Patch::new(
+                    "test".to_string(),
+                    "desc".to_string(),
+                    sample_diff(),
+                    PatchStatus::Closed,
+                    false,
+                    None,
+                    Username::from("test-creator"),
+                    Vec::new(),
+                    RepoName::from_str("dourolabs/api")?,
+                    Some(GithubPr::new(
+                        "octo".to_string(),
+                        "repo".to_string(),
+                        1,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )),
+                    None,
+                    None,
+                    None,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+        let worker = GithubPollerWorker::new(handles.state, 60);
+
+        let outcome = worker.run_iteration().await;
+
+        assert_eq!(
+            outcome,
+            WorkerOutcome::Progress {
+                processed: 1,
+                failed: 0
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn should_sync_patch_includes_open_patches_regardless_of_age() {
+        let now = Utc::now();
+        let stale = now - Duration::hours(24);
+        let cutoff = now - NON_OPEN_PATCH_RECENCY;
+
+        for status in [PatchStatus::Open, PatchStatus::ChangesRequested] {
+            let patch = Versioned::with_actor(
+                Patch::new(
+                    "test".to_string(),
+                    "desc".to_string(),
+                    sample_diff(),
+                    status,
+                    false,
+                    None,
+                    Username::from("test-creator"),
+                    Vec::new(),
+                    RepoName::from_str("dourolabs/api").unwrap(),
+                    Some(GithubPr::new(
+                        "octo".to_string(),
+                        "repo".to_string(),
+                        1,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )),
+                    None,
+                    None,
+                    None,
+                ),
+                1,
+                stale,
+                ActorRef::test(),
+                stale,
+            );
+            assert!(
+                should_sync_patch(&patch, cutoff),
+                "open/changes-requested patches should always be included"
+            );
+        }
+    }
+
+    #[test]
+    fn should_sync_patch_includes_recent_non_open_patches() {
+        let now = Utc::now();
+        let recent = now - Duration::minutes(30);
+        let cutoff = now - NON_OPEN_PATCH_RECENCY;
+
+        for status in [PatchStatus::Merged, PatchStatus::Closed] {
+            let patch = Versioned::with_actor(
+                Patch::new(
+                    "test".to_string(),
+                    "desc".to_string(),
+                    sample_diff(),
+                    status,
+                    false,
+                    None,
+                    Username::from("test-creator"),
+                    Vec::new(),
+                    RepoName::from_str("dourolabs/api").unwrap(),
+                    Some(GithubPr::new(
+                        "octo".to_string(),
+                        "repo".to_string(),
+                        1,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )),
+                    None,
+                    None,
+                    None,
+                ),
+                1,
+                recent,
+                ActorRef::test(),
+                recent,
+            );
+            assert!(
+                should_sync_patch(&patch, cutoff),
+                "recently-updated non-open patches should be included"
+            );
+        }
+    }
+
+    #[test]
+    fn should_sync_patch_excludes_stale_non_open_patches() {
+        let now = Utc::now();
+        let stale = now - Duration::hours(2);
+        let cutoff = now - NON_OPEN_PATCH_RECENCY;
+
+        for status in [PatchStatus::Merged, PatchStatus::Closed] {
+            let patch = Versioned::with_actor(
+                Patch::new(
+                    "test".to_string(),
+                    "desc".to_string(),
+                    sample_diff(),
+                    status,
+                    false,
+                    None,
+                    Username::from("test-creator"),
+                    Vec::new(),
+                    RepoName::from_str("dourolabs/api").unwrap(),
+                    Some(GithubPr::new(
+                        "octo".to_string(),
+                        "repo".to_string(),
+                        1,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )),
+                    None,
+                    None,
+                    None,
+                ),
+                1,
+                stale,
+                ActorRef::test(),
+                stale,
+            );
+            assert!(
+                !should_sync_patch(&patch, cutoff),
+                "stale non-open patches should be excluded"
+            );
+        }
+    }
+
+    #[test]
+    fn apply_ci_only_sync_updates_ci_without_changing_status_or_reviews() {
+        let existing_reviews = vec![Review::new(
+            "please update".to_string(),
+            false,
+            "alice".to_string(),
+            None,
+        )];
+        let github = GithubPr::new(
+            "octo".to_string(),
+            "repo".to_string(),
+            1,
+            None,
+            None,
+            None,
+            None,
+        );
+        let patch = Patch::new(
+            "Patch".to_string(),
+            "Patch description".to_string(),
+            sample_diff(),
+            PatchStatus::Merged,
+            false,
+            None,
+            Username::from("test-creator"),
+            existing_reviews.clone(),
+            RepoName::from_str("dourolabs/api").unwrap(),
+            Some(github.clone()),
+            None,
+            None,
+            None,
+        );
+        let pr: PullRequest = serde_json::from_value(json!({
+            "url": "",
+            "id": 1,
+            "number": 1,
+            "state": "closed",
+            "locked": false,
+            "maintainer_can_modify": false,
+            "html_url": "https://example.com/pr/1",
+            "head": { "ref": "feature", "sha": "abc123", "user": null, "repo": null },
+            "base": { "ref": "main", "sha": "def456", "user": null, "repo": null }
+        }))
+        .unwrap();
+        let ci_status = GithubCiStatus::new(
+            GithubCiState::Failed,
+            Some(GithubCiFailure::new(
+                "build".to_string(),
+                Some("compile error".to_string()),
+                Some("https://ci.example.com/run/1".to_string()),
+            )),
+        );
+
+        let updated = apply_ci_only_sync(patch.clone(), &github, &pr, ci_status.clone());
+
+        // Status and reviews must remain unchanged.
+        assert_eq!(updated.status, PatchStatus::Merged);
+        assert_eq!(updated.reviews, existing_reviews);
+        // CI status must be updated.
+        let updated_github = updated.github.expect("github metadata should be set");
+        assert_eq!(updated_github.ci, Some(ci_status));
+        assert_eq!(updated_github.head_ref, Some("feature".to_string()));
+        assert_eq!(updated_github.base_ref, Some("main".to_string()));
+        assert_eq!(
+            updated_github.url.as_deref(),
+            Some("https://example.com/pr/1")
         );
     }
 }
