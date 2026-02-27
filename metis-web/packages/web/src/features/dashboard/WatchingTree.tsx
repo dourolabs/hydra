@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Avatar, Badge, JobStatusIndicator, TreeView } from "@metis/ui";
+import { TreeView } from "@metis/ui";
 import type { TreeNode } from "@metis/ui";
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import { IssueRow } from "../issues/IssueRow";
@@ -8,9 +8,7 @@ import {
   buildIssueTree,
   type IssueTreeNode,
 } from "../issues/useIssues";
-import { toJobSummary } from "../../utils/jobMapping";
-import { issueToBadgeStatus, TERMINAL_STATUSES } from "../../utils/statusMapping";
-import { descriptionSnippet } from "../../utils/text";
+import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { treeHasActiveNode } from "./watchingUtils";
 import styles from "./WatchingTree.module.css";
 
@@ -240,9 +238,6 @@ function RootItem({
   if (root.blocked) rootClassNames.push(styles.blocked);
   if (root.issue.issue.assignee === username) rootClassNames.push(styles.assignedToMe);
 
-  const jobs = jobsByIssue.get(root.id);
-  const jobSummaries = jobs?.map(toJobSummary);
-
   return (
     <li className={styles.rootItem}>
       <button
@@ -261,30 +256,13 @@ function RootItem({
         >
           {totalChildren > 0 ? (expanded ? "\u25BE" : "\u25B8") : " "}
         </span>
-        <span className={styles.cardContent}>
-          <span className={styles.top}>
-            <Badge status={issueToBadgeStatus(root.issue.issue.status)} />
-            <span className={styles.desc}>
-              {descriptionSnippet(root.issue.issue.description, 60)}
-            </span>
-          </span>
-          <span className={styles.bottom}>
-            <span className={styles.id}>{root.id}</span>
-            {jobSummaries && jobSummaries.length > 0 && (
-              <span
-                className={styles.jobIndicator}
-                onClick={(e) => e.stopPropagation()}
-                role="presentation"
-              >
-                <JobStatusIndicator jobs={jobSummaries} onJobClick={(jobId) => handleJobClick(root.id, jobId)} />
-              </span>
-            )}
-            {root.issue.issue.assignee && <Avatar name={root.issue.issue.assignee} size="sm" />}
-            {root.blocked && root.blockedBy.length > 0 && (
-              <span className={styles.blockedBy}>blocked by {root.blockedBy.join(", ")}</span>
-            )}
-          </span>
-        </span>
+        <IssueRow
+          record={root.issue}
+          blocked={root.blocked}
+          blockedBy={root.blockedBy}
+          jobs={jobsByIssue.get(root.id)}
+          onJobClick={handleJobClick}
+        />
       </button>
       {summaryText && (
         <div className={styles.summary}>{summaryText}</div>

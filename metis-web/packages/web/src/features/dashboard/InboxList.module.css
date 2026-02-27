@@ -29,31 +29,10 @@
   border-left: 2px solid var(--color-accent);
 }
 
-.top {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.desc {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-primary);
-}
-
 .bottom {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-
-.jobIndicator {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
 }
 
 .id {
@@ -78,14 +57,5 @@
 @media (max-width: 768px) {
   .item {
     padding: var(--space-3);
-  }
-
-  .desc {
-    white-space: normal;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    text-overflow: ellipsis;
-    line-height: 1.4;
   }
 }
