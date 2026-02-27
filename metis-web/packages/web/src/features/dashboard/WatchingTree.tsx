@@ -105,7 +105,6 @@ function issueNodesToTreeNodes(
       <IssueRow
         record={node.issue}
         blocked={node.blocked}
-        blockedBy={node.blockedBy}
         jobs={jobsByIssue.get(node.id)}
         onJobClick={onJobClick}
       />
@@ -160,7 +159,6 @@ function issueNodesToTreeNodes(
             <IssueRow
               record={node.issue}
               blocked={node.blocked}
-              blockedBy={node.blockedBy}
               jobs={jobsByIssue.get(node.id)}
               onJobClick={onJobClick}
             />
