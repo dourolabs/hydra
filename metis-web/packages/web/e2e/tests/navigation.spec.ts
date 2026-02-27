@@ -20,8 +20,8 @@ test.describe("Navigation", () => {
     await page.locator('nav a[href="/settings"]').click();
     await expect(page).toHaveURL(/\/settings/);
 
-    // Navigate to Dashboard via sidebar (use the nav item, not the logo)
-    await page.locator('nav a[href="/"]').nth(1).click();
+    // Navigate to Dashboard via sidebar
+    await page.getByTestId('nav-dashboard').click();
     await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/$/);
   });
 
