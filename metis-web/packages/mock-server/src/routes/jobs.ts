@@ -87,8 +87,27 @@ export function createJobRoutes(store: Store): Hono {
   // GET /v1/jobs
   app.get("/v1/jobs", (c) => {
     const includeDeleted = c.req.query("include_deleted") === "true";
+    const q = c.req.query("q");
+    const spawnedFrom = c.req.query("spawned_from");
+    const status = c.req.query("status");
+
     const items = store.list<Task>(COLLECTION, includeDeleted);
-    const jobs: JobSummaryRecord[] = items.map(({ id, entry }) =>
+
+    let filtered = items;
+    if (q) {
+      const lower = q.toLowerCase();
+      filtered = filtered.filter(({ entry }) =>
+        entry.data.prompt.toLowerCase().includes(lower),
+      );
+    }
+    if (spawnedFrom) {
+      filtered = filtered.filter(({ entry }) => entry.data.spawned_from === spawnedFrom);
+    }
+    if (status) {
+      filtered = filtered.filter(({ entry }) => entry.data.status === status);
+    }
+
+    const jobs: JobSummaryRecord[] = filtered.map(({ id, entry }) =>
       toSummaryRecord(id, entry.version, entry.timestamp, entry.data),
     );
     const resp: ListJobsResponse = { jobs };
