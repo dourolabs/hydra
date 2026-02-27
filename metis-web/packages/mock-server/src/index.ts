@@ -98,8 +98,8 @@ export function startMockServer(options?: { port?: number }): Promise<MockServer
 if (!process.env.VITEST) {
   const port = Number(process.env.PORT ?? 8080);
   console.log(`@metis/mock-server starting on port ${port}`);
-  serve({ fetch: app.fetch, port }, (info) => {
-    console.log(`@metis/mock-server listening on http://localhost:${info.port}`);
+  startMockServer({ port }).then(({ port: resolvedPort }) => {
+    console.log(`@metis/mock-server listening on http://localhost:${resolvedPort}`);
   });
 }
 
