@@ -87,6 +87,15 @@ RUN apt-get update \
 # Ensure rustfmt and clippy are available for formatting and linting tasks run inside the worker image
 RUN rustup component add rustfmt clippy
 
+# Install 1Password CLI
+RUN curl -fsSL https://downloads.1password.com/linux/keys/1password.asc | \
+    gpg --dearmor -o /usr/share/keyrings/1password-archive-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main" \
+    > /etc/apt/sources.list.d/1password.list && \
+    apt-get update && apt-get install -y --no-install-recommends 1password-cli && \
+    rm -rf /var/lib/apt/lists/*
+RUN op --version
+
 # Create a non-root user
 RUN useradd -m -s /bin/bash -u 1000 worker \
     && mkdir -p ${APP_HOME} /usr/local/bin \
