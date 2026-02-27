@@ -48,28 +48,30 @@ export function SettingsPage() {
             <span className={styles.sectionTitle}>Repositories</span>
           }
         >
-          <table className={styles.repoTable}>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Remote URL</th>
-                <th>Default Branch</th>
-                <th>Default Image</th>
-                <th>Patch Workflow</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {repositories.map((repo) => (
-                <RepositoryRow
-                  key={repo.name}
-                  repo={repo}
-                  onEdit={() => setEditTarget(repo)}
-                  onDelete={() => setDeleteTarget(repo)}
-                />
-              ))}
-            </tbody>
-          </table>
+          <div className={styles.tableWrapper}>
+            <table className={styles.repoTable}>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Remote URL</th>
+                  <th>Default Branch</th>
+                  <th>Default Image</th>
+                  <th>Patch Workflow</th>
+                  <th className={styles.repoActions} />
+                </tr>
+              </thead>
+              <tbody>
+                {repositories.map((repo) => (
+                  <RepositoryRow
+                    key={repo.name}
+                    repo={repo}
+                    onEdit={() => setEditTarget(repo)}
+                    onDelete={() => setDeleteTarget(repo)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Panel>
       )}
 
@@ -149,7 +151,7 @@ function RepositoryRow({ repo, onEdit, onDelete }: RepositoryRowProps) {
           <span className={styles.dimText}>—</span>
         )}
       </td>
-      <td>
+      <td className={styles.repoActions}>
         <div className={styles.rowActions}>
           <Button variant="ghost" size="sm" onClick={onEdit}>
             Edit
