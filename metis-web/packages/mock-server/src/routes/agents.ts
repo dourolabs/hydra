@@ -41,7 +41,7 @@ export function createAgentRoutes(store: Store): Hono {
       max_tries: body.max_tries,
       max_simultaneous: body.max_simultaneous,
     };
-    store.create<AgentRecord>(COLLECTION, body.name, agent, "agent");
+    store.create<AgentRecord>(COLLECTION, body.name, agent, null);
     const resp: AgentResponse = { agent };
     return c.json(resp, 201);
   });
@@ -56,7 +56,7 @@ export function createAgentRoutes(store: Store): Hono {
       max_tries: body.max_tries,
       max_simultaneous: body.max_simultaneous,
     };
-    store.update<AgentRecord>(COLLECTION, name, agent, "agent");
+    store.update<AgentRecord>(COLLECTION, name, agent, null);
     const resp: AgentResponse = { agent };
     return c.json(resp);
   });
@@ -64,7 +64,7 @@ export function createAgentRoutes(store: Store): Hono {
   // DELETE /v1/agents/:name
   app.delete("/v1/agents/:name", (c) => {
     const name = c.req.param("name");
-    const entry = store.delete<AgentRecord>(COLLECTION, name, "agent");
+    const entry = store.delete<AgentRecord>(COLLECTION, name, null);
     const resp: DeleteAgentResponse = { agent: entry.data };
     return c.json(resp);
   });
