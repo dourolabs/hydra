@@ -1,14 +1,12 @@
 import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Badge, JobStatusIndicator } from "@metis/ui";
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
+import { IssueRow } from "../issues/IssueRow";
 import {
   buildIssueTree,
   type IssueTreeNode,
 } from "../issues/useIssues";
-import { toJobSummary } from "../../utils/jobMapping";
-import { issueToBadgeStatus, TERMINAL_STATUSES } from "../../utils/statusMapping";
-import { descriptionSnippet } from "../../utils/text";
+import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import styles from "./WatchingTree.module.css";
 
 interface CompletedTreeProps {
@@ -41,15 +39,6 @@ function TreeNodeRow({
   username: string;
 }) {
   const active = node.id === selectedId;
-  const jobs = jobsByIssue.get(node.id);
-  const jobSummaries = jobs?.map(toJobSummary);
-
-  const handleJobClick = useCallback(
-    (jobId: string) => {
-      onJobClick(node.id, jobId);
-    },
-    [onJobClick, node.id],
-  );
 
   const classNames = [styles.node];
   if (active) classNames.push(styles.active);
@@ -62,36 +51,23 @@ function TreeNodeRow({
       onClick={() => onSelect(node.id)}
       type="button"
     >
-      <span className={styles.topRow}>
-        <span
-          className={styles.chevron}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle();
-          }}
-          role="button"
-          tabIndex={-1}
-        >
-          {hasChildren ? (expanded ? "\u25BE" : "\u25B8") : " "}
-        </span>
-        <Badge status={issueToBadgeStatus(node.issue.issue.status)} />
-        {jobSummaries && jobSummaries.length > 0 && (
-          <span
-            className={styles.jobIndicator}
-            onClick={(e) => e.stopPropagation()}
-            role="presentation"
-          >
-            <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
-          </span>
-        )}
-        <span className={styles.id}>{node.id}</span>
+      <span
+        className={styles.chevron}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle();
+        }}
+        role="button"
+        tabIndex={-1}
+      >
+        {hasChildren ? (expanded ? "\u25BE" : "\u25B8") : " "}
       </span>
-      <span className={styles.desc}>
-        {descriptionSnippet(node.issue.issue.description, 50)}
-      </span>
-      {node.blocked && node.blockedBy.length > 0 && (
-        <span className={styles.blockedBy}>blocked by {node.blockedBy.join(", ")}</span>
-      )}
+      <IssueRow
+        record={node.issue}
+        blocked={node.blocked}
+        jobs={jobsByIssue.get(node.id)}
+        onJobClick={onJobClick}
+      />
     </button>
   );
 }

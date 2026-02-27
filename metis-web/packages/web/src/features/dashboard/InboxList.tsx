@@ -1,17 +1,17 @@
-import { Badge } from "@metis/ui";
-import type { IssueSummaryRecord } from "@metis/api";
-import { issueToBadgeStatus } from "../../utils/statusMapping";
-import { descriptionSnippet } from "../../utils/text";
+import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
+import { IssueRow } from "../issues/IssueRow";
 import { formatRelativeTime } from "../../utils/time";
 import styles from "./InboxList.module.css";
 
 interface InboxListProps {
   issues: IssueSummaryRecord[];
+  jobsByIssue?: Map<string, JobSummaryRecord[]>;
   selectedId: string | null;
   onSelect: (issueId: string) => void;
+  onJobClick?: (issueId: string, jobId: string) => void;
 }
 
-export function InboxList({ issues, selectedId, onSelect }: InboxListProps) {
+export function InboxList({ issues, jobsByIssue, selectedId, onSelect, onJobClick }: InboxListProps) {
   if (issues.length === 0) {
     return <p className={styles.empty}>No assigned issues.</p>;
   }
@@ -27,12 +27,11 @@ export function InboxList({ issues, selectedId, onSelect }: InboxListProps) {
               onClick={() => onSelect(record.issue_id)}
               type="button"
             >
-              <div className={styles.top}>
-                <Badge status={issueToBadgeStatus(record.issue.status)} />
-                <span className={styles.desc}>
-                  {descriptionSnippet(record.issue.description, 60)}
-                </span>
-              </div>
+              <IssueRow
+                record={record}
+                jobs={jobsByIssue?.get(record.issue_id)}
+                onJobClick={onJobClick}
+              />
               <div className={styles.bottom}>
                 <span className={styles.id}>{record.issue_id}</span>
                 <span className={styles.time}>
