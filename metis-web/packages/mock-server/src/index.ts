@@ -17,8 +17,12 @@ import { createRepositoryRoutes } from "./routes/repositories.js";
 import { createAgentRoutes } from "./routes/agents.js";
 import { createMergeQueueRoutes } from "./routes/merge-queues.js";
 import { createEventRoutes } from "./routes/events.js";
+import { loadSeedData } from "./seed.js";
 
 const store = new Store();
+
+// Load seed data on startup
+loadSeedData(store);
 const app = new Hono();
 
 // X-Mock-Error middleware: return simulated error for any request with this header
@@ -51,6 +55,12 @@ app.onError((err, c) => {
   }
   console.error("Unhandled error:", err);
   return c.json({ error: "internal server error" }, 500);
+});
+
+// POST /v1/dev/reset — restore store to seed data state
+app.post("/v1/dev/reset", (c) => {
+  loadSeedData(store);
+  return c.json({ ok: true });
 });
 
 // Mount routes
