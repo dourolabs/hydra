@@ -73,11 +73,34 @@ app.route("", createAgentRoutes(store));
 app.route("", createMergeQueueRoutes());
 app.route("", createEventRoutes(store));
 
-const port = Number(process.env.PORT ?? 8080);
+export interface MockServerHandle {
+  port: number;
+  close: () => Promise<void>;
+}
 
-console.log(`@metis/mock-server starting on port ${port}`);
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`@metis/mock-server listening on http://localhost:${info.port}`);
-});
+/**
+ * Start the mock server on the given port (default: random).
+ * Returns a handle with the resolved port and a close function.
+ */
+export function startMockServer(options?: { port?: number }): Promise<MockServerHandle> {
+  return new Promise((resolve) => {
+    const serverPort = options?.port ?? 0;
+    const server = serve({ fetch: app.fetch, port: serverPort }, (info) => {
+      resolve({
+        port: info.port,
+        close: () => new Promise<void>((res) => server.close(() => res())),
+      });
+    });
+  });
+}
+
+// Auto-start when running as a standalone server (not during tests)
+if (!process.env.VITEST) {
+  const port = Number(process.env.PORT ?? 8080);
+  console.log(`@metis/mock-server starting on port ${port}`);
+  serve({ fetch: app.fetch, port }, (info) => {
+    console.log(`@metis/mock-server listening on http://localhost:${info.port}`);
+  });
+}
 
 export { app, store };
