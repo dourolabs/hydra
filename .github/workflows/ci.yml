@@ -191,6 +191,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ts-build-dist
+          path: metis-web/packages
 
       - name: Get Playwright version
         id: playwright-version

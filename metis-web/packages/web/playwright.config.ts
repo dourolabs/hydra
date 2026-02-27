@@ -33,7 +33,8 @@ export default defineConfig({
       cwd: "../..",
     },
     {
-      command: "pnpm --filter @metis/web dev",
+      command:
+        "pnpm --filter @metis/api build && pnpm --filter @metis/ui build && pnpm --filter @metis/web dev",
       port: 3000,
       reuseExistingServer: true,
       cwd: "../..",
