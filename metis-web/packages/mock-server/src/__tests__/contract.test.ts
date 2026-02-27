@@ -114,9 +114,9 @@ describe("Issues", () => {
     expect(deleted.issue.deleted).toBe(true);
 
     // Get after delete → 404
-    await expect(client.getIssue(issueId)).rejects.toThrow(ApiError);
     try {
       await client.getIssue(issueId);
+      expect.unreachable("Should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(ApiError);
       expect((err as ApiError).status).toBe(404);
@@ -548,6 +548,10 @@ describe("Agents", () => {
 // Merge Queues
 // ---------------------------------------------------------------------------
 describe("Merge Queues", () => {
+  beforeEach(async () => {
+    await resetServer();
+  });
+
   it("get empty queue → enqueue → get with patch", async () => {
     const queue = await client.getMergeQueue("acme/web-app", "main");
     expect(queue.patches).toEqual([]);
