@@ -11,6 +11,31 @@ interface IssueActivityProps {
   issueId: string;
 }
 
+const STATUS_DOT_COLORS: Record<string, string> = {
+  open: "var(--color-status-open)",
+  "in-progress": "var(--color-status-in-progress)",
+  closed: "var(--color-status-closed)",
+  failed: "var(--color-status-failed)",
+  dropped: "var(--color-status-dropped)",
+  rejected: "var(--color-status-rejected)",
+};
+
+function getDotColor(
+  changes: Change[],
+  isCreation: boolean,
+): string | undefined {
+  if (isCreation) {
+    return "var(--color-accent)";
+  }
+
+  const statusChange = changes.find((c) => c.field === "status");
+  if (statusChange?.after) {
+    return STATUS_DOT_COLORS[statusChange.after];
+  }
+
+  return "var(--color-text-tertiary)";
+}
+
 function diffIssueVersions(
   prev: IssueVersionRecord,
   curr: IssueVersionRecord,
@@ -34,10 +59,10 @@ function diffIssueVersions(
     });
   }
   if (prevIssue.progress !== currIssue.progress) {
-    changes.push({ field: "progress" });
+    changes.push({ field: "progress", value: currIssue.progress });
   }
   if (prevIssue.description !== currIssue.description) {
-    changes.push({ field: "description" });
+    changes.push({ field: "description", value: currIssue.description });
   }
   if (prevIssue.type !== currIssue.type) {
     changes.push({
@@ -96,6 +121,14 @@ function IssueChangeEntry({ change }: { change: Change }) {
       <div className={styles.change}>
         <span className={styles.changeLabel}>Progress</span>
         updated
+        {change.value && (
+          <details>
+            <summary className={styles.collapsibleSummary}>
+              Show changes
+            </summary>
+            <div className={styles.collapsibleContent}>{change.value}</div>
+          </details>
+        )}
       </div>
     );
   }
@@ -105,6 +138,14 @@ function IssueChangeEntry({ change }: { change: Change }) {
       <div className={styles.change}>
         <span className={styles.changeLabel}>Description</span>
         updated
+        {change.value && (
+          <details>
+            <summary className={styles.collapsibleSummary}>
+              Show changes
+            </summary>
+            <div className={styles.collapsibleContent}>{change.value}</div>
+          </details>
+        )}
       </div>
     );
   }
@@ -143,6 +184,26 @@ function IssueChangeEntry({ change }: { change: Change }) {
   return null;
 }
 
+function CreationSubItems({ version }: { version: IssueVersionRecord }) {
+  const issue = version.issue;
+  return (
+    <div className={styles.creationSubItems}>
+      <span className={styles.creationSubItem}>
+        <span className={styles.creationSubItemLabel}>Type:</span>
+        {issue.type}
+      </span>
+      <span className={styles.creationSubItem}>
+        <span className={styles.creationSubItemLabel}>Status:</span>
+        {issue.status}
+      </span>
+      <span className={styles.creationSubItem}>
+        <span className={styles.creationSubItemLabel}>Assignee:</span>
+        {issue.assignee ?? "unassigned"}
+      </span>
+    </div>
+  );
+}
+
 export function IssueActivity({ issueId }: IssueActivityProps) {
   const { data, isLoading } = useQuery({
     queryKey: ["issue", issueId, "versions"],
@@ -156,6 +217,8 @@ export function IssueActivity({ issueId }: IssueActivityProps) {
       isLoading={isLoading}
       diffFn={diffIssueVersions}
       creationLabel="Issue created"
+      getDotColor={getDotColor}
+      renderCreation={(version) => <CreationSubItems version={version} />}
       renderChange={(change, i) => (
         <IssueChangeEntry key={i} change={change} />
       )}

@@ -29,7 +29,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--color-accent);
+  background: var(--dot-color, var(--color-accent));
 }
 
 .entry:last-child {
@@ -107,6 +107,49 @@
   color: var(--color-accent);
   font-weight: 600;
   font-size: var(--font-size-sm);
+}
+
+.creationSubItems {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: var(--space-3);
+}
+
+.creationSubItem {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.creationSubItemLabel {
+  color: var(--color-text-tertiary);
+  font-weight: 600;
+  margin-right: var(--space-1);
+}
+
+.collapsibleSummary {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.collapsibleSummary:hover {
+  color: var(--color-text-secondary);
+}
+
+.collapsibleContent {
+  margin-top: var(--space-1);
+  padding: var(--space-2);
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .empty {
