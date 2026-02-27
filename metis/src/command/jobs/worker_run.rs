@@ -11,14 +11,13 @@ use metis_common::{
     constants::{ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ISSUE_ID},
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
-    patches::GitOid,
-    IssueId, RepoName, TaskId,
+    IssueId, TaskId,
 };
 use tempfile::Builder;
 
 use crate::build_cache::build_cache_client;
 use crate::command::documents::{push_documents, sync_documents, PushArgs, SyncArgs};
-use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
+use crate::command::patches::resolve_service_repo_name;
 use crate::git::{
     clone_repo, commit_changes, configure_repo, fetch_remote, push_branch, resolve_head_oid,
     stage_all_changes, workdir_diff,
@@ -207,12 +206,7 @@ pub async fn run(
     };
 
     if base_commit.is_some() {
-        if let Err(err) = finalize_task_run(
-            &repo_path,
-            issue_branch_id.as_deref(),
-            &job,
-            github_token.as_deref(),
-        ) {
+        if let Err(err) = finalize_task_run(&repo_path, &job, github_token.as_deref()) {
             errors.push(err.context("failed to finalize task output branches"));
         }
     }
@@ -317,25 +311,6 @@ pub async fn run(
         }
     }
 
-    if let Some(service_repo_name) = service_repo_name.as_ref() {
-        if let Err(err) = submit_patch_artifact_if_present(
-            client,
-            &job,
-            &repo_path,
-            &last_message,
-            service_repo_name,
-            base_commit,
-        )
-        .await
-        {
-            errors.push(err.context("failed to submit patch artifact"));
-        }
-    } else {
-        log_status(
-            "No service repository detected; skipping patch artifact submission.".to_string(),
-        );
-    }
-
     let status_update = if errors.is_empty() {
         JobStatusUpdate::Complete {
             last_message: Some(last_message.clone()),
@@ -412,72 +387,6 @@ async fn submit_job_status(
         }
         Err(err) => Err(err),
     }
-}
-
-async fn submit_patch_artifact_if_present(
-    client: &dyn MetisClientInterface,
-    job: &TaskId,
-    dest: &Path,
-    last_message: &str,
-    service_repo_name: &RepoName,
-    base_commit: Option<GitOid>,
-) -> Result<()> {
-    let (title, description) = patch_metadata(job, last_message);
-    let is_automatic_backup = true;
-
-    let Some(_) = base_commit else {
-        log_status(format!(
-            "No git repository detected; skipping patch submission for job '{job}'."
-        ));
-        return Ok(());
-    };
-    let diff = workdir_diff(dest)?;
-    if diff.trim().is_empty() {
-        log_status(format!(
-            "No uncommitted changes detected; skipping patch submission for job '{job}'."
-        ));
-        return Ok(());
-    }
-
-    let response = create_patch_artifact_from_repo(
-        client,
-        dest,
-        diff,
-        title,
-        description,
-        Some(job.clone()),
-        is_automatic_backup,
-        false,
-        service_repo_name.clone(),
-        "origin/main",
-    )
-    .await?;
-
-    log_status(format!(
-        "Submitted patch '{}' for job '{}'.",
-        response.patch_id, job
-    ));
-
-    Ok(())
-}
-
-fn patch_metadata(job: &TaskId, last_message: &str) -> (String, String) {
-    let job_display = job.to_string();
-    let trimmed_message = last_message.trim();
-    let title = trimmed_message
-        .lines()
-        .next()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("Patch for job {job_display}"));
-    let description = if trimmed_message.is_empty() {
-        format!("Patch generated for Metis job {job_display}")
-    } else {
-        trimmed_message.to_string()
-    };
-
-    (title, description)
 }
 
 fn initialize_tracking_branches(
@@ -585,12 +494,7 @@ fn initialize_tracking_branches(
     Ok(())
 }
 
-fn finalize_task_run(
-    repo_root: &Path,
-    issue_id: Option<&str>,
-    task_id: &TaskId,
-    github_token: Option<&str>,
-) -> Result<()> {
+fn finalize_task_run(repo_root: &Path, task_id: &TaskId, github_token: Option<&str>) -> Result<()> {
     log_status(format!(
         "Auto-committing worker changes for task '{task_id}' and syncing tracking branches…"
     ));
@@ -618,16 +522,6 @@ fn finalize_task_run(
     push_branch(repo_root, &task_head_branch, github_token, true).with_context(|| {
         format!("failed to push task head branch '{task_head_branch}' to remote origin")
     })?;
-
-    if let Some(issue_id) = issue_id {
-        let issue_head_branch = format!("metis/{issue_id}/head");
-        update_branch_to_head(&repo, &issue_head_branch).with_context(|| {
-            format!("failed to update issue head branch '{issue_head_branch}' to latest commit")
-        })?;
-        push_branch(repo_root, &issue_head_branch, github_token, true).with_context(|| {
-            format!("failed to push issue head branch '{issue_head_branch}' to remote origin")
-        })?;
-    }
 
     Ok(())
 }
@@ -769,23 +663,15 @@ fn resolve_worker_home_dir() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use crate::{
-        client::MetisClient,
         git::{
             clone_repo as git_clone_repo, commit_changes as git_commit_changes,
             configure_repo as git_configure_repo, current_branch as git_current_branch,
             push_branch as git_push_branch, stage_all_changes as git_stage_all_changes,
         },
-        test_utils::ids::{patch_id, task_id},
+        test_utils::ids::task_id,
     };
     use git2::{build::CheckoutBuilder, Oid, Repository};
-    use httpmock::prelude::*;
-    use metis_common::patches::{Patch, PatchStatus, UpsertPatchRequest, UpsertPatchResponse};
-    use metis_common::users::Username;
-    use metis_common::whoami::{ActorIdentity, WhoAmIResponse};
-    use reqwest::Client as HttpClient;
-    use std::{collections::HashMap, path::Path, str::FromStr};
-
-    const TEST_METIS_TOKEN: &str = "u-test-user:test-metis-token";
+    use std::{collections::HashMap, path::Path};
 
     fn init_git_repo(repo_path: &Path) -> Result<String> {
         Repository::init(repo_path).context("failed to init git repo for test")?;
@@ -882,136 +768,6 @@ mod tests {
         assert_eq!(env.get("FORCE_COLOR").map(String::as_str), Some("0"));
         assert_eq!(env.get("CLICOLOR_FORCE").map(String::as_str), Some("1"));
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
-    }
-
-    #[tokio::test]
-    async fn submit_patch_artifact_if_present_creates_patch_from_uncommitted_changes() -> Result<()>
-    {
-        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
-        let repo_path = tempdir.path().join("repo");
-        let bare_path = tempdir.path().join("remote.git");
-        std::fs::create_dir_all(&repo_path)?;
-        Repository::init_bare(&bare_path).context("failed to init bare remote")?;
-        let repo = Repository::init(&repo_path).context("failed to init git repo for test")?;
-        // Ensure the default branch is "main" regardless of system git config.
-        repo.set_head("refs/heads/main")
-            .context("failed to set HEAD to main")?;
-        git_configure_repo(&repo_path, "Test User", "test@example.com")?;
-        let remote_url = bare_path.to_str().context("bare path not utf-8")?;
-        repo.remote("origin", remote_url)
-            .context("failed to set remote origin")?;
-
-        create_initial_commit(&repo_path, "README.md", "initial content")?;
-        let base_commit =
-            resolve_head_oid(&repo_path)?.expect("expected HEAD commit after initial setup");
-        // Push to origin so merge-base resolution works.
-        push_branch(&repo_path, "main", None, false)?;
-
-        std::fs::write(repo_path.join("README.md"), "updated content\n")?;
-        std::fs::write(repo_path.join("untracked.txt"), "untracked content\n")?;
-
-        let job_id = task_id("t-job-123");
-        let repo_name = RepoName::from_str("dourolabs/example")?;
-        let diff = workdir_diff(&repo_path)?;
-        let branch_name = git_current_branch(&repo_path)?;
-        let expected_patch = Patch::new(
-            "final output line".to_string(),
-            "final output line".to_string(),
-            diff.clone(),
-            PatchStatus::Open,
-            true,
-            Some(job_id.clone()),
-            Username::from("test-user"),
-            Vec::new(),
-            repo_name.clone(),
-            None,
-            false,
-            Some(branch_name),
-            // Merge-base of HEAD with origin/main is the initial commit (same as HEAD here).
-            Some(metis_common::patches::CommitRange::new(
-                base_commit,
-                base_commit,
-            )),
-            Some("main".to_string()),
-        );
-        let expected_request = UpsertPatchRequest::new(expected_patch);
-        let server = MockServer::start();
-        let patch_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/patches")
-                .json_body_obj(&expected_request);
-            then.status(200)
-                .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123"), 0));
-        });
-        // Mock the github token endpoint (always called now, but returns 401).
-        server.mock(|when, then| {
-            when.method(GET).path("/v1/github/token");
-            then.status(401);
-        });
-        let whoami_response = WhoAmIResponse::new(ActorIdentity::User {
-            username: Username::from("test-user"),
-        });
-        server.mock(|when, then| {
-            when.method(GET).path("/v1/whoami");
-            then.status(200).json_body_obj(&whoami_response);
-        });
-        let client =
-            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-
-        submit_patch_artifact_if_present(
-            &client,
-            &job_id,
-            &repo_path,
-            "final output line",
-            &repo_name,
-            Some(base_commit),
-        )
-        .await?;
-
-        patch_mock.assert();
-        assert!(
-            expected_request.patch.diff.contains("updated content"),
-            "patch should include modifications made by the worker"
-        );
-        assert!(
-            expected_request.patch.diff.contains("untracked.txt"),
-            "patch should include untracked files"
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn submit_patch_artifact_if_present_skips_without_changes() -> Result<()> {
-        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
-        let repo_path = tempdir.path();
-        setup_git_repo_with_initial_commit(repo_path)?;
-        let base_commit =
-            resolve_head_oid(repo_path)?.expect("expected HEAD commit after initial setup");
-
-        let server = MockServer::start();
-        let patch_mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/patches");
-            then.status(200)
-                .json_body_obj(&UpsertPatchResponse::new(patch_id("p-456"), 0));
-        });
-        let client =
-            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        let job_id = task_id("t-job-456");
-        let repo_name = RepoName::from_str("dourolabs/example")?;
-        submit_patch_artifact_if_present(
-            &client,
-            &job_id,
-            repo_path,
-            "done",
-            &repo_name,
-            Some(base_commit),
-        )
-        .await?;
-
-        patch_mock.assert_hits(0);
-
-        Ok(())
     }
 
     #[test]
@@ -1154,6 +910,14 @@ mod tests {
             .context("failed to configure git repository")?;
         initialize_tracking_branches(clone_dir.path(), Some(issue_id), &job_id, None)?;
 
+        let remote_repo_before = Repository::open(fixture.remote_dir())
+            .context("failed to open remote repository for pre-finalize snapshot")?;
+        let issue_head_before = reference_target(
+            &remote_repo_before,
+            &format!("refs/heads/metis/{issue_id}/head"),
+        )?;
+        drop(remote_repo_before);
+
         std::fs::write(clone_dir.path().join("README.md"), "updated content\n")
             .context("failed to edit README during finalize test")?;
         std::fs::write(
@@ -1162,7 +926,7 @@ mod tests {
         )
         .context("failed to write new file during finalize test")?;
 
-        finalize_task_run(clone_dir.path(), Some(issue_id), &job_id, None)?;
+        finalize_task_run(clone_dir.path(), &job_id, None)?;
 
         let repo = Repository::open(clone_dir.path())
             .context("failed to open cloned repository for finalize assertions")?;
@@ -1188,10 +952,14 @@ mod tests {
             head_oid,
             "task head branch should be pushed to the new commit"
         );
+        assert_ne!(
+            head_oid, issue_head_before,
+            "HEAD should have advanced past the initial issue head commit"
+        );
         assert_eq!(
             reference_target(&remote_repo, &format!("refs/heads/metis/{issue_id}/head"))?,
-            head_oid,
-            "issue head branch should advance to the worker's final commit"
+            issue_head_before,
+            "issue head branch should NOT advance during finalize_task_run"
         );
 
         Ok(())
