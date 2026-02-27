@@ -129,8 +129,31 @@ export function createIssueRoutes(store: Store): Hono {
   // GET /v1/issues
   app.get("/v1/issues", (c) => {
     const includeDeleted = c.req.query("include_deleted") === "true";
+    const issueType = c.req.query("issue_type");
+    const status = c.req.query("status");
+    const assignee = c.req.query("assignee");
+    const q = c.req.query("q");
+
     const items = store.list<Issue>(COLLECTION, includeDeleted);
-    const issues: IssueSummaryRecord[] = items.map(({ id, entry }) => {
+
+    let filtered = items;
+    if (issueType) {
+      filtered = filtered.filter(({ entry }) => entry.data.type === issueType);
+    }
+    if (status) {
+      filtered = filtered.filter(({ entry }) => entry.data.status === status);
+    }
+    if (assignee) {
+      filtered = filtered.filter(({ entry }) => entry.data.assignee === assignee);
+    }
+    if (q) {
+      const lower = q.toLowerCase();
+      filtered = filtered.filter(({ entry }) =>
+        entry.data.description.toLowerCase().includes(lower),
+      );
+    }
+
+    const issues: IssueSummaryRecord[] = filtered.map(({ id, entry }) => {
       const creationTime = store.getCreationTime(COLLECTION, id)!;
       return toSummaryRecord(id, entry.version, entry.timestamp, entry.data, creationTime);
     });

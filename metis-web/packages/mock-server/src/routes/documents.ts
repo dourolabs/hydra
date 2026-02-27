@@ -113,16 +113,29 @@ export function createDocumentRoutes(store: Store): Hono {
     const includeDeleted = c.req.query("include_deleted") === "true";
     const pathPrefix = c.req.query("path_prefix");
     const pathIsExact = c.req.query("path_is_exact") === "true";
+    const q = c.req.query("q");
+    const createdBy = c.req.query("created_by");
     const items = store.list<Document>(COLLECTION, includeDeleted);
 
     let filtered = items;
     if (pathPrefix) {
-      filtered = items.filter(({ entry }) => {
+      filtered = filtered.filter(({ entry }) => {
         const docPath = entry.data.path;
         if (!docPath) return false;
         if (pathIsExact) return docPath === pathPrefix;
         return docPath.startsWith(pathPrefix);
       });
+    }
+    if (q) {
+      const lower = q.toLowerCase();
+      filtered = filtered.filter(({ entry }) => {
+        const titleMatch = entry.data.title.toLowerCase().includes(lower);
+        const pathMatch = entry.data.path?.toLowerCase().includes(lower) ?? false;
+        return titleMatch || pathMatch;
+      });
+    }
+    if (createdBy) {
+      filtered = filtered.filter(({ entry }) => entry.data.created_by === createdBy);
     }
 
     const documents: DocumentSummaryRecord[] = filtered.map(({ id, entry }) => {

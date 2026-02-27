@@ -128,8 +128,30 @@ export function createPatchRoutes(store: Store): Hono {
   // GET /v1/patches
   app.get("/v1/patches", (c) => {
     const includeDeleted = c.req.query("include_deleted") === "true";
+    const q = c.req.query("q");
+    const statusParam = c.req.query("status");
+    const branchName = c.req.query("branch_name");
+
     const items = store.list<Patch>(COLLECTION, includeDeleted);
-    const patches: PatchSummaryRecord[] = items.map(({ id, entry }) => {
+
+    let filtered = items;
+    if (q) {
+      const lower = q.toLowerCase();
+      filtered = filtered.filter(({ entry }) =>
+        entry.data.title.toLowerCase().includes(lower),
+      );
+    }
+    if (statusParam) {
+      const statuses = statusParam.split(",");
+      filtered = filtered.filter(({ entry }) =>
+        statuses.includes(entry.data.status),
+      );
+    }
+    if (branchName) {
+      filtered = filtered.filter(({ entry }) => entry.data.branch_name === branchName);
+    }
+
+    const patches: PatchSummaryRecord[] = filtered.map(({ id, entry }) => {
       const creationTime = store.getCreationTime(COLLECTION, id)!;
       return toSummaryRecord(id, entry.version, entry.timestamp, entry.data, creationTime);
     });
