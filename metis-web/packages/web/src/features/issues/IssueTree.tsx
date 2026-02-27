@@ -50,7 +50,7 @@ function toTreeNodes(
 
     result.push({
       id: node.id,
-      label: <IssueRow record={node.issue} dimmed={dimmed} blocked={node.blocked} blockedBy={node.blockedBy} jobs={jobs} onJobClick={onJobClick} />,
+      label: <IssueRow record={node.issue} dimmed={dimmed} blocked={node.blocked} jobs={jobs} onJobClick={onJobClick} />,
       children:
         node.children.length > 0
           ? toTreeNodes(node.children, matchingIds, jobsByIssue, onJobClick)
