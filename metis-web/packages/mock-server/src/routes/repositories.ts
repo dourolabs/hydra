@@ -37,9 +37,7 @@ export function createRepositoryRoutes(store: Store): Hono {
       deleted: body.deleted,
       patch_workflow: body.patch_workflow,
     };
-    // Repositories don't emit entity SSE events (no repo_created/updated types)
-    // We store them but skip SSE emission by using a dummy prefix
-    store.create<Repository>(COLLECTION, body.name, repo, "repository");
+    store.create<Repository>(COLLECTION, body.name, repo, null);
     const record: RepositoryRecord = { name: body.name, repository: repo };
     const resp: UpsertRepositoryResponse = { repository: record };
     return c.json(resp, 201);
@@ -62,7 +60,7 @@ export function createRepositoryRoutes(store: Store): Hono {
       deleted: body.deleted,
       patch_workflow: body.patch_workflow,
     };
-    store.update<Repository>(COLLECTION, name, updated, "repository");
+    store.update<Repository>(COLLECTION, name, updated, null);
     const record: RepositoryRecord = { name, repository: updated };
     const resp: UpsertRepositoryResponse = { repository: record };
     return c.json(resp);
@@ -73,7 +71,7 @@ export function createRepositoryRoutes(store: Store): Hono {
     const org = c.req.param("org");
     const repo = c.req.param("repo");
     const name = `${org}/${repo}`;
-    const entry = store.delete<Repository>(COLLECTION, name, "repository");
+    const entry = store.delete<Repository>(COLLECTION, name, null);
     const record: RepositoryRecord = { name, repository: entry.data };
     const resp: DeleteRepositoryResponse = { repository: record };
     return c.json(resp);

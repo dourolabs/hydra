@@ -1,5 +1,10 @@
 import type { SseEventType } from "@metis/api";
 
+/** Extracts the entity prefix P from SSE event type strings of the form `P_Suffix`. */
+type SsePrefix<E extends string, Suffix extends string> = E extends `${infer P}_${Suffix}`
+  ? P
+  : never;
+
 export interface VersionedEntity<T = unknown> {
   version: number;
   timestamp: string;
@@ -38,7 +43,7 @@ export class Store {
     collectionName: string,
     id: string,
     data: T,
-    ssePrefix: string,
+    ssePrefix: SsePrefix<SseEventType, "created"> | null,
   ): VersionedEntity<T> {
     const col = this.getCollection(collectionName);
     if (col.has(id)) {
@@ -47,7 +52,9 @@ export class Store {
     const now = new Date().toISOString();
     const entry: VersionedEntity<T> = { version: 1, timestamp: now, data };
     col.set(id, [entry]);
-    this.emitEvent(`${ssePrefix}_created` as SseEventType, collectionName, id, entry);
+    if (ssePrefix !== null) {
+      this.emitEvent(`${ssePrefix}_created`, collectionName, id, entry);
+    }
     return entry;
   }
 
@@ -55,7 +62,7 @@ export class Store {
     collectionName: string,
     id: string,
     data: T,
-    ssePrefix: string,
+    ssePrefix: SsePrefix<SseEventType, "updated"> | null,
   ): VersionedEntity<T> {
     const col = this.getCollection(collectionName);
     const versions = col.get(id);
@@ -73,7 +80,9 @@ export class Store {
       data,
     };
     versions.push(entry);
-    this.emitEvent(`${ssePrefix}_updated` as SseEventType, collectionName, id, entry);
+    if (ssePrefix !== null) {
+      this.emitEvent(`${ssePrefix}_updated`, collectionName, id, entry);
+    }
     return entry;
   }
 
@@ -116,7 +125,7 @@ export class Store {
   delete<T>(
     collectionName: string,
     id: string,
-    ssePrefix: string,
+    ssePrefix: SsePrefix<SseEventType, "deleted"> | null,
   ): VersionedEntity<T> {
     const col = this.getCollection(collectionName);
     const versions = col.get(id);
@@ -136,7 +145,9 @@ export class Store {
       deleted: true,
     };
     versions.push(entry);
-    this.emitEvent(`${ssePrefix}_deleted` as SseEventType, collectionName, id, entry);
+    if (ssePrefix !== null) {
+      this.emitEvent(`${ssePrefix}_deleted`, collectionName, id, entry);
+    }
     return entry;
   }
 
