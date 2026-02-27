@@ -18,10 +18,22 @@ test.describe("Issue List", () => {
     await expect(
       page.getByText("i-seed00001", { exact: true })
     ).toBeVisible();
-    // The page should show various status badges from the seed data
-    // Seed data includes issues with statuses: open, in-progress, closed, failed, dropped
-    const issueList = page.locator("main");
-    await expect(issueList).toBeVisible();
+
+    // Verify badges for specific seeded issues across all status types
+    // i-seed00001 = open, i-seed00002 = in-progress, i-seed00004 = closed,
+    // i-seed00006 = failed, i-seed00010 = dropped
+    const cases = [
+      { id: "i-seed00001", status: "open" },
+      { id: "i-seed00002", status: "in-progress" },
+      { id: "i-seed00004", status: "closed" },
+      { id: "i-seed00006", status: "failed" },
+      { id: "i-seed00010", status: "dropped" },
+    ];
+
+    for (const { id, status } of cases) {
+      const row = page.getByRole("treeitem").filter({ hasText: id });
+      await expect(row.getByText(status, { exact: true })).toBeVisible();
+    }
   });
 
   test("shows issue descriptions as snippets", async ({
