@@ -193,6 +193,12 @@ export class Store {
   getCurrentSeq(): number {
     return this.eventSeq;
   }
+
+  clear(): void {
+    this.collections.clear();
+    this.events = [];
+    this.eventSeq = 0;
+  }
 }
 
 export class StoreError extends Error {
