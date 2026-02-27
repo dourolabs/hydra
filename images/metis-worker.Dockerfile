@@ -112,7 +112,7 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | b
 ENV NVM_DIR=/home/worker/.nvm
 
 # Install node, codex, claude, puppeteer, and playwright as the non-root user
-RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && npm install -g @openai/codex @anthropic-ai/claude-code puppeteer playwright pnpm"
+RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && npm install -g @openai/codex @anthropic-ai/claude-code puppeteer playwright@1.58.2 pnpm"
 
 # Pre-install Playwright's Chromium so E2E tests work without a per-session download
 RUN bash -c "source $NVM_DIR/nvm.sh && npx playwright install chromium"
