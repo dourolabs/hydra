@@ -73,7 +73,6 @@ impl AgentQueue {
         state: &AppState,
         issue_id: &IssueId,
         issue: &Issue,
-        is_assignment_agent: bool,
     ) -> anyhow::Result<Option<Task>> {
         let job_settings = state.apply_job_settings_defaults(issue.job_settings.clone());
         let bundle = match (
@@ -105,8 +104,7 @@ impl AgentQueue {
                     rev,
                 }
             }
-            _ if is_assignment_agent => BundleSpec::None,
-            _ => return Ok(None),
+            _ => BundleSpec::None,
         };
 
         let prompt = self.prompt.trim_end().to_string();
@@ -261,9 +259,7 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            let maybe_task = self
-                .build_task(state, &issue_id, &issue, is_assignment_agent)
-                .await?;
+            let maybe_task = self.build_task(state, &issue_id, &issue).await?;
             let Some(task) = maybe_task else {
                 continue;
             };
@@ -894,7 +890,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skips_when_repo_missing_but_allows_missing_image() -> anyhow::Result<()> {
+    async fn spawns_when_repo_missing_and_allows_missing_image() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
         handles
             .store
@@ -957,13 +953,21 @@ mod tests {
             .await?;
 
         let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        let task = tasks.first().expect("task should exist");
-        assert!(matches!(
-            task.context,
-            BundleSpec::ServiceRepository { ref name, .. } if name == &repo_name
-        ));
-        assert!(task.image.is_none());
+        assert_eq!(tasks.len(), 2);
+
+        let has_repo_task = tasks.iter().any(|t| {
+            matches!(
+                t.context,
+                BundleSpec::ServiceRepository { ref name, .. } if name == &repo_name
+            )
+        });
+        assert!(has_repo_task, "expected a task with ServiceRepository");
+
+        let has_no_repo_task = tasks.iter().any(|t| matches!(t.context, BundleSpec::None));
+        assert!(
+            has_no_repo_task,
+            "expected a task with BundleSpec::None for the repo-less issue"
+        );
 
         Ok(())
     }
