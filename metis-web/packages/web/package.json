@@ -9,7 +9,8 @@
     "dev:server": "tsx --watch server/index.ts",
     "build:server": "tsc --project tsconfig.server.json",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
@@ -22,6 +23,7 @@
     "react-router-dom": "^7.13.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/node": "^25.2.3",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

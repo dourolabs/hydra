@@ -27,6 +27,7 @@ export function LoginForm() {
   return (
     <form className={styles.form} onSubmit={handleSubmit}>
       <Input
+        data-testid="token-input"
         label="Metis Token"
         type="password"
         value={token}
@@ -35,7 +36,7 @@ export function LoginForm() {
         error={error ?? undefined}
         autoFocus
       />
-      <Button type="submit" variant="primary" disabled={submitting || !token.trim()}>
+      <Button data-testid="login-button" type="submit" variant="primary" disabled={submitting || !token.trim()}>
         {submitting ? "Logging in\u2026" : "Log in"}
       </Button>
     </form>
