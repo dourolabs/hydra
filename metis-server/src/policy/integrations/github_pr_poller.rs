@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use anyhow::Context;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use metis_common::api::v1 as api;
 use metis_common::{PatchId, Versioned};
 use octocrab::{
@@ -28,7 +28,14 @@ const AUTHENTICATED_RATE_LIMIT_PER_HOUR: u64 = 5_000;
 /// Conservative estimate: open patches use ~6 API calls (PR + CI status + CI checks +
 /// reviews + review comments + issue comments), non-open patches use ~3 (PR + CI status
 /// + CI checks). We use the higher value to stay within rate limits.
+///
+/// Non-open patches are bounded by a recency filter (see `NON_OPEN_PATCH_RECENCY`), so
+/// the working set stays manageable.
 const REQUESTS_PER_PATCH: u64 = 6;
+/// Only sync CI status for non-open (Closed/Merged) patches that were updated within
+/// this duration. This keeps the working set bounded as the total number of closed/merged
+/// patches grows over time.
+const NON_OPEN_PATCH_RECENCY: Duration = Duration::hours(1);
 const WORKER_NAME: &str = "github_poller";
 
 #[derive(Clone)]
@@ -108,16 +115,30 @@ fn max_patches_per_cycle(interval_secs: u64) -> usize {
     patches as usize
 }
 
+/// Returns true if a patch should be included in the sync cycle.
+/// Open/ChangesRequested patches are always included; non-open patches are only
+/// included if they were updated after `recency_cutoff`.
+fn should_sync_patch(patch: &Versioned<Patch>, recency_cutoff: DateTime<Utc>) -> bool {
+    let is_open = matches!(
+        patch.item.status,
+        PatchStatus::Open | PatchStatus::ChangesRequested
+    );
+    is_open || patch.timestamp >= recency_cutoff
+}
+
 async fn sync_patches(
     state: &AppState,
     max_per_cycle: usize,
     start_from: &mut usize,
 ) -> anyhow::Result<SyncStats> {
+    let now = Utc::now();
+    let recency_cutoff = now - NON_OPEN_PATCH_RECENCY;
     let github_patches: Vec<(PatchId, Versioned<Patch>)> = state
         .list_patches()
         .await?
         .into_iter()
         .filter(|(_, patch)| patch.item.github.is_some())
+        .filter(|(_, patch)| should_sync_patch(patch, recency_cutoff))
         .collect();
 
     if github_patches.is_empty() {
@@ -181,6 +202,9 @@ async fn sync_patch_from_github(
         return Ok(());
     };
 
+    // Note: `is_open` is derived from the snapshot passed into this function. The patch
+    // status could change between now and the later re-fetch of `latest_patch`, but this
+    // is harmless — worst case one cycle uses the wrong sync path (full vs CI-only).
     let is_open = matches!(
         patch.status,
         PatchStatus::Open | PatchStatus::ChangesRequested
@@ -1381,6 +1405,135 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn should_sync_patch_includes_open_patches_regardless_of_age() {
+        let now = Utc::now();
+        let stale = now - Duration::hours(24);
+        let cutoff = now - NON_OPEN_PATCH_RECENCY;
+
+        for status in [PatchStatus::Open, PatchStatus::ChangesRequested] {
+            let patch = Versioned::with_actor(
+                Patch::new(
+                    "test".to_string(),
+                    "desc".to_string(),
+                    sample_diff(),
+                    status,
+                    false,
+                    None,
+                    Username::from("test-creator"),
+                    Vec::new(),
+                    RepoName::from_str("dourolabs/api").unwrap(),
+                    Some(GithubPr::new(
+                        "octo".to_string(),
+                        "repo".to_string(),
+                        1,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )),
+                    None,
+                    None,
+                    None,
+                ),
+                1,
+                stale,
+                ActorRef::test(),
+                stale,
+            );
+            assert!(
+                should_sync_patch(&patch, cutoff),
+                "open/changes-requested patches should always be included"
+            );
+        }
+    }
+
+    #[test]
+    fn should_sync_patch_includes_recent_non_open_patches() {
+        let now = Utc::now();
+        let recent = now - Duration::minutes(30);
+        let cutoff = now - NON_OPEN_PATCH_RECENCY;
+
+        for status in [PatchStatus::Merged, PatchStatus::Closed] {
+            let patch = Versioned::with_actor(
+                Patch::new(
+                    "test".to_string(),
+                    "desc".to_string(),
+                    sample_diff(),
+                    status,
+                    false,
+                    None,
+                    Username::from("test-creator"),
+                    Vec::new(),
+                    RepoName::from_str("dourolabs/api").unwrap(),
+                    Some(GithubPr::new(
+                        "octo".to_string(),
+                        "repo".to_string(),
+                        1,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )),
+                    None,
+                    None,
+                    None,
+                ),
+                1,
+                recent,
+                ActorRef::test(),
+                recent,
+            );
+            assert!(
+                should_sync_patch(&patch, cutoff),
+                "recently-updated non-open patches should be included"
+            );
+        }
+    }
+
+    #[test]
+    fn should_sync_patch_excludes_stale_non_open_patches() {
+        let now = Utc::now();
+        let stale = now - Duration::hours(2);
+        let cutoff = now - NON_OPEN_PATCH_RECENCY;
+
+        for status in [PatchStatus::Merged, PatchStatus::Closed] {
+            let patch = Versioned::with_actor(
+                Patch::new(
+                    "test".to_string(),
+                    "desc".to_string(),
+                    sample_diff(),
+                    status,
+                    false,
+                    None,
+                    Username::from("test-creator"),
+                    Vec::new(),
+                    RepoName::from_str("dourolabs/api").unwrap(),
+                    Some(GithubPr::new(
+                        "octo".to_string(),
+                        "repo".to_string(),
+                        1,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )),
+                    None,
+                    None,
+                    None,
+                ),
+                1,
+                stale,
+                ActorRef::test(),
+                stale,
+            );
+            assert!(
+                !should_sync_patch(&patch, cutoff),
+                "stale non-open patches should be excluded"
+            );
+        }
     }
 
     #[test]
