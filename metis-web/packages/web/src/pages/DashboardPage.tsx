@@ -1,12 +1,14 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Spinner } from "@metis/ui";
-import { useIssues } from "../features/issues/useIssues";
+import { useIssues, buildIssueTree } from "../features/issues/useIssues";
 import { useAllJobs } from "../features/jobs/useAllJobs";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { SplitLayout } from "../layout/SplitLayout";
 import { WatchlistActivityFeed } from "../features/dashboard/WatchlistActivityFeed";
+import { IssueFilterSidebar } from "../features/dashboard/IssueFilterSidebar";
+import { readCollapsed } from "../features/dashboard/sidebarStorage";
 import { DetailPanel, DetailPanelEmpty } from "../features/dashboard/DetailPanel";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import styles from "./DashboardPage.module.css";
@@ -19,6 +21,8 @@ export function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get("selected");
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [filterRootId, setFilterRootId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed);
   const hasSelectionHistoryRef = useRef(false);
 
   const setSelectedId = useCallback(
@@ -53,6 +57,21 @@ export function DashboardPage() {
   }, [navigate, setSelectedId]);
 
   const username = user ? actorDisplayName(user.actor) : "";
+
+  const roots = useMemo(() => {
+    if (!issues) return [];
+    const tree = buildIssueTree(issues);
+    return tree
+      .filter(
+        (root) =>
+          !root.hardBlocked && root.issue.issue.creator === username,
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.issue.creation_time).getTime() -
+          new Date(a.issue.creation_time).getTime(),
+      );
+  }, [issues, username]);
 
   const assignees = useMemo(() => {
     if (!issues) return [];
@@ -90,6 +109,7 @@ export function DashboardPage() {
         selectedId={selectedId}
         onSelect={setSelectedId}
         username={username}
+        filterRootId={filterRootId}
       />
       <button
         type="button"
@@ -109,13 +129,22 @@ export function DashboardPage() {
 
   return (
     <div className={styles.page}>
-      <SplitLayout
-        left={leftPane}
-        right={rightPane}
-        leftWidth={40}
-        mobileDetailVisible={selectedId !== null}
-        onMobileBack={handleMobileBack}
-      />
+      <div className={styles.dashboardRow}>
+        <IssueFilterSidebar
+          roots={roots}
+          activeFilter={filterRootId}
+          onFilterChange={setFilterRootId}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={setSidebarCollapsed}
+        />
+        <SplitLayout
+          left={leftPane}
+          right={rightPane}
+          leftWidth={40}
+          mobileDetailVisible={selectedId !== null}
+          onMobileBack={handleMobileBack}
+        />
+      </div>
       <IssueCreateModal
         open={createModalOpen}
         onClose={() => setCreateModalOpen(false)}
