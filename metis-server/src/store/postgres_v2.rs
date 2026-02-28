@@ -13,6 +13,7 @@ use crate::{
         },
         jobs::{BundleSpec, Task},
         messages::Message,
+        notifications::Notification,
         patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
         task_status::{Status, TaskError},
         users::{User, Username},
@@ -29,7 +30,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, IssueId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
+    VersionNumber, Versioned,
+    api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use serde_json::Value;
@@ -96,6 +99,7 @@ const TABLE_REPOSITORIES_V2: &str = "metis.repositories_v2";
 const TABLE_ACTORS_V2: &str = "metis.actors_v2";
 const TABLE_DOCUMENTS_V2: &str = "metis.documents_v2";
 const TABLE_MESSAGES_V2: &str = "metis.messages_v2";
+const TABLE_NOTIFICATIONS: &str = "metis.notifications";
 
 /// PostgresStoreV2 uses the v2 tables with proper column definitions.
 #[derive(Clone)]
@@ -748,6 +752,111 @@ impl PostgresStoreV2 {
     }
 
     // -------------------------------------------------------------------------
+    // Notification helpers
+    // -------------------------------------------------------------------------
+
+    async fn insert_notification_row(
+        &self,
+        id: &NotificationId,
+        notification: &Notification,
+    ) -> Result<(), StoreError> {
+        let recipient_name = notification.recipient.to_string();
+        let source_actor_name = notification.source_actor.as_ref().map(|a| a.to_string());
+        let object_id_str = notification.object_id.to_string();
+        let source_issue_str = notification.source_issue_id.as_ref().map(|i| i.to_string());
+        let object_version = i64::try_from(notification.object_version).map_err(|_| {
+            StoreError::Internal(format!("object_version overflow for notification '{id}'"))
+        })?;
+
+        let query = format!(
+            "INSERT INTO {TABLE_NOTIFICATIONS} \
+             (id, recipient, source_actor, object_kind, object_id, object_version, \
+              event_type, summary, source_issue_id, policy, is_read) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(&recipient_name)
+            .bind(&source_actor_name)
+            .bind(&notification.object_kind)
+            .bind(&object_id_str)
+            .bind(object_version)
+            .bind(&notification.event_type)
+            .bind(&notification.summary)
+            .bind(&source_issue_str)
+            .bind(&notification.policy)
+            .bind(notification.is_read)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    fn row_to_notification(&self, row: &NotificationRow) -> Result<Notification, StoreError> {
+        let recipient = crate::domain::actors::Actor::parse_name(&row.recipient).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid recipient '{}' stored for notification '{}'",
+                row.recipient, row.id
+            ))
+        })?;
+
+        let source_actor = row
+            .source_actor
+            .as_deref()
+            .map(|s| {
+                crate::domain::actors::Actor::parse_name(s).map_err(|_| {
+                    StoreError::Internal(format!(
+                        "invalid source_actor '{}' stored for notification '{}'",
+                        s, row.id
+                    ))
+                })
+            })
+            .transpose()?;
+
+        let object_id = MetisId::from_str(&row.object_id).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid object_id '{}' stored for notification '{}'",
+                row.object_id, row.id
+            ))
+        })?;
+
+        let source_issue_id = row
+            .source_issue_id
+            .as_deref()
+            .map(|s| {
+                IssueId::from_str(s).map_err(|_| {
+                    StoreError::Internal(format!(
+                        "invalid source_issue_id '{}' stored for notification '{}'",
+                        s, row.id
+                    ))
+                })
+            })
+            .transpose()?;
+
+        let object_version = VersionNumber::try_from(row.object_version).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid object_version stored for notification '{}'",
+                row.id
+            ))
+        })?;
+
+        Ok(Notification {
+            recipient,
+            source_actor,
+            object_kind: row.object_kind.clone(),
+            object_id,
+            object_version,
+            event_type: row.event_type.clone(),
+            summary: row.summary.clone(),
+            source_issue_id,
+            policy: row.policy.clone(),
+            is_read: row.is_read,
+            created_at: row.created_at,
+        })
+    }
+
+    // -------------------------------------------------------------------------
     // User helpers
     // -------------------------------------------------------------------------
 
@@ -1074,6 +1183,22 @@ struct MessageRow {
     updated_at: DateTime<Utc>,
     #[sqlx(default)]
     creation_time: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct NotificationRow {
+    id: String,
+    recipient: String,
+    source_actor: Option<String>,
+    object_kind: String,
+    object_id: String,
+    object_version: i64,
+    event_type: String,
+    summary: String,
+    source_issue_id: Option<String>,
+    policy: String,
+    is_read: bool,
+    created_at: DateTime<Utc>,
 }
 
 fn map_sqlx_error(err: sqlx::Error) -> StoreError {
@@ -2419,6 +2544,98 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         Ok(messages)
     }
+
+    // -------------------------------------------------------------------------
+    // Notification methods (read-only)
+    // -------------------------------------------------------------------------
+
+    async fn list_notifications(
+        &self,
+        query: &ListNotificationsQuery,
+    ) -> Result<Vec<(NotificationId, Notification)>, StoreError> {
+        let limit = i64::from(query.limit.unwrap_or(50));
+
+        let mut conditions = Vec::new();
+        let mut param_idx = 1u32;
+
+        let recipient_val = query.recipient.clone();
+        if recipient_val.is_some() {
+            conditions.push(format!("recipient = ${param_idx}"));
+            param_idx += 1;
+        }
+
+        let is_read_val = query.is_read;
+        if is_read_val.is_some() {
+            conditions.push(format!("is_read = ${param_idx}"));
+            param_idx += 1;
+        }
+
+        let before_val = query.before;
+        if before_val.is_some() {
+            conditions.push(format!("created_at < ${param_idx}"));
+            param_idx += 1;
+        }
+
+        let after_val = query.after;
+        if after_val.is_some() {
+            conditions.push(format!("created_at > ${param_idx}"));
+            param_idx += 1;
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let sql = format!(
+            "SELECT id, recipient, source_actor, object_kind, object_id, object_version, \
+             event_type, summary, source_issue_id, policy, is_read, created_at \
+             FROM {TABLE_NOTIFICATIONS}{where_clause} \
+             ORDER BY created_at DESC LIMIT ${param_idx}"
+        );
+
+        let mut qb = sqlx::query_as::<_, NotificationRow>(&sql);
+        if let Some(ref r) = recipient_val {
+            qb = qb.bind(r);
+        }
+        if let Some(ref ir) = is_read_val {
+            qb = qb.bind(ir);
+        }
+        if let Some(ref b) = before_val {
+            qb = qb.bind(b);
+        }
+        if let Some(ref a) = after_val {
+            qb = qb.bind(a);
+        }
+        qb = qb.bind(limit);
+
+        let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+
+        let mut notifications = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let notification_id = row.id.parse::<NotificationId>().map_err(|err| {
+                StoreError::Internal(format!("invalid notification id stored in database: {err}"))
+            })?;
+            let notification = self.row_to_notification(row)?;
+            notifications.push((notification_id, notification));
+        }
+
+        Ok(notifications)
+    }
+
+    async fn count_unread_notifications(&self, recipient: &ActorId) -> Result<u64, StoreError> {
+        let recipient_name = recipient.to_string();
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(*) FROM {TABLE_NOTIFICATIONS} WHERE recipient = $1 AND is_read = false"
+        ))
+        .bind(&recipient_name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(u64::try_from(count).unwrap_or(0))
+    }
 }
 
 #[async_trait]
@@ -2878,6 +3095,70 @@ impl Store for PostgresStoreV2 {
         user.deleted = true;
         self.update_user(user, actor).await?;
         Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Notification methods
+    // -------------------------------------------------------------------------
+
+    async fn insert_notification(
+        &self,
+        notification: Notification,
+    ) -> Result<NotificationId, StoreError> {
+        let count =
+            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {TABLE_NOTIFICATIONS}"))
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+        let count = u64::try_from(count).unwrap_or(0);
+        let id = NotificationId::new_for_count(count);
+        self.insert_notification_row(&id, &notification).await?;
+        Ok(id)
+    }
+
+    async fn mark_notification_read(&self, id: &NotificationId) -> Result<(), StoreError> {
+        let result = sqlx::query(&format!(
+            "UPDATE {TABLE_NOTIFICATIONS} SET is_read = true WHERE id = $1"
+        ))
+        .bind(id.as_ref())
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(StoreError::NotificationNotFound(id.clone()));
+        }
+        Ok(())
+    }
+
+    async fn mark_all_notifications_read(
+        &self,
+        recipient: &ActorId,
+        before: Option<DateTime<Utc>>,
+    ) -> Result<u64, StoreError> {
+        let recipient_name = recipient.to_string();
+        let result = if let Some(before_ts) = before {
+            sqlx::query(&format!(
+                "UPDATE {TABLE_NOTIFICATIONS} SET is_read = true \
+                 WHERE recipient = $1 AND is_read = false AND created_at < $2"
+            ))
+            .bind(&recipient_name)
+            .bind(before_ts)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+        } else {
+            sqlx::query(&format!(
+                "UPDATE {TABLE_NOTIFICATIONS} SET is_read = true \
+                 WHERE recipient = $1 AND is_read = false"
+            ))
+            .bind(&recipient_name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+        };
+
+        Ok(result.rows_affected())
     }
 
     // -------------------------------------------------------------------------

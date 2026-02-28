@@ -10,6 +10,7 @@ const MESSAGE_PREFIX: &str = "m-";
 const PATCH_PREFIX: &str = "p-";
 const TASK_PREFIX: &str = "t-";
 const DOCUMENT_PREFIX: &str = "d-";
+const NOTIFICATION_PREFIX: &str = "nf-";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MetisIdError {
@@ -77,6 +78,12 @@ pub struct MessageId(String);
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
 pub struct TaskId(String);
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, type = "string"))]
+pub struct NotificationId(String);
+
 impl MetisId {
     pub fn as_issue_id(&self) -> Option<IssueId> {
         IssueId::try_from(self.clone()).ok()
@@ -98,8 +105,15 @@ impl MetisId {
         TaskId::try_from(self.clone()).ok()
     }
 
+    pub fn as_notification_id(&self) -> Option<NotificationId> {
+        NotificationId::try_from(self.clone()).ok()
+    }
+
     pub fn validate_str(value: &str) -> Result<(), MetisIdError> {
-        if value.starts_with(ISSUE_PREFIX) {
+        // Check longer prefixes first to avoid ambiguity (e.g., "nf-" before single-char prefixes)
+        if value.starts_with(NOTIFICATION_PREFIX) {
+            NotificationId::validate_str(value)
+        } else if value.starts_with(ISSUE_PREFIX) {
             IssueId::validate_str(value)
         } else if value.starts_with(MESSAGE_PREFIX) {
             MessageId::validate_str(value)
@@ -320,6 +334,45 @@ impl<'de> Deserialize<'de> for TaskId {
     }
 }
 
+impl NotificationId {
+    pub fn generate(random_len: usize) -> Result<Self, MetisIdError> {
+        generate_with_prefix(NOTIFICATION_PREFIX, random_len).map(Self)
+    }
+
+    pub fn new() -> Self {
+        Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
+    }
+
+    pub fn new_for_count(count: u64) -> Self {
+        let len = compute_random_len(count);
+        Self::generate(len).expect("computed random length should always be valid")
+    }
+
+    pub const fn prefix() -> &'static str {
+        NOTIFICATION_PREFIX
+    }
+
+    fn validate_str(value: &str) -> Result<(), MetisIdError> {
+        validate_with_prefix(value, NOTIFICATION_PREFIX)
+    }
+}
+
+impl Default for NotificationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'de> Deserialize<'de> for NotificationId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        NotificationId::try_from(value).map_err(de::Error::custom)
+    }
+}
+
 impl TryFrom<String> for MetisId {
     type Error = MetisIdError;
 
@@ -374,6 +427,15 @@ impl TryFrom<String> for TaskId {
     }
 }
 
+impl TryFrom<String> for NotificationId {
+    type Error = MetisIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        NotificationId::validate_str(&value)?;
+        Ok(Self(value))
+    }
+}
+
 impl TryFrom<MetisId> for IssueId {
     type Error = MetisIdError;
 
@@ -414,6 +476,14 @@ impl TryFrom<MetisId> for TaskId {
     }
 }
 
+impl TryFrom<MetisId> for NotificationId {
+    type Error = MetisIdError;
+
+    fn try_from(value: MetisId) -> Result<Self, Self::Error> {
+        Self::try_from(value.0)
+    }
+}
+
 impl From<IssueId> for MetisId {
     fn from(value: IssueId) -> Self {
         Self(value.0)
@@ -444,6 +514,12 @@ impl From<TaskId> for MetisId {
     }
 }
 
+impl From<NotificationId> for MetisId {
+    fn from(value: NotificationId) -> Self {
+        Self(value.0)
+    }
+}
+
 impl From<IssueId> for String {
     fn from(value: IssueId) -> Self {
         value.0
@@ -470,6 +546,12 @@ impl From<MessageId> for String {
 
 impl From<TaskId> for String {
     fn from(value: TaskId) -> Self {
+        value.0
+    }
+}
+
+impl From<NotificationId> for String {
+    fn from(value: NotificationId) -> Self {
         value.0
     }
 }
@@ -516,6 +598,12 @@ impl fmt::Display for TaskId {
     }
 }
 
+impl fmt::Display for NotificationId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 impl AsRef<str> for MetisId {
     fn as_ref(&self) -> &str {
         &self.0
@@ -547,6 +635,12 @@ impl AsRef<str> for MessageId {
 }
 
 impl AsRef<str> for TaskId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for NotificationId {
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -593,6 +687,14 @@ impl FromStr for MessageId {
 }
 
 impl FromStr for TaskId {
+    type Err = MetisIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.to_string().try_into()
+    }
+}
+
+impl FromStr for NotificationId {
     type Err = MetisIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

@@ -6,12 +6,13 @@ use std::collections::{HashMap, HashSet};
 use super::issue_graph::IssueGraphContext;
 use super::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog};
 use crate::domain::{
-    actors::{Actor, ActorRef},
+    actors::{Actor, ActorId, ActorRef},
     documents::Document,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
     },
     messages::Message,
+    notifications::Notification,
     patches::Patch,
     users::{User, Username},
 };
@@ -22,7 +23,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, IssueId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber,
+    Versioned,
+    api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 
@@ -57,6 +60,8 @@ pub struct MemoryStore {
     actors: DashMap<String, Vec<Versioned<Actor>>>,
     /// Maps message IDs to their versioned Message data
     messages: DashMap<MessageId, Vec<Versioned<Message>>>,
+    /// Maps notification IDs to their Notification data (non-versioned)
+    notifications: DashMap<NotificationId, Notification>,
 }
 
 impl MemoryStore {
@@ -76,6 +81,7 @@ impl MemoryStore {
             users: DashMap::new(),
             actors: DashMap::new(),
             messages: DashMap::new(),
+            notifications: DashMap::new(),
         }
     }
 
@@ -979,6 +985,69 @@ impl ReadOnlyStore for MemoryStore {
 
         Ok(all_messages)
     }
+
+    // ---- Notification (read-only) ----
+
+    async fn list_notifications(
+        &self,
+        query: &ListNotificationsQuery,
+    ) -> Result<Vec<(NotificationId, Notification)>, StoreError> {
+        let limit = query.limit.unwrap_or(50) as usize;
+
+        let mut results: Vec<(NotificationId, Notification)> = Vec::new();
+        for entry in self.notifications.iter() {
+            let notif = entry.value();
+
+            // Filter by recipient
+            if let Some(ref recipient_filter) = query.recipient {
+                if notif.recipient.to_string() != *recipient_filter {
+                    continue;
+                }
+            }
+
+            // Filter by is_read
+            if let Some(is_read_filter) = query.is_read {
+                if notif.is_read != is_read_filter {
+                    continue;
+                }
+            }
+
+            // Filter by before timestamp
+            if let Some(ref before_ts) = query.before {
+                if notif.created_at >= *before_ts {
+                    continue;
+                }
+            }
+
+            // Filter by after timestamp
+            if let Some(ref after_ts) = query.after {
+                if notif.created_at <= *after_ts {
+                    continue;
+                }
+            }
+
+            results.push((entry.key().clone(), notif.clone()));
+        }
+
+        // Sort by created_at descending (newest first)
+        results.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
+        results.truncate(limit);
+
+        Ok(results)
+    }
+
+    async fn count_unread_notifications(&self, recipient: &ActorId) -> Result<u64, StoreError> {
+        let recipient_str = recipient.to_string();
+        let count = self
+            .notifications
+            .iter()
+            .filter(|entry| {
+                let n = entry.value();
+                !n.is_read && n.recipient.to_string() == recipient_str
+            })
+            .count();
+        Ok(count as u64)
+    }
 }
 
 #[async_trait]
@@ -1373,6 +1442,62 @@ impl Store for MemoryStore {
         user.deleted = true;
         self.update_user(user, actor).await?;
         Ok(())
+    }
+
+    // ---- Notification mutations ----
+
+    async fn insert_notification(
+        &self,
+        notification: Notification,
+    ) -> Result<NotificationId, StoreError> {
+        let count = self.notifications.len() as u64;
+        let mut len = metis_common::ids::compute_random_len(count);
+        let id = loop {
+            let candidate =
+                NotificationId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
+            if !self.notifications.contains_key(&candidate) {
+                break candidate;
+            }
+            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
+        };
+
+        self.notifications.insert(id.clone(), notification);
+        Ok(id)
+    }
+
+    async fn mark_notification_read(&self, id: &NotificationId) -> Result<(), StoreError> {
+        let mut entry = self
+            .notifications
+            .get_mut(id)
+            .ok_or_else(|| StoreError::NotificationNotFound(id.clone()))?;
+        entry.is_read = true;
+        Ok(())
+    }
+
+    async fn mark_all_notifications_read(
+        &self,
+        recipient: &ActorId,
+        before: Option<DateTime<Utc>>,
+    ) -> Result<u64, StoreError> {
+        let recipient_str = recipient.to_string();
+        let mut count = 0u64;
+        for mut entry in self.notifications.iter_mut() {
+            let notif = entry.value_mut();
+            if notif.is_read {
+                continue;
+            }
+            if notif.recipient.to_string() != recipient_str {
+                continue;
+            }
+            if let Some(before_ts) = before {
+                if notif.created_at >= before_ts {
+                    continue;
+                }
+            }
+            notif.is_read = true;
+            count += 1;
+        }
+        Ok(count)
     }
 
     // ---- Message mutations ----
@@ -4872,5 +4997,281 @@ mod tests {
         let query = SearchMessagesQuery::default();
         let results = store.list_messages(&query).await.unwrap();
         assert_eq!(results.len(), 2);
+    }
+
+    // ---- Notification tests ----
+
+    fn sample_notification(recipient: ActorId) -> Notification {
+        Notification::new(
+            recipient,
+            Some(ActorId::Username(Username::from("alice").into())),
+            "issue".to_string(),
+            IssueId::new().into(),
+            1,
+            "updated".to_string(),
+            "Issue status changed".to_string(),
+            None,
+            "walk_up".to_string(),
+        )
+    }
+
+    fn make_notif_query(recipient: Option<String>) -> ListNotificationsQuery {
+        let mut q = ListNotificationsQuery::default();
+        q.recipient = recipient;
+        q
+    }
+
+    #[tokio::test]
+    async fn insert_notification_returns_id() {
+        let store = MemoryStore::new();
+        let recipient = ActorId::Username(Username::from("bob").into());
+        let notif = sample_notification(recipient);
+
+        let id = store.insert_notification(notif).await.unwrap();
+        assert!(
+            id.as_ref().starts_with("nf-"),
+            "notification id should start with nf-, got: {id}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_notifications_returns_inserted() {
+        let store = MemoryStore::new();
+        let recipient = ActorId::Username(Username::from("bob").into());
+        let notif = sample_notification(recipient.clone());
+
+        let id = store.insert_notification(notif).await.unwrap();
+
+        let query = make_notif_query(Some(recipient.to_string()));
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id);
+        assert!(!results[0].1.is_read);
+    }
+
+    #[tokio::test]
+    async fn list_notifications_filters_by_is_read() {
+        let store = MemoryStore::new();
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        // Insert two notifications
+        let notif1 = sample_notification(recipient.clone());
+        let id1 = store.insert_notification(notif1).await.unwrap();
+        let notif2 = sample_notification(recipient.clone());
+        let _id2 = store.insert_notification(notif2).await.unwrap();
+
+        // Mark one as read
+        store.mark_notification_read(&id1).await.unwrap();
+
+        // List unread only
+        let mut query = make_notif_query(Some(recipient.to_string()));
+        query.is_read = Some(false);
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].1.is_read);
+
+        // List read only
+        let mut query = make_notif_query(Some(recipient.to_string()));
+        query.is_read = Some(true);
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.is_read);
+    }
+
+    #[tokio::test]
+    async fn list_notifications_filters_by_recipient() {
+        let store = MemoryStore::new();
+        let alice = ActorId::Username(Username::from("alice").into());
+        let bob = ActorId::Username(Username::from("bob").into());
+
+        store
+            .insert_notification(sample_notification(alice.clone()))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(bob.clone()))
+            .await
+            .unwrap();
+
+        let query = make_notif_query(Some(alice.to_string()));
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.recipient, alice);
+    }
+
+    #[tokio::test]
+    async fn count_unread_notifications_returns_correct_count() {
+        let store = MemoryStore::new();
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        // Initially 0
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            0
+        );
+
+        // Insert 3 notifications
+        let id1 = store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            3
+        );
+
+        // Mark one as read
+        store.mark_notification_read(&id1).await.unwrap();
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_notification_read_updates_notification() {
+        let store = MemoryStore::new();
+        let recipient = ActorId::Username(Username::from("bob").into());
+        let notif = sample_notification(recipient.clone());
+        let id = store.insert_notification(notif).await.unwrap();
+
+        store.mark_notification_read(&id).await.unwrap();
+
+        let query = make_notif_query(Some(recipient.to_string()));
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.is_read);
+    }
+
+    #[tokio::test]
+    async fn mark_notification_read_fails_for_unknown_id() {
+        let store = MemoryStore::new();
+        let unknown_id: NotificationId = "nf-abcdef".parse().unwrap();
+        let result = store.mark_notification_read(&unknown_id).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn mark_all_notifications_read_marks_all() {
+        let store = MemoryStore::new();
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+
+        let marked = store
+            .mark_all_notifications_read(&recipient, None)
+            .await
+            .unwrap();
+        assert_eq!(marked, 3);
+
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            0
+        );
+
+        // Calling again returns 0 (all already read)
+        let marked = store
+            .mark_all_notifications_read(&recipient, None)
+            .await
+            .unwrap();
+        assert_eq!(marked, 0);
+    }
+
+    #[tokio::test]
+    async fn mark_all_notifications_read_with_before_filter() {
+        let store = MemoryStore::new();
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        // Insert notification with known created_at
+        let mut notif1 = sample_notification(recipient.clone());
+        notif1.created_at = Utc::now() - Duration::hours(2);
+        store.insert_notification(notif1).await.unwrap();
+
+        let mut notif2 = sample_notification(recipient.clone());
+        notif2.created_at = Utc::now() - Duration::hours(1);
+        store.insert_notification(notif2).await.unwrap();
+
+        let notif3 = sample_notification(recipient.clone());
+        store.insert_notification(notif3).await.unwrap();
+
+        // Mark only notifications before 30 minutes ago
+        let cutoff = Utc::now() - Duration::minutes(30);
+        let marked = store
+            .mark_all_notifications_read(&recipient, Some(cutoff))
+            .await
+            .unwrap();
+        assert_eq!(marked, 2);
+
+        // One still unread (the most recent)
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn list_notifications_respects_limit() {
+        let store = MemoryStore::new();
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        for _ in 0..5 {
+            store
+                .insert_notification(sample_notification(recipient.clone()))
+                .await
+                .unwrap();
+        }
+
+        let mut query = make_notif_query(Some(recipient.to_string()));
+        query.limit = Some(3);
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn list_notifications_sorted_by_created_at_desc() {
+        let store = MemoryStore::new();
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let mut notif1 = sample_notification(recipient.clone());
+        notif1.created_at = Utc::now() - Duration::hours(2);
+        notif1.summary = "oldest".to_string();
+        store.insert_notification(notif1).await.unwrap();
+
+        let mut notif2 = sample_notification(recipient.clone());
+        notif2.created_at = Utc::now() - Duration::hours(1);
+        notif2.summary = "middle".to_string();
+        store.insert_notification(notif2).await.unwrap();
+
+        let mut notif3 = sample_notification(recipient.clone());
+        notif3.created_at = Utc::now();
+        notif3.summary = "newest".to_string();
+        store.insert_notification(notif3).await.unwrap();
+
+        let query = make_notif_query(Some(recipient.to_string()));
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].1.summary, "newest");
+        assert_eq!(results[1].1.summary, "middle");
+        assert_eq!(results[2].1.summary, "oldest");
     }
 }

@@ -9,6 +9,7 @@ pub mod login;
 pub mod logs;
 pub mod merge_queues;
 pub mod messages;
+pub mod notifications;
 pub mod patches;
 pub mod repositories;
 pub mod task_status;

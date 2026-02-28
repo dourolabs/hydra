@@ -1,9 +1,10 @@
 use crate::{
     domain::{
-        actors::{Actor, ActorRef},
+        actors::{Actor, ActorId, ActorRef},
         documents::Document,
         issues::{Issue, IssueGraphFilter},
         messages::Message,
+        notifications::Notification,
         patches::Patch,
         users::{User, Username},
     },
@@ -18,7 +19,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, IssueId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber,
+    Versioned,
+    api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use std::collections::{HashMap, HashSet};
@@ -218,6 +221,17 @@ impl ReadOnlyStore for FailingStore {
     ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
         fail()
     }
+
+    async fn list_notifications(
+        &self,
+        _query: &ListNotificationsQuery,
+    ) -> Result<Vec<(NotificationId, Notification)>, StoreError> {
+        fail()
+    }
+
+    async fn count_unread_notifications(&self, _recipient: &ActorId) -> Result<u64, StoreError> {
+        fail()
+    }
 }
 
 #[async_trait]
@@ -370,6 +384,25 @@ impl Store for FailingStore {
     }
 
     async fn delete_user(&self, _username: &Username, _actor: &ActorRef) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn insert_notification(
+        &self,
+        _notification: Notification,
+    ) -> Result<NotificationId, StoreError> {
+        fail()
+    }
+
+    async fn mark_notification_read(&self, _id: &NotificationId) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn mark_all_notifications_read(
+        &self,
+        _recipient: &ActorId,
+        _before: Option<DateTime<Utc>>,
+    ) -> Result<u64, StoreError> {
         fail()
     }
 

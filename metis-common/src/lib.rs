@@ -21,12 +21,14 @@ pub use activity_log::{
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
-    agents, documents, events, issues, job_status, jobs, login, logs, merge_queues, patches,
-    repositories, task_status, users, whoami,
+    agents, documents, events, issues, job_status, jobs, login, logs, merge_queues, notifications,
+    patches, repositories, task_status, users, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
-pub use ids::{DocumentId, IssueId, MessageId, MetisId, MetisIdError, PatchId, TaskId};
+pub use ids::{
+    DocumentId, IssueId, MessageId, MetisId, MetisIdError, NotificationId, PatchId, TaskId,
+};
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use repo_name::{RepoName, RepoNameError};
 pub use repositories::{
@@ -69,6 +71,7 @@ mod ts_export {
         crate::PatchId::export_all(&cfg).expect("PatchId");
         crate::DocumentId::export_all(&cfg).expect("DocumentId");
         crate::TaskId::export_all(&cfg).expect("TaskId");
+        crate::NotificationId::export_all(&cfg).expect("NotificationId");
         crate::DocumentPath::export_all(&cfg).expect("DocumentPath");
         crate::RepoName::export_all(&cfg).expect("RepoName");
         crate::ActorId::export_all(&cfg).expect("ActorId");
@@ -166,6 +169,16 @@ mod ts_export {
         crate::merge_queues::MergeQueue::export_all(&cfg).expect("MergeQueue");
         crate::merge_queues::EnqueueMergePatchRequest::export_all(&cfg)
             .expect("EnqueueMergePatchRequest");
+
+        // API v1: notifications
+        crate::notifications::Notification::export_all(&cfg).expect("Notification");
+        crate::notifications::NotificationResponse::export_all(&cfg).expect("NotificationResponse");
+        crate::notifications::ListNotificationsQuery::export_all(&cfg)
+            .expect("ListNotificationsQuery");
+        crate::notifications::ListNotificationsResponse::export_all(&cfg)
+            .expect("ListNotificationsResponse");
+        crate::notifications::UnreadCountResponse::export_all(&cfg).expect("UnreadCountResponse");
+        crate::notifications::MarkReadResponse::export_all(&cfg).expect("MarkReadResponse");
 
         // API v1: patches
         crate::patches::PatchStatus::export_all(&cfg).expect("PatchStatus");
