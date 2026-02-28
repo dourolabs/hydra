@@ -25,7 +25,6 @@ interface IssueRowProps {
   onJobClick?: (issueId: string, jobId: string) => void;
   showId?: boolean;
   showTimestamp?: boolean;
-  timestamp?: string;
 }
 
 export function IssueRow({
@@ -36,7 +35,6 @@ export function IssueRow({
   onJobClick,
   showId,
   showTimestamp,
-  timestamp,
 }: IssueRowProps) {
   const { issue } = record;
 
@@ -75,8 +73,8 @@ export function IssueRow({
       {(showId || showTimestamp) && (
         <span className={styles.bottomRow}>
           {showId && <span className={styles.issueId}>{record.issue_id}</span>}
-          {showTimestamp && timestamp && (
-            <span className={styles.timestamp}>{formatRelativeTime(timestamp)}</span>
+          {showTimestamp && record.timestamp && (
+            <span className={styles.timestamp}>{formatRelativeTime(record.timestamp)}</span>
           )}
         </span>
       )}

@@ -32,7 +32,6 @@ export function InboxList({ issues, jobsByIssue, selectedId, onSelect, onJobClic
                 onJobClick={onJobClick}
                 showId
                 showTimestamp
-                timestamp={record.timestamp}
               />
             </button>
           </li>
