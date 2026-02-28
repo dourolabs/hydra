@@ -99,6 +99,12 @@ export function IssueDetail({ record }: IssueDetailProps) {
           </div>
         )}
         <div className={styles.metaItem}>
+          <span className={styles.metaLabel}>Created</span>
+          <span className={styles.metaValue}>
+            {formatTimestamp(record.creation_time)}
+          </span>
+        </div>
+        <div className={styles.metaItem}>
           <span className={styles.metaLabel}>Updated</span>
           <span className={styles.metaValue}>
             {formatTimestamp(record.timestamp)}
@@ -107,15 +113,13 @@ export function IssueDetail({ record }: IssueDetailProps) {
       </div>
 
       {/* Description */}
-      <Panel header={<span className={styles.sectionTitle}>Description</span>}>
-        <div className={styles.sectionBody}>
-          {issue.description ? (
-            <MarkdownViewer content={issue.description} />
-          ) : (
-            <p className={styles.empty}>No description.</p>
-          )}
-        </div>
-      </Panel>
+      <div className={styles.description}>
+        {issue.description ? (
+          <MarkdownViewer content={issue.description} />
+        ) : (
+          <p className={styles.empty}>No description.</p>
+        )}
+      </div>
 
       {/* Progress */}
       {issue.progress && (

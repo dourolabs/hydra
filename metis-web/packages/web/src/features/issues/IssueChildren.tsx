@@ -1,7 +1,6 @@
 import { Link } from "react-router-dom";
-import { Badge, Spinner } from "@metis/ui";
-import { issueToBadgeStatus } from "../../utils/statusMapping";
-import { descriptionSnippet } from "../../utils/text";
+import { Spinner } from "@metis/ui";
+import { IssueRow } from "./IssueRow";
 import { useIssues } from "./useIssues";
 import { topologicalSort } from "./topologicalSort";
 import styles from "./IssueChildren.module.css";
@@ -46,12 +45,8 @@ export function IssueChildren({ issueId }: IssueChildrenProps) {
     <ul className={styles.list}>
       {children.map((record) => (
         <li key={record.issue_id} className={styles.item}>
-          <Badge status={issueToBadgeStatus(record.issue.status)} />
           <Link to={`/issues/${record.issue_id}`} className={styles.link}>
-            <span className={styles.id}>{record.issue_id}</span>
-            <span className={styles.desc}>
-              {descriptionSnippet(record.issue.description, 60)}
-            </span>
+            <IssueRow record={record} showId />
           </Link>
         </li>
       ))}
