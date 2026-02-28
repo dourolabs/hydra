@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { JobSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 import { descriptionSnippet } from "../../utils/text";
+import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { computeIssueProgress, type IssueProgress } from "./activityUtils";
 import { writeCollapsed } from "./sidebarStorage";
 import styles from "./IssueFilterSidebar.module.css";
@@ -112,10 +113,18 @@ export function IssueFilterSidebar({
   onToggleCollapsed,
   jobsByIssue,
 }: IssueFilterSidebarProps) {
-  const progressList = useMemo(
-    () => computeIssueProgress(roots, jobsByIssue),
-    [roots, jobsByIssue],
-  );
+  const progressList = useMemo(() => {
+    const list = computeIssueProgress(roots, jobsByIssue);
+    return list.sort((a, b) => {
+      const aInactive = TERMINAL_STATUSES.has(a.rootIssue.issue.status) ? 1 : 0;
+      const bInactive = TERMINAL_STATUSES.has(b.rootIssue.issue.status) ? 1 : 0;
+      if (aInactive !== bInactive) return aInactive - bInactive;
+      return (
+        new Date(b.rootIssue.creation_time).getTime() -
+        new Date(a.rootIssue.creation_time).getTime()
+      );
+    });
+  }, [roots, jobsByIssue]);
 
   if (progressList.length === 0) return null;
 
@@ -136,49 +145,47 @@ export function IssueFilterSidebar({
           {collapsed ? "\u25B6" : "\u25C0"}
         </button>
       </div>
-      {!collapsed && (
-        <ul className={styles.list}>
-          <li
-            className={`${styles.item} ${activeFilter === null ? styles.active : ""}`}
-            onClick={() => onFilterChange(null)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onFilterChange(null);
-              }
-            }}
-          >
-            <span className={styles.itemLabel}>All issues</span>
-          </li>
-          {progressList.map((p) => {
-            const label = descriptionSnippet(p.rootIssue.issue.description, 40);
-            const isActive = activeFilter === p.rootId;
-            return (
-              <li
-                key={p.rootId}
-                className={`${styles.item} ${isActive ? styles.active : ""}`}
-                onClick={() => onFilterChange(p.rootId)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    onFilterChange(p.rootId);
-                  }
-                }}
-              >
-                <span className={styles.itemLabel}>{label}</span>
-                <span className={styles.itemStats}>
-                  <ProgressCircle progress={p} />
-                  {p.closed}/{p.total}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <ul className={`${styles.list} ${collapsed ? styles.listCollapsed : ""}`}>
+        <li
+          className={`${styles.item} ${activeFilter === null ? styles.active : ""}`}
+          onClick={() => onFilterChange(null)}
+          role="button"
+          tabIndex={collapsed ? -1 : 0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onFilterChange(null);
+            }
+          }}
+        >
+          <span className={styles.itemLabel}>All issues</span>
+        </li>
+        {progressList.map((p) => {
+          const label = descriptionSnippet(p.rootIssue.issue.description, 40);
+          const isActive = activeFilter === p.rootId;
+          return (
+            <li
+              key={p.rootId}
+              className={`${styles.item} ${isActive ? styles.active : ""}`}
+              onClick={() => onFilterChange(p.rootId)}
+              role="button"
+              tabIndex={collapsed ? -1 : 0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onFilterChange(p.rootId);
+                }
+              }}
+            >
+              <span className={styles.itemLabel}>{label}</span>
+              <span className={styles.itemStats}>
+                <ProgressCircle progress={p} />
+                {p.closed}/{p.total}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
