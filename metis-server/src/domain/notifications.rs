@@ -96,7 +96,7 @@ impl From<Notification> for api::notifications::Notification {
 
 /// A policy that determines who should be notified about a given event.
 ///
-/// The `NotificationWorker` holds a `Vec<Box<dyn NotificationPolicy>>` and runs all
+/// The `NotificationAutomation` holds a `Vec<Box<dyn NotificationPolicy>>` and runs all
 /// policies for each event, deduplicating recipients across policies. Each policy is
 /// independently testable and produces a set of `ActorId`s that should receive a
 /// notification for the given mutation.
@@ -207,10 +207,20 @@ impl NotificationPolicy for WalkUpPolicy {
                 match event {
                     ServerEvent::PatchCreated { patch_id, .. }
                     | ServerEvent::PatchUpdated { patch_id, .. }
-                    | ServerEvent::PatchDeleted { patch_id, .. } => store
-                        .get_issues_for_patch(patch_id)
-                        .await
-                        .unwrap_or_default(),
+                    | ServerEvent::PatchDeleted { patch_id, .. } => {
+                        match store.get_issues_for_patch(patch_id).await {
+                            Ok(ids) => ids,
+                            Err(e) => {
+                                tracing::warn!(
+                                    patch_id = %patch_id,
+                                    error = %e,
+                                    "failed to get issues for patch in WalkUpPolicy; \
+                                     skipping patch notification recipients"
+                                );
+                                vec![]
+                            }
+                        }
+                    }
                     _ => vec![],
                 }
             }
@@ -300,9 +310,7 @@ pub fn generate_summary(event: &ServerEvent) -> String {
                 if old.status != new.status {
                     let old_status = old.status;
                     let new_status = new.status;
-                    return format!(
-                        "Job {id} status changed from {old_status:?} to {new_status:?}"
-                    );
+                    return format!("Job {id} status changed from {old_status} to {new_status}");
                 }
             }
             format!("Job {id} was updated")
