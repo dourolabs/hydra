@@ -1,16 +1,71 @@
 .row {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-1);
   font-size: var(--font-size-sm);
   width: 100%;
   min-width: 0;
 }
 
+.topRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+}
+
+.typeChip {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
+.typeChip.task {
+  color: var(--color-status-open);
+  background: rgba(74, 158, 255, 0.12);
+}
+
+.typeChip.bug {
+  color: var(--color-status-failed);
+  background: rgba(255, 68, 68, 0.12);
+}
+
+.typeChip.feature {
+  color: var(--color-status-closed);
+  background: rgba(0, 204, 102, 0.12);
+}
+
+.typeChip.chore {
+  color: var(--color-text-secondary);
+  background: rgba(136, 136, 136, 0.12);
+}
+
+.typeChip.mergeRequest {
+  color: var(--color-status-blocked);
+  background: rgba(204, 102, 255, 0.12);
+}
+
+.typeChip.reviewRequest {
+  color: var(--color-status-rejected);
+  background: rgba(255, 136, 0, 0.12);
+}
+
+.typeChip.unknown {
+  color: var(--color-text-secondary);
+  background: rgba(136, 136, 136, 0.12);
+}
+
 .desc {
   flex: 1;
   min-width: 0;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -20,6 +75,25 @@
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
+}
+
+.bottomRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: calc(var(--space-2) + 1px);
+}
+
+.issueId {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+}
+
+.timestamp {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  margin-left: auto;
 }
 
 .dimmed {

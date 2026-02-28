@@ -4,7 +4,18 @@ import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
+import { formatRelativeTime } from "../../utils/time";
 import styles from "./IssueRow.module.css";
+
+const typeChipClass: Record<string, string> = {
+  task: styles.task,
+  bug: styles.bug,
+  feature: styles.feature,
+  chore: styles.chore,
+  "merge-request": styles.mergeRequest,
+  "review-request": styles.reviewRequest,
+  unknown: styles.unknown,
+};
 
 interface IssueRowProps {
   record: IssueSummaryRecord;
@@ -12,9 +23,21 @@ interface IssueRowProps {
   blocked?: boolean;
   jobs?: JobSummaryRecord[];
   onJobClick?: (issueId: string, jobId: string) => void;
+  showId?: boolean;
+  showTimestamp?: boolean;
+  timestamp?: string;
 }
 
-export function IssueRow({ record, dimmed, blocked, jobs, onJobClick }: IssueRowProps) {
+export function IssueRow({
+  record,
+  dimmed,
+  blocked,
+  jobs,
+  onJobClick,
+  showId,
+  showTimestamp,
+  timestamp,
+}: IssueRowProps) {
   const { issue } = record;
 
   const handleJobClick = useCallback(
@@ -30,20 +53,33 @@ export function IssueRow({ record, dimmed, blocked, jobs, onJobClick }: IssueRow
   if (dimmed) classNames.push(styles.dimmed);
   if (blocked) classNames.push(styles.blocked);
 
+  const chipClass = typeChipClass[issue.type] ?? styles.unknown;
+
   return (
     <span className={classNames.join(" ")}>
-      <Badge status={issueToBadgeStatus(issue.status)} />
-      <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
-      {jobSummaries && jobSummaries.length > 0 && (
-        <span
-          className={styles.jobIndicator}
-          onClick={(e) => e.stopPropagation()}
-          role="presentation"
-        >
-          <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
+      <span className={styles.topRow}>
+        <Badge status={issueToBadgeStatus(issue.status)} />
+        <span className={`${styles.typeChip} ${chipClass}`}>{issue.type}</span>
+        <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
+        {jobSummaries && jobSummaries.length > 0 && (
+          <span
+            className={styles.jobIndicator}
+            onClick={(e) => e.stopPropagation()}
+            role="presentation"
+          >
+            <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
+          </span>
+        )}
+        {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
+      </span>
+      {(showId || showTimestamp) && (
+        <span className={styles.bottomRow}>
+          {showId && <span className={styles.issueId}>{record.issue_id}</span>}
+          {showTimestamp && timestamp && (
+            <span className={styles.timestamp}>{formatRelativeTime(timestamp)}</span>
+          )}
         </span>
       )}
-      {issue.assignee && <Avatar name={issue.assignee} size="sm" />}
     </span>
   );
 }

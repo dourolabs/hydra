@@ -1,6 +1,5 @@
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import { IssueRow } from "../issues/IssueRow";
-import { formatRelativeTime } from "../../utils/time";
 import styles from "./InboxList.module.css";
 
 interface InboxListProps {
@@ -31,13 +30,10 @@ export function InboxList({ issues, jobsByIssue, selectedId, onSelect, onJobClic
                 record={record}
                 jobs={jobsByIssue?.get(record.issue_id)}
                 onJobClick={onJobClick}
+                showId
+                showTimestamp
+                timestamp={record.timestamp}
               />
-              <div className={styles.bottom}>
-                <span className={styles.id}>{record.issue_id}</span>
-                <span className={styles.time}>
-                  {formatRelativeTime(record.timestamp)}
-                </span>
-              </div>
             </button>
           </li>
         );
