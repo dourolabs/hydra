@@ -923,7 +923,8 @@ async fn handle_sse_event(
         | SseEventType::DocumentUpdated
         | SseEventType::DocumentDeleted
         | SseEventType::MessageCreated
-        | SseEventType::MessageUpdated => false,
+        | SseEventType::MessageUpdated
+        | SseEventType::NotificationCreated => false,
     }
 }
 

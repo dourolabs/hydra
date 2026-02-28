@@ -358,6 +358,7 @@ pub fn event_object_kind(event: &ServerEvent) -> &'static str {
         | ServerEvent::DocumentUpdated { .. }
         | ServerEvent::DocumentDeleted { .. } => "document",
         ServerEvent::MessageCreated { .. } | ServerEvent::MessageUpdated { .. } => "message",
+        ServerEvent::NotificationCreated { .. } => "notification",
     }
 }
 
@@ -378,6 +379,9 @@ pub fn event_object_id(event: &ServerEvent) -> MetisId {
         | ServerEvent::DocumentDeleted { document_id, .. } => document_id.clone().into(),
         ServerEvent::MessageCreated { message_id, .. }
         | ServerEvent::MessageUpdated { message_id, .. } => message_id.clone().into(),
+        ServerEvent::NotificationCreated {
+            notification_id, ..
+        } => notification_id.clone().into(),
     }
 }
 
@@ -397,6 +401,8 @@ pub fn event_version(event: &ServerEvent) -> VersionNumber {
         | ServerEvent::DocumentDeleted { version, .. }
         | ServerEvent::MessageCreated { version, .. }
         | ServerEvent::MessageUpdated { version, .. } => *version,
+        // Notifications are non-versioned; return 0 as a sentinel.
+        ServerEvent::NotificationCreated { .. } => 0,
     }
 }
 
@@ -416,6 +422,7 @@ pub fn event_type_str(event: &ServerEvent) -> &'static str {
         ServerEvent::IssueDeleted { .. }
         | ServerEvent::PatchDeleted { .. }
         | ServerEvent::DocumentDeleted { .. } => "deleted",
+        ServerEvent::NotificationCreated { .. } => "created",
     }
 }
 

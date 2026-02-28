@@ -1,3 +1,5 @@
+use crate::NotificationId;
+use crate::actor_ref::ActorId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -33,6 +35,10 @@ pub struct EventsQuery {
     /// Comma-separated message IDs to filter.
     #[serde(default)]
     pub message_ids: Option<String>,
+
+    /// Comma-separated notification IDs to filter.
+    #[serde(default)]
+    pub notification_ids: Option<String>,
 }
 
 impl EventsQuery {
@@ -57,6 +63,9 @@ impl EventsQuery {
         if let Some(ref ids) = self.message_ids {
             params.push(("message_ids", ids.clone()));
         }
+        if let Some(ref ids) = self.notification_ids {
+            params.push(("notification_ids", ids.clone()));
+        }
         params
     }
 }
@@ -80,6 +89,7 @@ pub enum SseEventType {
     DocumentDeleted,
     MessageCreated,
     MessageUpdated,
+    NotificationCreated,
     Snapshot,
     Resync,
     Heartbeat,
@@ -101,6 +111,7 @@ impl SseEventType {
             Self::DocumentDeleted => "document_deleted",
             Self::MessageCreated => "message_created",
             Self::MessageUpdated => "message_updated",
+            Self::NotificationCreated => "notification_created",
             Self::Snapshot => "snapshot",
             Self::Resync => "resync",
             Self::Heartbeat => "heartbeat",
@@ -126,6 +137,7 @@ impl std::str::FromStr for SseEventType {
             "document_deleted" => Ok(Self::DocumentDeleted),
             "message_created" => Ok(Self::MessageCreated),
             "message_updated" => Ok(Self::MessageUpdated),
+            "notification_created" => Ok(Self::NotificationCreated),
             "snapshot" => Ok(Self::Snapshot),
             "resync" => Ok(Self::Resync),
             "heartbeat" => Ok(Self::Heartbeat),
@@ -165,6 +177,21 @@ pub struct SnapshotEventData {
 pub struct ResyncEventData {
     pub reason: String,
     pub current_seq: u64,
+}
+
+/// Data payload for notification_created events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct NotificationEventData {
+    pub notification_id: NotificationId,
+    pub recipient: ActorId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_actor: Option<ActorId>,
+    pub object_kind: String,
+    pub object_id: String,
+    pub summary: String,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Data payload for heartbeat events.

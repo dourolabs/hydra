@@ -17,7 +17,8 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId, VersionNumber,
+    Versioned,
     api::v1::notifications::ListNotificationsQuery,
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -90,6 +91,7 @@ pub enum EventType {
     DocumentDeleted,
     MessageCreated,
     MessageUpdated,
+    NotificationCreated,
 }
 
 /// Events emitted when server-side entities are mutated.
@@ -197,6 +199,18 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
+    /// A notification was created. Emitted directly by the NotificationAutomation,
+    /// bypassing StoreWithEvents since notifications are non-versioned.
+    NotificationCreated {
+        seq: u64,
+        notification_id: NotificationId,
+        recipient: ActorId,
+        source_actor: Option<ActorId>,
+        object_kind: String,
+        object_id: MetisId,
+        summary: String,
+        created_at: DateTime<Utc>,
+    },
 }
 
 impl ServerEvent {
@@ -215,11 +229,17 @@ impl ServerEvent {
             | ServerEvent::DocumentUpdated { seq, .. }
             | ServerEvent::DocumentDeleted { seq, .. }
             | ServerEvent::MessageCreated { seq, .. }
-            | ServerEvent::MessageUpdated { seq, .. } => *seq,
+            | ServerEvent::MessageUpdated { seq, .. }
+            | ServerEvent::NotificationCreated { seq, .. } => *seq,
         }
     }
 
     /// Returns a reference to the mutation payload for this event.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on `NotificationCreated`, which does not carry a
+    /// `MutationPayload`. Use `event_type()` to check before calling.
     pub fn payload(&self) -> &Arc<MutationPayload> {
         match self {
             ServerEvent::IssueCreated { payload, .. }
@@ -235,6 +255,9 @@ impl ServerEvent {
             | ServerEvent::DocumentDeleted { payload, .. }
             | ServerEvent::MessageCreated { payload, .. }
             | ServerEvent::MessageUpdated { payload, .. } => payload,
+            ServerEvent::NotificationCreated { .. } => {
+                panic!("NotificationCreated events do not carry a MutationPayload")
+            }
         }
     }
 
@@ -254,6 +277,7 @@ impl ServerEvent {
             ServerEvent::DocumentDeleted { .. } => EventType::DocumentDeleted,
             ServerEvent::MessageCreated { .. } => EventType::MessageCreated,
             ServerEvent::MessageUpdated { .. } => EventType::MessageUpdated,
+            ServerEvent::NotificationCreated { .. } => EventType::NotificationCreated,
         }
     }
 }
@@ -489,6 +513,28 @@ impl EventBus {
             payload,
         });
     }
+
+    pub fn emit_notification_created(
+        &self,
+        notification_id: NotificationId,
+        recipient: ActorId,
+        source_actor: Option<ActorId>,
+        object_kind: String,
+        object_id: MetisId,
+        summary: String,
+        created_at: DateTime<Utc>,
+    ) {
+        self.send(ServerEvent::NotificationCreated {
+            seq: self.next_seq(),
+            notification_id,
+            recipient,
+            source_actor,
+            object_kind,
+            object_id,
+            summary,
+            created_at,
+        });
+    }
 }
 
 impl Default for EventBus {
@@ -515,17 +561,6 @@ impl StoreWithEvents {
     /// Returns a reference to the underlying event bus.
     pub fn event_bus(&self) -> &EventBus {
         &self.event_bus
-    }
-
-    /// Insert a notification directly, bypassing event emission.
-    ///
-    /// Notifications are side-effects of events and should not emit further events
-    /// (which would risk infinite loops).
-    pub async fn insert_notification(
-        &self,
-        notification: Notification,
-    ) -> Result<NotificationId, StoreError> {
-        self.inner.insert_notification(notification).await
     }
 
     // ---- Actor-aware mutation methods ----

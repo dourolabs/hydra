@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use crate::app::event_bus::EventType;
 use crate::domain::actors::ActorId;
 use crate::domain::notifications::{
     Notification, NotificationPolicy, WalkUpPolicy, actor_ref_to_actor_id, event_object_id,
@@ -34,7 +35,25 @@ impl Automation for NotificationAutomation {
     }
 
     fn event_filter(&self) -> EventFilter {
-        EventFilter::default() // match all events
+        // Match all mutation events except NotificationCreated to avoid
+        // infinite loops (we emit NotificationCreated from this automation).
+        EventFilter {
+            event_types: vec![
+                EventType::IssueCreated,
+                EventType::IssueUpdated,
+                EventType::IssueDeleted,
+                EventType::PatchCreated,
+                EventType::PatchUpdated,
+                EventType::PatchDeleted,
+                EventType::JobCreated,
+                EventType::JobUpdated,
+                EventType::DocumentCreated,
+                EventType::DocumentUpdated,
+                EventType::DocumentDeleted,
+                EventType::MessageCreated,
+                EventType::MessageUpdated,
+            ],
+        }
     }
 
     async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
@@ -83,7 +102,7 @@ impl Automation for NotificationAutomation {
 
         for (recipient, policy_name) in policy_recipients {
             let notification = Notification::new(
-                recipient,
+                recipient.clone(),
                 source_actor.clone(),
                 object_kind.clone(),
                 object_id.clone(),
@@ -94,8 +113,24 @@ impl Automation for NotificationAutomation {
                 policy_name,
             );
 
-            if let Err(err) = ctx.app_state.store.insert_notification(notification).await {
-                tracing::error!(error = %err, "failed to insert notification");
+            let created_at = notification.created_at;
+            match ctx.app_state.store.insert_notification(notification).await {
+                Ok(notification_id) => {
+                    // Emit NotificationCreated event directly to the EventBus
+                    // so SSE clients receive real-time notification updates.
+                    ctx.app_state.event_bus().emit_notification_created(
+                        notification_id,
+                        recipient,
+                        source_actor.clone(),
+                        object_kind.clone(),
+                        object_id.clone(),
+                        summary.clone(),
+                        created_at,
+                    );
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, "failed to insert notification");
+                }
             }
         }
 
