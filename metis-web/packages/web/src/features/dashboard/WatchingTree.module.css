@@ -45,10 +45,22 @@
   user-select: none;
 }
 
-.summary {
-  padding: var(--space-1) var(--space-3) var(--space-1) 36px;
+.completionRing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.ringSvg {
+  display: block;
+}
+
+.fractionLabel {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
+  white-space: nowrap;
+  line-height: 1;
 }
 
 .children {
@@ -102,10 +114,6 @@
 
   .chevron {
     padding: var(--space-1);
-  }
-
-  .summary {
-    padding-left: var(--space-3);
   }
 
   .children {

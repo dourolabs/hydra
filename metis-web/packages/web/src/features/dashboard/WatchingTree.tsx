@@ -8,7 +8,6 @@ import {
   buildIssueTree,
   type IssueTreeNode,
 } from "../issues/useIssues";
-import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { treeHasActiveNode } from "./watchingUtils";
 import styles from "./WatchingTree.module.css";
 
@@ -20,14 +19,17 @@ interface WatchingTreeProps {
   username: string;
 }
 
+const FAILED_STATUSES: Set<string> = new Set(["failed", "dropped", "rejected"]);
+
 interface SubtreeSummary {
   open: number;
   inProgress: number;
   closed: number;
+  failed: number;
 }
 
 function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
-  const summary: SubtreeSummary = { open: 0, inProgress: 0, closed: 0 };
+  const summary: SubtreeSummary = { open: 0, inProgress: 0, closed: 0, failed: 0 };
 
   function walk(n: IssueTreeNode) {
     for (const child of n.children) {
@@ -35,8 +37,10 @@ function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
       const status = child.issue.issue.status;
       if (status === "in-progress") {
         summary.inProgress++;
-      } else if (TERMINAL_STATUSES.has(status)) {
+      } else if (status === "closed") {
         summary.closed++;
+      } else if (FAILED_STATUSES.has(status)) {
+        summary.failed++;
       } else {
         summary.open++;
       }
@@ -48,12 +52,76 @@ function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
   return summary;
 }
 
-function formatSummary(summary: SubtreeSummary): string {
-  const parts: string[] = [];
-  if (summary.inProgress > 0) parts.push(`${summary.inProgress} in-progress`);
-  if (summary.open > 0) parts.push(`${summary.open} open`);
-  if (summary.closed > 0) parts.push(`${summary.closed} closed`);
-  return parts.join(", ");
+/** SVG completion ring showing closed (green), failed (red), and remaining (gray) arcs. */
+function CompletionRing({ summary }: { summary: SubtreeSummary }) {
+  const total = summary.open + summary.inProgress + summary.closed + summary.failed;
+  if (total === 0) return null;
+
+  const terminal = summary.closed + summary.failed;
+  const size = 18;
+  const strokeWidth = 3;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  const closedFrac = summary.closed / total;
+  const failedFrac = summary.failed / total;
+
+  // Arcs drawn clockwise from 12 o'clock: green (closed), then red (failed), rest is gray track
+  const closedLen = closedFrac * circumference;
+  const failedLen = failedFrac * circumference;
+
+  return (
+    <span className={styles.completionRing}>
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        className={styles.ringSvg}
+      >
+        {/* Gray track (full circle background) */}
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="var(--color-border)"
+          strokeWidth={strokeWidth}
+        />
+        {/* Failed arc (red) — drawn after closed so it starts where closed ends */}
+        {failedLen > 0 && (
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            stroke="var(--color-status-failed)"
+            strokeWidth={strokeWidth}
+            strokeDasharray={`${failedLen} ${circumference - failedLen}`}
+            strokeDashoffset={-closedLen}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        )}
+        {/* Closed arc (green) — starts at 12 o'clock */}
+        {closedLen > 0 && (
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            stroke="var(--color-status-closed)"
+            strokeWidth={strokeWidth}
+            strokeDasharray={`${closedLen} ${circumference - closedLen}`}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        )}
+      </svg>
+      <span className={styles.fractionLabel}>
+        {terminal}/{total}
+      </span>
+    </span>
+  );
 }
 
 /**
@@ -118,8 +186,7 @@ function RootItem({
 }: RootItemProps) {
   const summary = useMemo(() => summarizeSubtree(root), [root]);
 
-  const summaryText = formatSummary(summary);
-  const totalChildren = summary.open + summary.inProgress + summary.closed;
+  const totalChildren = summary.open + summary.inProgress + summary.closed + summary.failed;
 
   // Build child TreeNodes based on expanded/collapsed state
   let childNodes: TreeNode[];
@@ -160,6 +227,7 @@ function RootItem({
         >
           {totalChildren > 0 ? (expanded ? "\u25BE" : "\u25B8") : " "}
         </span>
+        {totalChildren > 0 && <CompletionRing summary={summary} />}
         <IssueRow
           record={root.issue}
           blocked={root.blocked}
@@ -167,9 +235,6 @@ function RootItem({
           onJobClick={handleJobClick}
         />
       </button>
-      {summaryText && (
-        <div className={styles.summary}>{summaryText}</div>
-      )}
       {childNodes.length > 0 && (
         <div className={styles.children}>
           <TreeView
