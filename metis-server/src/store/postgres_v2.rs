@@ -4499,6 +4499,7 @@ mod tests {
             Some(ActorId::Username(Username::from("alice").into()))
         );
         assert_eq!(fetched.object_kind, "issue");
+        assert_eq!(fetched.object_id, notif.object_id);
         assert_eq!(fetched.object_version, 1);
         assert_eq!(fetched.event_type, "updated");
         assert_eq!(fetched.summary, "Issue status changed");
