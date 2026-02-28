@@ -222,6 +222,10 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn get_notification(&self, _id: &NotificationId) -> Result<Notification, StoreError> {
+        fail()
+    }
+
     async fn list_notifications(
         &self,
         _query: &ListNotificationsQuery,

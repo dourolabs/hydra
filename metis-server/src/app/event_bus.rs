@@ -868,6 +868,29 @@ impl StoreWithEvents {
             .emit_message_updated(id.clone(), recipient, sender, version, payload);
         Ok(version)
     }
+
+    // ---- Notification mutations ----
+
+    pub async fn insert_notification(
+        &self,
+        notification: Notification,
+    ) -> Result<NotificationId, StoreError> {
+        self.inner.insert_notification(notification).await
+    }
+
+    pub async fn mark_notification_read(&self, id: &NotificationId) -> Result<(), StoreError> {
+        self.inner.mark_notification_read(id).await
+    }
+
+    pub async fn mark_all_notifications_read(
+        &self,
+        recipient: &ActorId,
+        before: Option<DateTime<Utc>>,
+    ) -> Result<u64, StoreError> {
+        self.inner
+            .mark_all_notifications_read(recipient, before)
+            .await
+    }
 }
 
 #[async_trait]
@@ -1078,6 +1101,10 @@ impl ReadOnlyStore for StoreWithEvents {
     }
 
     // ---- Notification (read-only) ----
+
+    async fn get_notification(&self, id: &NotificationId) -> Result<Notification, StoreError> {
+        self.inner.get_notification(id).await
+    }
 
     async fn list_notifications(
         &self,

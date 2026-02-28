@@ -988,6 +988,13 @@ impl ReadOnlyStore for MemoryStore {
 
     // ---- Notification (read-only) ----
 
+    async fn get_notification(&self, id: &NotificationId) -> Result<Notification, StoreError> {
+        self.notifications
+            .get(id)
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| StoreError::NotificationNotFound(id.clone()))
+    }
+
     async fn list_notifications(
         &self,
         query: &ListNotificationsQuery,
