@@ -24,6 +24,16 @@
   --color-status-blocked: #cc66ff;
   --color-status-rejected: #ff8800;
 
+  /* Status background colors (translucent) */
+  --color-status-open-bg: color-mix(in srgb, var(--color-status-open) 12%, transparent);
+  --color-status-in-progress-bg: color-mix(in srgb, var(--color-status-in-progress) 12%, transparent);
+  --color-status-closed-bg: color-mix(in srgb, var(--color-status-closed) 12%, transparent);
+  --color-status-failed-bg: color-mix(in srgb, var(--color-status-failed) 12%, transparent);
+  --color-status-dropped-bg: color-mix(in srgb, var(--color-status-dropped) 12%, transparent);
+  --color-status-blocked-bg: color-mix(in srgb, var(--color-status-blocked) 12%, transparent);
+  --color-status-rejected-bg: color-mix(in srgb, var(--color-status-rejected) 12%, transparent);
+  --color-status-neutral-bg: color-mix(in srgb, var(--color-text-secondary) 12%, transparent);
+
   /* Danger (red - destructive actions) */
   --color-danger: #cc3333;
   --color-danger-bright: #ff4444;
