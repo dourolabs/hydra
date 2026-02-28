@@ -1,7 +1,6 @@
 use crate::{
-    app::AppState,
+    app::{AppState, NotificationError},
     domain::actors::Actor,
-    store::{ReadOnlyStore, StoreError},
 };
 use axum::{Extension, Json, extract::Path, extract::Query, extract::State};
 use chrono::{DateTime, Utc};
@@ -18,8 +17,6 @@ use metis_common::{
 use serde::Deserialize;
 use tracing::{error, info};
 
-const DEFAULT_LIMIT: u32 = 50;
-
 /// Optional query parameters for the mark-all-read endpoint.
 #[derive(Debug, Default, Deserialize)]
 pub struct MarkAllReadQuery {
@@ -34,18 +31,10 @@ pub async fn list_notifications(
 ) -> Result<Json<ListNotificationsResponse>, ApiError> {
     info!(actor = %actor.name(), "list_notifications invoked");
 
-    let mut store_query = ListNotificationsQuery::default();
-    store_query.recipient = Some(actor.actor_id.to_string());
-    store_query.is_read = query.is_read;
-    store_query.before = query.before;
-    store_query.after = query.after;
-    store_query.limit = Some(query.limit.unwrap_or(DEFAULT_LIMIT));
-
     let results = state
-        .store
-        .list_notifications(&store_query)
+        .list_notifications(&actor.actor_id, &query)
         .await
-        .map_err(map_store_error)?;
+        .map_err(map_notification_error)?;
 
     let notifications: Vec<NotificationResponse> = results
         .into_iter()
@@ -69,10 +58,9 @@ pub async fn unread_count(
     info!(actor = %actor.name(), "unread_count invoked");
 
     let count = state
-        .store
         .count_unread_notifications(&actor.actor_id)
         .await
-        .map_err(map_store_error)?;
+        .map_err(map_notification_error)?;
 
     info!(
         actor = %actor.name(),
@@ -95,35 +83,10 @@ pub async fn mark_read(
         "mark_read invoked"
     );
 
-    // Verify the notification exists and belongs to the authenticated actor.
-    let notification = state
-        .store
-        .get_notification(&notification_id)
-        .await
-        .map_err(|err| match err {
-            StoreError::NotificationNotFound(_) => {
-                ApiError::not_found(format!("notification '{notification_id}' not found"))
-            }
-            other => map_store_error(other),
-        })?;
-
-    if notification.recipient != actor.actor_id {
-        return Err(ApiError::not_found(format!(
-            "notification '{notification_id}' not found"
-        )));
-    }
-
     state
-        .store
-        .mark_notification_read(&notification_id)
+        .mark_notification_read(&actor.actor_id, &notification_id)
         .await
-        .map_err(|err| match err {
-            StoreError::NotificationNotFound(id) => {
-                error!(notification_id = %id, "notification not found");
-                ApiError::not_found(format!("notification '{id}' not found"))
-            }
-            other => map_store_error(other),
-        })?;
+        .map_err(map_notification_error)?;
 
     info!(
         actor = %actor.name(),
@@ -143,10 +106,9 @@ pub async fn mark_all_read(
     info!(actor = %actor.name(), "mark_all_read invoked");
 
     let marked = state
-        .store
         .mark_all_notifications_read(&actor.actor_id, query.before)
         .await
-        .map_err(map_store_error)?;
+        .map_err(map_notification_error)?;
 
     info!(
         actor = %actor.name(),
@@ -157,7 +119,14 @@ pub async fn mark_all_read(
     Ok(Json(MarkReadResponse::new(marked)))
 }
 
-fn map_store_error(err: StoreError) -> ApiError {
-    error!(error = %err, "notification store operation failed");
-    ApiError::internal(format!("notification store error: {err}"))
+fn map_notification_error(err: NotificationError) -> ApiError {
+    match err {
+        NotificationError::NotFound { notification_id } => {
+            ApiError::not_found(format!("notification '{notification_id}' not found"))
+        }
+        NotificationError::Store { source } => {
+            error!(error = %source, "notification store operation failed");
+            ApiError::internal(format!("notification store error: {source}"))
+        }
+    }
 }
