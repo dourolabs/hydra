@@ -1,0 +1,268 @@
+.card {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  min-height: 100px;
+}
+
+.card:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.card.selected {
+  border-color: var(--color-accent-dim);
+  background: var(--color-bg-tertiary);
+}
+
+/* Title line */
+.titleLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.typeChip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xxs);
+  font-weight: 600;
+  text-transform: uppercase;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.typeTask {
+  color: var(--color-status-open);
+  background: var(--color-status-open-bg);
+}
+
+.typeBug {
+  color: var(--color-status-failed);
+  background: var(--color-status-failed-bg);
+}
+
+.typeFeature {
+  color: var(--color-status-closed);
+  background: var(--color-status-closed-bg);
+}
+
+.typeChore {
+  color: var(--color-text-secondary);
+  background: var(--color-status-neutral-bg);
+}
+
+.typeMergeRequest {
+  color: var(--color-type-merge-request);
+  background: var(--color-type-merge-request-bg);
+}
+
+.typeReviewRequest {
+  color: var(--color-status-blocked);
+  background: var(--color-status-blocked-bg);
+}
+
+.typeUnknown {
+  color: var(--color-text-secondary);
+  background: var(--color-status-neutral-bg);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+}
+
+/* Progress row */
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.progressBar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-bg-primary);
+  overflow: hidden;
+  display: flex;
+}
+
+.progressSegment {
+  height: 100%;
+  transition: width var(--transition-normal);
+}
+
+.segmentDone {
+  background: var(--color-status-closed);
+}
+
+.segmentActive {
+  background: var(--color-status-in-progress);
+}
+
+.segmentReview {
+  background: var(--color-status-blocked);
+}
+
+.segmentFailed {
+  background: var(--color-status-failed);
+}
+
+.segmentOpen {
+  background: var(--color-text-tertiary);
+}
+
+.progressText {
+  flex-shrink: 0;
+  font-size: var(--font-size-xxs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+/* Status pills */
+.pillRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: var(--font-size-xxs);
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.pillActive {
+  color: var(--color-status-in-progress);
+  background: var(--color-status-in-progress-bg);
+}
+
+.pillReview {
+  color: var(--color-status-blocked);
+  background: var(--color-status-blocked-bg);
+}
+
+.pillFailed {
+  color: var(--color-status-failed);
+  background: var(--color-status-failed-bg);
+}
+
+.pillQueued {
+  color: var(--color-status-open);
+  background: var(--color-status-open-bg);
+}
+
+.pillComplete {
+  color: var(--color-status-closed);
+  background: var(--color-status-closed-bg);
+}
+
+.pillOnTrack {
+  color: var(--color-status-closed);
+  background: var(--color-status-closed-bg);
+}
+
+/* Pulse animation for active pills */
+.pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-status-in-progress);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+}
+
+/* Expand toggle */
+.expandToggle {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xxs);
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  transition: color var(--transition-fast);
+}
+
+.expandToggle:hover {
+  color: var(--color-text-secondary);
+}
+
+/* Expanded subtask list */
+.subtaskList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-2);
+}
+
+.subtaskItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px var(--space-1);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+}
+
+.subtaskItem:hover {
+  background: var(--color-bg-primary);
+}
+
+.subtaskDesc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subtaskJobDot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-status-in-progress);
+  animation: pulse 2s ease-in-out infinite;
+}

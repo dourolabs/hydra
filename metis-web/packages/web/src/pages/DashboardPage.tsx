@@ -10,7 +10,7 @@ import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { SplitLayout } from "../layout/SplitLayout";
 import { InboxList } from "../features/dashboard/InboxList";
-import { WatchingTree } from "../features/dashboard/WatchingTree";
+import { WatchlistGrid } from "../features/dashboard/WatchlistGrid";
 import { CompletedTree } from "../features/dashboard/CompletedTree";
 import { useWatchingCount } from "../features/dashboard/useWatchingCount";
 import { useCompletedCount } from "../features/dashboard/useCompletedCount";
@@ -163,7 +163,7 @@ export function DashboardPage() {
         />
       )}
       {activeTab === "watching" && (
-        <WatchingTree
+        <WatchlistGrid
           issues={issues ?? []}
           jobsByIssue={jobsByIssue ?? new Map()}
           selectedId={selectedId}
