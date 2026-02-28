@@ -20,40 +20,58 @@ interface WatchingTreeProps {
   username: string;
 }
 
-interface SubtreeSummary {
-  open: number;
-  inProgress: number;
-  closed: number;
+const STATUS_ORDER: Record<string, number> = {
+  "in-progress": 0,
+  open: 1,
+  closed: 2,
+  failed: 3,
+  dropped: 4,
+  rejected: 5,
+};
+
+const STATUS_DOT_CSS_VAR: Record<string, string> = {
+  open: "var(--color-status-open)",
+  "in-progress": "var(--color-status-in-progress)",
+  closed: "var(--color-status-closed)",
+  failed: "var(--color-status-failed)",
+  dropped: "var(--color-status-dropped)",
+  rejected: "var(--color-status-rejected)",
+};
+
+interface ChildStatus {
+  id: string;
+  status: string;
 }
 
-function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
-  const summary: SubtreeSummary = { open: 0, inProgress: 0, closed: 0 };
-
-  function walk(n: IssueTreeNode) {
-    for (const child of n.children) {
-      if (child.hardBlocked) continue;
-      const status = child.issue.issue.status;
-      if (status === "in-progress") {
-        summary.inProgress++;
-      } else if (TERMINAL_STATUSES.has(status)) {
-        summary.closed++;
-      } else {
-        summary.open++;
-      }
-      walk(child);
-    }
-  }
-
-  walk(node);
-  return summary;
+function collectDirectChildStatuses(node: IssueTreeNode): ChildStatus[] {
+  return node.children
+    .filter((child) => !child.hardBlocked)
+    .map((child) => ({ id: child.id, status: child.issue.issue.status }))
+    .sort((a, b) => (STATUS_ORDER[a.status] ?? 6) - (STATUS_ORDER[b.status] ?? 6));
 }
 
-function formatSummary(summary: SubtreeSummary): string {
-  const parts: string[] = [];
-  if (summary.inProgress > 0) parts.push(`${summary.inProgress} in-progress`);
-  if (summary.open > 0) parts.push(`${summary.open} open`);
-  if (summary.closed > 0) parts.push(`${summary.closed} closed`);
-  return parts.join(", ");
+function StatusDots({ children: childStatuses }: { children: ChildStatus[] }) {
+  if (childStatuses.length === 0) return null;
+
+  const done = childStatuses.filter((c) => TERMINAL_STATUSES.has(c.status)).length;
+
+  return (
+    <div className={styles.statusDots}>
+      <div className={styles.dotsRow}>
+        {childStatuses.map((child) => (
+          <span
+            key={child.id}
+            className={styles.dot}
+            style={{ backgroundColor: STATUS_DOT_CSS_VAR[child.status] ?? "var(--color-text-tertiary)" }}
+            title={`${child.id}: ${child.status}`}
+          />
+        ))}
+      </div>
+      <span className={styles.doneLabel}>
+        {done}/{childStatuses.length} done
+      </span>
+    </div>
+  );
 }
 
 /**
@@ -116,10 +134,8 @@ function RootItem({
   handleJobClick,
   username,
 }: RootItemProps) {
-  const summary = useMemo(() => summarizeSubtree(root), [root]);
-
-  const summaryText = formatSummary(summary);
-  const totalChildren = summary.open + summary.inProgress + summary.closed;
+  const childStatuses = useMemo(() => collectDirectChildStatuses(root), [root]);
+  const totalChildren = childStatuses.length;
 
   // Build child TreeNodes based on expanded/collapsed state
   let childNodes: TreeNode[];
@@ -132,7 +148,7 @@ function RootItem({
       username,
     );
   } else {
-    // Collapsed: hide all children; the summary text provides status at a glance
+    // Collapsed: hide all children; the dots provide status at a glance
     childNodes = [];
   }
 
@@ -167,9 +183,7 @@ function RootItem({
           onJobClick={handleJobClick}
         />
       </button>
-      {summaryText && (
-        <div className={styles.summary}>{summaryText}</div>
-      )}
+      <StatusDots>{childStatuses}</StatusDots>
       {childNodes.length > 0 && (
         <div className={styles.children}>
           <TreeView
