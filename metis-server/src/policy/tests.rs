@@ -823,7 +823,7 @@ async fn check_update_job_passes_when_allowed() {
 // ---------------------------------------------------------------------------
 
 /// Test 1: Default config (no `[policies]` section) reproduces all current
-/// behavior exactly — all 5 restrictions and 6 automations are active.
+/// behavior exactly — all 5 restrictions and 7 automations are active.
 #[test]
 fn default_config_enables_all_builtin_policies() {
     let registry = registry::build_default_registry();
@@ -832,7 +832,7 @@ fn default_config_enables_all_builtin_policies() {
     let engine = crate::app::AppState::build_policy_engine(None);
 
     assert_eq!(engine.restriction_count(), 5);
-    assert_eq!(engine.automation_count(), 6);
+    assert_eq!(engine.automation_count(), 7);
 
     // Also verify that an explicit config listing all policies gives the same counts
     let all_config = PolicyConfig {
@@ -851,12 +851,13 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("sync_review_request_issues".to_string()),
                 PolicyEntry::Name("patch_workflow".to_string()),
                 PolicyEntry::Name("github_pr_sync".to_string()),
+                PolicyEntry::Name("notification_generation".to_string()),
             ],
         },
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 5);
-    assert_eq!(explicit_engine.automation_count(), 6);
+    assert_eq!(explicit_engine.automation_count(), 7);
 }
 
 /// Test 2: Disabling a specific restriction allows the previously-blocked

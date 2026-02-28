@@ -71,6 +71,7 @@ impl AppState {
                     PolicyEntry::Name("sync_review_request_issues".to_string()),
                     PolicyEntry::Name("patch_workflow".to_string()),
                     PolicyEntry::Name("github_pr_sync".to_string()),
+                    PolicyEntry::Name("notification_generation".to_string()),
                 ],
             },
         };

@@ -517,6 +517,17 @@ impl StoreWithEvents {
         &self.event_bus
     }
 
+    /// Insert a notification directly, bypassing event emission.
+    ///
+    /// Notifications are side-effects of events and should not emit further events
+    /// (which would risk infinite loops).
+    pub async fn insert_notification(
+        &self,
+        notification: Notification,
+    ) -> Result<NotificationId, StoreError> {
+        self.inner.insert_notification(notification).await
+    }
+
     // ---- Actor-aware mutation methods ----
     //
     // These inherent methods accept an explicit `actor: ActorRef` parameter

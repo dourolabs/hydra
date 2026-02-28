@@ -171,6 +171,9 @@ pub fn build_default_registry() -> PolicyRegistry {
             super::integrations::github_pr_sync::GithubPrSyncAutomation::new(params)?,
         ))
     });
+    registry.register_automation("notification_generation", |params| {
+        Ok(Box::new(NotificationAutomation::new(params)?))
+    });
 
     registry
 }

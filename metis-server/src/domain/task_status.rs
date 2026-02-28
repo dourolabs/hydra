@@ -12,6 +12,19 @@ pub enum Status {
     Failed,
 }
 
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Status::Created => "created",
+            Status::Pending => "pending",
+            Status::Running => "running",
+            Status::Complete => "complete",
+            Status::Failed => "failed",
+        };
+        f.write_str(s)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskError {
