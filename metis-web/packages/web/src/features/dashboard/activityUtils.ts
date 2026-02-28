@@ -3,6 +3,19 @@ import type { IssueTreeNode } from "../issues/useIssues";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 
 /**
+ * Progress stats for a root issue's direct children.
+ * Only tracks open/in-progress/closed; failed/dropped/rejected are excluded.
+ */
+export interface IssueProgress {
+  rootId: string;
+  rootIssue: IssueSummaryRecord;
+  open: number;
+  inProgress: number;
+  closed: number;
+  total: number;
+}
+
+/**
  * Activity section for a subtask in the unified activity feed.
  */
 export type ActivitySection =
@@ -179,4 +192,44 @@ export function sectionLabel(section: ActivitySection): string {
     case "recently-completed":
       return "COMPLETED";
   }
+}
+
+/**
+ * Compute progress stats for each root issue by iterating only over
+ * 1-level deep children (direct children, NOT recursive).
+ *
+ * Only counts open / in-progress / closed statuses.
+ * Skips hardBlocked children and children with status failed/dropped/rejected.
+ */
+export function computeIssueProgress(
+  roots: IssueTreeNode[],
+): IssueProgress[] {
+  return roots.map((root) => {
+    let open = 0;
+    let inProgress = 0;
+    let closed = 0;
+
+    for (const child of root.children) {
+      if (child.hardBlocked) continue;
+
+      const status = child.issue.issue.status;
+      if (status === "closed") {
+        closed++;
+      } else if (status === "in-progress") {
+        inProgress++;
+      } else if (status === "open") {
+        open++;
+      }
+      // failed/dropped/rejected are intentionally skipped
+    }
+
+    return {
+      rootId: root.id,
+      rootIssue: root.issue,
+      open,
+      inProgress,
+      closed,
+      total: open + inProgress + closed,
+    };
+  });
 }
