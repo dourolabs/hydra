@@ -1,7 +1,6 @@
 use crate::{
-    app::{AppState, SendMessageError},
+    app::{AppState, MessageError},
     domain::actors::{Actor, ActorRef, parse_actor_name},
-    store::{ReadOnlyStore, StoreError},
 };
 use anyhow::anyhow;
 use axum::{Extension, Json, extract::Query, extract::State};
@@ -42,7 +41,7 @@ pub async fn send_message(
             actor_ref,
         )
         .await
-        .map_err(map_send_message_error)?;
+        .map_err(map_message_error)?;
 
     info!(message_id = %message_id, "send_message completed");
 
@@ -77,10 +76,9 @@ pub async fn list_messages(
     store_query.limit = Some(query.limit.unwrap_or(DEFAULT_LIMIT));
 
     let results = state
-        .store
         .list_messages(&store_query)
         .await
-        .map_err(map_store_error)?;
+        .map_err(map_message_error)?;
 
     let messages: Vec<VersionedMessage> = results
         .into_iter()
@@ -140,10 +138,9 @@ pub async fn receive_messages(
     store_query.limit = Some(DEFAULT_LIMIT);
 
     let results = state
-        .store
         .list_messages(&store_query)
         .await
-        .map_err(map_store_error)?;
+        .map_err(map_message_error)?;
 
     // Filter for unread messages
     let unread: Vec<_> = results
@@ -154,14 +151,11 @@ pub async fn receive_messages(
     if !unread.is_empty() {
         // Mark all unread messages as read
         let actor_ref = ActorRef::from(&actor);
-        for (id, v) in &unread {
-            let mut updated = v.item.clone();
-            updated.is_read = true;
+        for (id, _) in &unread {
             state
-                .store
-                .update_message_with_actor(id, updated, actor_ref.clone())
+                .mark_message_read(id, actor_ref.clone())
                 .await
-                .map_err(map_store_error)?;
+                .map_err(map_message_error)?;
         }
 
         // Return the original unread versions of the messages
@@ -215,23 +209,19 @@ pub async fn receive_messages(
                         }
                     }
 
-                    // Found a matching message — mark it as read and return it
+                    // Found a matching message — fetch it from the app layer
                     let msg = state
-                        .store
                         .get_message(message_id)
                         .await
-                        .map_err(map_store_error)?;
+                        .map_err(map_message_error)?;
 
                     // Mark as read
                     let actor_ref = ActorRef::from(&actor);
                     if !msg.item.is_read {
-                        let mut updated = msg.item.clone();
-                        updated.is_read = true;
                         state
-                            .store
-                            .update_message_with_actor(message_id, updated, actor_ref)
+                            .mark_message_read(message_id, actor_ref)
                             .await
-                            .map_err(map_store_error)?;
+                            .map_err(map_message_error)?;
                     }
 
                     let api_msg: api_messages::Message = msg.item.into();
@@ -266,28 +256,19 @@ pub async fn receive_messages(
     }
 }
 
-fn map_send_message_error(err: SendMessageError) -> ApiError {
+fn map_message_error(err: MessageError) -> ApiError {
     match err {
-        SendMessageError::RecipientNotFound { actor_name } => {
+        MessageError::RecipientNotFound { actor_name } => {
             error!(recipient = %actor_name, "recipient not found");
             ApiError::not_found(format!("recipient '{actor_name}' not found"))
         }
-        SendMessageError::Store { source } => {
+        MessageError::NotFound { message_id } => {
+            error!(message_id = %message_id, "message not found");
+            ApiError::not_found(format!("message '{message_id}' not found"))
+        }
+        MessageError::Store { source } => {
             error!(error = %source, "message store operation failed");
             ApiError::internal(anyhow!("message store error: {source}"))
-        }
-    }
-}
-
-fn map_store_error(err: StoreError) -> ApiError {
-    match err {
-        StoreError::MessageNotFound(id) => {
-            error!(message_id = %id, "message not found");
-            ApiError::not_found(format!("message '{id}' not found"))
-        }
-        other => {
-            error!(error = %other, "message store operation failed");
-            ApiError::internal(anyhow!("message store error: {other}"))
         }
     }
 }
