@@ -1,13 +1,13 @@
 import { useCallback } from "react";
 import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
-import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, IssueType, JobSummaryRecord } from "@metis/api";
 import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
 import styles from "./IssueRow.module.css";
 
-const typeChipClass: Record<string, string> = {
+const typeChipClass: Record<IssueType, string> = {
   task: styles.task,
   bug: styles.bug,
   feature: styles.feature,
