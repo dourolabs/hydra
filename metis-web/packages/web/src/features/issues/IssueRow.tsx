@@ -60,6 +60,7 @@ export function IssueRow({
       <span className={styles.topRow}>
         <Badge status={issueToBadgeStatus(issue.status)} />
         <span className={`${styles.typeChip} ${chipClass}`}>{issue.type}</span>
+        {blocked && <span className={styles.blockedLabel}>BLOCKED</span>}
         <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
         {jobSummaries && jobSummaries.length > 0 && (
           <span
