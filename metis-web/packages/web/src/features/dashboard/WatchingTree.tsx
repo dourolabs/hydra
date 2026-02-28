@@ -56,129 +56,39 @@ function formatSummary(summary: SubtreeSummary): string {
   return parts.join(", ");
 }
 
-function formatTerminalSummary(nodes: IssueTreeNode[]): string {
-  const counts: Record<string, number> = {};
-  for (const node of nodes) {
-    const status = node.issue.issue.status;
-    counts[status] = (counts[status] || 0) + 1;
-  }
-  const order = Array.from(TERMINAL_STATUSES);
-  const parts: string[] = [];
-  for (const status of order) {
-    if (counts[status]) {
-      parts.push(`${counts[status]} ${status}`);
-    }
-  }
-  return parts.join(", ");
-}
-
-interface TerminalToggleOpts {
-  expandedTerminalIds: Set<string>;
-  onToggleTerminal: (id: string) => void;
-}
-
 /**
  * Convert IssueTreeNodes to TreeView-compatible TreeNodes using IssueRow labels.
- * Terminal-state children are hidden by default behind an expandable summary.
+ * All visible (non-hard-blocked) children are rendered inline regardless of status.
  */
 function issueNodesToTreeNodes(
   nodes: IssueTreeNode[],
-  parentId: string,
   jobsByIssue: Map<string, JobSummaryRecord[]>,
   onJobClick: (issueId: string, jobId: string) => void,
-  terminalOpts: TerminalToggleOpts,
   username: string,
 ): TreeNode[] {
-  const visible = nodes.filter((n) => !n.hardBlocked);
-  const activeNodes = visible.filter(
-    (n) => !TERMINAL_STATUSES.has(n.issue.issue.status),
-  );
-  const terminalNodes = visible.filter((n) =>
-    TERMINAL_STATUSES.has(n.issue.issue.status),
-  );
-
-  const result: TreeNode[] = activeNodes.map((node) => ({
-    id: node.id,
-    label: (
-      <IssueRow
-        record={node.issue}
-        blocked={node.blocked}
-        jobs={jobsByIssue.get(node.id)}
-        onJobClick={onJobClick}
-      />
-    ),
-    className: node.issue.issue.assignee === username ? styles.assignedToMe : undefined,
-    children:
-      node.children.length > 0
-        ? issueNodesToTreeNodes(
-            node.children,
-            node.id,
-            jobsByIssue,
-            onJobClick,
-            terminalOpts,
-            username,
-          )
-        : undefined,
-  }));
-
-  if (terminalNodes.length > 0) {
-    const terminalExpanded = terminalOpts.expandedTerminalIds.has(parentId);
-    const summaryText = formatTerminalSummary(terminalNodes);
-
-    result.push({
-      id: `${parentId}--terminal`,
+  return nodes
+    .filter((n) => !n.hardBlocked)
+    .map((node) => ({
+      id: node.id,
       label: (
-        <span
-          className={styles.terminalSummary}
-          onClick={(e) => {
-            e.stopPropagation();
-            terminalOpts.onToggleTerminal(parentId);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              e.stopPropagation();
-              terminalOpts.onToggleTerminal(parentId);
-            }
-          }}
-          role="button"
-          tabIndex={0}
-        >
-          {terminalExpanded ? "\u25BE" : "\u25B8"} {summaryText}
-        </span>
+        <IssueRow
+          record={node.issue}
+          blocked={node.blocked}
+          jobs={jobsByIssue.get(node.id)}
+          onJobClick={onJobClick}
+        />
       ),
-    });
-
-    if (terminalExpanded) {
-      for (const node of terminalNodes) {
-        result.push({
-          id: node.id,
-          label: (
-            <IssueRow
-              record={node.issue}
-              blocked={node.blocked}
-              jobs={jobsByIssue.get(node.id)}
-              onJobClick={onJobClick}
-            />
-          ),
-          className: node.issue.issue.assignee === username ? styles.assignedToMe : undefined,
-          children:
-            node.children.length > 0
-              ? issueNodesToTreeNodes(
-                  node.children,
-                  node.id,
-                  jobsByIssue,
-                  onJobClick,
-                  terminalOpts,
-                  username,
-                )
-              : undefined,
-        });
-      }
-    }
-  }
-
-  return result;
+      className: node.issue.issue.assignee === username ? styles.assignedToMe : undefined,
+      children:
+        node.children.length > 0
+          ? issueNodesToTreeNodes(
+              node.children,
+              jobsByIssue,
+              onJobClick,
+              username,
+            )
+          : undefined,
+    }));
 }
 
 interface RootItemProps {
@@ -191,7 +101,6 @@ interface RootItemProps {
   subtreeCollapsedIds: Set<string>;
   handleSubtreeToggle: (id: string) => void;
   handleJobClick: (issueId: string, jobId: string) => void;
-  terminalOpts: TerminalToggleOpts;
   username: string;
 }
 
@@ -205,7 +114,6 @@ function RootItem({
   subtreeCollapsedIds,
   handleSubtreeToggle,
   handleJobClick,
-  terminalOpts,
   username,
 }: RootItemProps) {
   const summary = useMemo(() => summarizeSubtree(root), [root]);
@@ -216,13 +124,11 @@ function RootItem({
   // Build child TreeNodes based on expanded/collapsed state
   let childNodes: TreeNode[];
   if (expanded) {
-    // Expanded: show full tree with terminal children hidden behind summaries
+    // Expanded: show full tree with all children inline
     childNodes = issueNodesToTreeNodes(
       root.children,
-      root.id,
       jobsByIssue,
       handleJobClick,
-      terminalOpts,
       username,
     );
   } else {
@@ -291,26 +197,12 @@ export function WatchingTree({
   const [expandedRoots, setExpandedRoots] = useState<Set<string>>(new Set());
   // Stable collapse state for subtree nodes — survives SSE-driven re-renders
   const [subtreeCollapsedIds, setSubtreeCollapsedIds] = useState<Set<string>>(new Set());
-  const [expandedTerminalIds, setExpandedTerminalIds] = useState<Set<string>>(new Set());
-
   const handleJobClick = useCallback(
     (issueId: string, jobId: string) => {
       navigate(`/issues/${issueId}/jobs/${jobId}/logs`);
     },
     [navigate],
   );
-
-  const handleToggleTerminal = useCallback((id: string) => {
-    setExpandedTerminalIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }, []);
 
   const handleSubtreeToggle = useCallback((id: string) => {
     setSubtreeCollapsedIds((prev) => {
@@ -361,7 +253,6 @@ export function WatchingTree({
           subtreeCollapsedIds={subtreeCollapsedIds}
           handleSubtreeToggle={handleSubtreeToggle}
           handleJobClick={handleJobClick}
-          terminalOpts={{ expandedTerminalIds, onToggleTerminal: handleToggleTerminal }}
           username={username}
         />
       ))}

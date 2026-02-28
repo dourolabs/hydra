@@ -1,13 +1,13 @@
 import { useCallback } from "react";
 import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
-import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, IssueType, JobSummaryRecord } from "@metis/api";
 import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
 import styles from "./IssueRow.module.css";
 
-const typeChipClass: Record<string, string> = {
+const typeChipClass: Record<IssueType, string> = {
   task: styles.task,
   bug: styles.bug,
   feature: styles.feature,
@@ -25,7 +25,6 @@ interface IssueRowProps {
   onJobClick?: (issueId: string, jobId: string) => void;
   showId?: boolean;
   showTimestamp?: boolean;
-  timestamp?: string;
 }
 
 export function IssueRow({
@@ -36,7 +35,6 @@ export function IssueRow({
   onJobClick,
   showId,
   showTimestamp,
-  timestamp,
 }: IssueRowProps) {
   const { issue } = record;
 
@@ -53,13 +51,14 @@ export function IssueRow({
   if (dimmed) classNames.push(styles.dimmed);
   if (blocked) classNames.push(styles.blocked);
 
-  const chipClass = typeChipClass[issue.type] ?? styles.unknown;
+  const chipClass = typeChipClass[issue.type];
 
   return (
     <span className={classNames.join(" ")}>
       <span className={styles.topRow}>
         <Badge status={issueToBadgeStatus(issue.status)} />
         <span className={`${styles.typeChip} ${chipClass}`}>{issue.type}</span>
+        {blocked && <span className={styles.blockedLabel}>BLOCKED</span>}
         <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
         {jobSummaries && jobSummaries.length > 0 && (
           <span
@@ -75,8 +74,8 @@ export function IssueRow({
       {(showId || showTimestamp) && (
         <span className={styles.bottomRow}>
           {showId && <span className={styles.issueId}>{record.issue_id}</span>}
-          {showTimestamp && timestamp && (
-            <span className={styles.timestamp}>{formatRelativeTime(timestamp)}</span>
+          {showTimestamp && record.timestamp && (
+            <span className={styles.timestamp}>{formatRelativeTime(record.timestamp)}</span>
           )}
         </span>
       )}

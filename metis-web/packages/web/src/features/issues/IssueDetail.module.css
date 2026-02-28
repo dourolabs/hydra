@@ -8,6 +8,8 @@
 .sectionBody { composes: sectionBody from '../detail.module.css'; }
 .empty { composes: empty from '../detail.module.css'; }
 
+.progressBody { composes: progressBody from '../detail.module.css'; }
+
 .issueId {
   color: var(--color-accent);
   font-size: var(--font-size-xl);
@@ -20,4 +22,53 @@
   font-size: var(--font-size-sm);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.blockedBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-status-blocked);
+  background: rgba(204, 102, 255, 0.08);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  flex-wrap: wrap;
+}
+
+.blockedBannerIcon {
+  flex-shrink: 0;
+}
+
+.blockedBannerLabel {
+  font-weight: 600;
+  color: var(--color-status-blocked);
+  flex-shrink: 0;
+}
+
+.blockingIssue {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.blockingIssueLink {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.blockingIssueLink:hover {
+  text-decoration: underline;
+}
+
+.blockingIssueStatus {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.blockedSeparator {
+  color: var(--color-text-tertiary);
+  margin: 0 var(--space-1);
 }

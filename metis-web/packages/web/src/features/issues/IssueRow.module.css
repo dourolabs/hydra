@@ -29,37 +29,37 @@
 
 .typeChip.task {
   color: var(--color-status-open);
-  background: rgba(74, 158, 255, 0.12);
+  background: var(--color-status-open-bg);
 }
 
 .typeChip.bug {
   color: var(--color-status-failed);
-  background: rgba(255, 68, 68, 0.12);
+  background: var(--color-status-failed-bg);
 }
 
 .typeChip.feature {
   color: var(--color-status-closed);
-  background: rgba(0, 204, 102, 0.12);
+  background: var(--color-status-closed-bg);
 }
 
 .typeChip.chore {
   color: var(--color-text-secondary);
-  background: rgba(136, 136, 136, 0.12);
+  background: var(--color-status-neutral-bg);
 }
 
 .typeChip.mergeRequest {
   color: var(--color-status-blocked);
-  background: rgba(204, 102, 255, 0.12);
+  background: var(--color-status-blocked-bg);
 }
 
 .typeChip.reviewRequest {
   color: var(--color-status-rejected);
-  background: rgba(255, 136, 0, 0.12);
+  background: var(--color-status-rejected-bg);
 }
 
 .typeChip.unknown {
   color: var(--color-text-secondary);
-  background: rgba(136, 136, 136, 0.12);
+  background: var(--color-status-neutral-bg);
 }
 
 .desc {
@@ -101,7 +101,21 @@
 }
 
 .blocked {
-  opacity: 0.5;
+  opacity: 0.6;
+}
+
+.blockedLabel {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  line-height: 1.4;
+  color: var(--color-status-blocked);
+  background: rgba(204, 102, 255, 0.12);
 }
 
 @media (max-width: 768px) {

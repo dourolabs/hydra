@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
+import { useIssue } from "./useIssue";
 import { IssueTodoList } from "./IssueTodoList";
 import { IssueChildren } from "./IssueChildren";
 import { IssueActivity } from "./IssueActivity";
@@ -10,6 +12,23 @@ import { JobList } from "../jobs/JobList";
 import { PatchList } from "../patches/PatchList";
 import { IssueSettings } from "./IssueSettings";
 import styles from "./IssueDetail.module.css";
+
+function BlockingIssueLink({ issueId }: { issueId: string }) {
+  const { data: record } = useIssue(issueId);
+  return (
+    <span className={styles.blockingIssue}>
+      <Link to={`/issues/${issueId}`} className={styles.blockingIssueLink}>
+        {issueId}
+      </Link>
+      {record && (
+        <>
+          <Badge status={issueToBadgeStatus(record.issue.status)} />
+          <span className={styles.blockingIssueStatus}>({record.issue.status})</span>
+        </>
+      )}
+    </span>
+  );
+}
 
 interface IssueDetailProps {
   record: IssueVersionRecord;
@@ -28,6 +47,14 @@ export function IssueDetail({ record }: IssueDetailProps) {
   const [activeTab, setActiveTab] = useState("children");
   const { issue } = record;
 
+  const blockedOnIds = useMemo(
+    () =>
+      issue.dependencies
+        .filter((d) => d.type === "blocked-on")
+        .map((d) => d.issue_id),
+    [issue.dependencies],
+  );
+
   return (
     <div className={styles.detail}>
       {/* Header: ID + Status */}
@@ -36,6 +63,20 @@ export function IssueDetail({ record }: IssueDetailProps) {
         <Badge status={issueToBadgeStatus(issue.status)} />
         <span className={styles.type}>{issue.type}</span>
       </div>
+
+      {/* Blocked-by banner */}
+      {blockedOnIds.length > 0 && (
+        <div className={styles.blockedBanner}>
+          <span className={styles.blockedBannerIcon}>⚠</span>
+          <span className={styles.blockedBannerLabel}>Blocked by:</span>
+          {blockedOnIds.map((id, idx) => (
+            <span key={id}>
+              {idx > 0 && <span className={styles.blockedSeparator}>·</span>}
+              <BlockingIssueLink issueId={id} />
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Metadata */}
       <div className={styles.meta}>
@@ -79,7 +120,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
       {/* Progress */}
       {issue.progress && (
         <Panel header={<span className={styles.sectionTitle}>Progress</span>}>
-          <div className={styles.sectionBody}>
+          <div className={styles.progressBody}>
             <MarkdownViewer content={issue.progress} />
           </div>
         </Panel>
