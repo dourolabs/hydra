@@ -111,6 +111,11 @@ enum Commands {
         #[command(subcommand)]
         command: command::messages::MessagesCommand,
     },
+    /// Manage notifications.
+    Notifications {
+        #[command(subcommand)]
+        command: command::notifications::NotificationsCommand,
+    },
     /// Manage service repositories.
     Repos {
         #[command(subcommand)]
@@ -227,6 +232,9 @@ async fn dispatch(
         }
         Commands::Issues { command } => command::issues::run(client, command, context).await?,
         Commands::Messages { command } => command::messages::run(client, command, context).await?,
+        Commands::Notifications { command } => {
+            command::notifications::run(client, command, context).await?
+        }
         Commands::Repos { command } => command::repos::run(client, command, context).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
         Commands::Chat {
