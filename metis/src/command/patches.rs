@@ -719,34 +719,70 @@ async fn merge_patch(
             .context("GitHub token required to merge via GitHub API")?;
         let octocrab_client = metis_common::github::build_octocrab_client(&github_token)?;
 
-        let merge_result = octocrab_client
-            .pulls(&github_pr.owner, &github_pr.repo)
-            .merge(github_pr.number)
-            .method(octocrab::params::pulls::MergeMethod::Squash)
-            .title(format!("{} ({})", patch.title, patch_id))
-            .message(patch.description.clone())
-            .send()
-            .await;
+        const MAX_API_MERGE_ATTEMPTS: u32 = 3;
+        let mut last_error = None;
 
-        match merge_result {
-            Ok(_) => {
-                let mut merged_patch = patch.clone();
-                merged_patch.status = PatchStatus::Merged;
-                client
-                    .update_patch(&patch_id, &UpsertPatchRequest::new(merged_patch))
-                    .await
-                    .with_context(|| {
-                        format!("failed to update patch '{patch_id}' status to Merged")
-                    })?;
-                println!("Patch '{patch_id}' merged successfully via GitHub API.");
-                return Ok(());
+        for attempt in 1..=MAX_API_MERGE_ATTEMPTS {
+            let merge_result = octocrab_client
+                .pulls(&github_pr.owner, &github_pr.repo)
+                .merge(github_pr.number)
+                .method(octocrab::params::pulls::MergeMethod::Squash)
+                .title(format!("{} ({})", patch.title, patch_id))
+                .message(patch.description.clone())
+                .send()
+                .await;
+
+            match merge_result {
+                Ok(_) => {
+                    let mut merged_patch = patch.clone();
+                    merged_patch.status = PatchStatus::Merged;
+                    client
+                        .update_patch(&patch_id, &UpsertPatchRequest::new(merged_patch))
+                        .await
+                        .with_context(|| {
+                            format!("failed to update patch '{patch_id}' status to Merged")
+                        })?;
+                    println!("Patch '{patch_id}' merged successfully via GitHub API.");
+                    return Ok(());
+                }
+                Err(e) => {
+                    let is_transient = match &e {
+                        octocrab::Error::GitHub { source, .. } => {
+                            source.status_code.is_server_error()
+                        }
+                        octocrab::Error::Http { .. }
+                        | octocrab::Error::Service { .. }
+                        | octocrab::Error::Hyper { .. } => true,
+                        _ => false,
+                    };
+
+                    if !is_transient || attempt == MAX_API_MERGE_ATTEMPTS {
+                        last_error = Some(e);
+                        break;
+                    }
+
+                    eprintln!(
+                        "GitHub API merge attempt {attempt}/{MAX_API_MERGE_ATTEMPTS} failed \
+                         (transient error), retrying..."
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
             }
-            Err(e) => {
-                bail!(
-                    "Error: GitHub API merge failed for patch {patch_id} (PR #{}).\n\n{e}",
-                    github_pr.number
-                );
-            }
+        }
+
+        if let Some(e) = last_error {
+            bail!(
+                "Error: GitHub API merge failed for patch {patch_id} \
+                 (PR #{pr_number} in {owner}/{repo}).\n\n\
+                 This could be due to merge conflicts with the target branch. To resolve:\n\
+                 1. Check the PR on GitHub: https://github.com/{owner}/{repo}/pull/{pr_number}\n\
+                 2. Rebase your changes onto the target branch if needed\n\
+                 3. Try merging again: metis patches merge {patch_id}\n\n\
+                 Underlying error: {e}",
+                pr_number = github_pr.number,
+                owner = github_pr.owner,
+                repo = github_pr.repo,
+            );
         }
     }
 
