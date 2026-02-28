@@ -13,6 +13,9 @@ use metis_common::{
         ListMessagesResponse, ReceiveMessagesQuery, SearchMessagesQuery, SendMessageRequest,
         SendMessageResponse,
     },
+    api::v1::notifications::{
+        ListNotificationsQuery, ListNotificationsResponse, MarkReadResponse, UnreadCountResponse,
+    },
     documents::{
         DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
         SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
@@ -42,7 +45,7 @@ use metis_common::{
     },
     users::UserSummary,
     whoami::WhoAmIResponse,
-    ActorId, DocumentId, IssueId, PatchId, RelativeVersionNumber, RepoName, TaskId,
+    ActorId, DocumentId, IssueId, NotificationId, PatchId, RelativeVersionNumber, RepoName, TaskId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
 use sse::SseEventStream;
@@ -259,6 +262,20 @@ pub trait MetisClientInterface: Send + Sync {
     async fn send_message(&self, request: &SendMessageRequest) -> Result<SendMessageResponse>;
     async fn list_messages(&self, query: &SearchMessagesQuery) -> Result<ListMessagesResponse>;
     async fn receive_messages(&self, query: &ReceiveMessagesQuery) -> Result<ListMessagesResponse>;
+
+    async fn list_notifications(
+        &self,
+        query: &ListNotificationsQuery,
+    ) -> Result<ListNotificationsResponse>;
+    async fn get_unread_notification_count(&self) -> Result<UnreadCountResponse>;
+    async fn mark_notification_read(
+        &self,
+        notification_id: &NotificationId,
+    ) -> Result<MarkReadResponse>;
+    async fn mark_all_notifications_read(
+        &self,
+        before: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<MarkReadResponse>;
 
     /// Resolve the current actor's ID from the auth context.
     async fn current_actor_id(&self) -> Result<ActorId> {
@@ -1550,6 +1567,100 @@ impl MetisClient {
             .context("failed to decode receive messages response")
     }
 
+    /// Call `GET /v1/notifications` to list notifications.
+    pub async fn list_notifications(
+        &self,
+        query: &ListNotificationsQuery,
+    ) -> Result<ListNotificationsResponse> {
+        let url = self.endpoint("/v1/notifications")?;
+        let response = self
+            .authed(self.http.get(url))
+            .query(query)
+            .send()
+            .await
+            .context("failed to fetch notifications")?
+            .error_for_status_with_body(
+                "metis-server returned an error while listing notifications",
+            )
+            .await?;
+
+        response
+            .json::<ListNotificationsResponse>()
+            .await
+            .context("failed to decode list notifications response")
+    }
+
+    /// Call `GET /v1/notifications/unread-count` to get the unread notification count.
+    pub async fn get_unread_notification_count(&self) -> Result<UnreadCountResponse> {
+        let url = self.endpoint("/v1/notifications/unread-count")?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch unread notification count")?
+            .error_for_status_with_body(
+                "metis-server returned an error while fetching unread count",
+            )
+            .await?;
+
+        response
+            .json::<UnreadCountResponse>()
+            .await
+            .context("failed to decode unread count response")
+    }
+
+    /// Call `POST /v1/notifications/{id}/read` to mark a notification as read.
+    pub async fn mark_notification_read(
+        &self,
+        notification_id: &NotificationId,
+    ) -> Result<MarkReadResponse> {
+        let path = format!("/v1/notifications/{notification_id}/read");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.post(url))
+            .send()
+            .await
+            .context("failed to mark notification as read")?
+            .error_for_status_with_body(
+                "metis-server returned an error while marking notification read",
+            )
+            .await?;
+
+        response
+            .json::<MarkReadResponse>()
+            .await
+            .context("failed to decode mark read response")
+    }
+
+    /// Call `POST /v1/notifications/read-all` to mark all notifications as read.
+    pub async fn mark_all_notifications_read(
+        &self,
+        before: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<MarkReadResponse> {
+        let url = self.endpoint("/v1/notifications/read-all")?;
+        let mut request = self.authed(self.http.post(url));
+        if let Some(before) = before {
+            #[derive(serde::Serialize)]
+            struct MarkAllReadQuery {
+                before: chrono::DateTime<chrono::Utc>,
+            }
+            request = request.query(&MarkAllReadQuery { before });
+        }
+        let response = request
+            .send()
+            .await
+            .context("failed to mark all notifications as read")?
+            .error_for_status_with_body(
+                "metis-server returned an error while marking all notifications read",
+            )
+            .await?;
+
+        response
+            .json::<MarkReadResponse>()
+            .await
+            .context("failed to decode mark all read response")
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -1962,6 +2073,31 @@ impl MetisClientInterface for MetisClient {
 
     async fn receive_messages(&self, query: &ReceiveMessagesQuery) -> Result<ListMessagesResponse> {
         MetisClient::receive_messages(self, query).await
+    }
+
+    async fn list_notifications(
+        &self,
+        query: &ListNotificationsQuery,
+    ) -> Result<ListNotificationsResponse> {
+        MetisClient::list_notifications(self, query).await
+    }
+
+    async fn get_unread_notification_count(&self) -> Result<UnreadCountResponse> {
+        MetisClient::get_unread_notification_count(self).await
+    }
+
+    async fn mark_notification_read(
+        &self,
+        notification_id: &NotificationId,
+    ) -> Result<MarkReadResponse> {
+        MetisClient::mark_notification_read(self, notification_id).await
+    }
+
+    async fn mark_all_notifications_read(
+        &self,
+        before: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<MarkReadResponse> {
+        MetisClient::mark_all_notifications_read(self, before).await
     }
 }
 
