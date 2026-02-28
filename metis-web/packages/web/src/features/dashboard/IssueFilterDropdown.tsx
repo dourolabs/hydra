@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import type { IssueTreeNode } from "../issues/useIssues";
 import { descriptionSnippet } from "../../utils/text";
 import { computeIssueProgress } from "./activityUtils";
-import styles from "./WatchlistSidebar.module.css";
+import styles from "./IssueFilterDropdown.module.css";
 
 interface IssueFilterProps {
   roots: IssueTreeNode[];

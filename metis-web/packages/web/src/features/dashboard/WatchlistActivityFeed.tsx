@@ -11,7 +11,7 @@ import {
   type ActivityItem,
   type ActivitySection,
 } from "./activityUtils";
-import { IssueFilterDropdown } from "./WatchlistSidebar";
+import { IssueFilterDropdown } from "./IssueFilterDropdown";
 import styles from "./WatchlistActivityFeed.module.css";
 
 interface WatchlistActivityFeedProps {
