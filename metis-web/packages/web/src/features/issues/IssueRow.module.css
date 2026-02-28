@@ -115,7 +115,7 @@
   text-transform: uppercase;
   line-height: 1.4;
   color: var(--color-status-blocked);
-  background: rgba(204, 102, 255, 0.12);
+  background: var(--color-status-blocked-bg);
 }
 
 @media (max-width: 768px) {
