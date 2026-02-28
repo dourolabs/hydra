@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useLayoutEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
@@ -100,6 +100,18 @@ function ProgressValue({ value }: { value: string }) {
     if (el) {
       setTruncated(el.scrollHeight > el.clientHeight);
     }
+  }, [value]);
+
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver(() => {
+      setTruncated(el.scrollHeight > el.clientHeight);
+    });
+    observer.observe(el);
+
+    return () => observer.disconnect();
   }, [value]);
 
   const toggle = useCallback(() => setExpanded((v) => !v), []);
