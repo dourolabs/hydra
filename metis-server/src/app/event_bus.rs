@@ -3,6 +3,7 @@ use crate::domain::{
     documents::Document,
     issues::{Issue, IssueGraphFilter},
     messages::Message,
+    notifications::Notification,
     patches::Patch,
     users::{User, Username},
 };
@@ -16,7 +17,8 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    api::v1::notifications::ListNotificationsQuery,
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -1073,6 +1075,19 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchMessagesQuery,
     ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
         self.inner.list_messages(query).await
+    }
+
+    // ---- Notification (read-only) ----
+
+    async fn list_notifications(
+        &self,
+        query: &ListNotificationsQuery,
+    ) -> Result<Vec<(NotificationId, Notification)>, StoreError> {
+        self.inner.list_notifications(query).await
+    }
+
+    async fn count_unread_notifications(&self, recipient: &ActorId) -> Result<u64, StoreError> {
+        self.inner.count_unread_notifications(recipient).await
     }
 }
 

@@ -1,8 +1,9 @@
 use crate::domain::{
-    actors::{Actor, ActorError, ActorRef},
+    actors::{Actor, ActorError, ActorId, ActorRef},
     documents::Document,
     issues::{Issue, IssueGraphFilter},
     messages::Message,
+    notifications::Notification,
     patches::Patch,
     task_status::Event,
     users::{User, Username},
@@ -16,7 +17,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, MessageId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, IssueId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber,
+    Versioned,
+    api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use std::collections::{HashMap, HashSet};
@@ -106,6 +109,8 @@ pub enum StoreError {
     DocumentNotFound(DocumentId),
     #[error("Message not found: {0}")]
     MessageNotFound(MessageId),
+    #[error("Notification not found: {0}")]
+    NotificationNotFound(NotificationId),
     #[error("Invalid dependency: {0}")]
     InvalidDependency(IssueId),
     #[error("Invalid issue status: {0}")]
@@ -356,6 +361,19 @@ pub trait ReadOnlyStore: Send + Sync {
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError>;
 
+    // ---- Notification (read-only) ----
+
+    /// Lists notifications matching the query, returning each notification with its ID.
+    ///
+    /// Results are ordered by `created_at DESC` (most recent first).
+    async fn list_notifications(
+        &self,
+        query: &ListNotificationsQuery,
+    ) -> Result<Vec<(NotificationId, Notification)>, StoreError>;
+
+    /// Counts unread notifications for the given recipient.
+    async fn count_unread_notifications(&self, recipient: &ActorId) -> Result<u64, StoreError>;
+
     // ---- Message (read-only) ----
 
     /// Retrieves a message by its MessageId. Returns the latest version.
@@ -568,6 +586,27 @@ pub trait Store: ReadOnlyStore {
     /// but will be filtered from `get_user` with `include_deleted: false` and from
     /// `list_users` by default (unless `include_deleted: true` is in the query).
     async fn delete_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError>;
+
+    // ---- Notification mutations ----
+
+    /// Inserts a new notification and returns the generated NotificationId.
+    async fn insert_notification(
+        &self,
+        notification: Notification,
+    ) -> Result<NotificationId, StoreError>;
+
+    /// Marks a single notification as read.
+    async fn mark_notification_read(&self, id: &NotificationId) -> Result<(), StoreError>;
+
+    /// Marks all notifications as read for the given recipient.
+    ///
+    /// If `before` is provided, only notifications created before that timestamp are marked.
+    /// Returns the number of notifications that were marked as read.
+    async fn mark_all_notifications_read(
+        &self,
+        recipient: &ActorId,
+        before: Option<DateTime<Utc>>,
+    ) -> Result<u64, StoreError>;
 
     // ---- Message mutations ----
 
