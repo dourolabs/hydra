@@ -85,6 +85,8 @@ export function collectActivityItems(
     parentId: string,
     parentDesc: string,
   ) {
+    if (node.hardBlocked) return;
+
     const state = classifyActivity(node, jobsByIssue);
     const jobs = jobsByIssue.get(node.id) ?? [];
     const activeJob = jobs.find(
@@ -198,6 +200,7 @@ export function computeIssueProgress(
 
     function walk(node: IssueTreeNode) {
       for (const child of node.children) {
+        if (child.hardBlocked) continue;
         progress.total++;
         const state = classifyActivity(child, jobsByIssue);
         switch (state) {
