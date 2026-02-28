@@ -136,6 +136,7 @@ export function DashboardPage() {
           onFilterChange={setFilterRootId}
           collapsed={sidebarCollapsed}
           onToggleCollapsed={setSidebarCollapsed}
+          jobsByIssue={jobsByIssue ?? new Map()}
         />
         <SplitLayout
           left={leftPane}

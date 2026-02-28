@@ -624,4 +624,75 @@ describe("computeIssueProgress", () => {
     expect(result[0].rootId).toBe("my-root");
     expect(result[0].rootIssue).toBe(root.issue);
   });
+
+  it("hasActive is false when no jobsByIssue is provided", () => {
+    const root = makeNode({
+      id: "root",
+      children: [makeNode({ id: "c1", status: "open" })],
+    });
+    const result = computeIssueProgress([root]);
+    expect(result[0].hasActive).toBe(false);
+  });
+
+  it("hasActive is false when jobsByIssue is empty", () => {
+    const root = makeNode({
+      id: "root",
+      children: [makeNode({ id: "c1", status: "open" })],
+    });
+    const jobs = new Map<string, JobSummaryRecord[]>();
+    const result = computeIssueProgress([root], jobs);
+    expect(result[0].hasActive).toBe(false);
+  });
+
+  it("hasActive is true when root itself has a running job", () => {
+    const root = makeNode({
+      id: "root",
+      children: [makeNode({ id: "c1", status: "open" })],
+    });
+    const jobs = new Map([["root", [makeJob({ status: "running" })]]]);
+    const result = computeIssueProgress([root], jobs);
+    expect(result[0].hasActive).toBe(true);
+  });
+
+  it("hasActive is true when a direct child has a pending job", () => {
+    const child = makeNode({ id: "c1", status: "open" });
+    const root = makeNode({ id: "root", children: [child] });
+    const jobs = new Map([["c1", [makeJob({ status: "pending" })]]]);
+    const result = computeIssueProgress([root], jobs);
+    expect(result[0].hasActive).toBe(true);
+  });
+
+  it("hasActive is true when a grandchild has a running job (recursive)", () => {
+    const grandchild = makeNode({ id: "gc1", status: "open" });
+    const child = makeNode({ id: "c1", status: "open", children: [grandchild] });
+    const root = makeNode({ id: "root", children: [child] });
+    const jobs = new Map([["gc1", [makeJob({ status: "running" })]]]);
+    const result = computeIssueProgress([root], jobs);
+    expect(result[0].hasActive).toBe(true);
+  });
+
+  it("hasActive is false when all jobs are complete/failed (not running/pending)", () => {
+    const child = makeNode({ id: "c1", status: "open" });
+    const root = makeNode({ id: "root", children: [child] });
+    const jobs = new Map([
+      ["c1", [makeJob({ status: "complete" }), makeJob({ status: "failed" })]],
+    ]);
+    const result = computeIssueProgress([root], jobs);
+    expect(result[0].hasActive).toBe(false);
+  });
+
+  it("hasActive is independent per root", () => {
+    const root1 = makeNode({
+      id: "r1",
+      children: [makeNode({ id: "c1", status: "open" })],
+    });
+    const root2 = makeNode({
+      id: "r2",
+      children: [makeNode({ id: "c2", status: "open" })],
+    });
+    const jobs = new Map([["c1", [makeJob({ status: "running" })]]]);
+    const result = computeIssueProgress([root1, root2], jobs);
+    expect(result[0].hasActive).toBe(true);
+    expect(result[1].hasActive).toBe(false);
+  });
 });

@@ -93,9 +93,26 @@
 }
 
 .itemStats {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   flex-shrink: 0;
   font-size: var(--font-size-xxs);
   color: var(--color-text-tertiary);
+}
+
+.pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .item.active .itemStats {
@@ -105,6 +122,10 @@
 @media (prefers-reduced-motion: reduce) {
   .sidebar {
     transition: none;
+  }
+
+  .pulse {
+    animation: none;
   }
 }
 
