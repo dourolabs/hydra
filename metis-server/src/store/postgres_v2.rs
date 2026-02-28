@@ -771,8 +771,8 @@ impl PostgresStoreV2 {
         let query = format!(
             "INSERT INTO {TABLE_NOTIFICATIONS} \
              (id, recipient, source_actor, object_kind, object_id, object_version, \
-              event_type, summary, source_issue_id, policy, is_read) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+              event_type, summary, source_issue_id, policy, is_read, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -786,6 +786,7 @@ impl PostgresStoreV2 {
             .bind(&source_issue_str)
             .bind(&notification.policy)
             .bind(notification.is_read)
+            .bind(notification.created_at)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
