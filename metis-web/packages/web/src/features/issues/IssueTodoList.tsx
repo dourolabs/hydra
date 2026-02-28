@@ -11,15 +11,29 @@ interface IssueTodoListProps {
 
 export function IssueTodoList({ items }: IssueTodoListProps) {
   if (items.length === 0) {
-    return <p className={styles.empty}>No todo items.</p>;
+    return (
+      <div className={styles.empty}>
+        <p className={styles.emptyText}>No todo items.</p>
+        <p className={styles.emptyHint}>
+          Add one with{" "}
+          <code className={styles.emptyCode}>
+            metis issues todo ID --add &quot;description&quot;
+          </code>
+        </p>
+      </div>
+    );
   }
 
   return (
     <ul className={styles.list}>
       {items.map((item, i) => (
         <li key={i} className={styles.item}>
-          <span className={item.is_done ? styles.checkDone : styles.check}>
-            {item.is_done ? "\u2611" : "\u2610"}
+          <span className={item.is_done ? styles.checkboxDone : styles.checkbox}>
+            {item.is_done && (
+              <svg viewBox="0 0 12 12" className={styles.checkIcon}>
+                <path d="M2.5 6l3 3 4.5-5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
           </span>
           <span className={item.is_done ? styles.textDone : styles.text}>
             {item.description}

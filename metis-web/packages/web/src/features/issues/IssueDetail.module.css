@@ -8,6 +8,8 @@
 .sectionBody { composes: sectionBody from '../detail.module.css'; }
 .empty { composes: empty from '../detail.module.css'; }
 
+.progressBody { composes: progressBody from '../detail.module.css'; }
+
 .issueId {
   color: var(--color-accent);
   font-size: var(--font-size-xl);
