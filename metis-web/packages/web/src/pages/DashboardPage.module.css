@@ -5,6 +5,13 @@
   flex-direction: column;
 }
 
+.dashboardRow {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+}
+
 .center {
   display: flex;
   justify-content: center;

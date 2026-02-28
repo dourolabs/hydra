@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useMemo, useCallback } from "react";
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import { buildIssueTree } from "../issues/useIssues";
 import { descriptionSnippet } from "../../utils/text";
@@ -11,7 +11,6 @@ import {
   type ActivityItem,
   type ActivitySection,
 } from "./activityUtils";
-import { IssueFilterDropdown } from "./IssueFilterDropdown";
 import styles from "./WatchlistActivityFeed.module.css";
 
 interface WatchlistActivityFeedProps {
@@ -20,6 +19,7 @@ interface WatchlistActivityFeedProps {
   selectedId: string | null;
   onSelect: (issueId: string) => void;
   username: string;
+  filterRootId: string | null;
 }
 
 const indicatorClass: Record<ActivitySection, string> = {
@@ -115,9 +115,8 @@ export function WatchlistActivityFeed({
   selectedId,
   onSelect,
   username,
+  filterRootId,
 }: WatchlistActivityFeedProps) {
-  const [filterRootId, setFilterRootId] = useState<string | null>(null);
-
   const roots = useMemo(() => {
     const tree = buildIssueTree(issues);
     return tree
@@ -169,11 +168,6 @@ export function WatchlistActivityFeed({
   return (
     <div className={styles.container}>
       <div className={styles.summaryBar}>
-        <IssueFilterDropdown
-          roots={roots}
-          activeFilter={filterRootId}
-          onFilterChange={setFilterRootId}
-        />
         <span className={styles.summaryItem}>
           <span className={`${styles.summaryDot} ${styles.active}`} />
           {summary.activeCount} active
