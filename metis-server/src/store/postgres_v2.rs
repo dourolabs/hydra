@@ -4446,4 +4446,303 @@ mod tests {
         let results = store.list_messages(&query).await.unwrap();
         assert_eq!(results.len(), 2);
     }
+
+    // ---- Notification tests ----
+
+    fn sample_notification(recipient: ActorId) -> Notification {
+        Notification::new(
+            recipient,
+            Some(ActorId::Username(Username::from("alice").into())),
+            "issue".to_string(),
+            IssueId::new().into(),
+            1,
+            "updated".to_string(),
+            "Issue status changed".to_string(),
+            None,
+            "walk_up".to_string(),
+        )
+    }
+
+    fn make_notif_query(recipient: Option<String>) -> ListNotificationsQuery {
+        let mut q = ListNotificationsQuery::default();
+        q.recipient = recipient;
+        q
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn notification_insert_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let recipient = ActorId::Username(Username::from("bob").into());
+        let notif = sample_notification(recipient);
+
+        let id = store.insert_notification(notif).await.unwrap();
+        assert!(
+            id.as_ref().starts_with("nf-"),
+            "notification id should start with nf-, got: {id}"
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn notification_get_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let recipient = ActorId::Username(Username::from("bob").into());
+        let notif = sample_notification(recipient.clone());
+
+        let id = store.insert_notification(notif.clone()).await.unwrap();
+        let fetched = store.get_notification(&id).await.unwrap();
+
+        assert_eq!(fetched.recipient, recipient);
+        assert_eq!(
+            fetched.source_actor,
+            Some(ActorId::Username(Username::from("alice").into()))
+        );
+        assert_eq!(fetched.object_kind, "issue");
+        assert_eq!(fetched.object_version, 1);
+        assert_eq!(fetched.event_type, "updated");
+        assert_eq!(fetched.summary, "Issue status changed");
+        assert_eq!(fetched.source_issue_id, None);
+        assert_eq!(fetched.policy, "walk_up");
+        assert!(!fetched.is_read);
+        // created_at should be close to now (within a few seconds)
+        let elapsed = Utc::now() - fetched.created_at;
+        assert!(elapsed.num_seconds() < 10);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn notification_list_filters_by_recipient_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let alice = ActorId::Username(Username::from("alice").into());
+        let bob = ActorId::Username(Username::from("bob").into());
+
+        store
+            .insert_notification(sample_notification(alice.clone()))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(bob.clone()))
+            .await
+            .unwrap();
+
+        let query = make_notif_query(Some(alice.to_string()));
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.recipient, alice);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn notification_list_filters_by_is_read_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let notif1 = sample_notification(recipient.clone());
+        let id1 = store.insert_notification(notif1).await.unwrap();
+        let notif2 = sample_notification(recipient.clone());
+        let _id2 = store.insert_notification(notif2).await.unwrap();
+
+        // Mark one as read
+        store.mark_notification_read(&id1).await.unwrap();
+
+        // List unread only
+        let mut query = make_notif_query(Some(recipient.to_string()));
+        query.is_read = Some(false);
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].1.is_read);
+
+        // List read only
+        let mut query = make_notif_query(Some(recipient.to_string()));
+        query.is_read = Some(true);
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.is_read);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn notification_list_sorted_by_created_at_desc_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        let mut notif1 = sample_notification(recipient.clone());
+        notif1.created_at = Utc::now() - chrono::Duration::hours(2);
+        notif1.summary = "oldest".to_string();
+        store.insert_notification(notif1).await.unwrap();
+
+        let mut notif2 = sample_notification(recipient.clone());
+        notif2.created_at = Utc::now() - chrono::Duration::hours(1);
+        notif2.summary = "middle".to_string();
+        store.insert_notification(notif2).await.unwrap();
+
+        let mut notif3 = sample_notification(recipient.clone());
+        notif3.created_at = Utc::now();
+        notif3.summary = "newest".to_string();
+        store.insert_notification(notif3).await.unwrap();
+
+        let query = make_notif_query(Some(recipient.to_string()));
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].1.summary, "newest");
+        assert_eq!(results[1].1.summary, "middle");
+        assert_eq!(results[2].1.summary, "oldest");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn notification_list_respects_limit_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        for _ in 0..5 {
+            store
+                .insert_notification(sample_notification(recipient.clone()))
+                .await
+                .unwrap();
+        }
+
+        let mut query = make_notif_query(Some(recipient.to_string()));
+        query.limit = Some(3);
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn notification_count_unread_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        // Initially 0
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            0
+        );
+
+        // Insert 3 notifications
+        let id1 = store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            3
+        );
+
+        // Mark one as read
+        store.mark_notification_read(&id1).await.unwrap();
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            2
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn notification_mark_read_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let recipient = ActorId::Username(Username::from("bob").into());
+        let notif = sample_notification(recipient);
+        let id = store.insert_notification(notif).await.unwrap();
+
+        store.mark_notification_read(&id).await.unwrap();
+
+        let fetched = store.get_notification(&id).await.unwrap();
+        assert!(fetched.is_read);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn notification_mark_read_not_found_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let unknown_id: NotificationId = "nf-abcdef".parse().unwrap();
+        let result = store.mark_notification_read(&unknown_id).await;
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), StoreError::NotificationNotFound(_)),
+            "expected NotificationNotFound error"
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn notification_mark_all_read_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(recipient.clone()))
+            .await
+            .unwrap();
+
+        let marked = store
+            .mark_all_notifications_read(&recipient, None)
+            .await
+            .unwrap();
+        assert_eq!(marked, 3);
+
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            0
+        );
+
+        // Calling again returns 0 (all already read)
+        let marked = store
+            .mark_all_notifications_read(&recipient, None)
+            .await
+            .unwrap();
+        assert_eq!(marked, 0);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn notification_mark_all_read_with_before_filter_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let recipient = ActorId::Username(Username::from("bob").into());
+
+        // Insert notification with known created_at
+        let mut notif1 = sample_notification(recipient.clone());
+        notif1.created_at = Utc::now() - chrono::Duration::hours(2);
+        store.insert_notification(notif1).await.unwrap();
+
+        let mut notif2 = sample_notification(recipient.clone());
+        notif2.created_at = Utc::now() - chrono::Duration::hours(1);
+        store.insert_notification(notif2).await.unwrap();
+
+        let notif3 = sample_notification(recipient.clone());
+        store.insert_notification(notif3).await.unwrap();
+
+        // Mark only notifications before 30 minutes ago
+        let cutoff = Utc::now() - chrono::Duration::minutes(30);
+        let marked = store
+            .mark_all_notifications_read(&recipient, Some(cutoff))
+            .await
+            .unwrap();
+        assert_eq!(marked, 2);
+
+        // One still unread (the most recent)
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            1
+        );
+    }
 }
