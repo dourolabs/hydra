@@ -5,7 +5,12 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::ValueEnum;
 use metis_common::{
     agents::AgentRecord,
-    api::v1::messages::VersionedMessage,
+    api::v1::{
+        messages::VersionedMessage,
+        notifications::{
+            ListNotificationsResponse, MarkReadResponse, NotificationResponse, UnreadCountResponse,
+        },
+    },
     documents::{DocumentSummaryRecord, DocumentVersionRecord},
     issues::{Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord},
     jobs::{JobSummary, JobSummaryRecord, JobVersionRecord, Task},
@@ -13,6 +18,7 @@ use metis_common::{
     repositories::RepositoryRecord,
     task_status::{Status, TaskError},
     whoami::ActorIdentity,
+    NotificationId,
 };
 use owo_colors::OwoColorize;
 use textwrap::{termwidth, Options, WrapAlgorithm};
@@ -1002,6 +1008,119 @@ pub(crate) fn format_runtime_fields(
         }
         _ => None,
     }
+}
+
+pub fn render_notifications(
+    format: ResolvedOutputFormat,
+    response: &ListNotificationsResponse,
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            for notification in &response.notifications {
+                serde_json::to_writer(&mut *writer, notification)?;
+                writer.write_all(b"\n")?;
+            }
+            writer.flush()?;
+        }
+        ResolvedOutputFormat::Pretty => {
+            if response.notifications.is_empty() {
+                writeln!(writer, "No notifications.")?;
+            } else {
+                for (index, notification) in response.notifications.iter().enumerate() {
+                    write_notification_pretty(notification, writer)?;
+                    if index + 1 < response.notifications.len() {
+                        writeln!(writer)?;
+                    }
+                }
+            }
+            writer.flush()?;
+        }
+    }
+    Ok(())
+}
+
+fn write_notification_pretty(record: &NotificationResponse, writer: &mut impl Write) -> Result<()> {
+    let read_status = if record.notification.is_read {
+        "read"
+    } else {
+        "unread"
+    };
+    writeln!(
+        writer,
+        "Notification {} [{}]",
+        record.notification_id, read_status
+    )?;
+    writeln!(writer, "  summary: {}", record.notification.summary)?;
+    writeln!(
+        writer,
+        "  object: {} {}",
+        record.notification.object_kind, record.notification.object_id
+    )?;
+    writeln!(writer, "  event: {}", record.notification.event_type)?;
+    if let Some(ref source) = record.notification.source_actor {
+        writeln!(writer, "  source: {source}")?;
+    }
+    writeln!(writer, "  time: {}", record.notification.created_at)?;
+    Ok(())
+}
+
+pub fn render_unread_count(
+    format: ResolvedOutputFormat,
+    response: &UnreadCountResponse,
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            serde_json::to_writer(&mut *writer, response)?;
+            writer.write_all(b"\n")?;
+            writer.flush()?;
+        }
+        ResolvedOutputFormat::Pretty => {
+            writeln!(writer, "{} unread notifications.", response.count)?;
+            writer.flush()?;
+        }
+    }
+    Ok(())
+}
+
+pub fn render_mark_read(
+    format: ResolvedOutputFormat,
+    notification_id: &NotificationId,
+    response: &MarkReadResponse,
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            serde_json::to_writer(&mut *writer, response)?;
+            writer.write_all(b"\n")?;
+            writer.flush()?;
+        }
+        ResolvedOutputFormat::Pretty => {
+            writeln!(writer, "Notification {notification_id} marked as read.")?;
+            writer.flush()?;
+        }
+    }
+    Ok(())
+}
+
+pub fn render_mark_all_read(
+    format: ResolvedOutputFormat,
+    response: &MarkReadResponse,
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            serde_json::to_writer(&mut *writer, response)?;
+            writer.write_all(b"\n")?;
+            writer.flush()?;
+        }
+        ResolvedOutputFormat::Pretty => {
+            writeln!(writer, "{} notifications marked as read.", response.marked)?;
+            writer.flush()?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
