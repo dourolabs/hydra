@@ -178,6 +178,55 @@
   max-height: 300px;
 }
 
+/* Parent breadcrumb */
+.parentBreadcrumb {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.parentBreadcrumb a {
+  color: var(--color-text-tertiary);
+  text-decoration: none;
+  font-family: var(--font-family-mono);
+}
+
+.parentBreadcrumb a:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+/* Creation timestamp in header */
+.creationTime {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* Read-only progress section */
+.progressSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-left: 2px solid var(--color-accent-dim);
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+/* Children summary */
+.childrenSummary {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.childrenSummary a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.childrenSummary a:hover {
+  text-decoration: underline;
+}
+
 .emptyState {
   display: flex;
   align-items: center;
