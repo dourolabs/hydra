@@ -111,7 +111,7 @@
 }
 
 .stateIndicator.upcoming {
-  background: var(--color-status-open);
+  background: var(--color-text-tertiary);
 }
 
 .stateIndicator.completed {
@@ -157,7 +157,7 @@
 }
 
 .stateLabel.upcoming {
-  color: var(--color-status-open);
+  color: var(--color-text-tertiary);
 }
 
 .stateLabel.completed {
@@ -204,21 +204,6 @@
   text-align: center;
 }
 
-/* Completed/terminal section — visually separated from active items */
-.completedSection {
-  border-top: 2px solid var(--color-border);
-  flex-shrink: 0;
-  max-height: 30%;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.completedSection .feed {
-  flex: 1;
-  overflow-y: auto;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .stateIndicator.active {
     animation: none;
@@ -230,8 +215,4 @@
     max-width: 120px;
   }
 
-  /* Hide completed/terminal section on mobile */
-  .completedSection {
-    display: none;
-  }
 }

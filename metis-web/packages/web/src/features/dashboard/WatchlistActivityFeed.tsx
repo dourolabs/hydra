@@ -195,22 +195,16 @@ export function WatchlistActivityFeed({
           selectedId,
           handleItemClick,
         )}
+        {renderSection(
+          completedItems,
+          "Recently Completed",
+          selectedId,
+          handleItemClick,
+        )}
         {!hasActiveSection && completedItems.length === 0 && (
           <li className={styles.empty}>No activity yet.</li>
         )}
       </ul>
-      {completedItems.length > 0 && (
-        <div className={styles.completedSection}>
-          <ul className={styles.feed}>
-            {renderSection(
-              completedItems,
-              "Recently Completed",
-              selectedId,
-              handleItemClick,
-            )}
-          </ul>
-        </div>
-      )}
     </div>
   );
 }
