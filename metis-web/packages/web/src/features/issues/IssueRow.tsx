@@ -53,7 +53,7 @@ export function IssueRow({
   if (dimmed) classNames.push(styles.dimmed);
   if (blocked) classNames.push(styles.blocked);
 
-  const chipClass = typeChipClass[issue.type] ?? styles.unknown;
+  const chipClass = typeChipClass[issue.type];
 
   return (
     <span className={classNames.join(" ")}>
