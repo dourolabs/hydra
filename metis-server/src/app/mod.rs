@@ -31,7 +31,7 @@ pub use event_bus::{EventBus, ServerEvent, StoreWithEvents};
 pub use issues::{UpdateTodoListError, UpsertIssueError};
 pub use jobs::{CreateJobError, SetJobStatusError};
 pub(crate) use jobs::{WORKER_NAME_CLEANUP_ORPHANED_TASKS, WORKER_NAME_TASK_LIFECYCLE};
-pub use messages::SendMessageError;
+pub use messages::MessageError;
 pub use metis_common::repositories::{Repository, RepositoryRecord};
 pub use notifications::NotificationError;
 pub use patches::UpsertPatchError;
