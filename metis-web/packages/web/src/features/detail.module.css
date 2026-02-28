@@ -53,7 +53,7 @@
 .progressBody {
   padding: var(--space-4);
   background: var(--color-bg-tertiary);
-  border-left: 2px solid var(--color-accent-dim);
+  border-left: 2px solid var(--color-border);
 }
 
 .empty {
