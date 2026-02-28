@@ -237,8 +237,24 @@ pub fn checkout_new_branch(repo_root: &Path, branch: &str) -> Result<()> {
 pub fn stage_all_changes(repo_root: &Path) -> Result<()> {
     let repo = repo_for_path(repo_root)?;
     let mut index = repo.index().context("failed to open repository index")?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| anyhow!("repository has no working directory"))?
+        .to_path_buf();
     index
-        .add_all(["*"], IndexAddOption::DEFAULT, None)
+        .add_all(
+            ["*"],
+            IndexAddOption::DEFAULT,
+            Some(&mut |path: &Path, _matched_spec: &[u8]| -> i32 {
+                // Skip nested git repositories to avoid libgit2 "invalid path" errors
+                // when agents clone other repos inside the working directory.
+                let full_path = workdir.join(path);
+                if full_path.is_dir() && full_path.join(".git").exists() {
+                    return 1; // skip
+                }
+                0 // add
+            }),
+        )
         .context("failed to stage changes")?;
     index.write().context("failed to write staged changes")?;
     Ok(())
@@ -901,7 +917,7 @@ mod tests {
     };
     use tempfile::tempdir;
 
-    use super::{checkout_revision, fetch_revision, workdir_diff};
+    use super::{checkout_revision, fetch_revision, stage_all_changes, workdir_diff};
     use metis_common::EnvGuard;
 
     #[test]
@@ -1063,6 +1079,52 @@ mod tests {
                 .context("failed to peel HEAD")?;
             assert_eq!(head_commit.id(), oid);
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn stage_all_changes_skips_nested_git_repositories() -> Result<()> {
+        let tempdir = tempdir().context("failed to create tempdir")?;
+        let repo = Repository::init(tempdir.path()).context("failed to init repo")?;
+        let signature =
+            Signature::now("Nest Tester", "nest.tester@example.com").context("signature")?;
+
+        // Create an initial commit so HEAD exists.
+        let base_path = tempdir.path().join("base.txt");
+        std::fs::write(&base_path, "base\n")?;
+        commit_all(&repo, &signature, "init")?;
+
+        // Create a regular file that should be staged.
+        let regular_path = tempdir.path().join("regular.txt");
+        std::fs::write(&regular_path, "regular\n")?;
+
+        // Create a nested git repository that should be skipped.
+        let nested_dir = tempdir.path().join("nested").join("repo");
+        std::fs::create_dir_all(&nested_dir)?;
+        Repository::init(&nested_dir).context("failed to init nested repo")?;
+        std::fs::write(nested_dir.join("nested_file.txt"), "nested\n")?;
+
+        // stage_all_changes should succeed despite the nested repo.
+        stage_all_changes(tempdir.path())?;
+
+        // Re-open the repo to read the updated on-disk index.
+        let repo = Repository::open(tempdir.path()).context("failed to reopen repo")?;
+        let index = repo.index().context("failed to open index")?;
+
+        // Verify regular file is staged.
+        assert!(
+            index.get_path(Path::new("regular.txt"), 0).is_some(),
+            "regular.txt should be staged"
+        );
+
+        // Verify nested repo contents are not staged.
+        assert!(
+            index
+                .get_path(Path::new("nested/repo/nested_file.txt"), 0)
+                .is_none(),
+            "nested repo file should not be staged"
+        );
 
         Ok(())
     }
