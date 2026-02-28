@@ -6,8 +6,10 @@ import type { SelectOption } from "@metis/ui";
 import type { PatchVersionRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { issueToBadgeStatus, patchToBadgeStatus } from "../../utils/statusMapping";
+import { formatRelativeTime } from "../../utils/time";
 import { useDocumentByPath } from "../documents/useDocumentByPath";
 import { useIssue } from "../issues/useIssue";
+import { useIssues } from "../issues/useIssues";
 import { usePatchesByIssue } from "../patches/usePatchesByIssue";
 import { useToast } from "../toast/useToast";
 import styles from "./DetailPanel.module.css";
@@ -63,6 +65,31 @@ export function DetailPanel({ issueId }: DetailPanelProps) {
   const [searchParams] = useSearchParams();
   const activeTab = searchParams.get("tab") ?? "inbox";
 
+  // Extract parent issue ID from child-of dependency
+  const parentIssueId = useMemo(
+    () => issue?.dependencies.find((dep) => dep.type === "child-of")?.issue_id ?? null,
+    [issue],
+  );
+
+  // Fetch all issues to compute children summary
+  const { data: allIssues } = useIssues();
+  const childrenSummary = useMemo(() => {
+    if (!allIssues || !issue) return null;
+    const children = allIssues.filter((r) =>
+      r.issue.dependencies.some((dep) => dep.type === "child-of" && dep.issue_id === issueId),
+    );
+    if (children.length === 0) return null;
+
+    const counts: Record<string, number> = {};
+    for (const child of children) {
+      counts[child.issue.status] = (counts[child.issue.status] ?? 0) + 1;
+    }
+    const breakdown = Object.entries(counts)
+      .map(([s, c]) => `${c} ${s}`)
+      .join(", ");
+    return { total: children.length, breakdown };
+  }, [allIssues, issue, issueId]);
+
   const patchIds = issue?.patches ?? [];
   const { data: patches, isLoading: patchesLoading } = usePatchesByIssue(patchIds);
 
@@ -102,11 +129,24 @@ export function DetailPanel({ issueId }: DetailPanelProps) {
 
   return (
     <div className={styles.panel}>
+      {/* Parent breadcrumb */}
+      {parentIssueId && (
+        <div className={styles.parentBreadcrumb}>
+          <Link to={`/issues/${parentIssueId}?from=dashboard&tab=${activeTab}`}>{parentIssueId}</Link>
+          {" / "}
+        </div>
+      )}
+
       {/* Header */}
       <div className={styles.header}>
         <Link to={`/issues/${issueId}?from=dashboard&tab=${activeTab}`} className={styles.issueIdLink}>{issueId}</Link>
         <Badge status={issueToBadgeStatus(issue.status)} />
         <span className={styles.type}>{issue.type}</span>
+        {record && (
+          <span className={styles.creationTime} title={record.creation_time}>
+            {formatRelativeTime(record.creation_time)}
+          </span>
+        )}
         {issue.assignee && (
           <span className={styles.assignee}>
             <Avatar name={issue.assignee} size="sm" />
@@ -124,6 +164,25 @@ export function DetailPanel({ issueId }: DetailPanelProps) {
           <p className={styles.empty}>No description.</p>
         )}
       </div>
+
+      {/* Progress (read-only) */}
+      {issue.progress && (
+        <div className={styles.progressSection}>
+          <h3 className={styles.sectionTitle}>Progress</h3>
+          <MarkdownViewer content={issue.progress} />
+        </div>
+      )}
+
+      {/* Children summary */}
+      {childrenSummary && (
+        <div className={styles.childrenSummary}>
+          <Link to={`/issues/${issueId}?from=dashboard&tab=children`}>
+            {childrenSummary.total} {childrenSummary.total === 1 ? "child" : "children"}
+          </Link>
+          {": "}
+          {childrenSummary.breakdown}
+        </div>
+      )}
 
       {/* Document preview */}
       {docPath && (
