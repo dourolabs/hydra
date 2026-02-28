@@ -10,7 +10,8 @@ import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { SplitLayout } from "../layout/SplitLayout";
 import { InboxList } from "../features/dashboard/InboxList";
-import { WatchingTree } from "../features/dashboard/WatchingTree";
+import { WatchlistPipelineCards } from "../features/dashboard/WatchlistPipelineCards";
+import { usePatches } from "../features/patches/usePatches";
 import { CompletedTree } from "../features/dashboard/CompletedTree";
 import { useWatchingCount } from "../features/dashboard/useWatchingCount";
 import { useCompletedCount } from "../features/dashboard/useCompletedCount";
@@ -29,6 +30,7 @@ export function DashboardPage() {
   const { user } = useAuth();
   const { data: issues, isLoading } = useIssues();
   const { data: jobsByIssue } = useAllJobs();
+  const { data: patches } = usePatches();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get("selected");
@@ -163,9 +165,10 @@ export function DashboardPage() {
         />
       )}
       {activeTab === "watching" && (
-        <WatchingTree
+        <WatchlistPipelineCards
           issues={issues ?? []}
           jobsByIssue={jobsByIssue ?? new Map()}
+          patches={patches}
           selectedId={selectedId}
           onSelect={setSelectedId}
           username={username}

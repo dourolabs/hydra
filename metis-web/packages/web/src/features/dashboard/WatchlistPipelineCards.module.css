@@ -1,0 +1,271 @@
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.card {
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* ── Header row ──────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3);
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--color-text-primary);
+  transition: background var(--transition-fast);
+}
+
+.header:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.header.active {
+  background: var(--color-bg-secondary);
+  border-left: 2px solid var(--color-accent);
+}
+
+.chevron {
+  display: inline-block;
+  width: 12px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.description {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  min-width: 0;
+}
+
+.progress {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  color: var(--color-text-secondary);
+}
+
+.activityIndicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.activityDot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--color-status-in-progress);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.activityDotIdle {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--color-text-tertiary);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(240, 192, 64, 0.5);
+  }
+  50% {
+    opacity: 0.6;
+    box-shadow: 0 0 4px 2px rgba(240, 192, 64, 0.3);
+  }
+}
+
+/* ── Pipeline bar ────────────────────────────────────── */
+.pipelineBar {
+  display: flex;
+  height: 20px;
+  margin: 0 var(--space-3) var(--space-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--color-bg-tertiary);
+}
+
+.segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-xxs);
+  font-family: var(--font-family-mono);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  cursor: default;
+  position: relative;
+  min-width: 24px;
+  transition: filter var(--transition-fast);
+}
+
+.segment:hover {
+  filter: brightness(1.2);
+}
+
+.segmentOpen {
+  background-color: var(--color-status-open);
+}
+
+.segmentAgentWorking {
+  background-color: var(--color-status-in-progress);
+  animation: segmentPulse 2s ease-in-out infinite;
+}
+
+@keyframes segmentPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+.segmentAwaitingReview {
+  background-color: var(--color-status-blocked);
+}
+
+.segmentDone {
+  background-color: var(--color-status-closed);
+}
+
+.segmentFailed {
+  background-color: var(--color-status-failed);
+}
+
+/* ── Tooltip ─────────────────────────────────────────── */
+.tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  z-index: 100;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+  max-width: 280px;
+  max-height: 200px;
+  overflow: hidden;
+}
+
+.tooltipTitle {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+}
+
+.tooltipItem {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+/* ── Attention banner ────────────────────────────────── */
+.attentionBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: color-mix(in srgb, var(--color-status-blocked) 12%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-status-blocked);
+}
+
+/* ── Expandable subtask list ─────────────────────────── */
+.subtaskList {
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.stageGroup {
+  margin-bottom: var(--space-2);
+}
+
+.stageGroup:last-child {
+  margin-bottom: 0;
+}
+
+.stageLabel {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: var(--space-1) 0;
+}
+
+.subtaskRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--color-text-primary);
+  transition: background var(--transition-fast);
+}
+
+.subtaskRow:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.subtaskRow.subtaskActive {
+  background: var(--color-bg-secondary);
+  border-left: 2px solid var(--color-accent);
+}
+
+.empty {
+  color: var(--color-text-secondary);
+  text-align: center;
+  padding: var(--space-8) var(--space-4);
+  font-size: var(--font-size-sm);
+}
+
+/* ── Mobile ──────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .card {
+    border-radius: var(--radius-md);
+    background: var(--color-bg-secondary);
+    margin: var(--space-1) var(--space-2);
+    border-bottom: none;
+  }
+
+  .description {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+}
