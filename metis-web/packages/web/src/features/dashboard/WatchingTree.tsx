@@ -8,7 +8,6 @@ import {
   buildIssueTree,
   type IssueTreeNode,
 } from "../issues/useIssues";
-import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { treeHasActiveNode } from "./watchingUtils";
 import styles from "./WatchingTree.module.css";
 
@@ -24,21 +23,44 @@ interface SubtreeSummary {
   open: number;
   inProgress: number;
   closed: number;
+  failed: number;
+  dropped: number;
+  rejected: number;
 }
 
 function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
-  const summary: SubtreeSummary = { open: 0, inProgress: 0, closed: 0 };
+  const summary: SubtreeSummary = {
+    open: 0,
+    inProgress: 0,
+    closed: 0,
+    failed: 0,
+    dropped: 0,
+    rejected: 0,
+  };
 
   function walk(n: IssueTreeNode) {
     for (const child of n.children) {
       if (child.hardBlocked) continue;
       const status = child.issue.issue.status;
-      if (status === "in-progress") {
-        summary.inProgress++;
-      } else if (TERMINAL_STATUSES.has(status)) {
-        summary.closed++;
-      } else {
-        summary.open++;
+      switch (status) {
+        case "in-progress":
+          summary.inProgress++;
+          break;
+        case "closed":
+          summary.closed++;
+          break;
+        case "failed":
+          summary.failed++;
+          break;
+        case "dropped":
+          summary.dropped++;
+          break;
+        case "rejected":
+          summary.rejected++;
+          break;
+        default:
+          summary.open++;
+          break;
       }
       walk(child);
     }
@@ -48,12 +70,59 @@ function summarizeSubtree(node: IssueTreeNode): SubtreeSummary {
   return summary;
 }
 
-function formatSummary(summary: SubtreeSummary): string {
+function formatTooltip(summary: SubtreeSummary): string {
   const parts: string[] = [];
   if (summary.inProgress > 0) parts.push(`${summary.inProgress} in-progress`);
   if (summary.open > 0) parts.push(`${summary.open} open`);
   if (summary.closed > 0) parts.push(`${summary.closed} closed`);
+  if (summary.failed > 0) parts.push(`${summary.failed} failed`);
+  if (summary.dropped > 0) parts.push(`${summary.dropped} dropped`);
+  if (summary.rejected > 0) parts.push(`${summary.rejected} rejected`);
   return parts.join(", ");
+}
+
+const SEGMENT_CONFIG: { key: keyof SubtreeSummary; className: string }[] = [
+  { key: "inProgress", className: styles.segmentInProgress },
+  { key: "open", className: styles.segmentOpen },
+  { key: "closed", className: styles.segmentClosed },
+  { key: "failed", className: styles.segmentFailed },
+  { key: "dropped", className: styles.segmentDropped },
+  { key: "rejected", className: styles.segmentRejected },
+];
+
+function SegmentedProgressBar({ summary }: { summary: SubtreeSummary }) {
+  const total =
+    summary.open +
+    summary.inProgress +
+    summary.closed +
+    summary.failed +
+    summary.dropped +
+    summary.rejected;
+
+  if (total === 0) return null;
+
+  const done = summary.closed;
+  const tooltip = formatTooltip(summary);
+
+  return (
+    <div className={styles.progressContainer} title={tooltip}>
+      <div className={styles.progressBar}>
+        {SEGMENT_CONFIG.map(
+          ({ key, className }) =>
+            summary[key] > 0 && (
+              <div
+                key={key}
+                className={className}
+                style={{ width: `${(summary[key] / total) * 100}%` }}
+              />
+            ),
+        )}
+      </div>
+      <span className={styles.progressLabel}>
+        {done} / {total} done
+      </span>
+    </div>
+  );
 }
 
 /**
@@ -118,8 +187,13 @@ function RootItem({
 }: RootItemProps) {
   const summary = useMemo(() => summarizeSubtree(root), [root]);
 
-  const summaryText = formatSummary(summary);
-  const totalChildren = summary.open + summary.inProgress + summary.closed;
+  const totalChildren =
+    summary.open +
+    summary.inProgress +
+    summary.closed +
+    summary.failed +
+    summary.dropped +
+    summary.rejected;
 
   // Build child TreeNodes based on expanded/collapsed state
   let childNodes: TreeNode[];
@@ -167,9 +241,7 @@ function RootItem({
           onJobClick={handleJobClick}
         />
       </button>
-      {summaryText && (
-        <div className={styles.summary}>{summaryText}</div>
-      )}
+      {totalChildren > 0 && <SegmentedProgressBar summary={summary} />}
       {childNodes.length > 0 && (
         <div className={styles.children}>
           <TreeView
