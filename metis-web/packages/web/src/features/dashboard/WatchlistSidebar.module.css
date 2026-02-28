@@ -1,0 +1,86 @@
+.sidebar {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sidebarHeader {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xxs);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.issueCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  background: transparent;
+  border-left: 2px solid transparent;
+}
+
+.issueCard:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.issueCard.activeFilter {
+  background: var(--color-bg-secondary);
+  border-left-color: var(--color-accent);
+}
+
+.issueInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.issueDesc {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.issueSummary {
+  font-size: var(--font-size-xxs);
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+}
+
+/* Mini donut chart */
+.donutContainer {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+}
+
+.donutRing {
+  fill: none;
+  stroke-width: 4;
+}
+
+.donutCenter {
+  font-size: 7px;
+  fill: var(--color-text-secondary);
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.empty {
+  color: var(--color-text-secondary);
+  padding: var(--space-4);
+  margin: 0;
+  text-align: center;
+  font-size: var(--font-size-xs);
+}
