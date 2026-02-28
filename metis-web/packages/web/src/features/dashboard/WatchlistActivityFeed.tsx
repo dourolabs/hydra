@@ -11,7 +11,7 @@ import {
   type ActivityItem,
   type ActivitySection,
 } from "./activityUtils";
-import { WatchlistSidebar, WatchlistMobilePills } from "./WatchlistSidebar";
+import { IssueFilterDropdown } from "./WatchlistSidebar";
 import styles from "./WatchlistActivityFeed.module.css";
 
 interface WatchlistActivityFeedProps {
@@ -151,6 +151,7 @@ export function WatchlistActivityFeed({
     [onSelect],
   );
 
+  // Split into two sections: active (open/in-progress) vs terminal (completed)
   const activeItems = displayItems.filter((i) => i.section === "active");
   const attentionItems = displayItems.filter(
     (i) => i.section === "needs-attention",
@@ -160,56 +161,62 @@ export function WatchlistActivityFeed({
     (i) => i.section === "recently-completed",
   );
 
-  const sidebarProps = {
-    roots,
-    activeFilter: filterRootId,
-    onFilterChange: setFilterRootId,
-  };
+  const hasActiveSection =
+    activeItems.length > 0 ||
+    attentionItems.length > 0 ||
+    upcomingItems.length > 0;
 
   return (
     <div className={styles.container}>
-      <div className={styles.feedColumn}>
-        <WatchlistMobilePills {...sidebarProps} />
-        <div className={styles.summaryBar}>
-          <span className={styles.summaryItem}>
-            <span className={`${styles.summaryDot} ${styles.active}`} />
-            {summary.activeCount} active
-          </span>
-          <span className={styles.summaryItem}>
-            <span className={`${styles.summaryDot} ${styles.attention}`} />
-            {summary.needsAttentionCount} need attention
-          </span>
-          <span className={styles.summaryItem}>
-            <span className={`${styles.summaryDot} ${styles.done}`} />
-            {summary.completedCount}/{summary.totalCount} completed
-          </span>
-        </div>
-        <ul className={styles.feed}>
-          {renderSection(activeItems, "Active", selectedId, handleItemClick)}
-          {renderSection(
-            attentionItems,
-            "Needs Attention",
-            selectedId,
-            handleItemClick,
-          )}
-          {renderSection(
-            upcomingItems,
-            "Upcoming",
-            selectedId,
-            handleItemClick,
-          )}
-          {renderSection(
-            completedItems,
-            "Recently Completed",
-            selectedId,
-            handleItemClick,
-          )}
-          {displayItems.length === 0 && (
-            <li className={styles.empty}>No activity yet.</li>
-          )}
-        </ul>
+      <div className={styles.summaryBar}>
+        <IssueFilterDropdown
+          roots={roots}
+          activeFilter={filterRootId}
+          onFilterChange={setFilterRootId}
+        />
+        <span className={styles.summaryItem}>
+          <span className={`${styles.summaryDot} ${styles.active}`} />
+          {summary.activeCount} active
+        </span>
+        <span className={styles.summaryItem}>
+          <span className={`${styles.summaryDot} ${styles.attention}`} />
+          {summary.needsAttentionCount} need attention
+        </span>
+        <span className={styles.summaryItem}>
+          <span className={`${styles.summaryDot} ${styles.done}`} />
+          {summary.completedCount}/{summary.totalCount} completed
+        </span>
       </div>
-      <WatchlistSidebar {...sidebarProps} />
+      <ul className={styles.feed}>
+        {renderSection(activeItems, "Active", selectedId, handleItemClick)}
+        {renderSection(
+          attentionItems,
+          "Needs Attention",
+          selectedId,
+          handleItemClick,
+        )}
+        {renderSection(
+          upcomingItems,
+          "Upcoming",
+          selectedId,
+          handleItemClick,
+        )}
+        {!hasActiveSection && completedItems.length === 0 && (
+          <li className={styles.empty}>No activity yet.</li>
+        )}
+      </ul>
+      {completedItems.length > 0 && (
+        <div className={styles.completedSection}>
+          <ul className={styles.feed}>
+            {renderSection(
+              completedItems,
+              "Recently Completed",
+              selectedId,
+              handleItemClick,
+            )}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
