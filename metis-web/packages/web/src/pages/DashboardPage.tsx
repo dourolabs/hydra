@@ -1,29 +1,15 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Spinner, Tabs } from "@metis/ui";
-import type { IssueSummaryRecord } from "@metis/api";
+import { Spinner } from "@metis/ui";
 import { useIssues } from "../features/issues/useIssues";
-import { computeBlockedStatus } from "../features/issues/blockedStatus";
-import { topologicalSort } from "../features/issues/topologicalSort";
 import { useAllJobs } from "../features/jobs/useAllJobs";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { SplitLayout } from "../layout/SplitLayout";
-import { InboxList } from "../features/dashboard/InboxList";
-import { WatchingTree } from "../features/dashboard/WatchingTree";
-import { CompletedTree } from "../features/dashboard/CompletedTree";
-import { useWatchingCount } from "../features/dashboard/useWatchingCount";
-import { useCompletedCount } from "../features/dashboard/useCompletedCount";
+import { WatchlistActivityFeed } from "../features/dashboard/WatchlistActivityFeed";
 import { DetailPanel, DetailPanelEmpty } from "../features/dashboard/DetailPanel";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import styles from "./DashboardPage.module.css";
-
-function isInbox(record: IssueSummaryRecord, username: string): boolean {
-  return (
-    record.issue.assignee === username &&
-    (record.issue.status === "open" || record.issue.status === "in-progress")
-  );
-}
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -32,16 +18,11 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get("selected");
-  const activeTab = searchParams.get("tab") ?? "inbox";
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const hasSelectionHistoryRef = useRef(false);
 
   const setSelectedId = useCallback(
     (id: string | null) => {
-      // Push a history entry when going from no selection to a selection
-      // so the browser back button can return to the list view.
-      // Replace when switching between items or deselecting to avoid
-      // cluttering the history stack.
       const shouldPush = id !== null && selectedId === null;
       if (shouldPush) {
         hasSelectionHistoryRef.current = true;
@@ -62,23 +43,6 @@ export function DashboardPage() {
     [setSearchParams, selectedId],
   );
 
-  const setActiveTab = useCallback(
-    (tab: string) => {
-      // Push a history entry when actually changing tabs so back button
-      // reverses tab switches. Replace if re-selecting the current tab.
-      const shouldPush = tab !== activeTab;
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.set("tab", tab);
-          return next;
-        },
-        { replace: !shouldPush },
-      );
-    },
-    [setSearchParams, activeTab],
-  );
-
   const handleMobileBack = useCallback(() => {
     if (hasSelectionHistoryRef.current) {
       hasSelectionHistoryRef.current = false;
@@ -89,21 +53,6 @@ export function DashboardPage() {
   }, [navigate, setSelectedId]);
 
   const username = user ? actorDisplayName(user.actor) : "";
-
-  const inboxIssues = useMemo(() => {
-    if (!issues) return [];
-    const issueMap = new Map<string, IssueSummaryRecord>();
-    for (const record of issues) {
-      issueMap.set(record.issue_id, record);
-    }
-    const filtered = issues
-      .filter((i) => isInbox(i, username) && !computeBlockedStatus(i, issueMap).blocked)
-      .sort(
-        (a, b) =>
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-      );
-    return topologicalSort(filtered);
-  }, [issues, username]);
 
   const assignees = useMemo(() => {
     if (!issues) return [];
@@ -125,18 +74,6 @@ export function DashboardPage() {
     }
   }, [selectedId, issues, selectedExists, setSelectedId]);
 
-  const watchingCount = useWatchingCount(issues, jobsByIssue, username);
-  const completedCount = useCompletedCount(issues, username);
-
-  const tabs = useMemo(
-    () => [
-      { id: "inbox", label: `Inbox (${inboxIssues.length})` },
-      { id: "watching", label: `Watching (${watchingCount})` },
-      { id: "completed", label: `Completed (${completedCount})` },
-    ],
-    [inboxIssues.length, watchingCount, completedCount],
-  );
-
   if (isLoading) {
     return (
       <div className={styles.center}>
@@ -147,39 +84,13 @@ export function DashboardPage() {
 
   const leftPane = (
     <div className={styles.leftPane}>
-      <Tabs
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        className={styles.tabs}
+      <WatchlistActivityFeed
+        issues={issues ?? []}
+        jobsByIssue={jobsByIssue ?? new Map()}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        username={username}
       />
-      {activeTab === "inbox" && (
-        <InboxList
-          issues={inboxIssues}
-          jobsByIssue={jobsByIssue}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          onJobClick={(issueId, jobId) => navigate(`/issues/${issueId}/jobs/${jobId}/logs`)}
-        />
-      )}
-      {activeTab === "watching" && (
-        <WatchingTree
-          issues={issues ?? []}
-          jobsByIssue={jobsByIssue ?? new Map()}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          username={username}
-        />
-      )}
-      {activeTab === "completed" && (
-        <CompletedTree
-          issues={issues ?? []}
-          jobsByIssue={jobsByIssue ?? new Map()}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          username={username}
-        />
-      )}
       <button
         type="button"
         className={styles.createButton}

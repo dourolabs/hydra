@@ -31,23 +31,6 @@
   animation: scaleIn 250ms ease-out both;
 }
 
-.tabs {
-  flex-shrink: 0;
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--color-border);
-  animation: scaleIn 250ms ease-out both;
-  animation-delay: 100ms;
-}
-
-.placeholder {
-  color: var(--color-text-secondary);
-  padding: var(--space-4);
-  margin: 0;
-  text-align: center;
-}
-
-.error { composes: error from './page.module.css'; }
-.empty { composes: empty from './page.module.css'; }
 
 .createButton {
   display: flex;
@@ -78,8 +61,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .leftPane,
-  .tabs {
+  .leftPane {
     animation: none;
   }
 }
