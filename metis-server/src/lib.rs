@@ -17,7 +17,7 @@ pub mod test_utils;
 mod test;
 
 use crate::app::{AppState, ServiceState};
-use crate::background::{AgentQueue, start_background_scheduler};
+use crate::background::{AgentQueue, spawn_notification_worker, start_background_scheduler};
 use crate::config::{AppConfig, GithubAppSection, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
 use crate::store::{
@@ -50,6 +50,10 @@ pub async fn run_with_state(
     let (automation_shutdown_tx, automation_shutdown_rx) = tokio::sync::watch::channel(false);
     let automation_handle =
         crate::policy::runner::spawn_automation_runner(state.clone(), automation_shutdown_rx);
+
+    // Start notification worker (event-driven notification generation)
+    let (notification_shutdown_tx, notification_shutdown_rx) = tokio::sync::watch::channel(false);
+    let notification_handle = spawn_notification_worker(state.clone(), notification_shutdown_rx);
 
     let public_routes = Router::new()
         .route("/health", get(health_check))
@@ -213,6 +217,8 @@ pub async fn run_with_state(
     scheduler.shutdown().await;
     let _ = automation_shutdown_tx.send(true);
     let _ = automation_handle.await;
+    let _ = notification_shutdown_tx.send(true);
+    let _ = notification_handle.await;
     serve_result?;
 
     Ok(())
