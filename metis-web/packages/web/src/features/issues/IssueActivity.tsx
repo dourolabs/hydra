@@ -1,3 +1,4 @@
+import { useRef, useState, useCallback, useLayoutEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
@@ -89,6 +90,45 @@ function diffIssueVersions(
   return changes;
 }
 
+function ProgressValue({ value }: { value: string }) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = contentRef.current;
+    if (el) {
+      setTruncated(el.scrollHeight > el.clientHeight);
+    }
+  }, [value]);
+
+  const toggle = useCallback(() => setExpanded((v) => !v), []);
+
+  return (
+    <div>
+      <div
+        ref={contentRef}
+        className={
+          expanded
+            ? styles.progressContentExpanded
+            : styles.progressContentTruncated
+        }
+      >
+        {value}
+      </div>
+      {truncated && (
+        <button
+          type="button"
+          className={styles.collapsibleSummary}
+          onClick={toggle}
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function IssueChangeEntry({ change }: { change: Change }) {
   if (change.field === "status" && change.before && change.after) {
     return (
@@ -121,14 +161,7 @@ function IssueChangeEntry({ change }: { change: Change }) {
       <div className={styles.change}>
         <span className={styles.changeLabel}>Progress</span>
         updated
-        {change.value && (
-          <details>
-            <summary className={styles.collapsibleSummary}>
-              Show changes
-            </summary>
-            <div className={styles.collapsibleContent}>{change.value}</div>
-          </details>
-        )}
+        {change.value && <ProgressValue value={change.value} />}
       </div>
     );
   }
