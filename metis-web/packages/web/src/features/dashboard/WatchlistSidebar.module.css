@@ -1,0 +1,161 @@
+/* Desktop sidebar column — hidden on mobile */
+.desktopSidebar {
+  display: flex;
+  flex-direction: column;
+  flex: 4;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sidebarHeader {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xxs);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.sidebar {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.issueCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  border-left: 2px solid transparent;
+}
+
+.issueCard:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.issueCard.activeFilter {
+  background: var(--color-bg-secondary);
+  border-left-color: var(--color-accent);
+}
+
+.issueInfo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.issueDesc {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.issueSummary {
+  font-size: var(--font-size-xxs);
+  color: var(--color-text-tertiary);
+}
+
+.empty {
+  color: var(--color-text-secondary);
+  padding: var(--space-4);
+  margin: 0;
+  text-align: center;
+  font-size: var(--font-size-sm);
+}
+
+/* Donut chart */
+.donutContainer {
+  flex-shrink: 0;
+}
+
+.donutRing {
+  fill: none;
+  stroke-width: 4;
+  transform-origin: center;
+  transform: rotate(-90deg);
+}
+
+.donutCenter {
+  font-size: 8px;
+  fill: var(--color-text-secondary);
+  text-anchor: middle;
+  dominant-baseline: central;
+  font-family: var(--font-family-mono);
+}
+
+/* Mobile pill bar — hidden on desktop */
+.mobilePillBar {
+  display: none;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  scroll-snap-align: start;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.pill:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.pill.pillActive {
+  border-color: var(--color-accent);
+  background: var(--color-bg-tertiary);
+}
+
+.pillText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
+.pillProgress {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xxs);
+}
+
+@media (max-width: 768px) {
+  .desktopSidebar {
+    display: none;
+  }
+
+  .mobilePillBar {
+    display: flex;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    overflow-x: auto;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+}
