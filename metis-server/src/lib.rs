@@ -194,6 +194,22 @@ pub async fn run_with_state(
         .route("/v1/whoami", get(routes::whoami::whoami))
         .route("/v1/users/:username", get(routes::users::get_user))
         .route("/v1/events", get(routes::events::get_events))
+        .route(
+            "/v1/notifications",
+            get(routes::notifications::list_notifications),
+        )
+        .route(
+            "/v1/notifications/unread-count",
+            get(routes::notifications::unread_count),
+        )
+        .route(
+            "/v1/notifications/:notification_id/read",
+            post(routes::notifications::mark_read),
+        )
+        .route(
+            "/v1/notifications/read-all",
+            post(routes::notifications::mark_all_read),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             routes::auth::require_auth,

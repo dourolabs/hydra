@@ -2549,6 +2549,21 @@ impl ReadOnlyStore for PostgresStoreV2 {
     // Notification methods (read-only)
     // -------------------------------------------------------------------------
 
+    async fn get_notification(&self, id: &NotificationId) -> Result<Notification, StoreError> {
+        let sql = format!(
+            "SELECT id, recipient, source_actor, object_kind, object_id, object_version, \
+             event_type, summary, source_issue_id, policy, is_read, created_at \
+             FROM {TABLE_NOTIFICATIONS} WHERE id = $1"
+        );
+        let row = sqlx::query_as::<_, NotificationRow>(&sql)
+            .bind(id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .ok_or_else(|| StoreError::NotificationNotFound(id.clone()))?;
+        self.row_to_notification(&row)
+    }
+
     async fn list_notifications(
         &self,
         query: &ListNotificationsQuery,

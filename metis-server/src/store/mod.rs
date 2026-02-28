@@ -363,6 +363,9 @@ pub trait ReadOnlyStore: Send + Sync {
 
     // ---- Notification (read-only) ----
 
+    /// Retrieves a single notification by its ID.
+    async fn get_notification(&self, id: &NotificationId) -> Result<Notification, StoreError>;
+
     /// Lists notifications matching the query, returning each notification with its ID.
     ///
     /// Results are ordered by `created_at DESC` (most recent first).

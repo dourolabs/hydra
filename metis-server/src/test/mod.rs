@@ -12,6 +12,7 @@ mod login;
 pub(crate) mod merge_queues;
 mod messages;
 mod messages_e2e;
+mod notifications;
 mod patches;
 mod repositories;
 mod users;

@@ -200,6 +200,11 @@ fn test_auth() -> (Actor, String) {
         .clone()
 }
 
+pub fn test_actor() -> Actor {
+    let (actor, _) = test_auth();
+    actor
+}
+
 pub fn test_auth_token() -> String {
     let (_, token) = test_auth();
     token
