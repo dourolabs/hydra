@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Avatar, Spinner } from "@metis/ui";
 import type { ActorRef } from "@metis/api";
 import { actorDisplayName, actorAvatarName } from "../../utils/actors";
@@ -18,6 +18,8 @@ interface TimelineEntryProps {
   changes: Change[];
   isCreation: boolean;
   creationLabel: string;
+  creationContent?: ReactNode;
+  dotColor?: string;
   renderChange: (change: Change, index: number) => ReactNode;
 }
 
@@ -26,12 +28,18 @@ export function TimelineEntry({
   changes,
   isCreation,
   creationLabel,
+  creationContent,
+  dotColor,
   renderChange,
 }: TimelineEntryProps) {
   const actor = version.actor;
 
+  const entryStyle = dotColor
+    ? ({ "--dot-color": dotColor } as CSSProperties)
+    : undefined;
+
   return (
-    <li className={styles.entry}>
+    <li className={styles.entry} style={entryStyle}>
       <div className={styles.entryContent}>
         <div className={styles.entryHeader}>
           {actor && (
@@ -48,7 +56,10 @@ export function TimelineEntry({
 
         <div className={styles.changes}>
           {isCreation && (
-            <span className={styles.created}>{creationLabel}</span>
+            <>
+              <span className={styles.created}>{creationLabel}</span>
+              {creationContent}
+            </>
           )}
           {changes.map((change, i) => renderChange(change, i))}
         </div>
@@ -69,6 +80,8 @@ interface ActivityTimelineProps<V extends VersionLike> {
   diffFn: (prev: V, curr: V) => Change[];
   creationLabel: string;
   renderChange: (change: Change, index: number) => ReactNode;
+  getDotColor?: (changes: Change[], isCreation: boolean) => string | undefined;
+  renderCreation?: (version: V) => ReactNode;
 }
 
 export function ActivityTimeline<V extends VersionLike>({
@@ -77,6 +90,8 @@ export function ActivityTimeline<V extends VersionLike>({
   diffFn,
   creationLabel,
   renderChange,
+  getDotColor,
+  renderCreation,
 }: ActivityTimelineProps<V>) {
   if (isLoading) {
     return <Spinner size="sm" />;
@@ -117,6 +132,12 @@ export function ActivityTimeline<V extends VersionLike>({
             changes={entry.changes}
             isCreation={entry.isCreation}
             creationLabel={creationLabel}
+            creationContent={
+              entry.isCreation && renderCreation
+                ? renderCreation(entry.version)
+                : undefined
+            }
+            dotColor={getDotColor?.(entry.changes, entry.isCreation)}
             renderChange={renderChange}
           />
         ))}
