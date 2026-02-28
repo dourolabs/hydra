@@ -34,6 +34,10 @@
   --color-status-rejected-bg: color-mix(in srgb, var(--color-status-rejected) 12%, transparent);
   --color-status-neutral-bg: color-mix(in srgb, var(--color-text-secondary) 12%, transparent);
 
+  /* Type chip colors */
+  --color-type-merge-request: #cc66ff;
+  --color-type-merge-request-bg: color-mix(in srgb, var(--color-type-merge-request) 12%, transparent);
+
   /* Danger (red - destructive actions) */
   --color-danger: #cc3333;
   --color-danger-bright: #ff4444;

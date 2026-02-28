@@ -48,8 +48,8 @@
 }
 
 .typeChip.mergeRequest {
-  color: var(--color-status-blocked);
-  background: var(--color-status-blocked-bg);
+  color: var(--color-type-merge-request);
+  background: var(--color-type-merge-request-bg);
 }
 
 .typeChip.reviewRequest {
