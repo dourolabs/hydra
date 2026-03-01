@@ -8,7 +8,7 @@ import { actorDisplayName } from "../api/auth";
 import { SplitLayout } from "../layout/SplitLayout";
 import { WatchlistActivityFeed } from "../features/dashboard/WatchlistActivityFeed";
 import { IssueFilterSidebar } from "../features/dashboard/IssueFilterSidebar";
-import { readCollapsed } from "../features/dashboard/sidebarStorage";
+import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { DetailPanel, DetailPanelEmpty } from "../features/dashboard/DetailPanel";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import styles from "./DashboardPage.module.css";
@@ -23,6 +23,7 @@ export function DashboardPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [filterRootId, setFilterRootId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const hasSelectionHistoryRef = useRef(false);
 
   const setSelectedId = useCallback(
@@ -93,6 +94,20 @@ export function DashboardPage() {
     }
   }, [selectedId, issues, selectedExists, setSelectedId]);
 
+  const handleToggleSidebar = useCallback(() => {
+    const next = !sidebarCollapsed;
+    writeCollapsed(next);
+    setSidebarCollapsed(next);
+  }, [sidebarCollapsed]);
+
+  const handleToggleDrawer = useCallback(() => {
+    setDrawerOpen((v) => !v);
+  }, []);
+
+  const handleDrawerClose = useCallback(() => {
+    setDrawerOpen(false);
+  }, []);
+
   if (isLoading) {
     return (
       <div className={styles.center}>
@@ -110,6 +125,10 @@ export function DashboardPage() {
         onSelect={setSelectedId}
         username={username}
         filterRootId={filterRootId}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={handleToggleSidebar}
+        drawerOpen={drawerOpen}
+        onToggleDrawer={handleToggleDrawer}
       />
       <button
         type="button"
@@ -135,7 +154,8 @@ export function DashboardPage() {
           activeFilter={filterRootId}
           onFilterChange={setFilterRootId}
           collapsed={sidebarCollapsed}
-          onToggleCollapsed={setSidebarCollapsed}
+          drawerOpen={drawerOpen}
+          onDrawerClose={handleDrawerClose}
           jobsByIssue={jobsByIssue ?? new Map()}
           username={username}
         />

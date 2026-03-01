@@ -20,6 +20,10 @@ interface WatchlistActivityFeedProps {
   onSelect: (issueId: string) => void;
   username: string;
   filterRootId: string | null;
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
+  drawerOpen: boolean;
+  onToggleDrawer: () => void;
 }
 
 const indicatorClass: Record<ActivitySection, string> = {
@@ -116,6 +120,10 @@ export function WatchlistActivityFeed({
   onSelect,
   username,
   filterRootId,
+  sidebarCollapsed,
+  onToggleSidebar,
+  drawerOpen,
+  onToggleDrawer,
 }: WatchlistActivityFeedProps) {
   const roots = useMemo(() => {
     const tree = buildIssueTree(issues);
@@ -168,6 +176,28 @@ export function WatchlistActivityFeed({
   return (
     <div className={styles.container}>
       <div className={styles.summaryBar}>
+        <button
+          type="button"
+          className={styles.sidebarToggle}
+          onClick={onToggleSidebar}
+          aria-label={sidebarCollapsed ? "Expand filter sidebar" : "Collapse filter sidebar"}
+        >
+          {sidebarCollapsed ? "\u25B6" : "\u25C0"}
+        </button>
+        <button
+          type="button"
+          className={styles.drawerToggle}
+          onClick={onToggleDrawer}
+          aria-label={drawerOpen ? "Close issue menu" : "Open issue menu"}
+        >
+          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <path
+              fillRule="evenodd"
+              d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </button>
         <span className={styles.summaryItem}>
           <span className={`${styles.summaryDot} ${styles.active}`} />
           {summary.activeCount} active

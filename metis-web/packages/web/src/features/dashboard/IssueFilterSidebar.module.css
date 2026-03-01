@@ -23,10 +23,6 @@
   flex-shrink: 0;
 }
 
-.collapsed .header {
-  justify-content: center;
-}
-
 .title {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
@@ -34,23 +30,6 @@
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-
-.toggle {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: var(--space-1);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  border-radius: var(--radius-md);
-  line-height: 1;
-  transition: color var(--transition-fast), background var(--transition-fast);
-}
-
-.toggle:hover {
-  color: var(--color-text-primary);
-  background: var(--color-bg-tertiary);
 }
 
 .list {
@@ -175,11 +154,6 @@
   }
 }
 
-/* ── Mobile hamburger button ── */
-.hamburger {
-  display: none;
-}
-
 /* ── Mobile slide-out drawer ── */
 .drawer {
   display: none;
@@ -201,30 +175,6 @@
   /* Hide the desktop sidebar on mobile */
   .sidebar {
     display: none;
-  }
-
-  /* Hamburger button */
-  .hamburger {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: fixed;
-    top: 62px;
-    left: var(--space-2);
-    z-index: 1001;
-    width: 36px;
-    height: 36px;
-    background: var(--color-bg-primary);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    transition: color var(--transition-fast), background var(--transition-fast);
-  }
-
-  .hamburger:hover {
-    color: var(--color-text-primary);
-    background: var(--color-bg-tertiary);
   }
 
   /* Backdrop overlay */
