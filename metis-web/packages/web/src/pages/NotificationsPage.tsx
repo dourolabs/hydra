@@ -51,24 +51,32 @@ export function NotificationsPage() {
         ["notifications", "unread-count"],
       );
 
-      const markAsRead = (old: ListNotificationsResponse | undefined) => {
-        if (!old) return old;
-        return {
-          notifications: old.notifications.map((n) =>
-            n.notification_id === id
-              ? { ...n, notification: { ...n.notification, is_read: true } }
-              : n,
-          ),
-        };
-      };
-
+      // Unread cache: remove the notification entirely
       queryClient.setQueryData<ListNotificationsResponse>(
         ["notifications", { isRead: false }],
-        markAsRead,
+        (old) => {
+          if (!old) return old;
+          return {
+            notifications: old.notifications.filter(
+              (n) => n.notification_id !== id,
+            ),
+          };
+        },
       );
+
+      // All cache: still toggle is_read to true (keep the item in the list)
       queryClient.setQueryData<ListNotificationsResponse>(
         ["notifications", { isRead: null }],
-        markAsRead,
+        (old) => {
+          if (!old) return old;
+          return {
+            notifications: old.notifications.map((n) =>
+              n.notification_id === id
+                ? { ...n, notification: { ...n.notification, is_read: true } }
+                : n,
+            ),
+          };
+        },
       );
       if (prevCount) {
         queryClient.setQueryData<UnreadCountResponse>(
@@ -112,23 +120,24 @@ export function NotificationsPage() {
         ["notifications", "unread-count"],
       );
 
-      const markAllAsRead = (old: ListNotificationsResponse | undefined) => {
-        if (!old) return old;
-        return {
-          notifications: old.notifications.map((n) => ({
-            ...n,
-            notification: { ...n.notification, is_read: true },
-          })),
-        };
-      };
-
+      // Unread cache: empty the list
       queryClient.setQueryData<ListNotificationsResponse>(
         ["notifications", { isRead: false }],
-        markAllAsRead,
+        (old) => (old ? { notifications: [] } : old),
       );
+
+      // All cache: still mark every item as read
       queryClient.setQueryData<ListNotificationsResponse>(
         ["notifications", { isRead: null }],
-        markAllAsRead,
+        (old) => {
+          if (!old) return old;
+          return {
+            notifications: old.notifications.map((n) => ({
+              ...n,
+              notification: { ...n.notification, is_read: true },
+            })),
+          };
+        },
       );
       queryClient.setQueryData<UnreadCountResponse>(
         ["notifications", "unread-count"],
