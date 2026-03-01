@@ -903,13 +903,6 @@ impl StoreWithEvents {
 
     // ---- Notification mutations ----
 
-    pub async fn insert_notification(
-        &self,
-        notification: Notification,
-    ) -> Result<NotificationId, StoreError> {
-        self.inner.insert_notification(notification).await
-    }
-
     pub async fn insert_notification_with_actor(
         &self,
         notification: Notification,
