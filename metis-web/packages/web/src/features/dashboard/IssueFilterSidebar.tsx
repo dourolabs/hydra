@@ -115,6 +115,13 @@ export function IssueFilterSidebar({
   jobsByIssue,
   username,
 }: IssueFilterSidebarProps) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  /** On mobile, selecting an issue should also close the drawer. */
+  const handleFilterChange = (rootId: string | null) => {
+    onFilterChange(rootId);
+    setDrawerOpen(false);
+  };
   const progressList = useMemo(() => {
     const list = computeIssueProgress(roots, jobsByIssue, username);
     return list.sort((a, b) => {
@@ -148,13 +155,13 @@ export function IssueFilterSidebar({
       <li
         key={p.rootId}
         className={`${styles.item} ${isActive ? styles.active : ""}`}
-        onClick={() => onFilterChange(p.rootId)}
+        onClick={() => handleFilterChange(p.rootId)}
         role="button"
         tabIndex={collapsed ? -1 : 0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            onFilterChange(p.rootId);
+            handleFilterChange(p.rootId);
           }
         }}
       >
@@ -172,61 +179,96 @@ export function IssueFilterSidebar({
     );
   };
 
+  const renderIssueList = (hideWhenCollapsed: boolean) => (
+    <ul className={`${styles.list} ${hideWhenCollapsed && collapsed ? styles.listCollapsed : ""}`}>
+      <li
+        className={`${styles.item} ${activeFilter === null ? styles.active : ""}`}
+        onClick={() => handleFilterChange(null)}
+        role="button"
+        tabIndex={hideWhenCollapsed && collapsed ? -1 : 0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleFilterChange(null);
+          }
+        }}
+      >
+        <span className={styles.itemLabel}>All issues</span>
+      </li>
+      {activeList.map(renderItem)}
+      {completedList.length > 0 && (
+        <>
+          <li
+            className={styles.completedToggle}
+            onClick={() => setCompletedExpanded((v) => !v)}
+            role="button"
+            tabIndex={hideWhenCollapsed && collapsed ? -1 : 0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setCompletedExpanded((v) => !v);
+              }
+            }}
+          >
+            <span className={styles.completedToggleLabel}>
+              {completedExpanded ? "\u25BC" : "\u25B6"} Completed ({completedList.length})
+            </span>
+          </li>
+          {completedExpanded && completedList.map(renderItem)}
+        </>
+      )}
+    </ul>
+  );
+
   return (
-    <div className={`${styles.sidebar} ${collapsed ? styles.collapsed : ""}`}>
-      <div className={styles.header}>
-        {!collapsed && <span className={styles.title}>Issues</span>}
-        <button
-          type="button"
-          className={styles.toggle}
-          onClick={() => {
-            const next = !collapsed;
-            writeCollapsed(next);
-            onToggleCollapsed(next);
-          }}
-          aria-label={collapsed ? "Expand filter sidebar" : "Collapse filter sidebar"}
-        >
-          {collapsed ? "\u25B6" : "\u25C0"}
-        </button>
+    <>
+      {/* Desktop sidebar — hidden on mobile via CSS */}
+      <div className={`${styles.sidebar} ${collapsed ? styles.collapsed : ""}`}>
+        <div className={styles.header}>
+          {!collapsed && <span className={styles.title}>Issues</span>}
+          <button
+            type="button"
+            className={styles.toggle}
+            onClick={() => {
+              const next = !collapsed;
+              writeCollapsed(next);
+              onToggleCollapsed(next);
+            }}
+            aria-label={collapsed ? "Expand filter sidebar" : "Collapse filter sidebar"}
+          >
+            {collapsed ? "\u25B6" : "\u25C0"}
+          </button>
+        </div>
+        {renderIssueList(true)}
       </div>
-      <ul className={`${styles.list} ${collapsed ? styles.listCollapsed : ""}`}>
-        <li
-          className={`${styles.item} ${activeFilter === null ? styles.active : ""}`}
-          onClick={() => onFilterChange(null)}
-          role="button"
-          tabIndex={collapsed ? -1 : 0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              onFilterChange(null);
-            }
-          }}
-        >
-          <span className={styles.itemLabel}>All issues</span>
-        </li>
-        {activeList.map(renderItem)}
-        {completedList.length > 0 && (
-          <>
-            <li
-              className={styles.completedToggle}
-              onClick={() => setCompletedExpanded((v) => !v)}
-              role="button"
-              tabIndex={collapsed ? -1 : 0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setCompletedExpanded((v) => !v);
-                }
-              }}
-            >
-              <span className={styles.completedToggleLabel}>
-                {completedExpanded ? "\u25BC" : "\u25B6"} Completed ({completedList.length})
-              </span>
-            </li>
-            {completedExpanded && completedList.map(renderItem)}
-          </>
-        )}
-      </ul>
-    </div>
+
+      {/* Mobile hamburger button + slide-out drawer */}
+      <button
+        type="button"
+        className={styles.hamburger}
+        onClick={() => setDrawerOpen((v) => !v)}
+        aria-label={drawerOpen ? "Close issue menu" : "Open issue menu"}
+      >
+        <svg viewBox="0 0 20 20" fill="currentColor" width="20" height="20">
+          <path
+            fillRule="evenodd"
+            d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"
+            clipRule="evenodd"
+          />
+        </svg>
+      </button>
+      {drawerOpen && (
+        <div
+          className={styles.backdrop}
+          onClick={() => setDrawerOpen(false)}
+        />
+      )}
+      <div className={`${styles.drawer} ${drawerOpen ? styles.drawerOpen : ""}`}>
+        <div className={styles.drawerHeader}>
+          <span className={styles.title}>Issues</span>
+        </div>
+        {renderIssueList(false)}
+      </div>
+    </>
   );
 }
