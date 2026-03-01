@@ -4,7 +4,6 @@ import type { IssueTreeNode } from "../issues/useIssues";
 import { descriptionSnippet } from "../../utils/text";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { computeIssueProgress, type IssueProgress } from "./activityUtils";
-import { writeCollapsed } from "./sidebarStorage";
 import styles from "./IssueFilterSidebar.module.css";
 
 interface IssueFilterSidebarProps {
@@ -12,7 +11,8 @@ interface IssueFilterSidebarProps {
   activeFilter: string | null;
   onFilterChange: (rootId: string | null) => void;
   collapsed: boolean;
-  onToggleCollapsed: (collapsed: boolean) => void;
+  drawerOpen: boolean;
+  onDrawerClose: () => void;
   jobsByIssue: Map<string, JobSummaryRecord[]>;
   username: string;
 }
@@ -111,16 +111,15 @@ export function IssueFilterSidebar({
   activeFilter,
   onFilterChange,
   collapsed,
-  onToggleCollapsed,
+  drawerOpen,
+  onDrawerClose,
   jobsByIssue,
   username,
 }: IssueFilterSidebarProps) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-
   /** On mobile, selecting an issue should also close the drawer. */
   const handleFilterChange = (rootId: string | null) => {
     onFilterChange(rootId);
-    setDrawerOpen(false);
+    onDrawerClose();
   };
   const progressList = useMemo(() => {
     const list = computeIssueProgress(roots, jobsByIssue, username);
@@ -224,43 +223,19 @@ export function IssueFilterSidebar({
     <>
       {/* Desktop sidebar — hidden on mobile via CSS */}
       <div className={`${styles.sidebar} ${collapsed ? styles.collapsed : ""}`}>
-        <div className={styles.header}>
-          {!collapsed && <span className={styles.title}>Issues</span>}
-          <button
-            type="button"
-            className={styles.toggle}
-            onClick={() => {
-              const next = !collapsed;
-              writeCollapsed(next);
-              onToggleCollapsed(next);
-            }}
-            aria-label={collapsed ? "Expand filter sidebar" : "Collapse filter sidebar"}
-          >
-            {collapsed ? "\u25B6" : "\u25C0"}
-          </button>
-        </div>
+        {!collapsed && (
+          <div className={styles.header}>
+            <span className={styles.title}>Issues</span>
+          </div>
+        )}
         {renderIssueList(true)}
       </div>
 
-      {/* Mobile hamburger button + slide-out drawer */}
-      <button
-        type="button"
-        className={styles.hamburger}
-        onClick={() => setDrawerOpen((v) => !v)}
-        aria-label={drawerOpen ? "Close issue menu" : "Open issue menu"}
-      >
-        <svg viewBox="0 0 20 20" fill="currentColor" width="20" height="20">
-          <path
-            fillRule="evenodd"
-            d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"
-            clipRule="evenodd"
-          />
-        </svg>
-      </button>
+      {/* Mobile slide-out drawer (hamburger button lives in WatchlistActivityFeed summary bar) */}
       {drawerOpen && (
         <div
           className={styles.backdrop}
-          onClick={() => setDrawerOpen(false)}
+          onClick={onDrawerClose}
         />
       )}
       <div className={`${styles.drawer} ${drawerOpen ? styles.drawerOpen : ""}`}>

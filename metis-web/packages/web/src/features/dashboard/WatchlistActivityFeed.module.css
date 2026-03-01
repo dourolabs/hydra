@@ -17,6 +17,47 @@
   flex-wrap: wrap;
 }
 
+/* Sidebar toggle (desktop only) */
+.sidebarToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  border-radius: var(--radius-md);
+  line-height: 1;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.sidebarToggle:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-tertiary);
+}
+
+/* Drawer toggle (mobile only) — hidden on desktop */
+.drawerToggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--space-1);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-md);
+  line-height: 1;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.drawerToggle:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-tertiary);
+}
+
 .summaryItem {
   display: flex;
   align-items: center;
@@ -211,8 +252,15 @@
 }
 
 @media (max-width: 768px) {
+  .sidebarToggle {
+    display: none;
+  }
+
+  .drawerToggle {
+    display: flex;
+  }
+
   .parentDesc {
     max-width: 120px;
   }
-
 }
