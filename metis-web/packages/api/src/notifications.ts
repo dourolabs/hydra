@@ -32,5 +32,9 @@ export interface MarkReadResponse {
 }
 
 export interface ListNotificationsQuery {
+  recipient: string | null;
   is_read: boolean | null;
+  before: string | null;
+  after: string | null;
+  limit: number | null;
 }
