@@ -3,10 +3,4 @@ import type { ActorRef } from "./ActorRef";
 import type { Task } from "./Task";
 import type { TaskId } from "./TaskId";
 
-export type JobVersionRecord = {
-  job_id: TaskId;
-  version: bigint;
-  timestamp: string;
-  task: Task;
-  actor?: ActorRef | null;
-};
+export type JobVersionRecord = { job_id: TaskId, version: bigint, timestamp: string, task: Task, actor?: ActorRef | null, };
