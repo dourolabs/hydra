@@ -479,6 +479,10 @@ async fn serialize_entity(
             );
             serde_json::to_value(record).ok()?
         }
+        MutationPayload::Notification { .. } => {
+            // Notification events are serialized via NotificationEventData in build_sse_event.
+            return None;
+        }
     };
     Some(value)
 }
@@ -672,7 +676,10 @@ async fn server_event_to_sse(
             payload,
         ),
         ServerEvent::NotificationCreated {
-            notification_id, ..
+            notification_id,
+            version,
+            timestamp,
+            ..
         } => {
             // NotificationCreated is normally handled by build_sse_event() before
             // reaching this function. If we get here due to a refactor, return a
@@ -687,8 +694,8 @@ async fn server_event_to_sse(
                 EntityEventData {
                     entity_type: "notification".to_string(),
                     entity_id: notification_id.to_string(),
-                    version: 0,
-                    timestamp: Utc::now(),
+                    version: *version,
+                    timestamp: *timestamp,
                     entity: None,
                 },
             );
@@ -717,21 +724,36 @@ async fn build_sse_event(event: &ServerEvent, state: &AppState) -> Event {
         ServerEvent::NotificationCreated {
             seq,
             notification_id,
-            recipient,
-            source_actor,
-            object_kind,
-            object_id,
-            summary,
-            created_at,
+            payload,
+            ..
         } => {
-            let data = NotificationEventData {
-                notification_id: notification_id.clone(),
-                recipient: recipient.clone(),
-                source_actor: source_actor.clone(),
-                object_kind: object_kind.clone(),
-                object_id: object_id.to_string(),
-                summary: summary.clone(),
-                created_at: *created_at,
+            let data = if let MutationPayload::Notification { new, .. } = payload.as_ref() {
+                NotificationEventData {
+                    notification_id: notification_id.clone(),
+                    recipient: new.recipient.clone(),
+                    source_actor: new.source_actor.clone(),
+                    object_kind: new.object_kind.clone(),
+                    object_id: new.object_id.to_string(),
+                    summary: new.summary.clone(),
+                    created_at: new.created_at,
+                }
+            } else {
+                // Fallback: should not happen, but handle gracefully.
+                warn!(
+                    notification_id = %notification_id,
+                    "NotificationCreated event has unexpected payload type"
+                );
+                NotificationEventData {
+                    notification_id: notification_id.clone(),
+                    recipient: metis_common::actor_ref::ActorId::Username(
+                        metis_common::api::v1::users::Username::from("unknown"),
+                    ),
+                    source_actor: None,
+                    object_kind: String::new(),
+                    object_id: String::new(),
+                    summary: String::new(),
+                    created_at: Utc::now(),
+                }
             };
             Event::default()
                 .event(SseEventType::NotificationCreated.as_str())
@@ -1159,24 +1181,42 @@ mod tests {
         assert_eq!(msg_obj.get("body").unwrap().as_str().unwrap(), "updated");
     }
 
+    fn dummy_notification() -> crate::domain::notifications::Notification {
+        crate::domain::notifications::Notification::new(
+            crate::domain::actors::ActorId::Username(Username::from("alice").into()),
+            Some(crate::domain::actors::ActorId::Issue(
+                "i-abcdef".parse::<IssueId>().unwrap(),
+            )),
+            "issue".to_string(),
+            "i-abcdef".parse::<IssueId>().unwrap().into(),
+            1,
+            "updated".to_string(),
+            "Issue i-abcdef status changed from open to in-progress".to_string(),
+            None,
+            "walk_up".to_string(),
+        )
+    }
+
     #[tokio::test]
     async fn build_sse_event_notification_created() {
         let state = test_app_state();
         let notification_id = metis_common::NotificationId::new();
-        let recipient = crate::domain::actors::ActorId::Username(Username::from("alice").into());
-        let source_actor =
-            crate::domain::actors::ActorId::Issue("i-abcdef".parse::<IssueId>().unwrap());
-        let created_at = Utc::now();
+        let notification = dummy_notification();
+        let recipient = notification.recipient.clone();
+        let source_actor = notification.source_actor.clone();
+        let created_at = notification.created_at;
 
+        let payload = Arc::new(MutationPayload::Notification {
+            old: None,
+            new: notification,
+            actor: ActorRef::test(),
+        });
         let event = ServerEvent::NotificationCreated {
             seq: 42,
             notification_id: notification_id.clone(),
-            recipient: recipient.clone(),
-            source_actor: Some(source_actor.clone()),
-            object_kind: "issue".to_string(),
-            object_id: "i-abcdef".parse::<IssueId>().unwrap().into(),
-            summary: "Issue i-abcdef status changed from open to in-progress".to_string(),
-            created_at,
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
         };
 
         let sse_event = build_sse_event(&event, &state).await;
@@ -1188,7 +1228,7 @@ mod tests {
         let data = NotificationEventData {
             notification_id: notification_id.clone(),
             recipient: recipient.clone(),
-            source_actor: Some(source_actor),
+            source_actor,
             object_kind: "issue".to_string(),
             object_id: "i-abcdef".to_string(),
             summary: "Issue i-abcdef status changed from open to in-progress".to_string(),
@@ -1215,17 +1255,19 @@ mod tests {
     #[test]
     fn event_entity_info_notification_created() {
         let notification_id = metis_common::NotificationId::new();
-        let recipient = crate::domain::actors::ActorId::Username(Username::from("alice").into());
+        let notification = dummy_notification();
 
+        let payload = Arc::new(MutationPayload::Notification {
+            old: None,
+            new: notification,
+            actor: ActorRef::test(),
+        });
         let event = ServerEvent::NotificationCreated {
             seq: 1,
             notification_id: notification_id.clone(),
-            recipient,
-            source_actor: None,
-            object_kind: "issue".to_string(),
-            object_id: "i-abcdef".parse::<IssueId>().unwrap().into(),
-            summary: "Issue created".to_string(),
-            created_at: Utc::now(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
         };
 
         let (entity_type, entity_id) = event_entity_info(&event);
@@ -1239,17 +1281,19 @@ mod tests {
     #[test]
     fn event_filter_notifications_entity_type() {
         let notification_id = metis_common::NotificationId::new();
-        let recipient = crate::domain::actors::ActorId::Username(Username::from("alice").into());
+        let notification = dummy_notification();
 
+        let payload = Arc::new(MutationPayload::Notification {
+            old: None,
+            new: notification,
+            actor: ActorRef::test(),
+        });
         let event = ServerEvent::NotificationCreated {
             seq: 1,
             notification_id,
-            recipient,
-            source_actor: None,
-            object_kind: "issue".to_string(),
-            object_id: "i-abcdef".parse::<IssueId>().unwrap().into(),
-            summary: "test".to_string(),
-            created_at: Utc::now(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
         };
 
         // Default filter (no types specified) should match notifications.

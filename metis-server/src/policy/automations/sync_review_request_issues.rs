@@ -124,11 +124,7 @@ impl Automation for SyncReviewRequestIssuesAutomation {
                     metis_common::api::v1::issues::UpsertIssueRequest::new(issue.into(), None),
                     ActorRef::Automation {
                         automation_name: AUTOMATION_NAME.into(),
-                        triggered_by: Some(Box::new(
-                            ctx.actor()
-                                .expect("patch events always carry a payload")
-                                .clone(),
-                        )),
+                        triggered_by: Some(Box::new(ctx.actor().clone())),
                     },
                 )
                 .await

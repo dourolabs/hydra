@@ -109,11 +109,7 @@ impl Automation for CascadeIssueStatusAutomation {
         let store = ctx.store;
         let actor = ActorRef::Automation {
             automation_name: AUTOMATION_NAME.into(),
-            triggered_by: Some(Box::new(
-                ctx.actor()
-                    .expect("issue events always carry a payload")
-                    .clone(),
-            )),
+            triggered_by: Some(Box::new(ctx.actor().clone())),
         };
 
         // Drop all children recursively

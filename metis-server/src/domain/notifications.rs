@@ -185,9 +185,7 @@ impl NotificationPolicy for WalkUpPolicy {
         event: &ServerEvent,
         store: &dyn ReadOnlyStore,
     ) -> Result<Vec<ActorId>, StoreError> {
-        let payload = event
-            .payload()
-            .expect("WalkUpPolicy only runs on mutation events with payloads");
+        let payload = event.payload();
         let source_issue_ids = match payload.as_ref() {
             MutationPayload::Issue { .. } => {
                 // The source issue is the issue itself
@@ -226,8 +224,10 @@ impl NotificationPolicy for WalkUpPolicy {
                     _ => vec![],
                 }
             }
-            MutationPayload::Document { .. } | MutationPayload::Message { .. } => {
-                // No source issue for documents or messages
+            MutationPayload::Document { .. }
+            | MutationPayload::Message { .. }
+            | MutationPayload::Notification { .. } => {
+                // No source issue for documents, messages, or notifications
                 vec![]
             }
         };
@@ -246,9 +246,7 @@ impl NotificationPolicy for WalkUpPolicy {
 ///
 /// Only called for mutation events that carry a `MutationPayload`.
 pub fn generate_summary(event: &ServerEvent) -> String {
-    let payload = event
-        .payload()
-        .expect("generate_summary only called for mutation events with payloads");
+    let payload = event.payload();
     match payload.as_ref() {
         MutationPayload::Issue { old, new, .. } => {
             let id = match event {
@@ -347,6 +345,15 @@ pub fn generate_summary(event: &ServerEvent) -> String {
             }
             format!("Message {id} was updated")
         }
+        MutationPayload::Notification { new, .. } => {
+            let id = match event {
+                ServerEvent::NotificationCreated {
+                    notification_id, ..
+                } => notification_id.to_string(),
+                _ => "unknown".to_string(),
+            };
+            format!("Notification {id} was created: {}", new.summary)
+        }
     }
 }
 
@@ -391,10 +398,8 @@ pub fn event_object_id(event: &ServerEvent) -> MetisId {
     }
 }
 
-/// Extract the version number from a server event, if present.
-///
-/// Returns `None` for `NotificationCreated` events, which are non-versioned.
-pub fn event_version(event: &ServerEvent) -> Option<VersionNumber> {
+/// Extract the version number from a server event.
+pub fn event_version(event: &ServerEvent) -> VersionNumber {
     match event {
         ServerEvent::IssueCreated { version, .. }
         | ServerEvent::IssueUpdated { version, .. }
@@ -408,8 +413,8 @@ pub fn event_version(event: &ServerEvent) -> Option<VersionNumber> {
         | ServerEvent::DocumentUpdated { version, .. }
         | ServerEvent::DocumentDeleted { version, .. }
         | ServerEvent::MessageCreated { version, .. }
-        | ServerEvent::MessageUpdated { version, .. } => Some(*version),
-        ServerEvent::NotificationCreated { .. } => None,
+        | ServerEvent::MessageUpdated { version, .. }
+        | ServerEvent::NotificationCreated { version, .. } => *version,
     }
 }
 
@@ -437,9 +442,7 @@ pub fn event_type_str(event: &ServerEvent) -> &'static str {
 ///
 /// Only called for mutation events that carry a `MutationPayload`.
 pub fn event_source_issue_id(event: &ServerEvent) -> Option<IssueId> {
-    let payload = event
-        .payload()
-        .expect("event_source_issue_id only called for mutation events with payloads");
+    let payload = event.payload();
     match payload.as_ref() {
         MutationPayload::Issue { .. } => match event {
             ServerEvent::IssueCreated { issue_id, .. }
@@ -448,8 +451,10 @@ pub fn event_source_issue_id(event: &ServerEvent) -> Option<IssueId> {
             _ => None,
         },
         MutationPayload::Job { new, .. } => new.spawned_from.clone(),
-        MutationPayload::Patch { .. } => None,
-        MutationPayload::Document { .. } | MutationPayload::Message { .. } => None,
+        MutationPayload::Patch { .. }
+        | MutationPayload::Document { .. }
+        | MutationPayload::Message { .. }
+        | MutationPayload::Notification { .. } => None,
     }
 }
 
@@ -792,7 +797,7 @@ mod tests {
 
         assert_eq!(event_object_kind(&event), "issue");
         assert_eq!(event_object_id(&event), MetisId::from(issue_id.clone()));
-        assert_eq!(event_version(&event), Some(3));
+        assert_eq!(event_version(&event), 3);
         assert_eq!(event_type_str(&event), "created");
         assert_eq!(event_source_issue_id(&event), Some(issue_id));
     }

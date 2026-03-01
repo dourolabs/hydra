@@ -107,11 +107,7 @@ impl PatchWorkflowAutomation {
     fn actor_ref(&self, ctx: &AutomationContext<'_>) -> ActorRef {
         ActorRef::Automation {
             automation_name: AUTOMATION_NAME.into(),
-            triggered_by: Some(Box::new(
-                ctx.actor()
-                    .expect("patch events always carry a payload")
-                    .clone(),
-            )),
+            triggered_by: Some(Box::new(ctx.actor().clone())),
         }
     }
 }

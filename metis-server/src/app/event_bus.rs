@@ -17,8 +17,7 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId, VersionNumber,
-    Versioned,
+    DocumentId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     api::v1::notifications::ListNotificationsQuery,
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -59,6 +58,11 @@ pub enum MutationPayload {
         new: Message,
         actor: ActorRef,
     },
+    Notification {
+        old: Option<Notification>,
+        new: Notification,
+        actor: ActorRef,
+    },
 }
 
 impl MutationPayload {
@@ -69,7 +73,8 @@ impl MutationPayload {
             | MutationPayload::Patch { actor, .. }
             | MutationPayload::Job { actor, .. }
             | MutationPayload::Document { actor, .. }
-            | MutationPayload::Message { actor, .. } => actor,
+            | MutationPayload::Message { actor, .. }
+            | MutationPayload::Notification { actor, .. } => actor,
         }
     }
 }
@@ -199,17 +204,12 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
-    /// A notification was created. Emitted directly by the NotificationAutomation,
-    /// bypassing StoreWithEvents since notifications are non-versioned.
     NotificationCreated {
         seq: u64,
         notification_id: NotificationId,
-        recipient: ActorId,
-        source_actor: Option<ActorId>,
-        object_kind: String,
-        object_id: MetisId,
-        summary: String,
-        created_at: DateTime<Utc>,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
     },
 }
 
@@ -234,11 +234,8 @@ impl ServerEvent {
         }
     }
 
-    /// Returns a reference to the mutation payload for this event, if present.
-    ///
-    /// Returns `None` for `NotificationCreated` events, which are emitted
-    /// directly by the worker and do not carry a `MutationPayload`.
-    pub fn payload(&self) -> Option<&Arc<MutationPayload>> {
+    /// Returns a reference to the mutation payload for this event.
+    pub fn payload(&self) -> &Arc<MutationPayload> {
         match self {
             ServerEvent::IssueCreated { payload, .. }
             | ServerEvent::IssueUpdated { payload, .. }
@@ -252,8 +249,8 @@ impl ServerEvent {
             | ServerEvent::DocumentUpdated { payload, .. }
             | ServerEvent::DocumentDeleted { payload, .. }
             | ServerEvent::MessageCreated { payload, .. }
-            | ServerEvent::MessageUpdated { payload, .. } => Some(payload),
-            ServerEvent::NotificationCreated { .. } => None,
+            | ServerEvent::MessageUpdated { payload, .. }
+            | ServerEvent::NotificationCreated { payload, .. } => payload,
         }
     }
 
@@ -513,22 +510,15 @@ impl EventBus {
     pub fn emit_notification_created(
         &self,
         notification_id: NotificationId,
-        recipient: ActorId,
-        source_actor: Option<ActorId>,
-        object_kind: String,
-        object_id: MetisId,
-        summary: String,
-        created_at: DateTime<Utc>,
+        version: u64,
+        payload: Arc<MutationPayload>,
     ) {
         self.send(ServerEvent::NotificationCreated {
             seq: self.next_seq(),
             notification_id,
-            recipient,
-            source_actor,
-            object_kind,
-            object_id,
-            summary,
-            created_at,
+            version,
+            timestamp: Utc::now(),
+            payload,
         });
     }
 }
@@ -918,6 +908,23 @@ impl StoreWithEvents {
         notification: Notification,
     ) -> Result<NotificationId, StoreError> {
         self.inner.insert_notification(notification).await
+    }
+
+    pub async fn insert_notification_with_actor(
+        &self,
+        notification: Notification,
+        actor: ActorRef,
+    ) -> Result<NotificationId, StoreError> {
+        let new_notification = notification.clone();
+        let notification_id = self.inner.insert_notification(notification).await?;
+        let payload = Arc::new(MutationPayload::Notification {
+            old: None,
+            new: new_notification,
+            actor,
+        });
+        self.event_bus
+            .emit_notification_created(notification_id.clone(), 1, payload);
+        Ok(notification_id)
     }
 
     pub async fn mark_notification_read(&self, id: &NotificationId) -> Result<(), StoreError> {

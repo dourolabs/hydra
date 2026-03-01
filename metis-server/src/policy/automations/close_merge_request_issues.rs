@@ -80,11 +80,7 @@ impl Automation for CloseMergeRequestIssuesAutomation {
 
         let actor = ActorRef::Automation {
             automation_name: AUTOMATION_NAME.into(),
-            triggered_by: Some(Box::new(
-                ctx.actor()
-                    .expect("patch events always carry a payload")
-                    .clone(),
-            )),
+            triggered_by: Some(Box::new(ctx.actor().clone())),
         };
 
         let mut updated_mr_ids = Vec::new();

@@ -45,9 +45,7 @@ impl Automation for NotificationAutomation {
 
     async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
         let event = ctx.event;
-        let payload = event
-            .payload()
-            .expect("NotificationAutomation filters to mutation events with payloads");
+        let payload = event.payload();
         let source_actor = actor_ref_to_actor_id(payload.actor());
 
         // Collect recipients from all policies, deduplicating and tracking which
@@ -85,10 +83,14 @@ impl Automation for NotificationAutomation {
         let summary = generate_summary(event);
         let object_kind = event_object_kind(event).to_string();
         let object_id = event_object_id(event);
-        let object_version = event_version(event)
-            .expect("NotificationAutomation filters to mutation events with versions");
+        let object_version = event_version(event);
         let event_type = event_type_str(event).to_string();
         let source_issue_id = event_source_issue_id(event);
+
+        let actor = crate::domain::actors::ActorRef::Automation {
+            automation_name: AUTOMATION_NAME.into(),
+            triggered_by: Some(Box::new(ctx.actor().clone())),
+        };
 
         for (recipient, policy_name) in policy_recipients {
             let notification = Notification::new(
@@ -103,24 +105,15 @@ impl Automation for NotificationAutomation {
                 policy_name,
             );
 
-            let created_at = notification.created_at;
-            match ctx.app_state.store.insert_notification(notification).await {
-                Ok(notification_id) => {
-                    // Emit NotificationCreated event directly to the EventBus
-                    // so SSE clients receive real-time notification updates.
-                    ctx.app_state.event_bus().emit_notification_created(
-                        notification_id,
-                        recipient,
-                        source_actor.clone(),
-                        object_kind.clone(),
-                        object_id.clone(),
-                        summary.clone(),
-                        created_at,
-                    );
-                }
-                Err(err) => {
-                    tracing::error!(error = %err, "failed to insert notification");
-                }
+            // Use insert_notification_with_actor so StoreWithEvents emits the
+            // NotificationCreated event to the EventBus automatically.
+            if let Err(err) = ctx
+                .app_state
+                .store
+                .insert_notification_with_actor(notification, actor.clone())
+                .await
+            {
+                tracing::error!(error = %err, "failed to insert notification");
             }
         }
 
