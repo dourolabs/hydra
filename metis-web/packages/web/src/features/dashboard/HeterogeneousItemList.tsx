@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import type { JobSummaryRecord } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
+import { useItemNotifications } from "./useItemNotifications";
 import { ItemRow } from "./ItemRow";
 import styles from "./HeterogeneousItemList.module.css";
 
@@ -30,14 +31,28 @@ export function HeterogeneousItemList({
   onToggleSidebar,
   onToggleDrawer,
 }: HeterogeneousItemListProps) {
+  const { getItemNotification, markItemRead, notificationMap } =
+    useItemNotifications(items);
+
+  // Sort: unread items first, then by timestamp (descending)
+  const sortWithUnread = useCallback(
+    (a: WorkItem, b: WorkItem): number => {
+      const aUnread = notificationMap.has(`${a.kind}:${a.id}`) ? 1 : 0;
+      const bUnread = notificationMap.has(`${b.kind}:${b.id}`) ? 1 : 0;
+      if (aUnread !== bUnread) return bUnread - aUnread;
+      return sortByLastUpdated(a, b);
+    },
+    [notificationMap],
+  );
+
   const activeItems = useMemo(
-    () => items.filter(isActiveItem).sort(sortByLastUpdated),
-    [items],
+    () => items.filter(isActiveItem).sort(sortWithUnread),
+    [items, sortWithUnread],
   );
 
   const completeItems = useMemo(
-    () => items.filter((i) => !isActiveItem(i)).sort(sortByLastUpdated),
-    [items],
+    () => items.filter((i) => !isActiveItem(i)).sort(sortWithUnread),
+    [items, sortWithUnread],
   );
 
   return (
@@ -107,6 +122,8 @@ export function HeterogeneousItemList({
                       ? jobsByIssue.get(item.id)
                       : undefined
                   }
+                  notification={getItemNotification(item)}
+                  onMarkRead={markItemRead}
                 />
               ))}
             </ul>
@@ -128,6 +145,8 @@ export function HeterogeneousItemList({
                       ? jobsByIssue.get(item.id)
                       : undefined
                   }
+                  notification={getItemNotification(item)}
+                  onMarkRead={markItemRead}
                 />
               ))}
             </ul>

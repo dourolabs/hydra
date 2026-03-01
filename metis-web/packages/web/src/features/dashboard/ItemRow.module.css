@@ -24,6 +24,22 @@
   opacity: 0.5;
 }
 
+.row.unread {
+  background: var(--color-bg-secondary);
+}
+
+.row.unread:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.unreadDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex-shrink: 0;
+}
+
 .icon {
   display: inline-flex;
   align-items: center;
@@ -35,9 +51,28 @@
   display: block;
 }
 
-.title {
+.titleGroup {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titleUnread {
+  composes: title;
+  font-weight: 600;
+}
+
+.notificationSummary {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

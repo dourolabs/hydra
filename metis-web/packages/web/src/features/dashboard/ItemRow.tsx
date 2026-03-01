@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
 import type { JobSummaryRecord } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
+import type { ItemNotificationState } from "./useItemNotifications";
 import { toJobSummary } from "../../utils/jobMapping";
 import {
   issueToBadgeStatus,
@@ -81,20 +82,25 @@ const TYPE_ICONS: Record<WorkItem["kind"], () => JSX.Element> = {
 interface ItemRowProps {
   item: WorkItem;
   jobs?: JobSummaryRecord[];
+  notification?: ItemNotificationState;
+  onMarkRead?: (item: WorkItem) => void;
 }
 
-export function ItemRow({ item, jobs }: ItemRowProps) {
+export function ItemRow({ item, jobs, notification, onMarkRead }: ItemRowProps) {
   const navigate = useNavigate();
   const Icon = TYPE_ICONS[item.kind];
 
   const handleClick = useCallback(() => {
+    if (notification?.unread && onMarkRead) {
+      onMarkRead(item);
+    }
     const paths: Record<WorkItem["kind"], string> = {
       issue: `/issues/${item.id}`,
       patch: `/patches/${item.id}`,
       document: `/documents/${item.id}`,
     };
     navigate(`${paths[item.kind]}?from=dashboard`);
-  }, [navigate, item.kind, item.id]);
+  }, [navigate, item, notification, onMarkRead]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -138,8 +144,10 @@ export function ItemRow({ item, jobs }: ItemRowProps) {
   // Job status (issues only)
   const jobSummaries = item.kind === "issue" && jobs ? jobs.map(toJobSummary) : undefined;
 
+  const isUnread = notification?.unread ?? false;
   const rowClasses = [styles.row];
   if (item.isTerminal) rowClasses.push(styles.terminal);
+  if (isUnread) rowClasses.push(styles.unread);
 
   return (
     <li
@@ -149,10 +157,20 @@ export function ItemRow({ item, jobs }: ItemRowProps) {
       role="button"
       tabIndex={0}
     >
+      {isUnread && <span className={styles.unreadDot} />}
       <span className={styles.icon}>
         <Icon />
       </span>
-      <span className={styles.title}>{title}</span>
+      <span className={styles.titleGroup}>
+        <span className={isUnread ? styles.titleUnread : styles.title}>
+          {title}
+        </span>
+        {isUnread && notification?.latestSummary && (
+          <span className={styles.notificationSummary}>
+            {notification.latestSummary}
+          </span>
+        )}
+      </span>
       {badgeStatus && (
         <span className={styles.status}>
           <Badge status={badgeStatus} />
