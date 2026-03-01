@@ -15,7 +15,7 @@ use metis_common::{
         error::ApiError,
         events::{
             EntityEventData, EventsQuery, HeartbeatEventData, LAST_EVENT_ID_HEADER,
-            NotificationEventData, ResyncEventData, SnapshotEventData, SseEventType,
+            ResyncEventData, SnapshotEventData, SseEventType,
         },
         issues::{IssueSummary, IssueSummaryRecord},
         jobs::JobVersionRecord,
@@ -479,9 +479,15 @@ async fn serialize_entity(
             );
             serde_json::to_value(record).ok()?
         }
-        MutationPayload::Notification { .. } => {
-            // Notification events are serialized via NotificationEventData in build_sse_event.
-            return None;
+        MutationPayload::Notification { new, .. } => {
+            let api_notification: metis_common::api::v1::notifications::Notification =
+                new.clone().into();
+            let notification_id: NotificationId = entity_id.parse().ok()?;
+            let response = metis_common::api::v1::notifications::NotificationResponse::new(
+                notification_id,
+                api_notification,
+            );
+            serde_json::to_value(response).ok()?
         }
     };
     Some(value)
@@ -679,27 +685,16 @@ async fn server_event_to_sse(
             notification_id,
             version,
             timestamp,
+            payload,
             ..
-        } => {
-            // NotificationCreated is normally handled by build_sse_event() before
-            // reaching this function. If we get here due to a refactor, return a
-            // reasonable fallback rather than panicking.
-            warn!(
-                notification_id = %notification_id,
-                "server_event_to_sse called for NotificationCreated; \
-                 this should be handled by build_sse_event"
-            );
-            return (
-                SseEventType::NotificationCreated,
-                EntityEventData {
-                    entity_type: "notification".to_string(),
-                    entity_id: notification_id.to_string(),
-                    version: *version,
-                    timestamp: *timestamp,
-                    entity: None,
-                },
-            );
-        }
+        } => (
+            SseEventType::NotificationCreated,
+            "notification",
+            notification_id.to_string(),
+            *version,
+            *timestamp,
+            payload,
+        ),
     };
 
     let entity = serialize_entity(payload, &entity_id, version, timestamp, state).await;
@@ -716,60 +711,15 @@ async fn server_event_to_sse(
     )
 }
 
-/// Builds an SSE `Event` from a `ServerEvent`, handling both entity mutation
-/// events (which carry `EntityEventData`) and notification events (which carry
-/// `NotificationEventData`).
+/// Builds an SSE `Event` from a `ServerEvent`. All entity types (including
+/// notifications) go through the standard `server_event_to_sse` path.
 async fn build_sse_event(event: &ServerEvent, state: &AppState) -> Event {
-    match event {
-        ServerEvent::NotificationCreated {
-            seq,
-            notification_id,
-            payload,
-            ..
-        } => {
-            let data = if let MutationPayload::Notification { new, .. } = payload.as_ref() {
-                NotificationEventData {
-                    notification_id: notification_id.clone(),
-                    recipient: new.recipient.clone(),
-                    source_actor: new.source_actor.clone(),
-                    object_kind: new.object_kind.clone(),
-                    object_id: new.object_id.to_string(),
-                    summary: new.summary.clone(),
-                    created_at: new.created_at,
-                }
-            } else {
-                // Fallback: should not happen, but handle gracefully.
-                warn!(
-                    notification_id = %notification_id,
-                    "NotificationCreated event has unexpected payload type"
-                );
-                NotificationEventData {
-                    notification_id: notification_id.clone(),
-                    recipient: metis_common::actor_ref::ActorId::Username(
-                        metis_common::api::v1::users::Username::from("unknown"),
-                    ),
-                    source_actor: None,
-                    object_kind: String::new(),
-                    object_id: String::new(),
-                    summary: String::new(),
-                    created_at: Utc::now(),
-                }
-            };
-            Event::default()
-                .event(SseEventType::NotificationCreated.as_str())
-                .id(seq.to_string())
-                .json_data(&data)
-                .unwrap_or_else(|_| Event::default().data("{}"))
-        }
-        _ => {
-            let (event_type, data) = server_event_to_sse(event, state).await;
-            Event::default()
-                .event(event_type.as_str())
-                .id(event.seq().to_string())
-                .json_data(&data)
-                .unwrap_or_else(|_| Event::default().data("{}"))
-        }
-    }
+    let (event_type, data) = server_event_to_sse(event, state).await;
+    Event::default()
+        .event(event_type.as_str())
+        .id(event.seq().to_string())
+        .json_data(&data)
+        .unwrap_or_else(|_| Event::default().data("{}"))
 }
 
 /// Builds a snapshot of current entity version numbers.
@@ -1198,13 +1148,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_sse_event_notification_created() {
+    async fn server_event_to_sse_notification_created() {
         let state = test_app_state();
         let notification_id = metis_common::NotificationId::new();
         let notification = dummy_notification();
-        let recipient = notification.recipient.clone();
-        let source_actor = notification.source_actor.clone();
-        let created_at = notification.created_at;
+        let timestamp = Utc::now();
 
         let payload = Arc::new(MutationPayload::Notification {
             old: None,
@@ -1215,41 +1163,36 @@ mod tests {
             seq: 42,
             notification_id: notification_id.clone(),
             version: 1,
-            timestamp: Utc::now(),
+            timestamp,
             payload,
         };
 
-        let sse_event = build_sse_event(&event, &state).await;
+        let (event_type, data) = server_event_to_sse(&event, &state).await;
 
-        // The SSE event should serialize to JSON containing our notification data.
-        // We can verify the event type by checking the event was created successfully.
-        // The Event struct doesn't expose fields directly, so we verify the data
-        // through the NotificationEventData serialization path.
-        let data = NotificationEventData {
-            notification_id: notification_id.clone(),
-            recipient: recipient.clone(),
-            source_actor,
-            object_kind: "issue".to_string(),
-            object_id: "i-abcdef".to_string(),
-            summary: "Issue i-abcdef status changed from open to in-progress".to_string(),
-            created_at,
-        };
+        assert_eq!(event_type, SseEventType::NotificationCreated);
+        assert_eq!(data.entity_type, "notification");
+        assert_eq!(data.entity_id, notification_id.to_string());
+        assert_eq!(data.version, 1);
 
-        // Verify the data serializes correctly.
-        let json = serde_json::to_string(&data).expect("should serialize");
-        let parsed: NotificationEventData =
-            serde_json::from_str(&json).expect("should deserialize");
-        assert_eq!(parsed.notification_id, notification_id);
-        assert_eq!(parsed.recipient, recipient);
-        assert_eq!(parsed.object_kind, "issue");
+        let entity = data.entity.expect("entity should be present");
+        let obj = entity.as_object().expect("entity should be a JSON object");
+
+        // Verify it has the shape of a NotificationResponse.
         assert_eq!(
-            parsed.summary,
+            obj.get("notification_id").unwrap().as_str().unwrap(),
+            notification_id.to_string()
+        );
+        let notif_obj = obj
+            .get("notification")
+            .expect("should contain notification field");
+        assert_eq!(
+            notif_obj.get("object_kind").unwrap().as_str().unwrap(),
+            "issue"
+        );
+        assert_eq!(
+            notif_obj.get("summary").unwrap().as_str().unwrap(),
             "Issue i-abcdef status changed from open to in-progress"
         );
-
-        // Verify the SSE event was created (not default/empty).
-        // We check this by ensuring build_sse_event doesn't panic and returns.
-        let _ = sse_event;
     }
 
     #[test]
