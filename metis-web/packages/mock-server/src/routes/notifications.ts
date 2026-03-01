@@ -39,7 +39,7 @@ export function createNotificationRoutes(store: Store): Hono {
   app.get("/v1/notifications/unread-count", (c) => {
     const items = store.list<Notification>(COLLECTION);
     const count = items.filter(({ entry }) => !entry.data.is_read).length;
-    const resp: UnreadCountResponse = { count };
+    const resp: UnreadCountResponse = { count: BigInt(count) };
     return c.json(resp);
   });
 
@@ -53,14 +53,14 @@ export function createNotificationRoutes(store: Store): Hono {
     if (!entry.data.is_read) {
       store.update<Notification>(COLLECTION, id, { ...entry.data, is_read: true }, null);
     }
-    const resp: MarkReadResponse = { marked: 1 };
+    const resp: MarkReadResponse = { marked: 1n };
     return c.json(resp);
   });
 
   // POST /v1/notifications/read-all
   app.post("/v1/notifications/read-all", (c) => {
     const items = store.list<Notification>(COLLECTION);
-    let marked = 0;
+    let marked = 0n;
     for (const { id, entry } of items) {
       if (!entry.data.is_read) {
         store.update<Notification>(COLLECTION, id, { ...entry.data, is_read: true }, null);
