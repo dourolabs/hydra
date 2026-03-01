@@ -14,6 +14,7 @@ interface IssueFilterSidebarProps {
   collapsed: boolean;
   onToggleCollapsed: (collapsed: boolean) => void;
   jobsByIssue: Map<string, JobSummaryRecord[]>;
+  username: string;
 }
 
 /** Small SVG donut ring showing completed / in-progress / open segments. */
@@ -112,9 +113,10 @@ export function IssueFilterSidebar({
   collapsed,
   onToggleCollapsed,
   jobsByIssue,
+  username,
 }: IssueFilterSidebarProps) {
   const progressList = useMemo(() => {
-    const list = computeIssueProgress(roots, jobsByIssue);
+    const list = computeIssueProgress(roots, jobsByIssue, username);
     return list.sort((a, b) => {
       const aInactive = TERMINAL_STATUSES.has(a.rootIssue.issue.status) ? 1 : 0;
       const bInactive = TERMINAL_STATUSES.has(b.rootIssue.issue.status) ? 1 : 0;
@@ -124,7 +126,7 @@ export function IssueFilterSidebar({
         new Date(a.rootIssue.creation_time).getTime()
       );
     });
-  }, [roots, jobsByIssue]);
+  }, [roots, jobsByIssue, username]);
 
   if (progressList.length === 0) return null;
 
@@ -178,6 +180,11 @@ export function IssueFilterSidebar({
               }}
             >
               <span className={styles.itemLabel}>{label}</span>
+              {p.needsAttentionCount > 0 && (
+                <span className={styles.needsAttentionChip}>
+                  {p.needsAttentionCount}
+                </span>
+              )}
               <span className={styles.itemStats}>
                 <ProgressCircle progress={p} />
                 {p.closed}/{p.total}

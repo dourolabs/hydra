@@ -119,6 +119,21 @@
   }
 }
 
+.needsAttentionChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: var(--font-size-xxs);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-status-blocked);
+  background: rgba(224, 120, 80, 0.15);
+  border-radius: 999px;
+  padding: 1px 6px;
+  min-width: 18px;
+}
+
 .item.active .itemStats {
   color: var(--color-accent-dim);
 }

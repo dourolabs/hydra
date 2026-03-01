@@ -681,6 +681,90 @@ describe("computeIssueProgress", () => {
     expect(result[0].hasActive).toBe(false);
   });
 
+  // ---------------------------------------------------------------------------
+  // needsAttentionCount
+  // ---------------------------------------------------------------------------
+
+  it("needsAttentionCount is 0 when no username is provided", () => {
+    const root = makeNode({
+      id: "root",
+      children: [makeNode({ id: "c1", status: "open", assignee: "me" })],
+    });
+    const result = computeIssueProgress([root]);
+    expect(result[0].needsAttentionCount).toBe(0);
+  });
+
+  it("needsAttentionCount is 0 when no descendants match", () => {
+    const root = makeNode({
+      id: "root",
+      children: [
+        makeNode({ id: "c1", status: "open", assignee: "someone-else" }),
+        makeNode({ id: "c2", status: "closed", assignee: "me" }),
+      ],
+    });
+    const result = computeIssueProgress([root], new Map(), "me");
+    expect(result[0].needsAttentionCount).toBe(0);
+  });
+
+  it("needsAttentionCount counts open descendants assigned to user with no active job", () => {
+    const root = makeNode({
+      id: "root",
+      children: [
+        makeNode({ id: "c1", status: "open", assignee: "me" }),
+        makeNode({ id: "c2", status: "open", assignee: "me" }),
+        makeNode({ id: "c3", status: "open", assignee: "other" }),
+      ],
+    });
+    const result = computeIssueProgress([root], new Map(), "me");
+    expect(result[0].needsAttentionCount).toBe(2);
+  });
+
+  it("needsAttentionCount excludes descendants with running/pending jobs", () => {
+    const root = makeNode({
+      id: "root",
+      children: [
+        makeNode({ id: "c1", status: "open", assignee: "me" }),
+        makeNode({ id: "c2", status: "open", assignee: "me" }),
+      ],
+    });
+    const jobs = new Map([["c1", [makeJob({ status: "running" })]]]);
+    const result = computeIssueProgress([root], jobs, "me");
+    expect(result[0].needsAttentionCount).toBe(1);
+  });
+
+  it("needsAttentionCount counts recursively through grandchildren", () => {
+    const grandchild = makeNode({ id: "gc1", status: "open", assignee: "me" });
+    const child = makeNode({ id: "c1", status: "open", assignee: "me", children: [grandchild] });
+    const root = makeNode({ id: "root", children: [child] });
+    const result = computeIssueProgress([root], new Map(), "me");
+    expect(result[0].needsAttentionCount).toBe(2);
+  });
+
+  it("needsAttentionCount includes root itself if it matches", () => {
+    const root = makeNode({ id: "root", status: "open", assignee: "me" });
+    const result = computeIssueProgress([root], new Map(), "me");
+    expect(result[0].needsAttentionCount).toBe(1);
+  });
+
+  it("needsAttentionCount is independent per root", () => {
+    const root1 = makeNode({
+      id: "r1",
+      children: [
+        makeNode({ id: "c1", status: "open", assignee: "me" }),
+        makeNode({ id: "c2", status: "open", assignee: "me" }),
+      ],
+    });
+    const root2 = makeNode({
+      id: "r2",
+      children: [
+        makeNode({ id: "c3", status: "open", assignee: "other" }),
+      ],
+    });
+    const result = computeIssueProgress([root1, root2], new Map(), "me");
+    expect(result[0].needsAttentionCount).toBe(2);
+    expect(result[1].needsAttentionCount).toBe(0);
+  });
+
   it("hasActive is independent per root", () => {
     const root1 = makeNode({
       id: "r1",
