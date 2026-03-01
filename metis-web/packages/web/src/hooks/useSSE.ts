@@ -6,10 +6,13 @@ import type {
   JobSummaryRecord,
   PatchSummaryRecord,
   DocumentSummaryRecord,
+  NotificationResponse,
   ListIssuesResponse,
   ListJobsResponse,
   ListPatchesResponse,
   ListDocumentsResponse,
+  ListNotificationsResponse,
+  UnreadCountResponse,
 } from "@metis/api";
 
 export type SSEConnectionState = "connecting" | "connected" | "disconnected";
@@ -101,6 +104,25 @@ const wrapDocs = (items: DocumentSummaryRecord[]): ListDocumentsResponse => ({ d
 const docRecordId = (r: DocumentSummaryRecord) => r.document_id;
 
 /**
+ * Insert a notification into a cached list if not already present (by notification_id).
+ * Notifications are non-versioned, so no version guard is needed.
+ */
+function insertNotificationIfMissing(
+  qc: QueryClient,
+  key: readonly unknown[],
+  record: NotificationResponse,
+) {
+  qc.setQueryData<ListNotificationsResponse>(key, (old) => {
+    if (!old) return old;
+    const exists = old.notifications.some(
+      (n) => n.notification_id === record.notification_id,
+    );
+    if (exists) return old;
+    return { notifications: [record, ...old.notifications] };
+  });
+}
+
+/**
  * SSE hook that connects to the BFF /api/v1/events endpoint, listens for
  * entity mutation events, and updates React Query caches. When entity data
  * is included in the event payload, the cache is updated directly to avoid
@@ -133,6 +155,7 @@ export function useSSE(): SSEConnectionState {
         queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
       } else if (entity_type === "notification" || eventType.startsWith("notification_")) {
         queryClient.invalidateQueries({ queryKey: ["notifications"] });
+        queryClient.invalidateQueries({ queryKey: ["notifications", "unread-count"] });
       }
     },
     [queryClient],
@@ -194,7 +217,15 @@ export function useSSE(): SSEConnectionState {
           upsertInList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id, record);
         }
       } else if (entity_type === "notification" || eventType.startsWith("notification_")) {
-        queryClient.invalidateQueries({ queryKey: ["notifications"] });
+        const record = entity as unknown as NotificationResponse;
+        // Insert into both the unread filter and all-notifications caches
+        insertNotificationIfMissing(queryClient, ["notifications", { isRead: false }], record);
+        insertNotificationIfMissing(queryClient, ["notifications", { isRead: null }], record);
+        // Increment unread count
+        queryClient.setQueryData<UnreadCountResponse>(
+          ["notifications", "unread-count"],
+          (old) => (old ? { count: old.count + 1n } : old),
+        );
       }
     },
     [queryClient, invalidateForEvent],

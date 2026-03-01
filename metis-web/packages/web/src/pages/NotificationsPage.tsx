@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Panel, Spinner } from "@metis/ui";
-import type { NotificationResponse } from "@metis/api";
+import type { NotificationResponse, ListNotificationsResponse, UnreadCountResponse } from "@metis/api";
 import { apiClient } from "../api/client";
 import { useNotifications } from "../features/notifications/useNotifications";
 import { formatRelativeTime } from "../utils/time";
@@ -37,15 +37,120 @@ export function NotificationsPage() {
 
   const markRead = useMutation({
     mutationFn: (id: string) => apiClient.markNotificationRead(id),
-    onSuccess: () => {
+    onMutate: async (id: string) => {
+      await queryClient.cancelQueries({ queryKey: ["notifications"] });
+      await queryClient.cancelQueries({ queryKey: ["notifications", "unread-count"] });
+
+      const prevUnread = queryClient.getQueryData<ListNotificationsResponse>(
+        ["notifications", { isRead: false }],
+      );
+      const prevAll = queryClient.getQueryData<ListNotificationsResponse>(
+        ["notifications", { isRead: null }],
+      );
+      const prevCount = queryClient.getQueryData<UnreadCountResponse>(
+        ["notifications", "unread-count"],
+      );
+
+      const markAsRead = (old: ListNotificationsResponse | undefined) => {
+        if (!old) return old;
+        return {
+          notifications: old.notifications.map((n) =>
+            n.notification_id === id
+              ? { ...n, notification: { ...n.notification, is_read: true } }
+              : n,
+          ),
+        };
+      };
+
+      queryClient.setQueryData<ListNotificationsResponse>(
+        ["notifications", { isRead: false }],
+        markAsRead,
+      );
+      queryClient.setQueryData<ListNotificationsResponse>(
+        ["notifications", { isRead: null }],
+        markAsRead,
+      );
+      if (prevCount) {
+        queryClient.setQueryData<UnreadCountResponse>(
+          ["notifications", "unread-count"],
+          { count: prevCount.count > 0n ? prevCount.count - 1n : 0n },
+        );
+      }
+
+      return { prevUnread, prevAll, prevCount };
+    },
+    onError: (_err, _id, context) => {
+      if (context?.prevUnread !== undefined) {
+        queryClient.setQueryData(["notifications", { isRead: false }], context.prevUnread);
+      }
+      if (context?.prevAll !== undefined) {
+        queryClient.setQueryData(["notifications", { isRead: null }], context.prevAll);
+      }
+      if (context?.prevCount !== undefined) {
+        queryClient.setQueryData(["notifications", "unread-count"], context.prevCount);
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications", "unread-count"] });
     },
   });
 
   const markAllRead = useMutation({
     mutationFn: () => apiClient.markAllNotificationsRead(),
-    onSuccess: () => {
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["notifications"] });
+      await queryClient.cancelQueries({ queryKey: ["notifications", "unread-count"] });
+
+      const prevUnread = queryClient.getQueryData<ListNotificationsResponse>(
+        ["notifications", { isRead: false }],
+      );
+      const prevAll = queryClient.getQueryData<ListNotificationsResponse>(
+        ["notifications", { isRead: null }],
+      );
+      const prevCount = queryClient.getQueryData<UnreadCountResponse>(
+        ["notifications", "unread-count"],
+      );
+
+      const markAllAsRead = (old: ListNotificationsResponse | undefined) => {
+        if (!old) return old;
+        return {
+          notifications: old.notifications.map((n) => ({
+            ...n,
+            notification: { ...n.notification, is_read: true },
+          })),
+        };
+      };
+
+      queryClient.setQueryData<ListNotificationsResponse>(
+        ["notifications", { isRead: false }],
+        markAllAsRead,
+      );
+      queryClient.setQueryData<ListNotificationsResponse>(
+        ["notifications", { isRead: null }],
+        markAllAsRead,
+      );
+      queryClient.setQueryData<UnreadCountResponse>(
+        ["notifications", "unread-count"],
+        { count: 0n },
+      );
+
+      return { prevUnread, prevAll, prevCount };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.prevUnread !== undefined) {
+        queryClient.setQueryData(["notifications", { isRead: false }], context.prevUnread);
+      }
+      if (context?.prevAll !== undefined) {
+        queryClient.setQueryData(["notifications", { isRead: null }], context.prevAll);
+      }
+      if (context?.prevCount !== undefined) {
+        queryClient.setQueryData(["notifications", "unread-count"], context.prevCount);
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications", "unread-count"] });
     },
   });
 
