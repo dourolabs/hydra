@@ -184,7 +184,7 @@ export function IssueFilterSidebar({
         className={`${styles.item} ${activeFilter === null ? styles.active : ""}`}
         onClick={() => handleFilterChange(null)}
         role="button"
-        tabIndex={hideWhenCollapsed && collapsed ? -1 : 0}
+        tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
@@ -201,7 +201,7 @@ export function IssueFilterSidebar({
             className={styles.completedToggle}
             onClick={() => setCompletedExpanded((v) => !v)}
             role="button"
-            tabIndex={hideWhenCollapsed && collapsed ? -1 : 0}
+            tabIndex={0}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
