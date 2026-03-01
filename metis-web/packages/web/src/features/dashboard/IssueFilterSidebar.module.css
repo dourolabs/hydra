@@ -166,61 +166,104 @@
     transition: none;
   }
 
+  .drawer {
+    transition: none;
+  }
+
   .pulse {
     animation: none;
   }
 }
 
+/* ── Mobile hamburger button ── */
+.hamburger {
+  display: none;
+}
+
+/* ── Mobile slide-out drawer ── */
+.drawer {
+  display: none;
+}
+
+.backdrop {
+  display: none;
+}
+
+.drawerHeader {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
 @media (max-width: 768px) {
+  /* Hide the desktop sidebar on mobile */
   .sidebar {
-    width: 100%;
-    min-width: 0;
-    flex-direction: row;
-    border-right: none;
-    border-bottom: 1px solid var(--color-border);
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .sidebar.collapsed {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .header {
     display: none;
   }
 
-  .list,
-  .listCollapsed {
+  /* Hamburger button */
+  .hamburger {
     display: flex;
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-    flex: none;
-    gap: 0;
-    padding: var(--space-1) var(--space-2);
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 62px;
+    left: var(--space-2);
+    z-index: 1001;
+    width: 36px;
+    height: 36px;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    transition: color var(--transition-fast), background var(--transition-fast);
   }
 
-  .item {
-    white-space: nowrap;
-    border-left: none;
-    border-bottom: 2px solid transparent;
-    padding: var(--space-1) var(--space-2);
-    flex-shrink: 0;
+  .hamburger:hover {
+    color: var(--color-text-primary);
+    background: var(--color-bg-tertiary);
   }
 
-  .item.active {
-    border-left-color: transparent;
-    border-bottom-color: var(--color-accent);
+  /* Backdrop overlay */
+  .backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 1002;
+    background: rgba(0, 0, 0, 0.4);
   }
 
-  .completedToggle {
-    border-top: none;
-    border-left: 1px solid var(--color-border);
-    margin-top: 0;
-    margin-left: var(--space-1);
-    flex-shrink: 0;
-    padding: var(--space-1) var(--space-2);
+  /* Slide-out drawer */
+  .drawer {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    max-width: 80vw;
+    z-index: 1003;
+    background: var(--color-bg-primary);
+    border-right: 1px solid var(--color-border);
+    transform: translateX(-100%);
+    transition: transform 250ms ease;
+    overflow: hidden;
+  }
+
+  .drawer.drawerOpen {
+    transform: translateX(0);
+  }
+
+  .drawer .list,
+  .drawer .listCollapsed {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1;
   }
 }
