@@ -234,13 +234,11 @@ impl ServerEvent {
         }
     }
 
-    /// Returns a reference to the mutation payload for this event.
+    /// Returns a reference to the mutation payload for this event, if present.
     ///
-    /// # Panics
-    ///
-    /// Panics if called on `NotificationCreated`, which does not carry a
-    /// `MutationPayload`. Use `event_type()` to check before calling.
-    pub fn payload(&self) -> &Arc<MutationPayload> {
+    /// Returns `None` for `NotificationCreated` events, which are emitted
+    /// directly by the worker and do not carry a `MutationPayload`.
+    pub fn payload(&self) -> Option<&Arc<MutationPayload>> {
         match self {
             ServerEvent::IssueCreated { payload, .. }
             | ServerEvent::IssueUpdated { payload, .. }
@@ -254,10 +252,8 @@ impl ServerEvent {
             | ServerEvent::DocumentUpdated { payload, .. }
             | ServerEvent::DocumentDeleted { payload, .. }
             | ServerEvent::MessageCreated { payload, .. }
-            | ServerEvent::MessageUpdated { payload, .. } => payload,
-            ServerEvent::NotificationCreated { .. } => {
-                panic!("NotificationCreated events do not carry a MutationPayload")
-            }
+            | ServerEvent::MessageUpdated { payload, .. } => Some(payload),
+            ServerEvent::NotificationCreated { .. } => None,
         }
     }
 

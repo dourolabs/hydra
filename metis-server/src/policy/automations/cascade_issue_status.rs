@@ -77,6 +77,7 @@ impl Automation for CascadeIssueStatusAutomation {
     fn event_filter(&self) -> EventFilter {
         EventFilter {
             event_types: vec![EventType::IssueUpdated],
+            ..Default::default()
         }
     }
 
@@ -108,7 +109,11 @@ impl Automation for CascadeIssueStatusAutomation {
         let store = ctx.store;
         let actor = ActorRef::Automation {
             automation_name: AUTOMATION_NAME.into(),
-            triggered_by: Some(Box::new(ctx.actor().clone())),
+            triggered_by: Some(Box::new(
+                ctx.actor()
+                    .expect("issue events always carry a payload")
+                    .clone(),
+            )),
         };
 
         // Drop all children recursively

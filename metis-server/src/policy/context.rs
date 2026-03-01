@@ -64,8 +64,11 @@ pub struct AutomationContext<'a> {
 }
 
 impl<'a> AutomationContext<'a> {
-    /// Returns the actor reference from the event payload.
-    pub fn actor(&self) -> &ActorRef {
-        self.event.payload().actor()
+    /// Returns the actor reference from the event payload, if present.
+    ///
+    /// Returns `None` for events that do not carry a `MutationPayload`
+    /// (e.g., `NotificationCreated`).
+    pub fn actor(&self) -> Option<&ActorRef> {
+        self.event.payload().map(|p| p.actor())
     }
 }

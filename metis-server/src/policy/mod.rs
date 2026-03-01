@@ -43,15 +43,21 @@ pub enum AutomationError {
 pub struct EventFilter {
     /// Which event types to match. Empty means match all.
     pub event_types: Vec<EventType>,
+    /// Event types to explicitly exclude, checked after `event_types`.
+    pub exclude_event_types: Vec<EventType>,
 }
 
 impl EventFilter {
     /// Returns `true` if this filter matches the given event.
     pub fn matches(&self, event: &ServerEvent) -> bool {
-        if self.event_types.is_empty() {
-            return true;
+        let et = event.event_type();
+        if !self.event_types.is_empty() && !self.event_types.contains(&et) {
+            return false;
         }
-        self.event_types.contains(&event.event_type())
+        if self.exclude_event_types.contains(&et) {
+            return false;
+        }
+        true
     }
 }
 

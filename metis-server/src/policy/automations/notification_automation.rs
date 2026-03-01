@@ -35,30 +35,19 @@ impl Automation for NotificationAutomation {
     }
 
     fn event_filter(&self) -> EventFilter {
-        // Match all mutation events except NotificationCreated to avoid
-        // infinite loops (we emit NotificationCreated from this automation).
+        // Match all events except NotificationCreated to avoid infinite loops
+        // (this automation emits NotificationCreated events).
         EventFilter {
-            event_types: vec![
-                EventType::IssueCreated,
-                EventType::IssueUpdated,
-                EventType::IssueDeleted,
-                EventType::PatchCreated,
-                EventType::PatchUpdated,
-                EventType::PatchDeleted,
-                EventType::JobCreated,
-                EventType::JobUpdated,
-                EventType::DocumentCreated,
-                EventType::DocumentUpdated,
-                EventType::DocumentDeleted,
-                EventType::MessageCreated,
-                EventType::MessageUpdated,
-            ],
+            exclude_event_types: vec![EventType::NotificationCreated],
+            ..Default::default()
         }
     }
 
     async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
         let event = ctx.event;
-        let payload = event.payload();
+        let payload = event
+            .payload()
+            .expect("NotificationAutomation filters to mutation events with payloads");
         let source_actor = actor_ref_to_actor_id(payload.actor());
 
         // Collect recipients from all policies, deduplicating and tracking which
@@ -96,7 +85,8 @@ impl Automation for NotificationAutomation {
         let summary = generate_summary(event);
         let object_kind = event_object_kind(event).to_string();
         let object_id = event_object_id(event);
-        let object_version = event_version(event);
+        let object_version = event_version(event)
+            .expect("NotificationAutomation filters to mutation events with versions");
         let event_type = event_type_str(event).to_string();
         let source_issue_id = event_source_issue_id(event);
 

@@ -283,6 +283,7 @@ async fn run_automations_executes_matching_automations() {
             count: count.clone(),
             filter: EventFilter {
                 event_types: vec![EventType::IssueCreated],
+                ..Default::default()
             },
         })],
     );
@@ -316,6 +317,7 @@ async fn run_automations_skips_non_matching_events() {
             count: count.clone(),
             filter: EventFilter {
                 event_types: vec![EventType::PatchCreated],
+                ..Default::default()
             },
         })],
     );
@@ -396,6 +398,7 @@ fn event_filter_empty_matches_all() {
 fn event_filter_specific_type_matches() {
     let filter = EventFilter {
         event_types: vec![EventType::PatchUpdated],
+        ..Default::default()
     };
     let matching = ServerEvent::PatchUpdated {
         seq: 1,

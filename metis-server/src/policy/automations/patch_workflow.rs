@@ -107,7 +107,11 @@ impl PatchWorkflowAutomation {
     fn actor_ref(&self, ctx: &AutomationContext<'_>) -> ActorRef {
         ActorRef::Automation {
             automation_name: AUTOMATION_NAME.into(),
-            triggered_by: Some(Box::new(ctx.actor().clone())),
+            triggered_by: Some(Box::new(
+                ctx.actor()
+                    .expect("patch events always carry a payload")
+                    .clone(),
+            )),
         }
     }
 }
@@ -121,6 +125,7 @@ impl Automation for PatchWorkflowAutomation {
     fn event_filter(&self) -> EventFilter {
         EventFilter {
             event_types: vec![EventType::PatchCreated, EventType::PatchUpdated],
+            ..Default::default()
         }
     }
 

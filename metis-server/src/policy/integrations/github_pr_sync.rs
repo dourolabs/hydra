@@ -39,6 +39,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
     fn event_filter(&self) -> EventFilter {
         EventFilter {
             event_types: vec![EventType::PatchCreated, EventType::PatchUpdated],
+            ..Default::default()
         }
     }
 
@@ -78,7 +79,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
         }
 
         // Resolve actor identity from the event payload.
-        let actor_ref = ctx.actor();
+        let actor_ref = ctx.actor().expect("patch events always carry a payload");
         let actor_name = actor_ref.display_name();
         let actor_id = match actor_ref {
             ActorRef::Authenticated { actor_id } => actor_id.clone(),
@@ -249,7 +250,11 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             .upsert_patch(
                 ActorRef::Automation {
                     automation_name: AUTOMATION_NAME.into(),
-                    triggered_by: Some(Box::new(ctx.actor().clone())),
+                    triggered_by: Some(Box::new(
+                        ctx.actor()
+                            .expect("patch events always carry a payload")
+                            .clone(),
+                    )),
                 },
                 Some(patch_id.clone()),
                 request,

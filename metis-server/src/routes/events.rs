@@ -671,8 +671,27 @@ async fn server_event_to_sse(
             *timestamp,
             payload,
         ),
-        ServerEvent::NotificationCreated { .. } => {
-            unreachable!("NotificationCreated is handled separately in build_sse_event")
+        ServerEvent::NotificationCreated {
+            notification_id, ..
+        } => {
+            // NotificationCreated is normally handled by build_sse_event() before
+            // reaching this function. If we get here due to a refactor, return a
+            // reasonable fallback rather than panicking.
+            warn!(
+                notification_id = %notification_id,
+                "server_event_to_sse called for NotificationCreated; \
+                 this should be handled by build_sse_event"
+            );
+            return (
+                SseEventType::NotificationCreated,
+                EntityEventData {
+                    entity_type: "notification".to_string(),
+                    entity_id: notification_id.to_string(),
+                    version: 0,
+                    timestamp: Utc::now(),
+                    entity: None,
+                },
+            );
         }
     };
 

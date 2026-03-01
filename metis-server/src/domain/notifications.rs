@@ -185,7 +185,9 @@ impl NotificationPolicy for WalkUpPolicy {
         event: &ServerEvent,
         store: &dyn ReadOnlyStore,
     ) -> Result<Vec<ActorId>, StoreError> {
-        let payload = event.payload();
+        let payload = event
+            .payload()
+            .expect("WalkUpPolicy only runs on mutation events with payloads");
         let source_issue_ids = match payload.as_ref() {
             MutationPayload::Issue { .. } => {
                 // The source issue is the issue itself
@@ -241,8 +243,12 @@ impl NotificationPolicy for WalkUpPolicy {
 }
 
 /// Generate a human-readable summary for a server event.
+///
+/// Only called for mutation events that carry a `MutationPayload`.
 pub fn generate_summary(event: &ServerEvent) -> String {
-    let payload = event.payload();
+    let payload = event
+        .payload()
+        .expect("generate_summary only called for mutation events with payloads");
     match payload.as_ref() {
         MutationPayload::Issue { old, new, .. } => {
             let id = match event {
@@ -385,8 +391,10 @@ pub fn event_object_id(event: &ServerEvent) -> MetisId {
     }
 }
 
-/// Extract the version number from a server event.
-pub fn event_version(event: &ServerEvent) -> VersionNumber {
+/// Extract the version number from a server event, if present.
+///
+/// Returns `None` for `NotificationCreated` events, which are non-versioned.
+pub fn event_version(event: &ServerEvent) -> Option<VersionNumber> {
     match event {
         ServerEvent::IssueCreated { version, .. }
         | ServerEvent::IssueUpdated { version, .. }
@@ -400,9 +408,8 @@ pub fn event_version(event: &ServerEvent) -> VersionNumber {
         | ServerEvent::DocumentUpdated { version, .. }
         | ServerEvent::DocumentDeleted { version, .. }
         | ServerEvent::MessageCreated { version, .. }
-        | ServerEvent::MessageUpdated { version, .. } => *version,
-        // Notifications are non-versioned; return 0 as a sentinel.
-        ServerEvent::NotificationCreated { .. } => 0,
+        | ServerEvent::MessageUpdated { version, .. } => Some(*version),
+        ServerEvent::NotificationCreated { .. } => None,
     }
 }
 
@@ -427,8 +434,12 @@ pub fn event_type_str(event: &ServerEvent) -> &'static str {
 }
 
 /// Extract the source issue ID(s) from a server event, if any.
+///
+/// Only called for mutation events that carry a `MutationPayload`.
 pub fn event_source_issue_id(event: &ServerEvent) -> Option<IssueId> {
-    let payload = event.payload();
+    let payload = event
+        .payload()
+        .expect("event_source_issue_id only called for mutation events with payloads");
     match payload.as_ref() {
         MutationPayload::Issue { .. } => match event {
             ServerEvent::IssueCreated { issue_id, .. }
@@ -781,7 +792,7 @@ mod tests {
 
         assert_eq!(event_object_kind(&event), "issue");
         assert_eq!(event_object_id(&event), MetisId::from(issue_id.clone()));
-        assert_eq!(event_version(&event), 3);
+        assert_eq!(event_version(&event), Some(3));
         assert_eq!(event_type_str(&event), "created");
         assert_eq!(event_source_issue_id(&event), Some(issue_id));
     }
