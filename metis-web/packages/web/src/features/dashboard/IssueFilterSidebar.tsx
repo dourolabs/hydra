@@ -150,7 +150,7 @@ export function IssueFilterSidebar({
         className={`${styles.item} ${isActive ? styles.active : ""}`}
         onClick={() => onFilterChange(p.rootId)}
         role="button"
-        tabIndex={collapsed ? -1 : 0}
+        tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
@@ -194,7 +194,7 @@ export function IssueFilterSidebar({
           className={`${styles.item} ${activeFilter === null ? styles.active : ""}`}
           onClick={() => onFilterChange(null)}
           role="button"
-          tabIndex={collapsed ? -1 : 0}
+          tabIndex={0}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
@@ -211,7 +211,7 @@ export function IssueFilterSidebar({
               className={styles.completedToggle}
               onClick={() => setCompletedExpanded((v) => !v)}
               role="button"
-              tabIndex={collapsed ? -1 : 0}
+              tabIndex={0}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
