@@ -215,4 +215,7 @@
     max-width: 120px;
   }
 
+  .stateLabel {
+    display: none;
+  }
 }
