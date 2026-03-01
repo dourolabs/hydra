@@ -20,32 +20,13 @@
   height: calc(100dvh - var(--space-12));
 }
 
-@keyframes scaleIn {
-  from {
-    opacity: 0;
-    transform: scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.leftPane {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  animation: scaleIn 250ms ease-out both;
-}
-
-
 .createButton {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
   width: calc(100% - var(--space-6));
-  margin: auto var(--space-3) var(--space-3);
+  margin: 0 var(--space-3) var(--space-3);
   padding: var(--space-2) var(--space-3);
   background-color: rgba(0, 204, 102, 0.08);
   border: 1px solid var(--color-accent-dim);
@@ -65,12 +46,6 @@
   border-color: var(--color-accent-bright);
   color: var(--color-accent-bright);
   background-color: rgba(0, 204, 102, 0.14);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .leftPane {
-    animation: none;
-  }
 }
 
 @media (max-width: 768px) {
