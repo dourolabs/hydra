@@ -156,7 +156,7 @@ export function IssueFilterSidebar({
         className={`${styles.item} ${isActive ? styles.active : ""}`}
         onClick={() => handleFilterChange(p.rootId)}
         role="button"
-        tabIndex={collapsed ? -1 : 0}
+        tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
