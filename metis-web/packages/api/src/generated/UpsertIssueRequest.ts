@@ -2,4 +2,4 @@
 import type { Issue } from "./Issue";
 import type { TaskId } from "./TaskId";
 
-export type UpsertIssueRequest = { issue: Issue; job_id: TaskId | null };
+export type UpsertIssueRequest = { issue: Issue, job_id: TaskId | null, };

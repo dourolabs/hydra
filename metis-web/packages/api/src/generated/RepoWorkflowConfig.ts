@@ -5,7 +5,4 @@ import type { ReviewRequestConfig } from "./ReviewRequestConfig";
 /**
  * Per-repo workflow configuration for patch review and merge.
  */
-export type RepoWorkflowConfig = {
-  review_requests: Array<ReviewRequestConfig>;
-  merge_request: MergeRequestConfig | null;
-};
+export type RepoWorkflowConfig = { review_requests: Array<ReviewRequestConfig>, merge_request: MergeRequestConfig | null, };

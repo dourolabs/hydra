@@ -48,12 +48,10 @@ import type { DeleteAgentResponse } from "./generated/DeleteAgentResponse";
 import type { MergeQueue } from "./generated/MergeQueue";
 import type { EnqueueMergePatchRequest } from "./generated/EnqueueMergePatchRequest";
 import type { DeleteRepositoryResponse } from "./generated/DeleteRepositoryResponse";
-import type {
-  ListNotificationsResponse,
-  ListNotificationsQuery,
-  UnreadCountResponse,
-  MarkReadResponse,
-} from "./notifications";
+import type { ListNotificationsResponse } from "./generated/ListNotificationsResponse";
+import type { ListNotificationsQuery } from "./generated/ListNotificationsQuery";
+import type { UnreadCountResponse } from "./generated/UnreadCountResponse";
+import type { MarkReadResponse } from "./generated/MarkReadResponse";
 import {
   MetisEventSource,
   buildEventsUrl,

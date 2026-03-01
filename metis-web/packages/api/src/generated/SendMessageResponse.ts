@@ -5,9 +5,4 @@ import type { MessageId } from "./MessageId";
 /**
  * Response after sending a message.
  */
-export type SendMessageResponse = {
-  message_id: MessageId;
-  version: bigint;
-  message: Message;
-  timestamp: string;
-};
+export type SendMessageResponse = { message_id: MessageId, version: bigint, message: Message, timestamp: string, };

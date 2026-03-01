@@ -15,12 +15,3 @@ export type {
 } from "./sse";
 
 export * from "./types";
-
-export type {
-  Notification,
-  NotificationResponse,
-  ListNotificationsResponse,
-  ListNotificationsQuery,
-  UnreadCountResponse,
-  MarkReadResponse,
-} from "./notifications";
