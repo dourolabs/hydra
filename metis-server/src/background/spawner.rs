@@ -38,6 +38,7 @@ struct SpawnAttempt {
     attempts: u32,
     children_snapshot: HashMap<IssueId, VersionNumber>,
     had_unread_messages: bool,
+    had_unread_notifications: bool,
 }
 
 pub struct AgentQueue {
@@ -137,12 +138,17 @@ impl AgentQueue {
         )))
     }
 
+    async fn was_previously_spawned(&self, issue_id: &IssueId) -> bool {
+        self.spawn_attempts.read().await.contains_key(issue_id)
+    }
+
     async fn register_spawn_attempt(
         &self,
         issue_id: &IssueId,
         status: IssueStatus,
         children_snapshot: HashMap<IssueId, VersionNumber>,
         had_unread_messages: bool,
+        had_unread_notifications: bool,
         max_tries: u32,
     ) -> bool {
         let mut attempts = self.spawn_attempts.write().await;
@@ -151,21 +157,25 @@ impl AgentQueue {
             attempts: 0,
             children_snapshot: HashMap::new(),
             had_unread_messages: false,
+            had_unread_notifications: false,
         });
 
         let status_changed = entry.status != status;
         let children_changed = entry.children_snapshot != children_snapshot;
         let new_unread_messages = !entry.had_unread_messages && had_unread_messages;
+        let new_unread_notifications = !entry.had_unread_notifications && had_unread_notifications;
 
-        if status_changed || children_changed || new_unread_messages {
+        if status_changed || children_changed || new_unread_messages || new_unread_notifications {
             *entry = SpawnAttempt {
                 status,
                 attempts: 0,
                 children_snapshot,
                 had_unread_messages,
+                had_unread_notifications,
             };
         } else {
             entry.had_unread_messages = had_unread_messages;
+            entry.had_unread_notifications = had_unread_notifications;
         }
 
         if entry.attempts >= max_tries {
@@ -243,7 +253,19 @@ impl Spawner for AgentQueue {
             let has_unread = has_unread_messages(state, &issue_id)
                 .await
                 .context("failed to check for unread messages")?;
-            if !is_ready && !has_unread {
+            let has_unread_notifs = has_unread_notifications(state, &issue_id)
+                .await
+                .context("failed to check for unread notifications")?;
+            // Notifications trigger respawning only when:
+            // 1. The issue was previously spawned (not initial spawning), to avoid
+            //    spawning tasks for blocked issues that received self-notifications
+            //    at creation time.
+            // 2. The issue is not InProgress — InProgress issues with ready children
+            //    should wait for those children rather than respawning prematurely.
+            let notifs_trigger_respawn = has_unread_notifs
+                && self.was_previously_spawned(&issue_id).await
+                && issue.status != IssueStatus::InProgress;
+            if !is_ready && !has_unread && !notifs_trigger_respawn {
                 continue;
             }
 
@@ -284,6 +306,7 @@ impl Spawner for AgentQueue {
                     issue.status,
                     children_snapshot,
                     has_unread,
+                    has_unread_notifs,
                     max_tries,
                 )
                 .await
@@ -356,6 +379,15 @@ async fn has_unread_messages(state: &AppState, issue_id: &IssueId) -> Result<boo
         .any(|(_, versioned)| !versioned.item.is_read))
 }
 
+async fn has_unread_notifications(
+    state: &AppState,
+    issue_id: &IssueId,
+) -> Result<bool, StoreError> {
+    let recipient = ActorId::Issue(issue_id.clone());
+    let count = state.store.count_unread_notifications(&recipient).await?;
+    Ok(count > 0)
+}
+
 async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool, StoreError> {
     for dependency in issue
         .dependencies
@@ -382,6 +414,7 @@ mod tests {
     use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::domain::messages::Message;
+    use crate::domain::notifications::Notification;
     use crate::domain::patches::{Patch, PatchStatus, Review};
     use crate::{
         app::Repository,
@@ -1817,6 +1850,247 @@ mod tests {
             tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
             Some(issue_id.as_ref())
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unread_notification_triggers_respawn_for_not_ready_issue() -> anyhow::Result<()> {
+        let queue = queue("agent-a");
+        let (handles, repo_name) = state_with_repository().await?;
+
+        // Create the issue initially without blockers (ready).
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Will become blocked",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // First spawn succeeds (issue is ready, no blockers).
+        let mut tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        record_completed_task(&handles, tasks.remove(0)).await?;
+
+        // Now add a blocker to make the issue not ready.
+        let (blocker_id, _) = handles
+            .store
+            .add_issue(
+                issue("Blocker", IssueStatus::Open, None, vec![], &repo_name),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Update the issue to add the blocker dependency.
+        let mut updated_issue = handles.store.get_issue(&issue_id, false).await?.item;
+        updated_issue.dependencies.push(IssueDependency::new(
+            IssueDependencyType::BlockedOn,
+            blocker_id,
+        ));
+        handles
+            .store
+            .update_issue(&issue_id, updated_issue, &ActorRef::test())
+            .await?;
+
+        // Issue is now blocked — should not spawn without notifications.
+        let tasks = queue.spawn(&handles.state).await?;
+        assert!(
+            tasks.is_empty(),
+            "should not spawn when blocked without notifications"
+        );
+
+        // Add an unread notification for the issue.
+        let recipient = ActorId::Issue(issue_id.clone());
+        let notif = Notification::new(
+            recipient,
+            None,
+            "issue".to_string(),
+            IssueId::new().into(),
+            1,
+            "updated".to_string(),
+            "Child issue completed".to_string(),
+            None,
+            "walk_up".to_string(),
+        );
+        handles.store.insert_notification(notif).await?;
+
+        // Notifications trigger respawn for previously spawned issues.
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
+            Some(issue_id.as_ref())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unread_notification_does_not_trigger_initial_spawn_for_blocked_issue()
+    -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+
+        // Create a blocker so the issue is not ready.
+        let (blocker_id, _) = handles
+            .store
+            .add_issue(
+                issue("Blocker", IssueStatus::Open, None, vec![], &repo_name),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Blocked with notifications",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::BlockedOn,
+                        blocker_id,
+                    )],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Add an unread notification — but this is a never-spawned issue.
+        let recipient = ActorId::Issue(issue_id.clone());
+        let notif = Notification::new(
+            recipient,
+            None,
+            "issue".to_string(),
+            IssueId::new().into(),
+            1,
+            "updated".to_string(),
+            "Something happened".to_string(),
+            None,
+            "walk_up".to_string(),
+        );
+        handles.store.insert_notification(notif).await?;
+
+        // Notifications should NOT trigger initial spawn for blocked issues.
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert!(
+            tasks.is_empty(),
+            "notifications should not trigger initial spawn for blocked issues"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn retry_counter_resets_on_new_unread_notification() -> anyhow::Result<()> {
+        let mut queue = queue("agent-a");
+        queue.max_tries = 1;
+
+        let (handles, repo_name) = state_with_repository().await?;
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Retry with notifications",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // First spawn attempt succeeds (attempt 1 of 1).
+        let mut tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        record_completed_task(&handles, tasks.remove(0)).await?;
+
+        // Second attempt should be blocked (max_tries=1 reached).
+        assert!(queue.spawn(&handles.state).await?.is_empty());
+
+        // Send an unread notification — this should reset the retry counter.
+        let recipient = ActorId::Issue(issue_id.clone());
+        let notif = Notification::new(
+            recipient,
+            None,
+            "issue".to_string(),
+            IssueId::new().into(),
+            1,
+            "updated".to_string(),
+            "Child issue completed".to_string(),
+            None,
+            "walk_up".to_string(),
+        );
+        handles.store.insert_notification(notif).await?;
+
+        // Now the counter should have reset, so spawning succeeds again.
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
+            Some(issue_id.as_ref())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_notifications_do_not_trigger_spawn() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+
+        // Create a blocker so the issue is not ready by normal rules.
+        let (blocker_id, _) = handles
+            .store
+            .add_issue(
+                issue("Blocker", IssueStatus::Open, None, vec![], &repo_name),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Blocked with read notifications",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::BlockedOn,
+                        blocker_id,
+                    )],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Add a notification and mark it as read.
+        let recipient = ActorId::Issue(issue_id);
+        let notif = Notification::new(
+            recipient,
+            None,
+            "issue".to_string(),
+            IssueId::new().into(),
+            1,
+            "updated".to_string(),
+            "Child issue completed".to_string(),
+            None,
+            "walk_up".to_string(),
+        );
+        let notif_id = handles.store.insert_notification(notif).await?;
+        handles.store.mark_notification_read(&notif_id).await?;
+
+        // Should not spawn because the only notification is read.
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert!(tasks.is_empty());
 
         Ok(())
     }
