@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { JobSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 import { descriptionSnippet } from "../../utils/text";
@@ -128,7 +128,49 @@ export function IssueFilterSidebar({
     });
   }, [roots, jobsByIssue, username]);
 
+  const activeList = useMemo(
+    () => progressList.filter((p) => !TERMINAL_STATUSES.has(p.rootIssue.issue.status)),
+    [progressList],
+  );
+  const completedList = useMemo(
+    () => progressList.filter((p) => TERMINAL_STATUSES.has(p.rootIssue.issue.status)),
+    [progressList],
+  );
+
+  const [completedExpanded, setCompletedExpanded] = useState(false);
+
   if (progressList.length === 0) return null;
+
+  const renderItem = (p: IssueProgress) => {
+    const label = descriptionSnippet(p.rootIssue.issue.description, 40);
+    const isActive = activeFilter === p.rootId;
+    return (
+      <li
+        key={p.rootId}
+        className={`${styles.item} ${isActive ? styles.active : ""}`}
+        onClick={() => onFilterChange(p.rootId)}
+        role="button"
+        tabIndex={collapsed ? -1 : 0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onFilterChange(p.rootId);
+          }
+        }}
+      >
+        <span className={styles.itemLabel}>{label}</span>
+        {p.needsAttentionCount > 0 && (
+          <span className={styles.needsAttentionChip}>
+            {p.needsAttentionCount}
+          </span>
+        )}
+        <span className={styles.itemStats}>
+          <ProgressCircle progress={p} />
+          {p.closed}/{p.total}
+        </span>
+      </li>
+    );
+  };
 
   return (
     <div className={`${styles.sidebar} ${collapsed ? styles.collapsed : ""}`}>
@@ -162,36 +204,28 @@ export function IssueFilterSidebar({
         >
           <span className={styles.itemLabel}>All issues</span>
         </li>
-        {progressList.map((p) => {
-          const label = descriptionSnippet(p.rootIssue.issue.description, 40);
-          const isActive = activeFilter === p.rootId;
-          return (
+        {activeList.map(renderItem)}
+        {completedList.length > 0 && (
+          <>
             <li
-              key={p.rootId}
-              className={`${styles.item} ${isActive ? styles.active : ""}`}
-              onClick={() => onFilterChange(p.rootId)}
+              className={styles.completedToggle}
+              onClick={() => setCompletedExpanded((v) => !v)}
               role="button"
               tabIndex={collapsed ? -1 : 0}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  onFilterChange(p.rootId);
+                  setCompletedExpanded((v) => !v);
                 }
               }}
             >
-              <span className={styles.itemLabel}>{label}</span>
-              {p.needsAttentionCount > 0 && (
-                <span className={styles.needsAttentionChip}>
-                  {p.needsAttentionCount}
-                </span>
-              )}
-              <span className={styles.itemStats}>
-                <ProgressCircle progress={p} />
-                {p.closed}/{p.total}
+              <span className={styles.completedToggleLabel}>
+                {completedExpanded ? "\u25BC" : "\u25B6"} Completed ({completedList.length})
               </span>
             </li>
-          );
-        })}
+            {completedExpanded && completedList.map(renderItem)}
+          </>
+        )}
       </ul>
     </div>
   );
