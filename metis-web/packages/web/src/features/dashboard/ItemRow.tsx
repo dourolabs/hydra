@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import React, { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
 import type { JobSummaryRecord } from "@metis/api";
@@ -73,7 +73,7 @@ function DocumentIcon() {
   );
 }
 
-const TYPE_ICONS: Record<WorkItem["kind"], () => JSX.Element> = {
+const TYPE_ICONS: Record<WorkItem["kind"], () => React.JSX.Element> = {
   issue: IssueIcon,
   patch: PatchIcon,
   document: DocumentIcon,
