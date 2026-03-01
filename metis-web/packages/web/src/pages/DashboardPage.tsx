@@ -1,15 +1,13 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useState, useMemo, useCallback } from "react";
 import { Spinner } from "@metis/ui";
 import { useIssues, buildIssueTree } from "../features/issues/useIssues";
 import { useAllJobs } from "../features/jobs/useAllJobs";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
-import { SplitLayout } from "../layout/SplitLayout";
-import { WatchlistActivityFeed } from "../features/dashboard/WatchlistActivityFeed";
 import { IssueFilterSidebar } from "../features/dashboard/IssueFilterSidebar";
+import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
+import { useTransitiveWorkItems } from "../features/dashboard/useTransitiveWorkItems";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
-import { DetailPanel, DetailPanelEmpty } from "../features/dashboard/DetailPanel";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import styles from "./DashboardPage.module.css";
 
@@ -17,45 +15,10 @@ export function DashboardPage() {
   const { user } = useAuth();
   const { data: issues, isLoading } = useIssues();
   const { data: jobsByIssue } = useAllJobs();
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const selectedId = searchParams.get("selected");
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [filterRootId, setFilterRootId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const hasSelectionHistoryRef = useRef(false);
-
-  const setSelectedId = useCallback(
-    (id: string | null) => {
-      const shouldPush = id !== null && selectedId === null;
-      if (shouldPush) {
-        hasSelectionHistoryRef.current = true;
-      }
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (id) {
-            next.set("selected", id);
-          } else {
-            next.delete("selected");
-          }
-          return next;
-        },
-        { replace: !shouldPush },
-      );
-    },
-    [setSearchParams, selectedId],
-  );
-
-  const handleMobileBack = useCallback(() => {
-    if (hasSelectionHistoryRef.current) {
-      hasSelectionHistoryRef.current = false;
-      navigate(-1);
-    } else {
-      setSelectedId(null);
-    }
-  }, [navigate, setSelectedId]);
 
   const username = user ? actorDisplayName(user.actor) : "";
 
@@ -83,16 +46,8 @@ export function DashboardPage() {
     return Array.from(set).sort();
   }, [issues]);
 
-  const selectedExists = useMemo(
-    () => selectedId != null && issues?.some((i) => i.issue_id === selectedId),
-    [issues, selectedId],
-  );
-
-  useEffect(() => {
-    if (selectedId && issues && !selectedExists) {
-      setSelectedId(null);
-    }
-  }, [selectedId, issues, selectedExists, setSelectedId]);
+  const { items: workItems, isLoading: workItemsLoading } =
+    useTransitiveWorkItems(filterRootId, issues ?? []);
 
   const handleToggleSidebar = useCallback(() => {
     const next = !sidebarCollapsed;
@@ -116,36 +71,6 @@ export function DashboardPage() {
     );
   }
 
-  const leftPane = (
-    <div className={styles.leftPane}>
-      <WatchlistActivityFeed
-        issues={issues ?? []}
-        jobsByIssue={jobsByIssue ?? new Map()}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-        username={username}
-        filterRootId={filterRootId}
-        sidebarCollapsed={sidebarCollapsed}
-        onToggleSidebar={handleToggleSidebar}
-        drawerOpen={drawerOpen}
-        onToggleDrawer={handleToggleDrawer}
-      />
-      <button
-        type="button"
-        className={styles.createButton}
-        onClick={() => setCreateModalOpen(true)}
-      >
-        + Create Issue
-      </button>
-    </div>
-  );
-
-  const rightPane = selectedId && selectedExists ? (
-    <DetailPanel issueId={selectedId} />
-  ) : (
-    <DetailPanelEmpty />
-  );
-
   return (
     <div className={styles.page}>
       <div className={styles.dashboardRow}>
@@ -159,14 +84,22 @@ export function DashboardPage() {
           jobsByIssue={jobsByIssue ?? new Map()}
           username={username}
         />
-        <SplitLayout
-          left={leftPane}
-          right={rightPane}
-          leftWidth={40}
-          mobileDetailVisible={selectedId !== null}
-          onMobileBack={handleMobileBack}
+        <HeterogeneousItemList
+          items={workItems}
+          jobsByIssue={jobsByIssue ?? new Map()}
+          isLoading={workItemsLoading}
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={handleToggleSidebar}
+          onToggleDrawer={handleToggleDrawer}
         />
       </div>
+      <button
+        type="button"
+        className={styles.createButton}
+        onClick={() => setCreateModalOpen(true)}
+      >
+        + Create Issue
+      </button>
       <IssueCreateModal
         open={createModalOpen}
         onClose={() => setCreateModalOpen(false)}
