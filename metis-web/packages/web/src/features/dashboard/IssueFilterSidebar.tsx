@@ -4,7 +4,6 @@ import type { IssueTreeNode } from "../issues/useIssues";
 import { descriptionSnippet } from "../../utils/text";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { computeIssueProgress, type IssueProgress } from "./activityUtils";
-import { writeCollapsed } from "./sidebarStorage";
 import styles from "./IssueFilterSidebar.module.css";
 
 interface IssueFilterSidebarProps {
@@ -12,7 +11,8 @@ interface IssueFilterSidebarProps {
   activeFilter: string | null;
   onFilterChange: (rootId: string | null) => void;
   collapsed: boolean;
-  onToggleCollapsed: (collapsed: boolean) => void;
+  drawerOpen: boolean;
+  onDrawerClose: () => void;
   jobsByIssue: Map<string, JobSummaryRecord[]>;
   username: string;
 }
@@ -111,10 +111,16 @@ export function IssueFilterSidebar({
   activeFilter,
   onFilterChange,
   collapsed,
-  onToggleCollapsed,
+  drawerOpen,
+  onDrawerClose,
   jobsByIssue,
   username,
 }: IssueFilterSidebarProps) {
+  /** On mobile, selecting an issue should also close the drawer. */
+  const handleFilterChange = (rootId: string | null) => {
+    onFilterChange(rootId);
+    onDrawerClose();
+  };
   const progressList = useMemo(() => {
     const list = computeIssueProgress(roots, jobsByIssue, username);
     return list.sort((a, b) => {
@@ -148,13 +154,13 @@ export function IssueFilterSidebar({
       <li
         key={p.rootId}
         className={`${styles.item} ${isActive ? styles.active : ""}`}
-        onClick={() => onFilterChange(p.rootId)}
+        onClick={() => handleFilterChange(p.rootId)}
         role="button"
         tabIndex={collapsed ? -1 : 0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            onFilterChange(p.rootId);
+            handleFilterChange(p.rootId);
           }
         }}
       >
@@ -172,61 +178,72 @@ export function IssueFilterSidebar({
     );
   };
 
+  const renderIssueList = (hideWhenCollapsed: boolean) => (
+    <ul className={`${styles.list} ${hideWhenCollapsed && collapsed ? styles.listCollapsed : ""}`}>
+      <li
+        className={`${styles.item} ${activeFilter === null ? styles.active : ""}`}
+        onClick={() => handleFilterChange(null)}
+        role="button"
+        tabIndex={hideWhenCollapsed && collapsed ? -1 : 0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleFilterChange(null);
+          }
+        }}
+      >
+        <span className={styles.itemLabel}>All issues</span>
+      </li>
+      {activeList.map(renderItem)}
+      {completedList.length > 0 && (
+        <>
+          <li
+            className={styles.completedToggle}
+            onClick={() => setCompletedExpanded((v) => !v)}
+            role="button"
+            tabIndex={hideWhenCollapsed && collapsed ? -1 : 0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setCompletedExpanded((v) => !v);
+              }
+            }}
+          >
+            <span className={styles.completedToggleLabel}>
+              {completedExpanded ? "\u25BC" : "\u25B6"} Completed ({completedList.length})
+            </span>
+          </li>
+          {completedExpanded && completedList.map(renderItem)}
+        </>
+      )}
+    </ul>
+  );
+
   return (
-    <div className={`${styles.sidebar} ${collapsed ? styles.collapsed : ""}`}>
-      <div className={styles.header}>
-        {!collapsed && <span className={styles.title}>Issues</span>}
-        <button
-          type="button"
-          className={styles.toggle}
-          onClick={() => {
-            const next = !collapsed;
-            writeCollapsed(next);
-            onToggleCollapsed(next);
-          }}
-          aria-label={collapsed ? "Expand filter sidebar" : "Collapse filter sidebar"}
-        >
-          {collapsed ? "\u25B6" : "\u25C0"}
-        </button>
-      </div>
-      <ul className={`${styles.list} ${collapsed ? styles.listCollapsed : ""}`}>
-        <li
-          className={`${styles.item} ${activeFilter === null ? styles.active : ""}`}
-          onClick={() => onFilterChange(null)}
-          role="button"
-          tabIndex={collapsed ? -1 : 0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              onFilterChange(null);
-            }
-          }}
-        >
-          <span className={styles.itemLabel}>All issues</span>
-        </li>
-        {activeList.map(renderItem)}
-        {completedList.length > 0 && (
-          <>
-            <li
-              className={styles.completedToggle}
-              onClick={() => setCompletedExpanded((v) => !v)}
-              role="button"
-              tabIndex={collapsed ? -1 : 0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setCompletedExpanded((v) => !v);
-                }
-              }}
-            >
-              <span className={styles.completedToggleLabel}>
-                {completedExpanded ? "\u25BC" : "\u25B6"} Completed ({completedList.length})
-              </span>
-            </li>
-            {completedExpanded && completedList.map(renderItem)}
-          </>
+    <>
+      {/* Desktop sidebar — hidden on mobile via CSS */}
+      <div className={`${styles.sidebar} ${collapsed ? styles.collapsed : ""}`}>
+        {!collapsed && (
+          <div className={styles.header}>
+            <span className={styles.title}>Issues</span>
+          </div>
         )}
-      </ul>
-    </div>
+        {renderIssueList(true)}
+      </div>
+
+      {/* Mobile slide-out drawer (hamburger button lives in WatchlistActivityFeed summary bar) */}
+      {drawerOpen && (
+        <div
+          className={styles.backdrop}
+          onClick={onDrawerClose}
+        />
+      )}
+      <div className={`${styles.drawer} ${drawerOpen ? styles.drawerOpen : ""}`}>
+        <div className={styles.drawerHeader}>
+          <span className={styles.title}>Issues</span>
+        </div>
+        {renderIssueList(false)}
+      </div>
+    </>
   );
 }
