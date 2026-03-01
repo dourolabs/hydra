@@ -13,6 +13,8 @@ export interface IssueProgress {
   inProgress: number;
   closed: number;
   total: number;
+  /** True if any descendant (recursive) has a running or pending job. */
+  hasActive: boolean;
 }
 
 /**
@@ -203,7 +205,17 @@ export function sectionLabel(section: ActivitySection): string {
  */
 export function computeIssueProgress(
   roots: IssueTreeNode[],
+  jobsByIssue?: Map<string, JobSummaryRecord[]>,
 ): IssueProgress[] {
+  function hasActiveDescendant(node: IssueTreeNode): boolean {
+    if (!jobsByIssue) return false;
+    const jobs = jobsByIssue.get(node.id) ?? [];
+    if (jobs.some((j) => j.task.status === "running" || j.task.status === "pending")) {
+      return true;
+    }
+    return node.children.some((child) => hasActiveDescendant(child));
+  }
+
   return roots.map((root) => {
     let open = 0;
     let inProgress = 0;
@@ -230,6 +242,7 @@ export function computeIssueProgress(
       inProgress,
       closed,
       total: open + inProgress + closed,
+      hasActive: hasActiveDescendant(root),
     };
   });
 }

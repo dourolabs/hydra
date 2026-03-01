@@ -79,6 +79,10 @@
     height: calc(100dvh - 56px - var(--space-6));
   }
 
+  .dashboardRow {
+    flex-direction: column;
+  }
+
   .center {
     height: calc(100vh - 56px - var(--space-6));
     height: calc(100dvh - 56px - var(--space-6));
