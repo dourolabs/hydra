@@ -64,7 +64,7 @@
   composes: filterTab;
   color: var(--color-accent);
   border-color: var(--color-accent);
-  background: rgba(0, 204, 102, 0.1);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
 
 .notificationList {
