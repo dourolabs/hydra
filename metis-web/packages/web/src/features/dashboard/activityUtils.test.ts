@@ -11,6 +11,7 @@ import {
   type ActivityItem,
   type ActivitySection,
 } from "./activityUtils";
+import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -778,5 +779,76 @@ describe("computeIssueProgress", () => {
     const result = computeIssueProgress([root1, root2], jobs);
     expect(result[0].hasActive).toBe(true);
     expect(result[1].hasActive).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// partitioning progressList by TERMINAL_STATUSES (IssueFilterSidebar logic)
+// ---------------------------------------------------------------------------
+
+describe("partitioning progressList by TERMINAL_STATUSES", () => {
+  it("separates active roots from terminal roots", () => {
+    const roots = [
+      makeNode({ id: "r1", status: "open" }),
+      makeNode({ id: "r2", status: "closed" }),
+      makeNode({ id: "r3", status: "in-progress" }),
+      makeNode({ id: "r4", status: "failed" }),
+      makeNode({ id: "r5", status: "dropped" }),
+      makeNode({ id: "r6", status: "rejected" }),
+    ];
+    const progressList = computeIssueProgress(roots);
+
+    const activeList = progressList.filter(
+      (p) => !TERMINAL_STATUSES.has(p.rootIssue.issue.status),
+    );
+    const completedList = progressList.filter(
+      (p) => TERMINAL_STATUSES.has(p.rootIssue.issue.status),
+    );
+
+    expect(activeList.map((p) => p.rootId)).toEqual(["r1", "r3"]);
+    expect(completedList.map((p) => p.rootId)).toEqual(["r2", "r4", "r5", "r6"]);
+  });
+
+  it("returns empty completedList when no roots are terminal", () => {
+    const roots = [
+      makeNode({ id: "r1", status: "open" }),
+      makeNode({ id: "r2", status: "in-progress" }),
+    ];
+    const progressList = computeIssueProgress(roots);
+
+    const completedList = progressList.filter(
+      (p) => TERMINAL_STATUSES.has(p.rootIssue.issue.status),
+    );
+
+    expect(completedList).toHaveLength(0);
+  });
+
+  it("returns empty activeList when all roots are terminal", () => {
+    const roots = [
+      makeNode({ id: "r1", status: "closed" }),
+      makeNode({ id: "r2", status: "failed" }),
+    ];
+    const progressList = computeIssueProgress(roots);
+
+    const activeList = progressList.filter(
+      (p) => !TERMINAL_STATUSES.has(p.rootIssue.issue.status),
+    );
+
+    expect(activeList).toHaveLength(0);
+  });
+
+  it("blocked status is not terminal", () => {
+    const roots = [makeNode({ id: "r1", status: "blocked" })];
+    const progressList = computeIssueProgress(roots);
+
+    const activeList = progressList.filter(
+      (p) => !TERMINAL_STATUSES.has(p.rootIssue.issue.status),
+    );
+    const completedList = progressList.filter(
+      (p) => TERMINAL_STATUSES.has(p.rootIssue.issue.status),
+    );
+
+    expect(activeList).toHaveLength(1);
+    expect(completedList).toHaveLength(0);
   });
 });
