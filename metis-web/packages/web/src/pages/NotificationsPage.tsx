@@ -10,14 +10,16 @@ import styles from "./NotificationsPage.module.css";
 
 type Filter = "unread" | "all";
 
-function objectRoute(objectKind: string, objectId: string): string {
+function objectRoute(objectKind: string, objectId: string, sourceIssueId?: string | null): string {
   switch (objectKind) {
     case "issue":
       return `/issues/${objectId}`;
     case "patch":
       return `/patches/${objectId}`;
     case "job":
-      return `/issues/${objectId}`;
+      return sourceIssueId
+        ? `/issues/${sourceIssueId}/jobs/${objectId}/logs`
+        : `/`;
     case "document":
       return `/documents/${objectId}`;
     default:
@@ -54,6 +56,7 @@ export function NotificationsPage() {
     const route = objectRoute(
       notification.notification.object_kind,
       notification.notification.object_id,
+      notification.notification.source_issue_id,
     );
     navigate(route);
   };
