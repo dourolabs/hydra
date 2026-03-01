@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Store } from "./store.js";
-import type { Issue, Task, Patch, Document, Repository, AgentRecord } from "@metis/api";
+import type { Issue, Task, Patch, Document, Repository, AgentRecord, Notification } from "@metis/api";
 
 interface SeedData {
   issues: Record<string, Issue>;
@@ -11,6 +11,7 @@ interface SeedData {
   documents: Record<string, Document>;
   repositories: Record<string, Repository>;
   agents: Record<string, AgentRecord>;
+  notifications: Record<string, Notification>;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,12 +51,17 @@ export function loadSeedData(store: Store): void {
     store.create<AgentRecord>("agents", id, agent, null);
   }
 
+  for (const [id, notification] of Object.entries(seed.notifications)) {
+    store.create<Notification>("notifications", id, notification, null);
+  }
+
   console.log(
     `Seed data loaded: ${Object.keys(seed.issues).length} issues, ` +
     `${Object.keys(seed.jobs).length} jobs, ` +
     `${Object.keys(seed.patches).length} patches, ` +
     `${Object.keys(seed.documents).length} documents, ` +
     `${Object.keys(seed.repositories).length} repositories, ` +
-    `${Object.keys(seed.agents).length} agents`,
+    `${Object.keys(seed.agents).length} agents, ` +
+    `${Object.keys(seed.notifications).length} notifications`,
   );
 }

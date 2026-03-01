@@ -16,6 +16,7 @@ import { createDocumentRoutes } from "./routes/documents.js";
 import { createRepositoryRoutes } from "./routes/repositories.js";
 import { createAgentRoutes } from "./routes/agents.js";
 import { createMergeQueueRoutes } from "./routes/merge-queues.js";
+import { createNotificationRoutes } from "./routes/notifications.js";
 import { createEventRoutes } from "./routes/events.js";
 import { loadSeedData } from "./seed.js";
 
@@ -74,6 +75,7 @@ app.route("", createDocumentRoutes(store));
 app.route("", createRepositoryRoutes(store));
 app.route("", createAgentRoutes(store));
 app.route("", createMergeQueueRoutes());
+app.route("", createNotificationRoutes(store));
 app.route("", createEventRoutes(store));
 
 export interface MockServerHandle {
