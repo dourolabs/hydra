@@ -2,6 +2,7 @@ import { Link, NavLink } from "react-router-dom";
 import { Avatar, Tooltip } from "@metis/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
+import { useUnreadCount } from "../features/notifications/useUnreadCount";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import styles from "./IconSidebar.module.css";
 
@@ -58,6 +59,16 @@ const NAV_ITEMS = [
     end: false,
   },
   {
+    to: "/notifications",
+    label: "Notifications",
+    icon: (
+      <svg className={styles.navIcon} viewBox="0 0 20 20" fill="currentColor">
+        <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
+      </svg>
+    ),
+    end: false,
+  },
+  {
     to: "/settings",
     label: "Settings",
     icon: (
@@ -72,6 +83,7 @@ const NAV_ITEMS = [
 export function IconSidebar({ connectionState }: IconSidebarProps) {
   const { user, logout } = useAuth();
   const displayName = user ? actorDisplayName(user.actor) : null;
+  const { data: unreadCount } = useUnreadCount();
 
   return (
     <nav className={styles.sidebar}>
@@ -92,7 +104,16 @@ export function IconSidebar({ connectionState }: IconSidebarProps) {
                 `${styles.navItem}${isActive ? ` ${styles.active}` : ""}`
               }
             >
-              {item.icon}
+              {item.to === "/notifications" ? (
+                <span className={styles.bellWrapper}>
+                  {item.icon}
+                  {unreadCount != null && unreadCount > 0 && (
+                    <span className={styles.badge}>{unreadCount}</span>
+                  )}
+                </span>
+              ) : (
+                item.icon
+              )}
             </NavLink>
           </Tooltip>
         ))}
