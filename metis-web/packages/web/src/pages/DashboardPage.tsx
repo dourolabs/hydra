@@ -137,6 +137,7 @@ export function DashboardPage() {
           collapsed={sidebarCollapsed}
           onToggleCollapsed={setSidebarCollapsed}
           jobsByIssue={jobsByIssue ?? new Map()}
+          username={username}
         />
         <SplitLayout
           left={leftPane}

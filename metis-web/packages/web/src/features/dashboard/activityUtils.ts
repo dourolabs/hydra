@@ -15,6 +15,8 @@ export interface IssueProgress {
   total: number;
   /** True if any descendant (recursive) has a running or pending job. */
   hasActive: boolean;
+  /** Count of descendants that need attention (open, assigned to user, no active job). */
+  needsAttentionCount: number;
 }
 
 /**
@@ -206,6 +208,7 @@ export function sectionLabel(section: ActivitySection): string {
 export function computeIssueProgress(
   roots: IssueTreeNode[],
   jobsByIssue?: Map<string, JobSummaryRecord[]>,
+  username?: string,
 ): IssueProgress[] {
   function hasActiveDescendant(node: IssueTreeNode): boolean {
     if (!jobsByIssue) return false;
@@ -214,6 +217,28 @@ export function computeIssueProgress(
       return true;
     }
     return node.children.some((child) => hasActiveDescendant(child));
+  }
+
+  function countNeedsAttention(node: IssueTreeNode): number {
+    let count = 0;
+    const status = node.issue.issue.status;
+    if (
+      username &&
+      status === "open" &&
+      node.issue.issue.assignee === username
+    ) {
+      const jobs = jobsByIssue?.get(node.id) ?? [];
+      const hasRunningJob = jobs.some(
+        (j) => j.task.status === "running" || j.task.status === "pending",
+      );
+      if (!hasRunningJob) {
+        count++;
+      }
+    }
+    for (const child of node.children) {
+      count += countNeedsAttention(child);
+    }
+    return count;
   }
 
   return roots.map((root) => {
@@ -243,6 +268,7 @@ export function computeIssueProgress(
       closed,
       total: open + inProgress + closed,
       hasActive: hasActiveDescendant(root),
+      needsAttentionCount: countNeedsAttention(root),
     };
   });
 }
