@@ -26,6 +26,7 @@ const ENTITY_EVENT_TYPES = [
   "document_created",
   "document_updated",
   "document_deleted",
+  "notification_created",
 ] as const;
 
 const MAX_BACKOFF_MS = 30_000;
@@ -130,6 +131,8 @@ export function useSSE(): SSEConnectionState {
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
         queryClient.invalidateQueries({ queryKey: ["documents"] });
         queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
+      } else if (entity_type === "notification" || eventType.startsWith("notification_")) {
+        queryClient.invalidateQueries({ queryKey: ["notifications"] });
       }
     },
     [queryClient],
@@ -190,6 +193,8 @@ export function useSSE(): SSEConnectionState {
           queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
           upsertInList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id, record);
         }
+      } else if (entity_type === "notification" || eventType.startsWith("notification_")) {
+        queryClient.invalidateQueries({ queryKey: ["notifications"] });
       }
     },
     [queryClient, invalidateForEvent],
@@ -203,6 +208,7 @@ export function useSSE(): SSEConnectionState {
     queryClient.invalidateQueries({ queryKey: ["patches"] });
     queryClient.invalidateQueries({ queryKey: ["documents"] });
     queryClient.invalidateQueries({ queryKey: ["document"] });
+    queryClient.invalidateQueries({ queryKey: ["notifications"] });
   }, [queryClient]);
 
   const connect = useCallback(() => {
@@ -214,7 +220,7 @@ export function useSSE(): SSEConnectionState {
 
     setState("connecting");
 
-    const es = new EventSource("/api/v1/events?types=issues,jobs,patches,documents");
+    const es = new EventSource("/api/v1/events?types=issues,jobs,patches,documents,notifications");
     esRef.current = es;
 
     es.onopen = () => {
