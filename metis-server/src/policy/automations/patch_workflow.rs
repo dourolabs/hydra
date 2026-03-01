@@ -121,6 +121,7 @@ impl Automation for PatchWorkflowAutomation {
     fn event_filter(&self) -> EventFilter {
         EventFilter {
             event_types: vec![EventType::PatchCreated, EventType::PatchUpdated],
+            ..Default::default()
         }
     }
 

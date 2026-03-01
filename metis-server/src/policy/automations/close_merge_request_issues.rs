@@ -35,6 +35,7 @@ impl Automation for CloseMergeRequestIssuesAutomation {
     fn event_filter(&self) -> EventFilter {
         EventFilter {
             event_types: vec![EventType::PatchUpdated],
+            ..Default::default()
         }
     }
 

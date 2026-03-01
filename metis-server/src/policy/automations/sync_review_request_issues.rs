@@ -34,6 +34,7 @@ impl Automation for SyncReviewRequestIssuesAutomation {
     fn event_filter(&self) -> EventFilter {
         EventFilter {
             event_types: vec![EventType::PatchUpdated],
+            ..Default::default()
         }
     }
 

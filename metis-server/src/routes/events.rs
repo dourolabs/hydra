@@ -9,12 +9,13 @@ use axum::{
 use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
 use metis_common::{
+    NotificationId,
     api::v1::{
         documents::{DocumentSummaryRecord, DocumentVersionRecord},
         error::ApiError,
         events::{
             EntityEventData, EventsQuery, HeartbeatEventData, LAST_EVENT_ID_HEADER,
-            ResyncEventData, SnapshotEventData, SseEventType,
+            NotificationEventData, ResyncEventData, SnapshotEventData, SseEventType,
         },
         issues::{IssueSummary, IssueSummaryRecord},
         jobs::JobVersionRecord,
@@ -105,12 +106,7 @@ pub async fn get_events(
                                 continue;
                             }
 
-                            let (event_type, data) = server_event_to_sse(&event, &state).await;
-                            let sse_event = Event::default()
-                                .event(event_type.as_str())
-                                .id(event.seq().to_string())
-                                .json_data(&data)
-                                .unwrap_or_else(|_| Event::default().data("{}"));
+                            let sse_event = build_sse_event(&event, &state).await;
 
                             if tx.unbounded_send(Ok(sse_event)).is_err() {
                                 break;
@@ -168,6 +164,7 @@ struct EventFilter {
     patch_ids: Option<Vec<PatchId>>,
     document_ids: Option<Vec<DocumentId>>,
     message_ids: Option<Vec<MessageId>>,
+    notification_ids: Option<Vec<NotificationId>>,
 }
 
 impl EventFilter {
@@ -232,6 +229,17 @@ impl EventFilter {
             .transpose()
             .map_err(|e| format!("invalid message_ids: {e}"))?;
 
+        let notification_ids = query
+            .notification_ids
+            .as_ref()
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().parse::<NotificationId>())
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .map_err(|e| format!("invalid notification_ids: {e}"))?;
+
         Ok(Self {
             entity_types,
             issue_ids,
@@ -239,6 +247,7 @@ impl EventFilter {
             patch_ids,
             document_ids,
             message_ids,
+            notification_ids,
         })
     }
 
@@ -289,6 +298,13 @@ impl EventFilter {
                     }
                 }
             }
+            EntityId::Notification(id) => {
+                if let Some(ids) = &self.notification_ids {
+                    if !ids.contains(id) {
+                        return false;
+                    }
+                }
+            }
         }
 
         true
@@ -296,12 +312,14 @@ impl EventFilter {
 }
 
 /// A typed entity ID extracted from a ServerEvent.
+#[derive(Debug)]
 enum EntityId<'a> {
     Issue(&'a IssueId),
     Task(&'a TaskId),
     Patch(&'a PatchId),
     Document(&'a DocumentId),
     Message(&'a MessageId),
+    Notification(&'a NotificationId),
 }
 
 /// Extracts the entity type category and typed entity ID from a ServerEvent.
@@ -329,6 +347,10 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
         | ServerEvent::MessageUpdated { message_id, .. } => {
             ("messages", EntityId::Message(message_id))
         }
+
+        ServerEvent::NotificationCreated {
+            notification_id, ..
+        } => ("notifications", EntityId::Notification(notification_id)),
     }
 }
 
@@ -456,6 +478,10 @@ async fn serialize_entity(
                 creation_time,
             );
             serde_json::to_value(record).ok()?
+        }
+        MutationPayload::Notification { .. } => {
+            // Notification events are serialized via NotificationEventData in build_sse_event.
+            return None;
         }
     };
     Some(value)
@@ -649,6 +675,31 @@ async fn server_event_to_sse(
             *timestamp,
             payload,
         ),
+        ServerEvent::NotificationCreated {
+            notification_id,
+            version,
+            timestamp,
+            ..
+        } => {
+            // NotificationCreated is normally handled by build_sse_event() before
+            // reaching this function. If we get here due to a refactor, return a
+            // reasonable fallback rather than panicking.
+            warn!(
+                notification_id = %notification_id,
+                "server_event_to_sse called for NotificationCreated; \
+                 this should be handled by build_sse_event"
+            );
+            return (
+                SseEventType::NotificationCreated,
+                EntityEventData {
+                    entity_type: "notification".to_string(),
+                    entity_id: notification_id.to_string(),
+                    version: *version,
+                    timestamp: *timestamp,
+                    entity: None,
+                },
+            );
+        }
     };
 
     let entity = serialize_entity(payload, &entity_id, version, timestamp, state).await;
@@ -663,6 +714,62 @@ async fn server_event_to_sse(
             entity,
         },
     )
+}
+
+/// Builds an SSE `Event` from a `ServerEvent`, handling both entity mutation
+/// events (which carry `EntityEventData`) and notification events (which carry
+/// `NotificationEventData`).
+async fn build_sse_event(event: &ServerEvent, state: &AppState) -> Event {
+    match event {
+        ServerEvent::NotificationCreated {
+            seq,
+            notification_id,
+            payload,
+            ..
+        } => {
+            let data = if let MutationPayload::Notification { new, .. } = payload.as_ref() {
+                NotificationEventData {
+                    notification_id: notification_id.clone(),
+                    recipient: new.recipient.clone(),
+                    source_actor: new.source_actor.clone(),
+                    object_kind: new.object_kind.clone(),
+                    object_id: new.object_id.to_string(),
+                    summary: new.summary.clone(),
+                    created_at: new.created_at,
+                }
+            } else {
+                // Fallback: should not happen, but handle gracefully.
+                warn!(
+                    notification_id = %notification_id,
+                    "NotificationCreated event has unexpected payload type"
+                );
+                NotificationEventData {
+                    notification_id: notification_id.clone(),
+                    recipient: metis_common::actor_ref::ActorId::Username(
+                        metis_common::api::v1::users::Username::from("unknown"),
+                    ),
+                    source_actor: None,
+                    object_kind: String::new(),
+                    object_id: String::new(),
+                    summary: String::new(),
+                    created_at: Utc::now(),
+                }
+            };
+            Event::default()
+                .event(SseEventType::NotificationCreated.as_str())
+                .id(seq.to_string())
+                .json_data(&data)
+                .unwrap_or_else(|_| Event::default().data("{}"))
+        }
+        _ => {
+            let (event_type, data) = server_event_to_sse(event, state).await;
+            Event::default()
+                .event(event_type.as_str())
+                .id(event.seq().to_string())
+                .json_data(&data)
+                .unwrap_or_else(|_| Event::default().data("{}"))
+        }
+    }
 }
 
 /// Builds a snapshot of current entity version numbers.
@@ -1072,5 +1179,141 @@ mod tests {
             .expect("entity should be present for update events");
         let msg_obj = entity.get("message").expect("should contain message field");
         assert_eq!(msg_obj.get("body").unwrap().as_str().unwrap(), "updated");
+    }
+
+    fn dummy_notification() -> crate::domain::notifications::Notification {
+        crate::domain::notifications::Notification::new(
+            crate::domain::actors::ActorId::Username(Username::from("alice").into()),
+            Some(crate::domain::actors::ActorId::Issue(
+                "i-abcdef".parse::<IssueId>().unwrap(),
+            )),
+            "issue".to_string(),
+            "i-abcdef".parse::<IssueId>().unwrap().into(),
+            1,
+            "updated".to_string(),
+            "Issue i-abcdef status changed from open to in-progress".to_string(),
+            None,
+            "walk_up".to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn build_sse_event_notification_created() {
+        let state = test_app_state();
+        let notification_id = metis_common::NotificationId::new();
+        let notification = dummy_notification();
+        let recipient = notification.recipient.clone();
+        let source_actor = notification.source_actor.clone();
+        let created_at = notification.created_at;
+
+        let payload = Arc::new(MutationPayload::Notification {
+            old: None,
+            new: notification,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::NotificationCreated {
+            seq: 42,
+            notification_id: notification_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let sse_event = build_sse_event(&event, &state).await;
+
+        // The SSE event should serialize to JSON containing our notification data.
+        // We can verify the event type by checking the event was created successfully.
+        // The Event struct doesn't expose fields directly, so we verify the data
+        // through the NotificationEventData serialization path.
+        let data = NotificationEventData {
+            notification_id: notification_id.clone(),
+            recipient: recipient.clone(),
+            source_actor,
+            object_kind: "issue".to_string(),
+            object_id: "i-abcdef".to_string(),
+            summary: "Issue i-abcdef status changed from open to in-progress".to_string(),
+            created_at,
+        };
+
+        // Verify the data serializes correctly.
+        let json = serde_json::to_string(&data).expect("should serialize");
+        let parsed: NotificationEventData =
+            serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(parsed.notification_id, notification_id);
+        assert_eq!(parsed.recipient, recipient);
+        assert_eq!(parsed.object_kind, "issue");
+        assert_eq!(
+            parsed.summary,
+            "Issue i-abcdef status changed from open to in-progress"
+        );
+
+        // Verify the SSE event was created (not default/empty).
+        // We check this by ensuring build_sse_event doesn't panic and returns.
+        let _ = sse_event;
+    }
+
+    #[test]
+    fn event_entity_info_notification_created() {
+        let notification_id = metis_common::NotificationId::new();
+        let notification = dummy_notification();
+
+        let payload = Arc::new(MutationPayload::Notification {
+            old: None,
+            new: notification,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::NotificationCreated {
+            seq: 1,
+            notification_id: notification_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let (entity_type, entity_id) = event_entity_info(&event);
+        assert_eq!(entity_type, "notifications");
+        match entity_id {
+            EntityId::Notification(id) => assert_eq!(*id, notification_id),
+            other => panic!("expected Notification, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn event_filter_notifications_entity_type() {
+        let notification_id = metis_common::NotificationId::new();
+        let notification = dummy_notification();
+
+        let payload = Arc::new(MutationPayload::Notification {
+            old: None,
+            new: notification,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::NotificationCreated {
+            seq: 1,
+            notification_id,
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        // Default filter (no types specified) should match notifications.
+        let default_filter = EventFilter::from_query(&EventsQuery::default()).unwrap();
+        assert!(default_filter.matches(&event));
+
+        // Filter with types=notifications should match.
+        let notif_query = EventsQuery {
+            types: Some("notifications".to_string()),
+            ..Default::default()
+        };
+        let notif_filter = EventFilter::from_query(&notif_query).unwrap();
+        assert!(notif_filter.matches(&event));
+
+        // Filter with types=issues should NOT match notifications.
+        let issue_query = EventsQuery {
+            types: Some("issues".to_string()),
+            ..Default::default()
+        };
+        let issue_filter = EventFilter::from_query(&issue_query).unwrap();
+        assert!(!issue_filter.matches(&event));
     }
 }

@@ -119,6 +119,7 @@ mod ts_export {
         crate::events::SnapshotEventData::export_all(&cfg).expect("SnapshotEventData");
         crate::events::ResyncEventData::export_all(&cfg).expect("ResyncEventData");
         crate::events::HeartbeatEventData::export_all(&cfg).expect("HeartbeatEventData");
+        crate::events::NotificationEventData::export_all(&cfg).expect("NotificationEventData");
 
         // API v1: issues
         crate::issues::IssueStatus::export_all(&cfg).expect("IssueStatus");

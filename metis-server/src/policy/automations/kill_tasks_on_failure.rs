@@ -28,6 +28,7 @@ impl Automation for KillTasksOnFailureAutomation {
     fn event_filter(&self) -> EventFilter {
         EventFilter {
             event_types: vec![EventType::IssueUpdated],
+            ..Default::default()
         }
     }
 

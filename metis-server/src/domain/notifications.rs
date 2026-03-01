@@ -224,8 +224,10 @@ impl NotificationPolicy for WalkUpPolicy {
                     _ => vec![],
                 }
             }
-            MutationPayload::Document { .. } | MutationPayload::Message { .. } => {
-                // No source issue for documents or messages
+            MutationPayload::Document { .. }
+            | MutationPayload::Message { .. }
+            | MutationPayload::Notification { .. } => {
+                // No source issue for documents, messages, or notifications
                 vec![]
             }
         };
@@ -241,6 +243,8 @@ impl NotificationPolicy for WalkUpPolicy {
 }
 
 /// Generate a human-readable summary for a server event.
+///
+/// Only called for mutation events that carry a `MutationPayload`.
 pub fn generate_summary(event: &ServerEvent) -> String {
     let payload = event.payload();
     match payload.as_ref() {
@@ -341,6 +345,15 @@ pub fn generate_summary(event: &ServerEvent) -> String {
             }
             format!("Message {id} was updated")
         }
+        MutationPayload::Notification { new, .. } => {
+            let id = match event {
+                ServerEvent::NotificationCreated {
+                    notification_id, ..
+                } => notification_id.to_string(),
+                _ => "unknown".to_string(),
+            };
+            format!("Notification {id} was created: {}", new.summary)
+        }
     }
 }
 
@@ -358,6 +371,7 @@ pub fn event_object_kind(event: &ServerEvent) -> &'static str {
         | ServerEvent::DocumentUpdated { .. }
         | ServerEvent::DocumentDeleted { .. } => "document",
         ServerEvent::MessageCreated { .. } | ServerEvent::MessageUpdated { .. } => "message",
+        ServerEvent::NotificationCreated { .. } => "notification",
     }
 }
 
@@ -378,6 +392,9 @@ pub fn event_object_id(event: &ServerEvent) -> MetisId {
         | ServerEvent::DocumentDeleted { document_id, .. } => document_id.clone().into(),
         ServerEvent::MessageCreated { message_id, .. }
         | ServerEvent::MessageUpdated { message_id, .. } => message_id.clone().into(),
+        ServerEvent::NotificationCreated {
+            notification_id, ..
+        } => notification_id.clone().into(),
     }
 }
 
@@ -396,7 +413,8 @@ pub fn event_version(event: &ServerEvent) -> VersionNumber {
         | ServerEvent::DocumentUpdated { version, .. }
         | ServerEvent::DocumentDeleted { version, .. }
         | ServerEvent::MessageCreated { version, .. }
-        | ServerEvent::MessageUpdated { version, .. } => *version,
+        | ServerEvent::MessageUpdated { version, .. }
+        | ServerEvent::NotificationCreated { version, .. } => *version,
     }
 }
 
@@ -416,10 +434,13 @@ pub fn event_type_str(event: &ServerEvent) -> &'static str {
         ServerEvent::IssueDeleted { .. }
         | ServerEvent::PatchDeleted { .. }
         | ServerEvent::DocumentDeleted { .. } => "deleted",
+        ServerEvent::NotificationCreated { .. } => "created",
     }
 }
 
 /// Extract the source issue ID(s) from a server event, if any.
+///
+/// Only called for mutation events that carry a `MutationPayload`.
 pub fn event_source_issue_id(event: &ServerEvent) -> Option<IssueId> {
     let payload = event.payload();
     match payload.as_ref() {
@@ -430,8 +451,10 @@ pub fn event_source_issue_id(event: &ServerEvent) -> Option<IssueId> {
             _ => None,
         },
         MutationPayload::Job { new, .. } => new.spawned_from.clone(),
-        MutationPayload::Patch { .. } => None,
-        MutationPayload::Document { .. } | MutationPayload::Message { .. } => None,
+        MutationPayload::Patch { .. }
+        | MutationPayload::Document { .. }
+        | MutationPayload::Message { .. }
+        | MutationPayload::Notification { .. } => None,
     }
 }
 

@@ -58,6 +58,11 @@ pub enum MutationPayload {
         new: Message,
         actor: ActorRef,
     },
+    Notification {
+        old: Option<Notification>,
+        new: Notification,
+        actor: ActorRef,
+    },
 }
 
 impl MutationPayload {
@@ -68,7 +73,8 @@ impl MutationPayload {
             | MutationPayload::Patch { actor, .. }
             | MutationPayload::Job { actor, .. }
             | MutationPayload::Document { actor, .. }
-            | MutationPayload::Message { actor, .. } => actor,
+            | MutationPayload::Message { actor, .. }
+            | MutationPayload::Notification { actor, .. } => actor,
         }
     }
 }
@@ -90,6 +96,7 @@ pub enum EventType {
     DocumentDeleted,
     MessageCreated,
     MessageUpdated,
+    NotificationCreated,
 }
 
 /// Events emitted when server-side entities are mutated.
@@ -197,6 +204,13 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
+    NotificationCreated {
+        seq: u64,
+        notification_id: NotificationId,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
 }
 
 impl ServerEvent {
@@ -215,7 +229,8 @@ impl ServerEvent {
             | ServerEvent::DocumentUpdated { seq, .. }
             | ServerEvent::DocumentDeleted { seq, .. }
             | ServerEvent::MessageCreated { seq, .. }
-            | ServerEvent::MessageUpdated { seq, .. } => *seq,
+            | ServerEvent::MessageUpdated { seq, .. }
+            | ServerEvent::NotificationCreated { seq, .. } => *seq,
         }
     }
 
@@ -234,7 +249,8 @@ impl ServerEvent {
             | ServerEvent::DocumentUpdated { payload, .. }
             | ServerEvent::DocumentDeleted { payload, .. }
             | ServerEvent::MessageCreated { payload, .. }
-            | ServerEvent::MessageUpdated { payload, .. } => payload,
+            | ServerEvent::MessageUpdated { payload, .. }
+            | ServerEvent::NotificationCreated { payload, .. } => payload,
         }
     }
 
@@ -254,6 +270,7 @@ impl ServerEvent {
             ServerEvent::DocumentDeleted { .. } => EventType::DocumentDeleted,
             ServerEvent::MessageCreated { .. } => EventType::MessageCreated,
             ServerEvent::MessageUpdated { .. } => EventType::MessageUpdated,
+            ServerEvent::NotificationCreated { .. } => EventType::NotificationCreated,
         }
     }
 }
@@ -489,6 +506,21 @@ impl EventBus {
             payload,
         });
     }
+
+    pub fn emit_notification_created(
+        &self,
+        notification_id: NotificationId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::NotificationCreated {
+            seq: self.next_seq(),
+            notification_id,
+            version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
 }
 
 impl Default for EventBus {
@@ -515,17 +547,6 @@ impl StoreWithEvents {
     /// Returns a reference to the underlying event bus.
     pub fn event_bus(&self) -> &EventBus {
         &self.event_bus
-    }
-
-    /// Insert a notification directly, bypassing event emission.
-    ///
-    /// Notifications are side-effects of events and should not emit further events
-    /// (which would risk infinite loops).
-    pub async fn insert_notification(
-        &self,
-        notification: Notification,
-    ) -> Result<NotificationId, StoreError> {
-        self.inner.insert_notification(notification).await
     }
 
     // ---- Actor-aware mutation methods ----
@@ -887,6 +908,23 @@ impl StoreWithEvents {
         notification: Notification,
     ) -> Result<NotificationId, StoreError> {
         self.inner.insert_notification(notification).await
+    }
+
+    pub async fn insert_notification_with_actor(
+        &self,
+        notification: Notification,
+        actor: ActorRef,
+    ) -> Result<NotificationId, StoreError> {
+        let new_notification = notification.clone();
+        let notification_id = self.inner.insert_notification(notification).await?;
+        let payload = Arc::new(MutationPayload::Notification {
+            old: None,
+            new: new_notification,
+            actor,
+        });
+        self.event_bus
+            .emit_notification_created(notification_id.clone(), 1, payload);
+        Ok(notification_id)
     }
 
     pub async fn mark_notification_read(&self, id: &NotificationId) -> Result<(), StoreError> {

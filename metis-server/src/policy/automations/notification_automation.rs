@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use crate::app::event_bus::EventType;
 use crate::domain::actors::ActorId;
 use crate::domain::notifications::{
     Notification, NotificationPolicy, WalkUpPolicy, actor_ref_to_actor_id, event_object_id,
@@ -34,7 +35,12 @@ impl Automation for NotificationAutomation {
     }
 
     fn event_filter(&self) -> EventFilter {
-        EventFilter::default() // match all events
+        // Match all events except NotificationCreated to avoid infinite loops
+        // (this automation emits NotificationCreated events).
+        EventFilter {
+            exclude_event_types: vec![EventType::NotificationCreated],
+            ..Default::default()
+        }
     }
 
     async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
@@ -81,9 +87,14 @@ impl Automation for NotificationAutomation {
         let event_type = event_type_str(event).to_string();
         let source_issue_id = event_source_issue_id(event);
 
+        let actor = crate::domain::actors::ActorRef::Automation {
+            automation_name: AUTOMATION_NAME.into(),
+            triggered_by: Some(Box::new(ctx.actor().clone())),
+        };
+
         for (recipient, policy_name) in policy_recipients {
             let notification = Notification::new(
-                recipient,
+                recipient.clone(),
                 source_actor.clone(),
                 object_kind.clone(),
                 object_id.clone(),
@@ -94,7 +105,14 @@ impl Automation for NotificationAutomation {
                 policy_name,
             );
 
-            if let Err(err) = ctx.app_state.store.insert_notification(notification).await {
+            // Use insert_notification_with_actor so StoreWithEvents emits the
+            // NotificationCreated event to the EventBus automatically.
+            if let Err(err) = ctx
+                .app_state
+                .store
+                .insert_notification_with_actor(notification, actor.clone())
+                .await
+            {
                 tracing::error!(error = %err, "failed to insert notification");
             }
         }
