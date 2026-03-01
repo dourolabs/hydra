@@ -35,6 +35,9 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+// Health endpoint (no auth required)
+app.get("/health", (c) => c.json({ status: "ok" }));
+
 // Login endpoint does not require auth
 app.route("", createAuthRoutes());
 
