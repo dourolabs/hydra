@@ -12,15 +12,8 @@ import { useIssue } from "../issues/useIssue";
 import { useIssues } from "../issues/useIssues";
 import { usePatchesByIssue } from "../patches/usePatchesByIssue";
 import { useToast } from "../toast/useToast";
+import { extractDocumentPaths } from "./useTransitiveWorkItems";
 import styles from "./DetailPanel.module.css";
-
-/** Regex to detect document paths in issue text. */
-const DOC_PATH_RE = /(?:^|\s)(\/\S+\.md)/m;
-
-function extractDocumentPath(text: string): string | null {
-  const match = DOC_PATH_RE.exec(text);
-  return match ? match[1] : null;
-}
 
 const STATUS_OPTIONS: SelectOption[] = [
   { value: "open", label: "Open" },
@@ -57,7 +50,7 @@ export function DetailPanel({ issueId }: DetailPanelProps) {
   }
 
   const docPath = useMemo(
-    () => issue ? extractDocumentPath(issue.description + "\n" + issue.progress) : null,
+    () => issue ? extractDocumentPaths(issue.description + "\n" + issue.progress)[0] ?? null : null,
     [issue],
   );
   const { data: docRecord, isLoading: docLoading } = useDocumentByPath(docPath);
