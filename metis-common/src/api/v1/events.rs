@@ -1,5 +1,3 @@
-use crate::NotificationId;
-use crate::actor_ref::ActorId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -177,21 +175,6 @@ pub struct SnapshotEventData {
 pub struct ResyncEventData {
     pub reason: String,
     pub current_seq: u64,
-}
-
-/// Data payload for notification_created events.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-pub struct NotificationEventData {
-    pub notification_id: NotificationId,
-    pub recipient: ActorId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_actor: Option<ActorId>,
-    pub object_kind: String,
-    pub object_id: String,
-    pub summary: String,
-    pub created_at: DateTime<Utc>,
 }
 
 /// Data payload for heartbeat events.
