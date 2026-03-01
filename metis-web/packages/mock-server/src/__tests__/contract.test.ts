@@ -46,6 +46,18 @@ async function resetServer() {
 }
 
 // ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
+describe("Health", () => {
+  it("GET /health returns 200 with status ok, no auth required", async () => {
+    const resp = await originalFetch(`${baseUrl}/health`);
+    expect(resp.status).toBe(200);
+    const body = await resp.json();
+    expect(body).toEqual({ status: "ok" });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Issues
 // ---------------------------------------------------------------------------
 describe("Issues", () => {

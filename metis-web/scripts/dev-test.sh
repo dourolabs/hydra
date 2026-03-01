@@ -63,7 +63,7 @@ wait_for_url() {
 echo "Starting mock server..."
 pnpm --filter @metis/mock-server dev &
 MOCK_PID=$!
-wait_for_url "http://localhost:8080/v1/issues" "Mock server" 30
+wait_for_url "http://localhost:8080/health" "Mock server" 30
 
 # Start BFF (port 4000), pointing at mock server
 echo "Starting BFF server..."
