@@ -31,12 +31,6 @@ export function IssueChildren({ issueId }: IssueChildrenProps) {
     return (
       <div className={styles.empty}>
         <p className={styles.emptyText}>No child issues.</p>
-        <p className={styles.emptyHint}>
-          Create one from the CLI with{" "}
-          <code className={styles.emptyCode}>
-            metis issues create --deps child-of:{issueId}
-          </code>
-        </p>
       </div>
     );
   }
