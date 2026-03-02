@@ -4,4 +4,4 @@ import type { NotificationResponse } from "./NotificationResponse";
 /**
  * Response containing a list of notifications.
  */
-export type ListNotificationsResponse = { notifications: Array<NotificationResponse> };
+export type ListNotificationsResponse = { notifications: Array<NotificationResponse>, };

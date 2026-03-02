@@ -9,7 +9,8 @@ import type { Username } from "./Username";
 /**
  * Lightweight summary of an issue for list views.
  *
- * Excludes `progress`, `job_settings`, and the full `description` body.
+ * Excludes `job_settings` and the full `description` body.
  * The `description` field is truncated to the first line (max 200 chars).
+ * The `progress` field is truncated to the first 200 characters.
  */
-export type IssueSummary = { type: IssueType, description: string, creator: Username, status: IssueStatus, assignee?: string | null, dependencies: Array<IssueDependency>, patches: Array<PatchId>, todo_list?: Array<TodoItem>, deleted?: boolean, };
+export type IssueSummary = { type: IssueType, description: string, creator: Username, status: IssueStatus, assignee?: string | null, progress: string, dependencies: Array<IssueDependency>, patches: Array<PatchId>, todo_list?: Array<TodoItem>, deleted?: boolean, };
