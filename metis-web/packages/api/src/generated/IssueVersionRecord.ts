@@ -3,4 +3,11 @@ import type { ActorRef } from "./ActorRef";
 import type { Issue } from "./Issue";
 import type { IssueId } from "./IssueId";
 
-export type IssueVersionRecord = { issue_id: IssueId, version: bigint, timestamp: string, issue: Issue, actor?: ActorRef | null, creation_time: string, };
+export type IssueVersionRecord = {
+  issue_id: IssueId;
+  version: bigint;
+  timestamp: string;
+  issue: Issue;
+  actor?: ActorRef | null;
+  creation_time: string;
+};

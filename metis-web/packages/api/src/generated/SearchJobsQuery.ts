@@ -2,4 +2,9 @@
 import type { IssueId } from "./IssueId";
 import type { Status } from "./Status";
 
-export type SearchJobsQuery = { q: string | null, spawned_from?: IssueId | null, include_deleted: boolean | null, status?: Status | null, };
+export type SearchJobsQuery = {
+  q: string | null;
+  spawned_from?: IssueId | null;
+  include_deleted: boolean | null;
+  status?: Status | null;
+};

@@ -4,4 +4,4 @@ import type { ActorId } from "./ActorId";
 /**
  * Request to send a new message.
  */
-export type SendMessageRequest = { recipient: ActorId, body: string, is_read: boolean, };
+export type SendMessageRequest = { recipient: ActorId; body: string; is_read: boolean };

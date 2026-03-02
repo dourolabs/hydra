@@ -7,4 +7,11 @@ import type { MessageId } from "./MessageId";
  * Flattened representation of Versioned<Message> for the wire.
  * Follows the same pattern as other versioned entities in the API.
  */
-export type VersionedMessage = { message_id: MessageId, version: bigint, timestamp: string, message: Message, actor?: ActorRef | null, creation_time: string, };
+export type VersionedMessage = {
+  message_id: MessageId;
+  version: bigint;
+  timestamp: string;
+  message: Message;
+  actor?: ActorRef | null;
+  creation_time: string;
+};

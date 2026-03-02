@@ -7,4 +7,4 @@
  * marks them as read, and returns them. If no unread messages exist, long-polls
  * until a new message arrives (up to the specified timeout).
  */
-export type ReceiveMessagesQuery = { sender: string | null, timeout: number | null, };
+export type ReceiveMessagesQuery = { sender: string | null; timeout: number | null };
