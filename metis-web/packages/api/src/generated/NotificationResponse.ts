@@ -5,4 +5,4 @@ import type { NotificationId } from "./NotificationId";
 /**
  * Response containing a single notification with its ID.
  */
-export type NotificationResponse = { notification_id: NotificationId; notification: Notification };
+export type NotificationResponse = { notification_id: NotificationId, notification: Notification, };

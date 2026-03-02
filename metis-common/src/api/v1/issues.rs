@@ -688,8 +688,9 @@ impl SearchIssuesQuery {
 
 /// Lightweight summary of an issue for list views.
 ///
-/// Excludes `progress`, `job_settings`, and the full `description` body.
+/// Excludes `job_settings` and the full `description` body.
 /// The `description` field is truncated to the first line (max 200 chars).
+/// The `progress` field is truncated to the first 200 characters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -703,6 +704,8 @@ pub struct IssueSummary {
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<String>,
+    #[serde(default)]
+    pub progress: String,
     #[serde(default)]
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
@@ -721,12 +724,18 @@ impl From<&Issue> for IssueSummary {
         } else {
             first_line.to_string()
         };
+        let progress = if issue.progress.len() > 200 {
+            issue.progress.chars().take(200).collect()
+        } else {
+            issue.progress.clone()
+        };
         IssueSummary {
             issue_type: issue.issue_type,
             description: truncated,
             creator: issue.creator.clone(),
             status: issue.status,
             assignee: issue.assignee.clone(),
+            progress,
             dependencies: issue.dependencies.clone(),
             patches: issue.patches.clone(),
             todo_list: issue.todo_list.clone(),
@@ -1095,11 +1104,19 @@ mod tests {
     }
 
     #[test]
-    fn issue_summary_excludes_progress_and_job_settings() {
+    fn issue_summary_truncates_long_progress() {
+        let mut issue = make_test_issue("desc");
+        issue.progress = "p".repeat(300);
+        let summary = IssueSummary::from(&issue);
+        assert_eq!(summary.progress.len(), 200);
+        assert!(summary.progress.chars().all(|c| c == 'p'));
+    }
+
+    #[test]
+    fn issue_summary_excludes_job_settings() {
         let issue = make_test_issue("test issue");
         let summary = IssueSummary::from(&issue);
         let value = serde_json::to_value(&summary).unwrap();
-        assert!(value.get("progress").is_none());
         assert!(value.get("job_settings").is_none());
     }
 
@@ -1109,6 +1126,7 @@ mod tests {
         let summary = IssueSummary::from(&issue);
         assert_eq!(summary.issue_type, IssueType::Task);
         assert_eq!(summary.creator, Username::from("alice"));
+        assert_eq!(summary.progress, "some progress text");
         assert_eq!(summary.status, IssueStatus::InProgress);
         assert_eq!(summary.assignee.as_deref(), Some("bob"));
         assert_eq!(summary.dependencies.len(), 1);
