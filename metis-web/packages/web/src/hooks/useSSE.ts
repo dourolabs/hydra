@@ -12,7 +12,6 @@ import type {
   ListPatchesResponse,
   ListDocumentsResponse,
   ListNotificationsResponse,
-  UnreadCountResponse,
 } from "@metis/api";
 
 export type SSEConnectionState = "connecting" | "connected" | "disconnected";
@@ -155,7 +154,6 @@ export function useSSE(): SSEConnectionState {
         queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
       } else if (entity_type === "notification" || eventType.startsWith("notification_")) {
         queryClient.invalidateQueries({ queryKey: ["notifications"] });
-        queryClient.invalidateQueries({ queryKey: ["notifications", "unread-count"] });
       }
     },
     [queryClient],
@@ -221,11 +219,6 @@ export function useSSE(): SSEConnectionState {
         // Insert into both the unread filter and all-notifications caches
         insertNotificationIfMissing(queryClient, ["notifications", { isRead: false }], record);
         insertNotificationIfMissing(queryClient, ["notifications", { isRead: null }], record);
-        // Increment unread count
-        queryClient.setQueryData<UnreadCountResponse>(
-          ["notifications", "unread-count"],
-          (old) => (old ? { count: old.count + 1n } : old),
-        );
       }
     },
     [queryClient, invalidateForEvent],

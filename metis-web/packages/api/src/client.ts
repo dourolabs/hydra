@@ -50,7 +50,6 @@ import type { EnqueueMergePatchRequest } from "./generated/EnqueueMergePatchRequ
 import type { DeleteRepositoryResponse } from "./generated/DeleteRepositoryResponse";
 import type { ListNotificationsResponse } from "./generated/ListNotificationsResponse";
 import type { ListNotificationsQuery } from "./generated/ListNotificationsQuery";
-import type { UnreadCountResponse } from "./generated/UnreadCountResponse";
 import type { MarkReadResponse } from "./generated/MarkReadResponse";
 import {
   MetisEventSource,
@@ -499,11 +498,6 @@ export class MetisApiClient {
   /** GET /v1/notifications */
   listNotifications(query?: Partial<ListNotificationsQuery>): Promise<ListNotificationsResponse> {
     return this.get("/v1/notifications", query as Record<string, unknown>);
-  }
-
-  /** GET /v1/notifications/unread-count */
-  getUnreadCount(): Promise<UnreadCountResponse> {
-    return this.get("/v1/notifications/unread-count");
   }
 
   /** POST /v1/notifications/:notificationId/read */
