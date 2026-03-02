@@ -431,6 +431,8 @@ impl<'de> Deserialize<'de> for IssueGraphFilter {
 pub struct Issue {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
+    #[serde(default)]
+    pub title: String,
     pub description: String,
     pub creator: Username,
     #[serde(default)]
@@ -455,6 +457,7 @@ impl Issue {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         issue_type: IssueType,
+        title: String,
         description: String,
         creator: Username,
         progress: String,
@@ -468,6 +471,7 @@ impl Issue {
     ) -> Self {
         Self {
             issue_type,
+            title,
             description,
             creator,
             progress,
@@ -698,6 +702,8 @@ impl SearchIssuesQuery {
 pub struct IssueSummary {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
+    #[serde(default)]
+    pub title: String,
     pub description: String,
     pub creator: Username,
     #[serde(default)]
@@ -731,6 +737,7 @@ impl From<&Issue> for IssueSummary {
         };
         IssueSummary {
             issue_type: issue.issue_type,
+            title: issue.title.clone(),
             description: truncated,
             creator: issue.creator.clone(),
             status: issue.status,
@@ -963,6 +970,7 @@ mod tests {
         ];
         let issue = Issue {
             issue_type: IssueType::Task,
+            title: String::new(),
             description: "with todos".to_string(),
             creator: Username::from("author"),
             progress: String::new(),
@@ -990,6 +998,7 @@ mod tests {
         let issue_id: IssueId = "i-test".parse().unwrap();
         let issue = Issue {
             issue_type: IssueType::Task,
+            title: String::new(),
             description: "test".to_string(),
             creator: Username::from("alice"),
             progress: String::new(),
@@ -1018,6 +1027,7 @@ mod tests {
         let issue_id: IssueId = "i-test".parse().unwrap();
         let issue = Issue {
             issue_type: IssueType::Task,
+            title: String::new(),
             description: "test".to_string(),
             creator: Username::from("alice"),
             progress: String::new(),
@@ -1058,6 +1068,7 @@ mod tests {
     fn make_test_issue(description: &str) -> Issue {
         Issue {
             issue_type: IssueType::Task,
+            title: String::new(),
             description: description.to_string(),
             creator: Username::from("alice"),
             progress: "some progress text".to_string(),

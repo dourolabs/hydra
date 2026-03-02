@@ -239,13 +239,14 @@ impl PostgresStoreV2 {
             .map_err(|e| StoreError::Internal(format!("failed to serialize patches: {e}")))?;
 
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
             .bind(version_number)
             .bind(issue.issue_type.as_str())
+            .bind(&issue.title)
             .bind(&issue.description)
             .bind(issue.creator.as_str())
             .bind(&issue.progress)
@@ -283,6 +284,7 @@ impl PostgresStoreV2 {
 
         Ok(Issue {
             issue_type,
+            title: row.title.clone(),
             description: row.description.clone(),
             creator: Username::from(row.creator.clone()),
             progress: row.progress.clone(),
@@ -1040,6 +1042,7 @@ struct IssueRow {
     id: String,
     version_number: i64,
     issue_type: String,
+    title: String,
     description: String,
     creator: String,
     progress: String,
@@ -1322,7 +1325,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
@@ -1360,7 +1363,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -1409,7 +1412,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each issue, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, \
+            "SELECT DISTINCT ON (id) id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, \
              MIN(created_at) OVER (PARTITION BY id) AS creation_time \
              FROM {TABLE_ISSUES_V2} ORDER BY id, version_number DESC"
         );
@@ -1448,14 +1451,16 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .filter(|value| !value.is_empty())
         {
             let idx_id = bindings.len() + 1;
-            let idx_desc = bindings.len() + 2;
-            let idx_progress = bindings.len() + 3;
-            let idx_type = bindings.len() + 4;
-            let idx_status = bindings.len() + 5;
-            let idx_creator = bindings.len() + 6;
-            let idx_assignee = bindings.len() + 7;
+            let idx_title = bindings.len() + 2;
+            let idx_desc = bindings.len() + 3;
+            let idx_progress = bindings.len() + 4;
+            let idx_type = bindings.len() + 5;
+            let idx_status = bindings.len() + 6;
+            let idx_creator = bindings.len() + 7;
+            let idx_assignee = bindings.len() + 8;
             predicates.push(format!(
                 "(LOWER(id) LIKE ${idx_id} \
+                 OR LOWER(title) LIKE ${idx_title} \
                  OR LOWER(description) LIKE ${idx_desc} \
                  OR LOWER(progress) LIKE ${idx_progress} \
                  OR issue_type = ${idx_type} \
@@ -1465,6 +1470,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ));
             let pattern = format!("%{term}%");
             bindings.push(pattern.clone()); // id
+            bindings.push(pattern.clone()); // title
             bindings.push(pattern.clone()); // description
             bindings.push(pattern.clone()); // progress
             bindings.push(term.clone()); // type (exact match)
@@ -3263,6 +3269,7 @@ mod tests {
     fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
         Issue::new(
             IssueType::Task,
+            String::new(),
             "details".to_string(),
             Username::from("creator"),
             String::new(),
@@ -3420,6 +3427,7 @@ mod tests {
     fn sample_issue_all_fields(dependencies: Vec<IssueDependency>, patches: Vec<PatchId>) -> Issue {
         Issue::new(
             IssueType::Task,
+            String::new(),
             "full description".to_string(),
             Username::from("issue-creator"),
             "50%".to_string(),
@@ -3979,6 +3987,7 @@ mod tests {
         // Create an issue with a unique description
         let issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "original_unique_description_abc123".to_string(),
             Username::from("creator"),
             String::new(),
@@ -3994,6 +4003,7 @@ mod tests {
         // Update the issue to change the description
         let updated_issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "changed_unique_description_xyz789".to_string(),
             Username::from("creator"),
             String::new(),

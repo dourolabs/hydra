@@ -262,6 +262,7 @@ mod tests {
     ) -> Issue {
         Issue::new(
             IssueType::MergeRequest,
+            String::new(),
             "merge request".to_string(),
             Username::from("tester"),
             String::new(),
@@ -284,6 +285,7 @@ mod tests {
     ) -> Issue {
         Issue::new(
             IssueType::ReviewRequest,
+            String::new(),
             "review request".to_string(),
             Username::from("tester"),
             String::new(),
@@ -311,6 +313,7 @@ mod tests {
         // Create a parent issue for the merge request
         let parent = Issue::new(
             IssueType::Task,
+            String::new(),
             "parent".to_string(),
             Username::from("tester"),
             String::new(),
@@ -368,6 +371,7 @@ mod tests {
 
         let parent = Issue::new(
             IssueType::Task,
+            String::new(),
             "parent".to_string(),
             Username::from("tester"),
             String::new(),
@@ -423,6 +427,7 @@ mod tests {
 
         let parent = Issue::new(
             IssueType::Task,
+            String::new(),
             "parent".to_string(),
             Username::from("tester"),
             String::new(),
@@ -484,6 +489,7 @@ mod tests {
 
         let parent = Issue::new(
             IssueType::Task,
+            String::new(),
             "parent".to_string(),
             Username::from("tester"),
             String::new(),
@@ -545,6 +551,7 @@ mod tests {
 
         let parent = Issue::new(
             IssueType::Task,
+            String::new(),
             "parent".to_string(),
             Username::from("tester"),
             String::new(),
@@ -617,6 +624,7 @@ mod tests {
 
         let parent = Issue::new(
             IssueType::Task,
+            String::new(),
             "parent".to_string(),
             Username::from("tester"),
             String::new(),

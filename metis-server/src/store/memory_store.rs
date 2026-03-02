@@ -1583,7 +1583,8 @@ fn issue_matches(
             return true;
         }
 
-        return issue.description.to_lowercase().contains(term)
+        return issue.title.to_lowercase().contains(term)
+            || issue.description.to_lowercase().contains(term)
             || issue.progress.to_lowercase().contains(term)
             || issue.issue_type.as_str() == term
             || issue.status.as_str() == term
@@ -1685,6 +1686,7 @@ mod tests {
     fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
         Issue::new(
             IssueType::Task,
+            String::new(),
             "issue details".to_string(),
             Username::from("creator"),
             String::new(),

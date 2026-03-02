@@ -82,6 +82,10 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ISSUE_TYPE", default_value_t = IssueType::Task)]
         r#type: IssueType,
 
+        /// Short title for the issue.
+        #[arg(long, value_name = "TITLE")]
+        title: Option<String>,
+
         /// Issue status: open, in-progress, or closed (defaults to open).
         #[arg(long, value_name = "ISSUE_STATUS", default_value_t = IssueStatus::Open)]
         status: IssueStatus,
@@ -151,6 +155,10 @@ pub enum IssueCommands {
         /// New issue type.
         #[arg(long, value_name = "ISSUE_TYPE")]
         r#type: Option<IssueType>,
+
+        /// Updated title.
+        #[arg(long, value_name = "TITLE")]
+        title: Option<String>,
 
         /// New issue status.
         #[arg(long, value_name = "ISSUE_STATUS")]
@@ -369,6 +377,7 @@ pub async fn run(
         }
         IssueCommands::Create {
             r#type,
+            title,
             status,
             dependencies,
             patches,
@@ -388,6 +397,7 @@ pub async fn run(
             create_issue(
                 client,
                 r#type,
+                title.unwrap_or_default(),
                 status,
                 dependencies,
                 patches,
@@ -410,6 +420,7 @@ pub async fn run(
         IssueCommands::Update {
             id,
             r#type,
+            title,
             status,
             assignee,
             clear_assignee,
@@ -433,6 +444,7 @@ pub async fn run(
             client,
             id,
             r#type,
+            title,
             status,
             assignee,
             clear_assignee,
@@ -712,6 +724,7 @@ fn issue_version_from_summary(summary: IssueSummaryRecord) -> IssueVersionRecord
         summary.timestamp,
         Issue::new(
             summary.issue.issue_type,
+            summary.issue.title,
             summary.issue.description,
             summary.issue.creator,
             String::new(),
@@ -1194,6 +1207,7 @@ async fn resolve_inherited_job_settings(
 async fn create_issue(
     client: &dyn MetisClientInterface,
     issue_type: IssueType,
+    title: String,
     status: IssueStatus,
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
@@ -1249,6 +1263,7 @@ async fn create_issue(
 
     let issue = Issue::new(
         issue_type,
+        title,
         description.to_string(),
         creator,
         progress,
@@ -1281,6 +1296,7 @@ async fn update_issue(
     client: &dyn MetisClientInterface,
     id: IssueId,
     issue_type: Option<IssueType>,
+    title: Option<String>,
     status: Option<IssueStatus>,
     assignee: Option<String>,
     clear_assignee: bool,
@@ -1359,6 +1375,7 @@ async fn update_issue(
         || clear_secrets;
 
     let no_changes = issue_type.is_none()
+        && title.is_none()
         && status.is_none()
         && assignee.is_none()
         && description.is_none()
@@ -1395,6 +1412,7 @@ async fn update_issue(
 
     let updated_issue = Issue::new(
         issue_type.unwrap_or(current.issue.issue_type),
+        title.unwrap_or(current.issue.title),
         description.unwrap_or(current.issue.description),
         current.issue.creator,
         progress_update.unwrap_or(current.issue.progress),
@@ -1690,6 +1708,7 @@ fn write_issue_details_pretty(
     } = issue_with_patches;
     let Issue {
         issue_type,
+        title,
         description,
         creator,
         progress,
@@ -1705,6 +1724,9 @@ fn write_issue_details_pretty(
         "{indent}Issue {} ({issue_type}, {status})",
         issue_record.issue_id
     )?;
+    if !title.is_empty() {
+        writeln!(writer, "{indent}Title: {title}")?;
+    }
     writeln!(writer, "{indent}Creator: {}", creator.as_ref())?;
     writeln!(
         writer,
@@ -2058,6 +2080,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 issue_type,
+                String::new(),
                 description.into(),
                 empty_user(),
                 String::new(),
@@ -2085,6 +2108,7 @@ mod tests {
                 Utc::now(),
                 Issue::new(
                     IssueType::Bug,
+                    String::new(),
                     "First issue".into(),
                     empty_user(),
                     String::new(),
@@ -2144,6 +2168,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "Edge case bug".into(),
                 empty_user(),
                 String::new(),
@@ -2194,6 +2219,7 @@ mod tests {
                 Utc::now(),
                 Issue::new(
                     IssueType::Task,
+                    String::new(),
                     "Edge case bug".into(),
                     empty_user(),
                     String::new(),
@@ -2577,6 +2603,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
+                String::new(),
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
@@ -2601,6 +2628,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::MergeRequest,
+            String::new(),
             IssueStatus::Closed,
             Vec::new(),
             patch_ids.clone(),
@@ -2638,6 +2666,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
+                String::new(),
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
@@ -2662,6 +2691,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::MergeRequest,
+            String::new(),
             IssueStatus::Closed,
             Vec::new(),
             vec![],
@@ -2702,6 +2732,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -2724,6 +2755,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
+                String::new(),
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
@@ -2748,6 +2780,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::MergeRequest,
+            String::new(),
             IssueStatus::Open,
             Vec::new(),
             vec![],
@@ -2790,6 +2823,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -2818,6 +2852,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
+                String::new(),
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
@@ -2842,6 +2877,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::MergeRequest,
+            String::new(),
             IssueStatus::Open,
             Vec::new(),
             vec![],
@@ -2877,6 +2913,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "Issue with secrets".into(),
                 Username::from("creator-a"),
                 String::new(),
@@ -2901,6 +2938,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::Task,
+            String::new(),
             IssueStatus::Open,
             Vec::new(),
             vec![],
@@ -2938,6 +2976,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "Parent issue".into(),
                 empty_user(),
                 String::new(),
@@ -2960,6 +2999,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "Child issue".into(),
                 Username::from("creator-a"),
                 String::new(),
@@ -2984,6 +3024,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::Task,
+            String::new(),
             IssueStatus::Open,
             Vec::new(),
             vec![],
@@ -3016,6 +3057,7 @@ mod tests {
         assert!(create_issue(
             &client,
             IssueType::Bug,
+            String::new(),
             IssueStatus::Open,
             vec![],
             Vec::new(),
@@ -3043,6 +3085,7 @@ mod tests {
         assert!(create_issue(
             &client,
             IssueType::Bug,
+            String::new(),
             IssueStatus::Open,
             vec![],
             Vec::new(),
@@ -3150,6 +3193,7 @@ mod tests {
         let updated_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Bug,
+                String::new(),
                 "Updated issue description".into(),
                 empty_user(),
                 "New progress".into(),
@@ -3183,6 +3227,7 @@ mod tests {
             &client,
             target_issue_id,
             Some(IssueType::Bug),
+            None,
             Some(IssueStatus::Closed),
             Some("owner-b".into()),
             false,
@@ -3226,6 +3271,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Feature,
+                String::new(),
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
@@ -3246,6 +3292,7 @@ mod tests {
         let update_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Feature,
+                String::new(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -3275,6 +3322,7 @@ mod tests {
         update_issue(
             &client,
             target_issue_id,
+            None,
             None,
             None,
             None,
@@ -3317,6 +3365,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Feature,
+                String::new(),
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
@@ -3337,6 +3386,7 @@ mod tests {
         let update_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Feature,
+                String::new(),
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
@@ -3369,6 +3419,7 @@ mod tests {
         update_issue(
             &client,
             target_issue_id,
+            None,
             None,
             None,
             None,
@@ -3410,6 +3461,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -3429,6 +3481,7 @@ mod tests {
         let update_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -3458,6 +3511,7 @@ mod tests {
         update_issue(
             &client,
             target_issue_id,
+            None,
             None,
             None,
             None,
@@ -3501,6 +3555,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -3518,6 +3573,7 @@ mod tests {
         let update_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -3547,6 +3603,7 @@ mod tests {
         update_issue(
             &client,
             target_issue_id,
+            None,
             None,
             None,
             None,
@@ -3586,6 +3643,7 @@ mod tests {
                 Utc::now(),
                 Issue::new(
                     IssueType::Bug,
+                    String::new(),
                     "First issue\nwith context".into(),
                     empty_user(),
                     "Working on repro".into(),
@@ -3609,6 +3667,7 @@ mod tests {
                 Utc::now(),
                 Issue::new(
                     IssueType::Feature,
+                    String::new(),
                     "Follow-up work".into(),
                     empty_user(),
                     String::new(),
@@ -3662,6 +3721,7 @@ mod tests {
                 Utc::now(),
                 Issue::new(
                     IssueType::Task,
+                    String::new(),
                     "has todos".into(),
                     empty_user(),
                     String::new(),
@@ -3851,6 +3911,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Task,
+                        String::new(),
                         "Main issue".into(),
                         empty_user(),
                         String::new(),
@@ -3874,6 +3935,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Feature,
+                        String::new(),
                         "Parent".into(),
                         empty_user(),
                         String::new(),
@@ -3916,6 +3978,7 @@ mod tests {
 
         let base_issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "Main issue".into(),
             empty_user(),
             String::new(),
@@ -4064,6 +4127,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Task,
+                        String::new(),
                         "Main issue".into(),
                         empty_user(),
                         "Main progress".into(),
@@ -4087,6 +4151,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Feature,
+                        String::new(),
                         "Parent".into(),
                         empty_user(),
                         String::new(),
@@ -4110,6 +4175,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Bug,
+                        String::new(),
                         "Child".into(),
                         empty_user(),
                         "Child update".into(),
@@ -4153,6 +4219,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Task,
+                        String::new(),
                         "Main issue".into(),
                         empty_user(),
                         String::new(),
@@ -4176,6 +4243,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Task,
+                        String::new(),
                         "Parent description".into(),
                         empty_user(),
                         String::new(),
@@ -4199,6 +4267,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Bug,
+                        String::new(),
                         "Child description".into(),
                         empty_user(),
                         String::new(),
@@ -4261,6 +4330,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Task,
+                        String::new(),
                         "Main issue".into(),
                         empty_user(),
                         String::new(),

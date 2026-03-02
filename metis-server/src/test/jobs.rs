@@ -220,6 +220,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
         .add_issue(
             Issue {
                 issue_type: IssueType::Task,
+                title: String::new(),
                 description: "use overrides".to_string(),
                 creator: Username::from("tester"),
                 progress: String::new(),
@@ -307,6 +308,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
         .add_issue(
             Issue {
                 issue_type: IssueType::Task,
+                title: String::new(),
                 description: "use repo override".to_string(),
                 creator: Username::from("tester"),
                 progress: String::new(),

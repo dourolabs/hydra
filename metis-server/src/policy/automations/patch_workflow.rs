@@ -279,6 +279,7 @@ impl PatchWorkflowAutomation {
                     format!("Review request for patch {}: {title}", patch_id.as_ref());
                 let issue = Issue::new(
                     IssueType::ReviewRequest,
+                    String::new(),
                     description,
                     creator.clone(),
                     String::new(),
@@ -340,6 +341,7 @@ impl PatchWorkflowAutomation {
 
             let issue = Issue::new(
                 IssueType::MergeRequest,
+                String::new(),
                 description,
                 creator,
                 String::new(),
@@ -537,6 +539,7 @@ mod tests {
 
         let parent = Issue::new(
             IssueType::Task,
+            String::new(),
             "parent".to_string(),
             Username::from("tester"),
             String::new(),
@@ -551,6 +554,7 @@ mod tests {
 
         let mr_issue = Issue::new(
             IssueType::MergeRequest,
+            String::new(),
             "old review".to_string(),
             Username::from("tester"),
             String::new(),
@@ -655,6 +659,7 @@ mod tests {
 
         let parent = Issue::new(
             IssueType::Task,
+            String::new(),
             "parent task".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1766,6 +1771,7 @@ merge_request:
         // Pre-create an open ReviewRequest issue for this patch.
         let existing_rr = Issue::new(
             IssueType::ReviewRequest,
+            String::new(),
             "existing review request".to_string(),
             Username::from("tester"),
             String::new(),
@@ -1854,6 +1860,7 @@ merge_request:
         // Pre-create an open ReviewRequest.
         let existing_rr = Issue::new(
             IssueType::ReviewRequest,
+            String::new(),
             "existing review request".to_string(),
             Username::from("tester"),
             String::new(),
@@ -1872,6 +1879,7 @@ merge_request:
         // Pre-create a Failed MergeRequest (terminal state, should not block).
         let failed_mr = Issue::new(
             IssueType::MergeRequest,
+            String::new(),
             "old merge request".to_string(),
             Username::from("tester"),
             String::new(),
@@ -1956,6 +1964,7 @@ merge_request:
         ] {
             let rr = Issue::new(
                 IssueType::ReviewRequest,
+                String::new(),
                 format!("old review request ({status:?})"),
                 Username::from("tester"),
                 String::new(),
@@ -1970,6 +1979,7 @@ merge_request:
 
             let mr = Issue::new(
                 IssueType::MergeRequest,
+                String::new(),
                 format!("old merge request ({status:?})"),
                 Username::from("tester"),
                 String::new(),

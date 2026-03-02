@@ -1270,6 +1270,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "test issue".to_string(),
                 Username::from("test-creator"),
                 String::new(),
