@@ -1,6 +1,35 @@
+.largeModal {
+  width: 80vw;
+  max-width: 80vw;
+  height: 70vh;
+  height: 70dvh;
+  max-height: 70vh;
+  max-height: 70dvh;
+}
+
+@media (max-width: 768px) {
+  .largeModal {
+    width: 95vw;
+    max-width: 95vw;
+    height: 85vh;
+    height: 85dvh;
+    max-height: 85vh;
+    max-height: 85dvh;
+  }
+}
+
+/* Ensure the modal body fills remaining height so the form can flex */
+.largeModal > div:last-child {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .form {
   display: flex;
   flex-direction: column;
+  height: 100%;
   gap: var(--space-3);
 }
 
