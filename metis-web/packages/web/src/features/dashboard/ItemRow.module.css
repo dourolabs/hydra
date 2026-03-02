@@ -33,7 +33,8 @@
 }
 
 .row.assignedToMe {
-  border-left: 3px solid var(--color-accent);
+  border-left: 3px solid var(--color-status-blocked);
+  background-color: rgba(224, 120, 80, 0.08);
 }
 
 .unreadDot {
