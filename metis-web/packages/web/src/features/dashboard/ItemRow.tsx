@@ -1,6 +1,6 @@
 import React, { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
+import { Avatar, JobStatusIndicator } from "@metis/ui";
 import type { JobSummaryRecord } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import type { ItemNotificationState } from "./useItemNotifications";
@@ -188,11 +188,6 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
           {title}
         </span>
       </span>
-      {badgeStatus && (
-        <span className={styles.status}>
-          <Badge status={badgeStatus} />
-        </span>
-      )}
       {jobSummaries && jobSummaries.length > 0 && (
         <span
           className={styles.jobIndicator}
