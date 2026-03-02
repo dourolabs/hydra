@@ -182,7 +182,9 @@ describe("buildItemKey", () => {
     const item: WorkItem = {
       kind: "patch",
       id: "p-7",
-      data: {} as any,
+      data: {} as WorkItem & { kind: "patch" } extends { data: infer D }
+        ? D
+        : never,
       lastUpdated: "2026-01-01T00:00:00Z",
       isTerminal: false,
     };
@@ -193,7 +195,9 @@ describe("buildItemKey", () => {
     const item: WorkItem = {
       kind: "document",
       id: "d-3",
-      data: {} as any,
+      data: {} as WorkItem & { kind: "document" } extends { data: infer D }
+        ? D
+        : never,
       lastUpdated: "2026-01-01T00:00:00Z",
       isTerminal: false,
     };
