@@ -222,8 +222,8 @@
     top: 0;
     left: 0;
     bottom: 0;
-    width: 280px;
-    max-width: 80vw;
+    width: 320px;
+    max-width: 85vw;
     z-index: 1003;
     background: var(--color-bg-primary);
     border-right: 1px solid var(--color-border);
