@@ -1,10 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "../../api/client";
+import { useNotifications } from "./useNotifications";
 
 export function useUnreadCount() {
-  return useQuery({
-    queryKey: ["notifications", "unread-count"],
-    queryFn: () => apiClient.getUnreadCount(),
-    select: (data) => data.count,
-  });
+  const { data: notifications, ...rest } = useNotifications(false);
+  return {
+    ...rest,
+    data: notifications != null ? notifications.length : undefined,
+  };
 }

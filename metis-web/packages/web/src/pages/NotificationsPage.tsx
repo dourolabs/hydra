@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Panel, Spinner } from "@metis/ui";
-import type { NotificationResponse, ListNotificationsResponse, UnreadCountResponse } from "@metis/api";
+import type { NotificationResponse, ListNotificationsResponse } from "@metis/api";
 import { apiClient } from "../api/client";
 import { useNotifications } from "../features/notifications/useNotifications";
 import { formatRelativeTime } from "../utils/time";
@@ -39,16 +39,12 @@ export function NotificationsPage() {
     mutationFn: (id: string) => apiClient.markNotificationRead(id),
     onMutate: async (id: string) => {
       await queryClient.cancelQueries({ queryKey: ["notifications"] });
-      await queryClient.cancelQueries({ queryKey: ["notifications", "unread-count"] });
 
       const prevUnread = queryClient.getQueryData<ListNotificationsResponse>(
         ["notifications", { isRead: false }],
       );
       const prevAll = queryClient.getQueryData<ListNotificationsResponse>(
         ["notifications", { isRead: null }],
-      );
-      const prevCount = queryClient.getQueryData<UnreadCountResponse>(
-        ["notifications", "unread-count"],
       );
 
       // Unread cache: remove the notification entirely
@@ -78,14 +74,8 @@ export function NotificationsPage() {
           };
         },
       );
-      if (prevCount) {
-        queryClient.setQueryData<UnreadCountResponse>(
-          ["notifications", "unread-count"],
-          { count: prevCount.count > 0n ? prevCount.count - 1n : 0n },
-        );
-      }
 
-      return { prevUnread, prevAll, prevCount };
+      return { prevUnread, prevAll };
     },
     onError: (_err, _id, context) => {
       if (context?.prevUnread !== undefined) {
@@ -94,13 +84,9 @@ export function NotificationsPage() {
       if (context?.prevAll !== undefined) {
         queryClient.setQueryData(["notifications", { isRead: null }], context.prevAll);
       }
-      if (context?.prevCount !== undefined) {
-        queryClient.setQueryData(["notifications", "unread-count"], context.prevCount);
-      }
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      queryClient.invalidateQueries({ queryKey: ["notifications", "unread-count"] });
     },
   });
 
@@ -108,16 +94,12 @@ export function NotificationsPage() {
     mutationFn: () => apiClient.markAllNotificationsRead(),
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey: ["notifications"] });
-      await queryClient.cancelQueries({ queryKey: ["notifications", "unread-count"] });
 
       const prevUnread = queryClient.getQueryData<ListNotificationsResponse>(
         ["notifications", { isRead: false }],
       );
       const prevAll = queryClient.getQueryData<ListNotificationsResponse>(
         ["notifications", { isRead: null }],
-      );
-      const prevCount = queryClient.getQueryData<UnreadCountResponse>(
-        ["notifications", "unread-count"],
       );
 
       // Unread cache: empty the list
@@ -139,12 +121,8 @@ export function NotificationsPage() {
           };
         },
       );
-      queryClient.setQueryData<UnreadCountResponse>(
-        ["notifications", "unread-count"],
-        { count: 0n },
-      );
 
-      return { prevUnread, prevAll, prevCount };
+      return { prevUnread, prevAll };
     },
     onError: (_err, _vars, context) => {
       if (context?.prevUnread !== undefined) {
@@ -153,13 +131,9 @@ export function NotificationsPage() {
       if (context?.prevAll !== undefined) {
         queryClient.setQueryData(["notifications", { isRead: null }], context.prevAll);
       }
-      if (context?.prevCount !== undefined) {
-        queryClient.setQueryData(["notifications", "unread-count"], context.prevCount);
-      }
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      queryClient.invalidateQueries({ queryKey: ["notifications", "unread-count"] });
     },
   });
 

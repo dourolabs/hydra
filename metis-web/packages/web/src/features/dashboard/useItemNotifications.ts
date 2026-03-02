@@ -4,7 +4,6 @@ import type {
   NotificationResponse,
   JobSummaryRecord,
   ListNotificationsResponse,
-  UnreadCountResponse,
 } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { useNotifications } from "../notifications/useNotifications";
@@ -155,17 +154,10 @@ export function useItemNotifications(
       if (!state) return;
 
       await queryClient.cancelQueries({ queryKey: ["notifications"] });
-      await queryClient.cancelQueries({
-        queryKey: ["notifications", "unread-count"],
-      });
 
       const prevUnread = queryClient.getQueryData<ListNotificationsResponse>([
         "notifications",
         { isRead: false },
-      ]);
-      const prevCount = queryClient.getQueryData<UnreadCountResponse>([
-        "notifications",
-        "unread-count",
       ]);
 
       // Optimistically remove these notifications from the unread cache
@@ -182,17 +174,7 @@ export function useItemNotifications(
         },
       );
 
-      // Decrement unread count
-      if (prevCount) {
-        const newCount =
-          prevCount.count - BigInt(idsToRemove.size);
-        queryClient.setQueryData<UnreadCountResponse>(
-          ["notifications", "unread-count"],
-          { count: newCount > 0n ? newCount : 0n },
-        );
-      }
-
-      return { prevUnread, prevCount };
+      return { prevUnread };
     },
     onError: (_err, _item, context) => {
       if (context?.prevUnread !== undefined) {
@@ -201,18 +183,9 @@ export function useItemNotifications(
           context.prevUnread,
         );
       }
-      if (context?.prevCount !== undefined) {
-        queryClient.setQueryData(
-          ["notifications", "unread-count"],
-          context.prevCount,
-        );
-      }
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      queryClient.invalidateQueries({
-        queryKey: ["notifications", "unread-count"],
-      });
     },
   });
 

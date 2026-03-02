@@ -4,7 +4,6 @@ import type {
   Notification,
   NotificationResponse,
   ListNotificationsResponse,
-  UnreadCountResponse,
   MarkReadResponse,
 } from "@metis/api";
 
@@ -32,14 +31,6 @@ export function createNotificationRoutes(store: Store): Hono {
       toResponse(id, entry.data),
     );
     const resp: ListNotificationsResponse = { notifications };
-    return c.json(resp);
-  });
-
-  // GET /v1/notifications/unread-count
-  app.get("/v1/notifications/unread-count", (c) => {
-    const items = store.list<Notification>(COLLECTION);
-    const count = items.filter(({ entry }) => !entry.data.is_read).length;
-    const resp: UnreadCountResponse = { count: BigInt(count) };
     return c.json(resp);
   });
 
