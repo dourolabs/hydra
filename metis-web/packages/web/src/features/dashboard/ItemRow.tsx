@@ -6,10 +6,7 @@ import type { WorkItem } from "./useTransitiveWorkItems";
 import type { ItemNotificationState } from "./useItemNotifications";
 import { useAuth } from "../auth/useAuth";
 import { toJobSummary } from "../../utils/jobMapping";
-import {
-  issueToBadgeStatus,
-  patchToBadgeStatus,
-} from "../../utils/statusMapping";
+import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
 import styles from "./ItemRow.module.css";
@@ -137,21 +134,41 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
     title = item.data.document.title || item.data.document.path || item.data.document_id;
   }
 
-  // Status badge
-  let badgeStatus;
-  if (item.kind === "issue") {
-    badgeStatus = issueToBadgeStatus(item.data.issue.status);
-  } else if (item.kind === "patch") {
-    badgeStatus = patchToBadgeStatus(item.data.patch.status);
+  // Status dot (issues only)
+  const badgeStatus = item.kind === "issue"
+    ? issueToBadgeStatus(item.data.issue.status)
+    : undefined;
+
+  // Patch display status
+  let patchDisplayStatus: string | undefined;
+  if (item.kind === "patch") {
+    const { status, review_summary } = item.data.patch;
+    if (status === "Merged") {
+      patchDisplayStatus = "Merged";
+    } else if (status === "ChangesRequested") {
+      patchDisplayStatus = "Changes Requested";
+    } else if (status === "Open" && review_summary.approved) {
+      patchDisplayStatus = "Approved";
+    } else if (status === "Open") {
+      patchDisplayStatus = "Open";
+    } else if (status === "Closed") {
+      patchDisplayStatus = "Closed";
+    } else {
+      patchDisplayStatus = status;
+    }
   }
 
-  // Assignee
-  let assignee: string | null | undefined;
-  if (item.kind === "issue") {
-    assignee = item.data.issue.assignee;
-  } else if (item.kind === "patch") {
-    assignee = item.data.patch.creator;
+  // Patch GitHub PR link
+  let patchPrUrl: string | undefined;
+  let patchPrNumber: bigint | undefined;
+  if (item.kind === "patch" && item.data.patch.github) {
+    const gh = item.data.patch.github;
+    patchPrUrl = gh.url ?? `https://github.com/${gh.owner}/${gh.repo}/pull/${gh.number}`;
+    patchPrNumber = gh.number;
   }
+
+  // Assignee (issues only)
+  const assignee = item.kind === "issue" ? item.data.issue.assignee : undefined;
 
   // Highlight open issues assigned to the current user
   const currentUsername = user?.actor.type === "user" ? user.actor.username : user?.actor.creator;
@@ -196,6 +213,37 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
         >
           <JobStatusIndicator jobs={jobSummaries} />
         </span>
+      )}
+      {patchDisplayStatus && (
+        <span className={`${styles.patchBadge} ${styles[`patchBadge${patchDisplayStatus.replace(/\s+/g, "")}`] ?? ""}`}>
+          {patchDisplayStatus}
+        </span>
+      )}
+      {patchPrUrl && (
+        <a
+          className={styles.prLink}
+          href={patchPrUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          #{String(patchPrNumber)}
+          <svg
+            className={styles.externalLinkIcon}
+            width="12"
+            height="12"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M6 2H2v12h12v-4" />
+            <path d="M9 1h6v6" />
+            <path d="M15 1L7 9" />
+          </svg>
+        </a>
       )}
       {assignee && (
         <span className={styles.assignee}>
