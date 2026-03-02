@@ -15,9 +15,14 @@ interface HeterogeneousItemListProps {
   filterRootId: string | null;
 }
 
-/** Active (non-terminal) statuses for segmentation. */
+/** Artifacts are patches and documents regardless of terminal status. */
+function isArtifact(item: WorkItem): boolean {
+  return item.kind === "patch" || item.kind === "document";
+}
+
+/** Active items are non-terminal issues (excludes artifacts). */
 function isActiveItem(item: WorkItem): boolean {
-  return !item.isTerminal;
+  return item.kind === "issue" && !item.isTerminal;
 }
 
 function sortByLastUpdated(a: WorkItem, b: WorkItem): number {
@@ -52,8 +57,16 @@ export function HeterogeneousItemList({
     [items, sortWithUnread],
   );
 
+  const artifactItems = useMemo(
+    () => items.filter(isArtifact).sort(sortWithUnread),
+    [items, sortWithUnread],
+  );
+
   const completeItems = useMemo(
-    () => items.filter((i) => !isActiveItem(i)).sort(sortWithUnread),
+    () =>
+      items
+        .filter((i) => i.kind === "issue" && i.isTerminal)
+        .sort(sortWithUnread),
     [items, sortWithUnread],
   );
 
@@ -93,6 +106,11 @@ export function HeterogeneousItemList({
         </button>
         <span className={styles.toolbarSummary}>
           {activeItems.length} active
+          {artifactItems.length > 0 && (
+            <span className={styles.toolbarDivider}>&middot;</span>
+          )}
+          {artifactItems.length > 0 &&
+            `${artifactItems.length} artifact${artifactItems.length !== 1 ? "s" : ""}`}
           {completeItems.length > 0 && (
             <span className={styles.toolbarDivider}>&middot;</span>
           )}
@@ -124,6 +142,26 @@ export function HeterogeneousItemList({
                       ? jobsByIssue.get(item.id)
                       : undefined
                   }
+                  notification={getItemNotification(item)}
+                  onMarkRead={markItemRead}
+                  filterRootId={filterRootId}
+                />
+              ))}
+            </ul>
+          </>
+        )}
+
+        {artifactItems.length > 0 && (
+          <>
+            <div className={styles.sectionHeader}>
+              Artifacts ({artifactItems.length})
+            </div>
+            <ul className={styles.list}>
+              {artifactItems.map((item) => (
+                <ItemRow
+                  key={`${item.kind}-${item.id}`}
+                  item={item}
+                  jobs={undefined}
                   notification={getItemNotification(item)}
                   onMarkRead={markItemRead}
                   filterRootId={filterRootId}
