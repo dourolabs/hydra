@@ -24,6 +24,10 @@
   letter-spacing: 0.05em;
 }
 
+.updateStatusBtn {
+  margin-left: auto;
+}
+
 .description {
   font-size: var(--font-size-md);
   color: var(--color-text-primary);

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@metis/ui";
+import { Avatar, Badge, Button, MarkdownViewer, Panel, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
@@ -8,6 +8,7 @@ import { useIssue } from "./useIssue";
 import { IssueTodoList } from "./IssueTodoList";
 import { IssueChildren } from "./IssueChildren";
 import { IssueActivity } from "./IssueActivity";
+import { IssueUpdateModal } from "./IssueUpdateModal";
 import { JobList } from "../jobs/JobList";
 import { PatchList } from "../patches/PatchList";
 import { IssueSettings } from "./IssueSettings";
@@ -45,6 +46,7 @@ const TABS = [
 
 export function IssueDetail({ record }: IssueDetailProps) {
   const [activeTab, setActiveTab] = useState("children");
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const { issue } = record;
 
   const blockedOnIds = useMemo(
@@ -62,7 +64,22 @@ export function IssueDetail({ record }: IssueDetailProps) {
         <span className={styles.issueId}>{record.issue_id}</span>
         <Badge status={issueToBadgeStatus(issue.status)} />
         <span className={styles.type}>{issue.type}</span>
+        <Button
+          variant="secondary"
+          size="sm"
+          className={styles.updateStatusBtn}
+          onClick={() => setUpdateModalOpen(true)}
+        >
+          Update Status
+        </Button>
       </div>
+
+      <IssueUpdateModal
+        open={updateModalOpen}
+        onClose={() => setUpdateModalOpen(false)}
+        issueId={record.issue_id}
+        issue={issue}
+      />
 
       {/* Blocked-by banner */}
       {blockedOnIds.length > 0 && (
