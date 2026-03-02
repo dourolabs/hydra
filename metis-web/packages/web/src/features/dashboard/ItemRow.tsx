@@ -21,28 +21,6 @@ const STATUS_DOT_CLASSES: Record<string, string> = {
   rejected: styles.statusDotRejected,
 };
 
-function IssueIcon() {
-  return (
-    <svg
-      className={styles.typeIcon}
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="currentColor"
-    >
-      <circle
-        cx="8"
-        cy="8"
-        r="6.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-      />
-      <circle cx="8" cy="8" r="2" />
-    </svg>
-  );
-}
-
 function PatchIcon() {
   return (
     <svg
@@ -77,8 +55,8 @@ function DocumentIcon() {
   );
 }
 
-const TYPE_ICONS: Record<WorkItem["kind"], () => React.JSX.Element> = {
-  issue: IssueIcon,
+const TYPE_ICONS: Record<WorkItem["kind"], (() => React.JSX.Element) | null> = {
+  issue: null,
   patch: PatchIcon,
   document: DocumentIcon,
 };
@@ -197,9 +175,11 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
           className={`${styles.statusDot} ${item.kind === "issue" && item.hasInProgressChild ? styles.statusDotPulsing : (STATUS_DOT_CLASSES[badgeStatus] ?? "")}`}
         />
       )}
-      <span className={styles.icon}>
-        <Icon />
-      </span>
+      {Icon && (
+        <span className={styles.icon}>
+          <Icon />
+        </span>
+      )}
       <span className={styles.titleGroup}>
         <span className={isUnread ? styles.titleUnread : styles.title}>
           {title}
