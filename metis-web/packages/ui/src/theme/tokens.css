@@ -33,6 +33,7 @@
   --color-status-blocked-bg: color-mix(in srgb, var(--color-status-blocked) 12%, transparent);
   --color-status-rejected-bg: color-mix(in srgb, var(--color-status-rejected) 12%, transparent);
   --color-status-neutral-bg: color-mix(in srgb, var(--color-text-secondary) 12%, transparent);
+  --color-bg-unread: color-mix(in srgb, var(--color-status-open) 7%, transparent);
 
   /* Type chip colors */
   --color-type-merge-request: #cc66ff;
