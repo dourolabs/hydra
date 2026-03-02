@@ -37,6 +37,41 @@
   background-color: var(--color-status-blocked-bg);
 }
 
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.statusDotOpen {
+  background-color: var(--color-status-open);
+}
+
+.statusDotInProgress {
+  background-color: var(--color-status-in-progress);
+}
+
+.statusDotClosed {
+  background-color: var(--color-status-closed);
+}
+
+.statusDotFailed {
+  background-color: var(--color-status-failed);
+}
+
+.statusDotDropped {
+  background-color: var(--color-status-dropped);
+}
+
+.statusDotBlocked {
+  background-color: var(--color-status-blocked);
+}
+
+.statusDotRejected {
+  background-color: var(--color-status-rejected);
+}
+
 .icon {
   display: inline-flex;
   align-items: center;
