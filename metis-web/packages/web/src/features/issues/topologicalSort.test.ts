@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { IssueSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, PatchSummaryRecord } from "@metis/api";
 import type { WorkItem } from "../dashboard/useTransitiveWorkItems";
 import { topologicalSort, topologicalSortWorkItems } from "./topologicalSort";
 
@@ -189,8 +189,15 @@ function makePatchWorkItem(
       version: BigInt(1),
       timestamp: lastUpdated,
       creation_time: lastUpdated,
-      patch: { status: "Open", title: "", description: "" },
-    } as WorkItem["data"],
+      patch: {
+        status: "Open",
+        title: "",
+        is_automatic_backup: false,
+        creator: "test",
+        review_summary: { count: 0, approved: false },
+        service_repo_name: "test/repo",
+      },
+    } as PatchSummaryRecord,
     lastUpdated,
     isTerminal: false,
   };
