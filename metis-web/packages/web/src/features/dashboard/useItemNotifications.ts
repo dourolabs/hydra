@@ -225,7 +225,7 @@ export function useItemNotifications(
 
   return {
     getItemNotification,
-    markItemRead: markItemRead.mutate,
+    markItemRead: markItemRead.mutateAsync,
     notificationMap,
   };
 }
