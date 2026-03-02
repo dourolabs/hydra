@@ -14,15 +14,17 @@ export function DocumentDetailPage() {
   const { documentId } = useParams<{ documentId: string }>();
   const [searchParams] = useSearchParams();
   const fromDashboard = searchParams.get("from") === "dashboard";
-  const issueId = searchParams.get("issueId");
+  const filterParam = searchParams.get("filter");
   const { data: record, isLoading, error } = useDocument(documentId ?? "");
 
   const displayTitle = record
     ? (record.document.title || record.document.path || record.document_id)
     : `Document ${documentId}`;
 
-  const breadcrumbItems: BreadcrumbItem[] = fromDashboard && issueId
-    ? [{ label: "Dashboard", to: `/?selected=${issueId}` }]
+  const dashboardReturnUrl = filterParam ? `/?selected=${filterParam}` : "/";
+
+  const breadcrumbItems: BreadcrumbItem[] = fromDashboard
+    ? [{ label: "Dashboard", to: dashboardReturnUrl }]
     : [{ label: "Documents", to: "/documents" }];
 
   return (

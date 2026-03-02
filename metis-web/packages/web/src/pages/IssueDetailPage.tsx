@@ -10,11 +10,21 @@ export function IssueDetailPage() {
   const { issueId } = useParams<{ issueId: string }>();
   const [searchParams] = useSearchParams();
   const fromDashboard = searchParams.get("from") === "dashboard";
+  const filterParam = searchParams.get("filter");
   const tab = searchParams.get("tab");
   const { data: record, isLoading, error } = useIssue(issueId ?? "");
 
+  let dashboardReturnUrl = "/";
+  if (fromDashboard) {
+    const returnParams = new URLSearchParams();
+    if (filterParam) returnParams.set("selected", filterParam);
+    if (tab) returnParams.set("tab", tab);
+    const qs = returnParams.toString();
+    dashboardReturnUrl = qs ? `/?${qs}` : "/";
+  }
+
   const breadcrumbItems: BreadcrumbItem[] = fromDashboard
-    ? [{ label: "Dashboard", to: `/?selected=${issueId}${tab ? `&tab=${tab}` : ""}` }]
+    ? [{ label: "Dashboard", to: dashboardReturnUrl }]
     : [{ label: "Issues", to: "/issues" }];
 
   return (

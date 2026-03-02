@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
 import { useIssues, buildIssueTree } from "../features/issues/useIssues";
 import { useAllJobs } from "../features/jobs/useAllJobs";
@@ -15,8 +16,11 @@ export function DashboardPage() {
   const { user } = useAuth();
   const { data: issues, isLoading } = useIssues();
   const { data: jobsByIssue } = useAllJobs();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [filterRootId, setFilterRootId] = useState<string | null>(null);
+  const [filterRootId, setFilterRootId] = useState<string | null>(
+    searchParams.get("selected"),
+  );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -49,6 +53,21 @@ export function DashboardPage() {
   const { items: workItems, isLoading: workItemsLoading } =
     useTransitiveWorkItems(filterRootId, issues ?? []);
 
+  const handleFilterChange = useCallback(
+    (rootId: string | null) => {
+      setFilterRootId(rootId);
+      setSearchParams((prev) => {
+        if (rootId) {
+          prev.set("selected", rootId);
+        } else {
+          prev.delete("selected");
+        }
+        return prev;
+      }, { replace: true });
+    },
+    [setSearchParams],
+  );
+
   const handleToggleSidebar = useCallback(() => {
     const next = !sidebarCollapsed;
     writeCollapsed(next);
@@ -77,7 +96,7 @@ export function DashboardPage() {
         <IssueFilterSidebar
           roots={roots}
           activeFilter={filterRootId}
-          onFilterChange={setFilterRootId}
+          onFilterChange={handleFilterChange}
           collapsed={sidebarCollapsed}
           drawerOpen={drawerOpen}
           onDrawerClose={handleDrawerClose}
@@ -91,6 +110,7 @@ export function DashboardPage() {
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={handleToggleSidebar}
           onToggleDrawer={handleToggleDrawer}
+          filterRootId={filterRootId}
         />
       </div>
       <button

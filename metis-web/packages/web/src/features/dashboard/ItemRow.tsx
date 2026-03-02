@@ -84,9 +84,10 @@ interface ItemRowProps {
   jobs?: JobSummaryRecord[];
   notification?: ItemNotificationState;
   onMarkRead?: (item: WorkItem) => void;
+  filterRootId?: string | null;
 }
 
-export function ItemRow({ item, jobs, notification, onMarkRead }: ItemRowProps) {
+export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: ItemRowProps) {
   const navigate = useNavigate();
   const Icon = TYPE_ICONS[item.kind];
 
@@ -99,8 +100,10 @@ export function ItemRow({ item, jobs, notification, onMarkRead }: ItemRowProps) 
       patch: `/patches/${item.id}`,
       document: `/documents/${item.id}`,
     };
-    navigate(`${paths[item.kind]}?from=dashboard`);
-  }, [navigate, item, notification, onMarkRead]);
+    const params = new URLSearchParams({ from: "dashboard" });
+    if (filterRootId) params.set("filter", filterRootId);
+    navigate(`${paths[item.kind]}?${params.toString()}`);
+  }, [navigate, item, notification, onMarkRead, filterRootId]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
