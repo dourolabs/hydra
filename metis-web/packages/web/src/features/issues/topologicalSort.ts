@@ -1,4 +1,5 @@
 import type { IssueSummaryRecord } from "@metis/api";
+import type { WorkItem } from "../dashboard/useTransitiveWorkItems";
 
 /**
  * Topologically sort sibling issues by blocked-on dependencies using Kahn's algorithm.
@@ -84,4 +85,116 @@ export function topologicalSort(
   }
 
   return result;
+}
+
+/**
+ * Topologically sort WorkItems for the active dashboard section.
+ *
+ * Builds a dependency graph from both child-of and blocked-on edges across
+ * all issue WorkItems, then applies Kahn's algorithm so that items expected
+ * to complete sooner appear first (leaf/unblocked issues at top, root/parent
+ * issues at bottom).
+ *
+ * Edge construction:
+ * - x:child-of:y  → edge x → y (child completes before parent)
+ * - x:blocked-on:y → edge y → x (blocker completes before blocked)
+ *
+ * Only edges where both endpoints are in the active item set are considered.
+ * Within each topological tier, items are sorted by lastUpdated descending.
+ * Cycles are handled gracefully by appending remaining nodes in lastUpdated
+ * order. Non-issue items are appended at the end sorted by lastUpdated.
+ */
+export function topologicalSortWorkItems(items: WorkItem[]): WorkItem[] {
+  if (items.length <= 1) return items;
+
+  const issueItems: WorkItem[] = [];
+  const nonIssueItems: WorkItem[] = [];
+  for (const item of items) {
+    if (item.kind === "issue") {
+      issueItems.push(item);
+    } else {
+      nonIssueItems.push(item);
+    }
+  }
+
+  if (issueItems.length === 0) {
+    return [...nonIssueItems].sort(compareByLastUpdated);
+  }
+
+  const activeIds = new Set(issueItems.map((i) => i.id));
+  const itemMap = new Map<string, WorkItem>();
+  const adj = new Map<string, string[]>();
+  const inDegree = new Map<string, number>();
+
+  for (const item of issueItems) {
+    itemMap.set(item.id, item);
+    adj.set(item.id, []);
+    inDegree.set(item.id, 0);
+  }
+
+  for (const item of issueItems) {
+    if (item.kind !== "issue") continue;
+    for (const dep of item.data.issue.dependencies) {
+      if (dep.type === "child-of" && activeIds.has(dep.issue_id)) {
+        // child completes before parent: edge child → parent
+        adj.get(item.id)!.push(dep.issue_id);
+        inDegree.set(dep.issue_id, inDegree.get(dep.issue_id)! + 1);
+      } else if (dep.type === "blocked-on" && activeIds.has(dep.issue_id)) {
+        // blocker completes before blocked: edge blocker → blocked
+        adj.get(dep.issue_id)!.push(item.id);
+        inDegree.set(item.id, inDegree.get(item.id)! + 1);
+      }
+    }
+  }
+
+  // Kahn's algorithm with tier-aware ordering.
+  const compareFn = (aId: string, bId: string): number =>
+    compareByLastUpdated(itemMap.get(aId)!, itemMap.get(bId)!);
+
+  let currentTier: string[] = [];
+  for (const item of issueItems) {
+    if (inDegree.get(item.id) === 0) {
+      currentTier.push(item.id);
+    }
+  }
+  currentTier.sort(compareFn);
+
+  const result: WorkItem[] = [];
+  while (currentTier.length > 0) {
+    const nextTier: string[] = [];
+    for (const id of currentTier) {
+      result.push(itemMap.get(id)!);
+      for (const neighbor of adj.get(id)!) {
+        const newDeg = inDegree.get(neighbor)! - 1;
+        inDegree.set(neighbor, newDeg);
+        if (newDeg === 0) {
+          nextTier.push(neighbor);
+        }
+      }
+    }
+    nextTier.sort(compareFn);
+    currentTier = nextTier;
+  }
+
+  // Handle cycles: append remaining nodes sorted by lastUpdated descending.
+  if (result.length < issueItems.length) {
+    const added = new Set(result.map((r) => r.id));
+    const remaining = issueItems
+      .filter((i) => !added.has(i.id))
+      .sort(compareByLastUpdated);
+    result.push(...remaining);
+  }
+
+  // Append non-issue items at the end.
+  if (nonIssueItems.length > 0) {
+    result.push(...nonIssueItems.sort(compareByLastUpdated));
+  }
+
+  return result;
+}
+
+function compareByLastUpdated(a: WorkItem, b: WorkItem): number {
+  return (
+    new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime()
+  );
 }

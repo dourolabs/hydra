@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { JobSummaryRecord } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { useItemNotifications } from "./useItemNotifications";
+import { topologicalSortWorkItems } from "../issues/topologicalSort";
 import { ItemRow } from "./ItemRow";
 import styles from "./HeterogeneousItemList.module.css";
 
@@ -42,7 +43,7 @@ export function HeterogeneousItemList({
     useItemNotifications(items);
 
   const activeItems = useMemo(
-    () => items.filter(isActiveItem).sort(sortByLastUpdated),
+    () => topologicalSortWorkItems(items.filter(isActiveItem)),
     [items],
   );
 
