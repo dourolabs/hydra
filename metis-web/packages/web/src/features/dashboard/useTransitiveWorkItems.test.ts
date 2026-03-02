@@ -34,6 +34,7 @@ function makeIssueRecord(
     creation_time: "2026-01-01T00:00:00Z",
     issue: {
       type: "task",
+      title: "",
       description: overrides.description ?? "Test issue",
       creator: "testuser",
       status: (overrides.status ?? "open") as IssueSummaryRecord["issue"]["status"],

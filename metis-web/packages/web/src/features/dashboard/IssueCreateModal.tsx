@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Modal, Button, Textarea, Select } from "@metis/ui";
+import { Modal, Button, Input, Textarea, Select } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
 import type { IssueType, RepositoryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
@@ -47,24 +47,28 @@ export function IssueCreateModal({
   const { data: repos } = useRepositories();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
+  const [title, setTitle, clearTitleDraft] = useFormDraft("metis:draft:issue-create-modal:title", "");
   const [description, setDescription, clearDescriptionDraft] = useFormDraft("metis:draft:issue-create-modal:description", "");
   const [issueType, setIssueType, clearIssueTypeDraft] = useFormDraft<IssueType>("metis:draft:issue-create-modal:issueType", "task");
   const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft("metis:draft:issue-create-modal:assignee", "");
   const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft("metis:draft:issue-create-modal:repoName", "");
 
   const resetForm = useCallback(() => {
+    setTitle("");
     setDescription("");
     setIssueType("task");
     setAssignee("");
     setRepoName("");
+    clearTitleDraft();
     clearDescriptionDraft();
     clearIssueTypeDraft();
     clearAssigneeDraft();
     clearRepoNameDraft();
-  }, [setDescription, setIssueType, setAssignee, setRepoName, clearDescriptionDraft, clearIssueTypeDraft, clearAssigneeDraft, clearRepoNameDraft]);
+  }, [setTitle, setDescription, setIssueType, setAssignee, setRepoName, clearTitleDraft, clearDescriptionDraft, clearIssueTypeDraft, clearAssigneeDraft, clearRepoNameDraft]);
 
   const mutation = useMutation({
     mutationFn: (params: {
+      title: string;
       description: string;
       creator: string;
       type: IssueType;
@@ -74,6 +78,7 @@ export function IssueCreateModal({
       apiClient.createIssue({
         issue: {
           type: params.type,
+          title: params.title,
           description: params.description,
           creator: params.creator,
           progress: "",
@@ -105,13 +110,14 @@ export function IssueCreateModal({
     const desc = description.trim();
     if (!desc) return;
     mutation.mutate({
+      title: title.trim(),
       description: desc,
       creator: currentUsername,
       type: issueType,
       ...(assignee && { assignee }),
       ...(repoName && { repoName }),
     });
-  }, [description, currentUsername, issueType, assignee, repoName, mutation]);
+  }, [title, description, currentUsername, issueType, assignee, repoName, mutation]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -143,6 +149,12 @@ export function IssueCreateModal({
       className={styles.largeModal}
     >
       <div className={styles.form} onKeyDown={handleKeyDown}>
+        <Input
+          label="Title"
+          placeholder="Short summary (optional)"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
         <div className={styles.descriptionWrapper}>
           <Textarea
             label="Description"

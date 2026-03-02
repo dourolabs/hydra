@@ -105,7 +105,7 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
   // Title
   let title: string;
   if (item.kind === "issue") {
-    title = descriptionSnippet(item.data.issue.description);
+    title = item.data.issue.title || descriptionSnippet(item.data.issue.description);
   } else if (item.kind === "patch") {
     title = item.data.patch.title || item.id;
   } else {

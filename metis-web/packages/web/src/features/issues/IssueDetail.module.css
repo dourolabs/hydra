@@ -28,6 +28,14 @@
   margin-left: auto;
 }
 
+.issueTitle {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+  line-height: 1.3;
+}
+
 .description {
   font-size: var(--font-size-md);
   color: var(--color-text-primary);

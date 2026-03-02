@@ -15,6 +15,7 @@ import type { Username } from "./Username";
  */
 export type IssueSummary = {
   type: IssueType;
+  title: string;
   description: string;
   creator: Username;
   status: IssueStatus;

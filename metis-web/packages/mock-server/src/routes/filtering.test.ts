@@ -14,6 +14,7 @@ import type { Issue, Patch, Task, Document, Status } from "@metis/api";
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
   return {
     type: "task",
+    title: "",
     description: "Default issue description",
     creator: "testuser",
     status: "open",

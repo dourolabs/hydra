@@ -2,6 +2,7 @@
   "issues": {
     "i-seed00001": {
       "type": "feature",
+      "title": "Platform v2.0 Migration",
       "description": "Platform v2.0 Migration\n\nMigrate the entire platform to v2.0 architecture. This is a large initiative covering authentication, database, and API changes.\n\n## Goals\n- Modernize authentication with OAuth2\n- Migrate database schema for new entity model\n- Implement API rate limiting\n- Update deployment pipeline\n\n## Timeline\nTargeting completion by end of Q2.",
       "creator": "alice",
       "progress": "Phase 1 (auth) is underway. Database migration planning complete.",
@@ -18,6 +19,7 @@
     },
     "i-seed00002": {
       "type": "task",
+      "title": "Migrate authentication to OAuth2",
       "description": "Migrate authentication to OAuth2\n\nReplace the existing session-based authentication with OAuth2 / OpenID Connect. This involves:\n\n1. Setting up an OAuth2 provider (e.g., Auth0 or Keycloak)\n2. Implementing authorization code flow\n3. Migrating existing user sessions\n4. Updating all API endpoints to validate JWT tokens\n\n```typescript\n// Example token validation middleware\nconst validateToken = async (req, res, next) => {\n  const token = req.headers.authorization?.split(' ')[1];\n  if (!token) return res.status(401).json({ error: 'Unauthorized' });\n  try {\n    const decoded = await verifyJwt(token);\n    req.user = decoded;\n    next();\n  } catch (err) {\n    return res.status(403).json({ error: 'Invalid token' });\n  }\n};\n```",
       "creator": "alice",
       "progress": "Provider selected (Keycloak). Authorization code flow implemented. Token refresh in progress.",
@@ -40,6 +42,7 @@
     },
     "i-seed00003": {
       "type": "task",
+      "title": "Implement OAuth2 token refresh logic",
       "description": "Implement OAuth2 token refresh logic\n\nAdd automatic token refresh when access tokens expire. Must handle concurrent requests gracefully and queue refresh operations.",
       "creator": "bob",
       "progress": "",
@@ -54,6 +57,7 @@
     },
     "i-seed00004": {
       "type": "task",
+      "title": "Add OAuth2 scopes and permissions support",
       "description": "Add OAuth2 scopes and permissions support\n\nImplement fine-grained authorization using OAuth2 scopes. Map existing role-based permissions to scope definitions.",
       "creator": "alice",
       "progress": "Scope definitions finalized. Implementation merged.",
@@ -71,6 +75,7 @@
     },
     "i-seed00005": {
       "type": "task",
+      "title": "Database schema migration for v2.0",
       "description": "Database schema migration for v2.0\n\nMigrate the PostgreSQL schema to support new entity relationships and the audit log table.",
       "creator": "alice",
       "progress": "Migration scripts written and tested. Deployed to staging successfully.",
@@ -84,6 +89,7 @@
     },
     "i-seed00006": {
       "type": "task",
+      "title": "Implement API rate limiting",
       "description": "Implement API rate limiting\n\nAdd rate limiting middleware to protect API endpoints from abuse. Use a sliding window algorithm with Redis backing.",
       "creator": "alice",
       "progress": "Initial implementation had memory leak in Redis connection pool. Investigation ongoing.",
@@ -101,6 +107,7 @@
     },
     "i-seed00007": {
       "type": "bug",
+      "title": "Fix login page 500 error on expired sessions",
       "description": "Fix login page 500 error on expired sessions\n\nUsers are seeing a 500 error when their session expires and they try to access the login page. The session cleanup middleware is throwing an unhandled exception.",
       "creator": "dev-user",
       "progress": "Root cause identified: session middleware not handling null session gracefully. Fix deployed.",
@@ -112,6 +119,7 @@
     },
     "i-seed00008": {
       "type": "feature",
+      "title": "Add dark mode support",
       "description": "Add dark mode support\n\nImplement a dark mode theme that users can toggle from their profile settings. Should respect the OS-level preference by default.\n\n## Requirements\n- Toggle in user profile settings\n- Respect `prefers-color-scheme` media query\n- Persist preference in localStorage\n- Smooth transition animation between themes\n- All components must support both themes",
       "creator": "dev-user",
       "progress": "",
@@ -128,6 +136,7 @@
     },
     "i-seed00009": {
       "type": "task",
+      "title": "Improve search performance",
       "description": "Improve search performance\n\nThe full-text search endpoint is too slow for large datasets. Need to add proper indexing and consider Elasticsearch integration.",
       "creator": "alice",
       "progress": "Profiling complete. Main bottleneck is the unindexed LIKE query on description field. Adding GIN index.",
@@ -143,6 +152,7 @@
     },
     "i-seed00010": {
       "type": "chore",
+      "title": "Update deployment documentation",
       "description": "Update deployment documentation\n\nThe deployment docs are outdated after the Kubernetes migration. Need to update with new kubectl commands and Helm chart references.",
       "creator": "bob",
       "progress": "",
@@ -154,6 +164,7 @@
     },
     "i-seed00011": {
       "type": "review-request",
+      "title": "Review: OAuth2 provider integration patch",
       "description": "Review: OAuth2 provider integration patch\n\nPlease review the OAuth2 provider integration patch (p-seed00001). Focus areas:\n- Security of token handling\n- Error handling edge cases\n- Test coverage",
       "creator": "bob",
       "progress": "",
@@ -165,6 +176,7 @@
     },
     "i-seed00012": {
       "type": "merge-request",
+      "title": "Merge: Rate limiter middleware",
       "description": "Merge: Rate limiter middleware\n\nMerge the rate limiter middleware patch after addressing review feedback.",
       "creator": "alice",
       "progress": "",
