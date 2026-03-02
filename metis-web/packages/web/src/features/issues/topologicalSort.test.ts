@@ -17,6 +17,7 @@ function makeRecord(
       description: "",
       creator: "test",
       status: status as IssueSummaryRecord["issue"]["status"],
+      progress: "",
       dependencies: dependencies as IssueSummaryRecord["issue"]["dependencies"],
       patches: [],
     },

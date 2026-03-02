@@ -27,6 +27,7 @@ function makeIssueRecord(
       creator: "testuser",
       status: overrides.status ?? "open",
       assignee: overrides.assignee ?? null,
+      progress: "",
       dependencies: [],
       patches: [],
     },

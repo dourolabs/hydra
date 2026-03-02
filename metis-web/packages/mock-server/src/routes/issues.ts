@@ -49,6 +49,7 @@ function toSummaryRecord(
     creator: issue.creator,
     status: issue.status,
     assignee: issue.assignee,
+    progress: (issue.progress ?? "").slice(0, 200),
     dependencies: issue.dependencies,
     patches: issue.patches,
     todo_list: issue.todo_list,

@@ -37,6 +37,7 @@ function makeIssueRecord(
       description: overrides.description ?? "Test issue",
       creator: "testuser",
       status: (overrides.status ?? "open") as IssueSummaryRecord["issue"]["status"],
+      progress: "",
       dependencies: overrides.dependencies ?? [],
       patches: overrides.patches ?? [],
     },
