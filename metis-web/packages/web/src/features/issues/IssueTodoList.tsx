@@ -14,12 +14,6 @@ export function IssueTodoList({ items }: IssueTodoListProps) {
     return (
       <div className={styles.empty}>
         <p className={styles.emptyText}>No todo items.</p>
-        <p className={styles.emptyHint}>
-          Add one with{" "}
-          <code className={styles.emptyCode}>
-            metis issues todo ID --add &quot;description&quot;
-          </code>
-        </p>
       </div>
     );
   }

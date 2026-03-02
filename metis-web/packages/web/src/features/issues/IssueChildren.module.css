@@ -25,5 +25,3 @@
 
 .empty { composes: empty from '../detail.module.css'; }
 .emptyText { composes: emptyText from '../detail.module.css'; }
-.emptyHint { composes: emptyHint from '../detail.module.css'; }
-.emptyCode { composes: emptyCode from '../detail.module.css'; }

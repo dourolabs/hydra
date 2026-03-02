@@ -68,20 +68,6 @@
   font-size: var(--font-size-sm);
 }
 
-.emptyHint {
-  margin: var(--space-1) 0 0;
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-}
-
-.emptyCode {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  background: var(--color-bg-tertiary);
-  padding: 1px 4px;
-  border-radius: 2px;
-}
 
 .error {
   color: var(--color-status-failed);
