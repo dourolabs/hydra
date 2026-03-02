@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { JobSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 import { descriptionSnippet } from "../../utils/text";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
@@ -8,6 +8,7 @@ import styles from "./IssueFilterSidebar.module.css";
 
 interface IssueFilterSidebarProps {
   roots: IssueTreeNode[];
+  allIssues: IssueSummaryRecord[];
   activeFilter: string | null;
   onFilterChange: (rootId: string | null) => void;
   collapsed: boolean;
@@ -108,6 +109,7 @@ function ProgressCircle({ progress }: { progress: IssueProgress }) {
 
 export function IssueFilterSidebar({
   roots,
+  allIssues,
   activeFilter,
   onFilterChange,
   collapsed,
@@ -121,6 +123,15 @@ export function IssueFilterSidebar({
     onFilterChange(rootId);
     onDrawerClose();
   };
+
+  const inboxCount = useMemo(() => {
+    return allIssues.filter(
+      (issue) =>
+        !TERMINAL_STATUSES.has(issue.issue.status) &&
+        issue.issue.assignee === username,
+    ).length;
+  }, [allIssues, username]);
+
   const progressList = useMemo(() => {
     const list = computeIssueProgress(roots, jobsByIssue, username);
     return list.sort((a, b) => {
@@ -183,6 +194,23 @@ export function IssueFilterSidebar({
   const renderIssueList = (hideWhenCollapsed: boolean) => (
     <ul className={`${styles.list} ${hideWhenCollapsed && collapsed ? styles.listCollapsed : ""}`}>
       <li
+        className={`${styles.item} ${activeFilter === "inbox" ? styles.active : ""}`}
+        onClick={() => handleFilterChange("inbox")}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleFilterChange("inbox");
+          }
+        }}
+      >
+        <span className={styles.itemLabel}>Inbox</span>
+        {inboxCount > 0 && (
+          <span className={styles.inboxCount}>{inboxCount}</span>
+        )}
+      </li>
+      <li
         className={`${styles.item} ${activeFilter === null ? styles.active : ""}`}
         onClick={() => handleFilterChange(null)}
         role="button"
@@ -194,7 +222,7 @@ export function IssueFilterSidebar({
           }
         }}
       >
-        <span className={styles.itemLabel}>All issues</span>
+        <span className={styles.itemLabel}>Everything</span>
       </li>
       {activeList.map(renderItem)}
       {completedList.length > 0 && (
