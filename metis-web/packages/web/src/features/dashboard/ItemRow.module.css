@@ -25,7 +25,7 @@
 }
 
 .row.unread {
-  background: var(--color-bg-secondary);
+  background: rgba(74, 158, 255, 0.07);
 }
 
 .row.unread:hover {
@@ -35,14 +35,6 @@
 .row.assignedToMe {
   border-left: 3px solid var(--color-status-blocked);
   background-color: var(--color-status-blocked-bg);
-}
-
-.unreadDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-accent);
-  flex-shrink: 0;
 }
 
 .icon {
@@ -73,14 +65,6 @@
 .titleUnread {
   composes: title;
   font-weight: 600;
-}
-
-.notificationSummary {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .status {

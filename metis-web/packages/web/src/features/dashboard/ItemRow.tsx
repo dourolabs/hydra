@@ -165,7 +165,6 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
       role="button"
       tabIndex={0}
     >
-      {isUnread && <span className={styles.unreadDot} />}
       <span className={styles.icon}>
         <Icon />
       </span>
@@ -173,17 +172,6 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
         <span className={isUnread ? styles.titleUnread : styles.title}>
           {title}
         </span>
-        {item.kind === "issue" && item.data.issue.progress ? (
-          <span className={styles.notificationSummary}>
-            {item.data.issue.progress}
-          </span>
-        ) : (
-          isUnread && notification?.latestSummary && (
-            <span className={styles.notificationSummary}>
-              {notification.latestSummary}
-            </span>
-          )
-        )}
       </span>
       {badgeStatus && (
         <span className={styles.status}>
