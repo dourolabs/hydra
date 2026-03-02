@@ -227,6 +227,7 @@ fn render_issue_records_pretty(
     for (index, issue_record) in issues.iter().enumerate() {
         let Issue {
             issue_type,
+            title,
             description,
             creator,
             progress,
@@ -241,6 +242,9 @@ fn render_issue_records_pretty(
             "Issue {} ({issue_type}, {status})",
             issue_record.issue_id
         )?;
+        if !title.is_empty() {
+            writeln!(writer, "Title: {title}")?;
+        }
         writeln!(writer, "Creator: {}", creator.as_ref())?;
         writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
         writeln!(writer, "Description:")?;
@@ -301,6 +305,7 @@ fn render_issue_summary_records_pretty(
     for (index, issue_record) in issues.iter().enumerate() {
         let IssueSummary {
             issue_type,
+            title,
             description,
             creator,
             status,
@@ -314,6 +319,9 @@ fn render_issue_summary_records_pretty(
             "Issue {} ({issue_type}, {status})",
             issue_record.issue_id
         )?;
+        if !title.is_empty() {
+            writeln!(writer, "Title: {title}")?;
+        }
         writeln!(writer, "Creator: {}", creator.as_ref())?;
         writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
         writeln!(writer, "Description:")?;

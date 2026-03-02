@@ -139,6 +139,7 @@ mod tests {
     fn make_issue(creator: &str, assignee: Option<&str>, deps: Vec<IssueDependency>) -> Issue {
         Issue::new(
             IssueType::Task,
+            String::new(),
             "test issue".to_string(),
             Username::from(creator),
             String::new(),

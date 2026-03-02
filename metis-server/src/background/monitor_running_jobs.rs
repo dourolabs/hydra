@@ -194,6 +194,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "parent issue".to_string(),
             Username::from("creator"),
             String::new(),

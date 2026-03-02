@@ -55,6 +55,7 @@ mod tests {
     fn make_issue(creator: &str) -> Issue {
         Issue::new(
             IssueType::Task,
+            String::new(),
             "test issue".to_string(),
             Username::from(creator),
             String::new(),

@@ -853,6 +853,7 @@ mod tests {
                 .add_issue_with_actor(
                     Issue {
                         issue_type: IssueType::Task,
+                        title: String::new(),
                         description: "with limits".to_string(),
                         creator: Username::from("creator"),
                         progress: String::new(),

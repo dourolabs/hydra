@@ -528,6 +528,7 @@ mod tests {
         let handles = crate::test_utils::test_state_handles();
         let issue = crate::domain::issues::Issue::new(
             crate::domain::issues::IssueType::Task,
+            String::new(),
             "test issue".to_string(),
             crate::domain::users::Username::from("creator"),
             String::new(),
@@ -593,6 +594,7 @@ mod tests {
         let handles = crate::test_utils::test_state_handles();
         let issue = crate::domain::issues::Issue::new(
             crate::domain::issues::IssueType::Task,
+            String::new(),
             "deleted issue".to_string(),
             crate::domain::users::Username::from("creator"),
             String::new(),

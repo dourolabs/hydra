@@ -339,6 +339,8 @@ impl<'de> Deserialize<'de> for IssueGraphFilter {
 pub struct Issue {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
+    #[serde(default)]
+    pub title: String,
     pub description: String,
     pub creator: Username,
     #[serde(default)]
@@ -363,6 +365,7 @@ impl Issue {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         issue_type: IssueType,
+        title: String,
         description: String,
         creator: Username,
         progress: String,
@@ -375,6 +378,7 @@ impl Issue {
     ) -> Self {
         Self {
             issue_type,
+            title,
             description,
             creator,
             progress,
@@ -687,6 +691,7 @@ impl From<api::issues::Issue> for Issue {
     fn from(value: api::issues::Issue) -> Self {
         Self {
             issue_type: value.issue_type.into(),
+            title: value.title,
             description: value.description,
             creator: value.creator.into(),
             progress: value.progress,
@@ -705,6 +710,7 @@ impl From<Issue> for api::issues::Issue {
     fn from(value: Issue) -> Self {
         api::issues::Issue::new(
             value.issue_type.into(),
+            value.title,
             value.description,
             value.creator.into(),
             value.progress,
@@ -766,6 +772,7 @@ mod tests {
         };
         let issue = Issue {
             issue_type: IssueType::Task,
+            title: String::new(),
             description: "cool feature".to_string(),
             creator: Username::from("alice"),
             progress: "in-progress".to_string(),

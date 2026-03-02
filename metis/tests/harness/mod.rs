@@ -124,6 +124,7 @@ pub async fn create_merge_request_issue(
     let description = format!("Review patch {}: {patch_title}", patch_id.as_ref());
     let issue = Issue::new(
         IssueType::MergeRequest,
+        String::new(),
         description,
         creator,
         String::new(),

@@ -452,6 +452,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     // Issues and todos
     let issue = Issue::new(
         IssueType::Bug,
+        String::new(),
         "desc".to_string(),
         Username::from("creator"),
         "progress".to_string(),

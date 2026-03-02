@@ -1182,6 +1182,7 @@ mod tests {
 
         Issue::new(
             IssueType::Task,
+            String::new(),
             "test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1263,6 +1264,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1305,6 +1307,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1355,6 +1358,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1403,6 +1407,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "payload test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1445,6 +1450,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "before update".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1498,6 +1504,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "to be deleted".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1618,6 +1625,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "actor test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1666,6 +1674,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
+            String::new(),
             "system actor test".to_string(),
             Username::from("creator"),
             String::new(),

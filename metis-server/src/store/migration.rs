@@ -1024,6 +1024,7 @@ mod tests {
         let v2_store = PostgresStoreV2::new(pool.clone());
         let issue = Issue {
             issue_type: IssueType::Task,
+            title: String::new(),
             description: "New issue created in v2".to_string(),
             creator: Username::from("v2-user"),
             progress: "".to_string(),

@@ -202,6 +202,7 @@ mod tests {
         let issue_id = IssueId::new();
         let base_issue = Issue {
             issue_type: IssueType::Task,
+            title: String::new(),
             description: "Initial".to_string(),
             creator: "alice".into(),
             progress: String::new(),
@@ -304,6 +305,7 @@ mod tests {
         let issue_id = IssueId::new();
         let base_issue = Issue {
             issue_type: IssueType::Task,
+            title: String::new(),
             description: "Initial".to_string(),
             creator: "alice".into(),
             progress: String::new(),

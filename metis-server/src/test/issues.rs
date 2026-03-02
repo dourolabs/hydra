@@ -28,6 +28,7 @@ fn issue(
 ) -> Issue {
     Issue::new(
         issue_type,
+        String::new(),
         description.to_string(),
         creator,
         progress,
@@ -66,6 +67,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "original details".to_string(),
                 default_user(),
                 "Initial progress".to_string(),
@@ -93,6 +95,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "updated details".to_string(),
                 default_user(),
                 "Updated progress".to_string(),
@@ -125,6 +128,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "initial".to_string(),
                 default_user(),
                 "Initial progress".to_string(),
@@ -152,6 +156,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "updated".to_string(),
                 default_user(),
                 "Updated progress".to_string(),
@@ -229,6 +234,7 @@ async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "initial".to_string(),
                 default_user(),
                 "Initial progress".to_string(),

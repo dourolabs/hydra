@@ -1616,6 +1616,7 @@ async fn submit_issue(
     let request = UpsertIssueRequest::new(
         Issue::new(
             IssueType::Task,
+            String::new(),
             submission.prompt.trim().to_string(),
             creator.clone(),
             String::new(),
@@ -1652,6 +1653,7 @@ async fn update_issue_status(
     let issue = current.issue;
     let updated_issue = Issue::new(
         issue.issue_type,
+        String::new(),
         issue.description,
         issue.creator,
         issue.progress,
@@ -6250,6 +6252,7 @@ mod tests {
             when.method(POST).path("/v1/issues").json_body(json!({
                 "issue": {
                     "type": "task",
+                    "title": "",
                     "description": "Draft release notes",
                     "creator": " metis-user ",
                     "progress": "",
@@ -6566,6 +6569,7 @@ mod tests {
             now,
             Issue::new(
                 IssueType::Task,
+                String::new(),
                 "test issue".to_string(),
                 Username::from("alice"),
                 "Investigating root cause".to_string(),
@@ -6597,6 +6601,7 @@ mod tests {
             now,
             metis_common::issues::IssueSummary::from(&Issue::new(
                 IssueType::Task,
+                String::new(),
                 "test issue".to_string(),
                 Username::from("alice"),
                 "Some progress text".to_string(),

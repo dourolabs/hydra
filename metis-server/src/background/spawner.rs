@@ -460,6 +460,7 @@ mod tests {
     ) -> Issue {
         Issue::new(
             issue_type,
+            String::new(),
             description.to_string(),
             default_user(),
             String::new(),
@@ -492,6 +493,7 @@ mod tests {
     fn issue_without_repo(description: &str, status: IssueStatus, assignee: Option<&str>) -> Issue {
         Issue {
             issue_type: IssueType::Task,
+            title: String::new(),
             description: description.to_string(),
             creator: default_user(),
             progress: String::new(),
@@ -684,6 +686,7 @@ mod tests {
             .add_issue(
                 Issue {
                     issue_type: IssueType::Task,
+                    title: String::new(),
                     description: "Review patch".to_string(),
                     creator: default_user(),
                     progress: String::new(),
@@ -897,6 +900,7 @@ mod tests {
             .add_issue(
                 Issue {
                     issue_type: IssueType::Task,
+                    title: String::new(),
                     description: "Missing repo".to_string(),
                     creator: default_user(),
                     progress: String::new(),
@@ -927,6 +931,7 @@ mod tests {
             .add_issue(
                 Issue {
                     issue_type: IssueType::Task,
+                    title: String::new(),
                     description: "Missing image".to_string(),
                     creator: default_user(),
                     progress: String::new(),
@@ -983,6 +988,7 @@ mod tests {
             .add_issue(
                 Issue {
                     issue_type: IssueType::Task,
+                    title: String::new(),
                     description: "Override retries".to_string(),
                     creator: default_user(),
                     progress: String::new(),
@@ -1029,6 +1035,7 @@ mod tests {
             .add_issue(
                 Issue {
                     issue_type: IssueType::Task,
+                    title: String::new(),
                     description: "Already running".to_string(),
                     creator: default_user(),
                     progress: String::new(),
@@ -1092,6 +1099,7 @@ mod tests {
             .add_issue(
                 Issue {
                     issue_type: IssueType::Task,
+                    title: String::new(),
                     description: "First issue".to_string(),
                     creator: default_user(),
                     progress: String::new(),
@@ -1111,6 +1119,7 @@ mod tests {
             .add_issue(
                 Issue {
                     issue_type: IssueType::Task,
+                    title: String::new(),
                     description: "Second issue".to_string(),
                     creator: default_user(),
                     progress: String::new(),
@@ -1487,6 +1496,7 @@ mod tests {
             .add_issue(
                 Issue {
                     issue_type: IssueType::Task,
+                    title: String::new(),
                     description: "Assigned".to_string(),
                     creator: default_user(),
                     progress: String::new(),
@@ -1553,6 +1563,7 @@ mod tests {
             .add_issue(
                 Issue {
                     issue_type: IssueType::Task,
+                    title: String::new(),
                     description: "Issue with secrets".to_string(),
                     creator: default_user(),
                     progress: String::new(),
@@ -1597,6 +1608,7 @@ mod tests {
             .add_issue(
                 Issue {
                     issue_type: IssueType::Task,
+                    title: String::new(),
                     description: "Issue without secrets".to_string(),
                     creator: default_user(),
                     progress: String::new(),
