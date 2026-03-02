@@ -114,16 +114,16 @@
   font-size: var(--font-size-xxs);
   font-weight: 600;
   line-height: 1;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-tertiary);
+  color: var(--color-status-blocked);
+  background: var(--color-status-blocked-bg);
   border-radius: 999px;
   padding: 1px 6px;
   min-width: 18px;
 }
 
 .item.active .inboxCount {
-  color: var(--color-accent-dim);
-  background: var(--color-bg-tertiary);
+  color: var(--color-status-blocked);
+  background: var(--color-status-blocked-bg);
 }
 
 .needsAttentionChip {
