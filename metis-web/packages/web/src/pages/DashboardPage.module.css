@@ -57,6 +57,7 @@
 
   .dashboardRow {
     flex-direction: column;
+    margin-left: 0;
   }
 
   .center {
