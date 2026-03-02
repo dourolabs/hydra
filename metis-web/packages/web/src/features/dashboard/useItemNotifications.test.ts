@@ -60,88 +60,54 @@ function makeItemIdsByKind(
 // ---------------------------------------------------------------------------
 
 describe("notificationToItemKey", () => {
-  const emptyJobMap = new Map<string, string>();
-
   it("returns issue:<id> for an issue notification matching a known issue", () => {
     const n = makeNotification({ object_kind: "issue", object_id: "i-1" });
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    expect(notificationToItemKey(n, ids, emptyJobMap)).toBe("issue:i-1");
+    expect(notificationToItemKey(n, ids)).toBe("issue:i-1");
   });
 
   it("returns null for an issue notification with an unknown issue", () => {
     const n = makeNotification({ object_kind: "issue", object_id: "i-unknown" });
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    expect(notificationToItemKey(n, ids, emptyJobMap)).toBeNull();
+    expect(notificationToItemKey(n, ids)).toBeNull();
   });
 
-  it("returns issue:<source_issue_id> for a job notification with matching source_issue_id", () => {
+  it("returns null for all job notifications (filtered out)", () => {
     const n = makeNotification({
       object_kind: "job",
       object_id: "j-1",
       source_issue_id: "i-1",
     });
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    expect(notificationToItemKey(n, ids, emptyJobMap)).toBe("issue:i-1");
+    expect(notificationToItemKey(n, ids)).toBeNull();
   });
 
-  it("returns null for a job notification with source_issue_id not matching any known issue", () => {
-    const n = makeNotification({
-      object_kind: "job",
-      object_id: "j-1",
-      source_issue_id: "i-unknown",
-    });
-    const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    expect(notificationToItemKey(n, ids, emptyJobMap)).toBeNull();
-  });
-
-  it("uses jobIdToIssueId fallback when source_issue_id is absent", () => {
+  it("returns null for job notifications without source_issue_id", () => {
     const n = makeNotification({
       object_kind: "job",
       object_id: "j-1",
       source_issue_id: null,
     });
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    const jobMap = new Map([["j-1", "i-1"]]);
-    expect(notificationToItemKey(n, ids, jobMap)).toBe("issue:i-1");
-  });
-
-  it("returns null when source_issue_id is absent and job_id not in jobIdToIssueId", () => {
-    const n = makeNotification({
-      object_kind: "job",
-      object_id: "j-1",
-      source_issue_id: null,
-    });
-    const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    expect(notificationToItemKey(n, ids, emptyJobMap)).toBeNull();
-  });
-
-  it("falls back to jobIdToIssueId when source_issue_id does not match but fallback does", () => {
-    const n = makeNotification({
-      object_kind: "job",
-      object_id: "j-1",
-      source_issue_id: "i-unknown",
-    });
-    const ids = makeItemIdsByKind({ issue: ["i-2"] });
-    const jobMap = new Map([["j-1", "i-2"]]);
-    expect(notificationToItemKey(n, ids, jobMap)).toBe("issue:i-2");
+    expect(notificationToItemKey(n, ids)).toBeNull();
   });
 
   it("returns patch:<id> for a patch notification matching a known patch", () => {
     const n = makeNotification({ object_kind: "patch", object_id: "p-1" });
     const ids = makeItemIdsByKind({ patch: ["p-1"] });
-    expect(notificationToItemKey(n, ids, emptyJobMap)).toBe("patch:p-1");
+    expect(notificationToItemKey(n, ids)).toBe("patch:p-1");
   });
 
   it("returns null for a patch notification with an unknown patch", () => {
     const n = makeNotification({ object_kind: "patch", object_id: "p-unknown" });
     const ids = makeItemIdsByKind({ patch: ["p-1"] });
-    expect(notificationToItemKey(n, ids, emptyJobMap)).toBeNull();
+    expect(notificationToItemKey(n, ids)).toBeNull();
   });
 
   it("returns document:<id> for a document notification matching a known document", () => {
     const n = makeNotification({ object_kind: "document", object_id: "d-1" });
     const ids = makeItemIdsByKind({ document: ["d-1"] });
-    expect(notificationToItemKey(n, ids, emptyJobMap)).toBe("document:d-1");
+    expect(notificationToItemKey(n, ids)).toBe("document:d-1");
   });
 
   it("returns null for a document notification with an unknown document", () => {
@@ -150,13 +116,13 @@ describe("notificationToItemKey", () => {
       object_id: "d-unknown",
     });
     const ids = makeItemIdsByKind({ document: ["d-1"] });
-    expect(notificationToItemKey(n, ids, emptyJobMap)).toBeNull();
+    expect(notificationToItemKey(n, ids)).toBeNull();
   });
 
   it("returns null for an unknown object_kind", () => {
     const n = makeNotification({ object_kind: "widget", object_id: "w-1" });
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    expect(notificationToItemKey(n, ids, emptyJobMap)).toBeNull();
+    expect(notificationToItemKey(n, ids)).toBeNull();
   });
 });
 
@@ -210,11 +176,9 @@ describe("buildItemKey", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildNotificationMap", () => {
-  const emptyJobMap = new Map<string, string>();
-
   it("returns an empty map for empty notifications", () => {
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    const result = buildNotificationMap([], ids, emptyJobMap);
+    const result = buildNotificationMap([], ids);
     expect(result.size).toBe(0);
   });
 
@@ -227,7 +191,7 @@ describe("buildNotificationMap", () => {
       created_at: "2026-01-15T10:00:00Z",
     });
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    const result = buildNotificationMap([n], ids, emptyJobMap);
+    const result = buildNotificationMap([n], ids);
 
     expect(result.size).toBe(1);
     const state = result.get("issue:i-1");
@@ -255,7 +219,7 @@ describe("buildNotificationMap", () => {
     });
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
     // Pass in chronological order — function should sort descending
-    const result = buildNotificationMap([older, newer], ids, emptyJobMap);
+    const result = buildNotificationMap([older, newer], ids);
 
     const state = result.get("issue:i-1");
     expect(state).toBeDefined();
@@ -277,7 +241,7 @@ describe("buildNotificationMap", () => {
       summary: "Patch update",
     });
     const ids = makeItemIdsByKind({ issue: ["i-1"], patch: ["p-1"] });
-    const result = buildNotificationMap([n1, n2], ids, emptyJobMap);
+    const result = buildNotificationMap([n1, n2], ids);
 
     expect(result.size).toBe(2);
     expect(result.has("issue:i-1")).toBe(true);
@@ -296,32 +260,27 @@ describe("buildNotificationMap", () => {
       object_id: "i-unknown",
     });
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    const result = buildNotificationMap([matching, orphan], ids, emptyJobMap);
+    const result = buildNotificationMap([matching, orphan], ids);
 
     expect(result.size).toBe(1);
     expect(result.get("issue:i-1")!.notificationIds).toEqual(["n-match"]);
   });
 
-  it("groups job notifications under parent issue via fallback mapping", () => {
+  it("filters out job notifications entirely", () => {
     const jobNotif = makeNotification({
       notification_id: "n-job",
       object_kind: "job",
       object_id: "j-1",
-      source_issue_id: null,
+      source_issue_id: "i-1",
       summary: "Job completed",
     });
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    const jobMap = new Map([["j-1", "i-1"]]);
-    const result = buildNotificationMap([jobNotif], ids, jobMap);
+    const result = buildNotificationMap([jobNotif], ids);
 
-    expect(result.size).toBe(1);
-    const state = result.get("issue:i-1");
-    expect(state).toBeDefined();
-    expect(state!.latestSummary).toBe("Job completed");
-    expect(state!.notificationIds).toEqual(["n-job"]);
+    expect(result.size).toBe(0);
   });
 
-  it("groups mixed issue and job notifications for the same parent issue", () => {
+  it("excludes job notifications when mixed with issue notifications", () => {
     const issueNotif = makeNotification({
       notification_id: "n-issue",
       object_kind: "issue",
@@ -338,17 +297,13 @@ describe("buildNotificationMap", () => {
       created_at: "2026-01-02T00:00:00Z",
     });
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    const result = buildNotificationMap(
-      [issueNotif, jobNotif],
-      ids,
-      emptyJobMap,
-    );
+    const result = buildNotificationMap([issueNotif, jobNotif], ids);
 
     expect(result.size).toBe(1);
     const state = result.get("issue:i-1");
     expect(state).toBeDefined();
-    expect(state!.latestSummary).toBe("Job finished");
-    expect(state!.notificationIds).toEqual(["n-job", "n-issue"]);
+    expect(state!.latestSummary).toBe("Issue updated");
+    expect(state!.notificationIds).toEqual(["n-issue"]);
   });
 
   it("captures all notification IDs in the notificationIds array", () => {
@@ -373,7 +328,7 @@ describe("buildNotificationMap", () => {
       }),
     ];
     const ids = makeItemIdsByKind({ issue: ["i-1"] });
-    const result = buildNotificationMap(notifs, ids, emptyJobMap);
+    const result = buildNotificationMap(notifs, ids);
 
     const state = result.get("issue:i-1");
     expect(state!.notificationIds).toHaveLength(3);

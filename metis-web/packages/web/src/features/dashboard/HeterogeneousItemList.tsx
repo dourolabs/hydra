@@ -34,7 +34,7 @@ export function HeterogeneousItemList({
   filterRootId,
 }: HeterogeneousItemListProps) {
   const { getItemNotification, markItemRead, notificationMap } =
-    useItemNotifications(items, jobsByIssue);
+    useItemNotifications(items);
 
   // Sort: unread items first, then by timestamp (descending)
   const sortWithUnread = useCallback(

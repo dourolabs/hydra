@@ -173,10 +173,16 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
         <span className={isUnread ? styles.titleUnread : styles.title}>
           {title}
         </span>
-        {isUnread && notification?.latestSummary && (
+        {item.kind === "issue" && item.data.issue.progress ? (
           <span className={styles.notificationSummary}>
-            {notification.latestSummary}
+            {item.data.issue.progress}
           </span>
+        ) : (
+          isUnread && notification?.latestSummary && (
+            <span className={styles.notificationSummary}>
+              {notification.latestSummary}
+            </span>
+          )
         )}
       </span>
       {badgeStatus && (
