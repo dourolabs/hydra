@@ -4,6 +4,7 @@ import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
 import type { JobSummaryRecord } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import type { ItemNotificationState } from "./useItemNotifications";
+import { useAuth } from "../auth/useAuth";
 import { toJobSummary } from "../../utils/jobMapping";
 import {
   issueToBadgeStatus,
@@ -88,6 +89,7 @@ interface ItemRowProps {
 
 export function ItemRow({ item, jobs, notification, onMarkRead }: ItemRowProps) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const Icon = TYPE_ICONS[item.kind];
 
   const handleClick = useCallback(() => {
@@ -124,13 +126,10 @@ export function ItemRow({ item, jobs, notification, onMarkRead }: ItemRowProps) 
 
   // Status badge
   let badgeStatus;
-  let statusLabel: string | undefined;
   if (item.kind === "issue") {
     badgeStatus = issueToBadgeStatus(item.data.issue.status);
-    statusLabel = item.data.issue.status;
   } else if (item.kind === "patch") {
     badgeStatus = patchToBadgeStatus(item.data.patch.status);
-    statusLabel = item.data.patch.status;
   }
 
   // Assignee
@@ -141,6 +140,11 @@ export function ItemRow({ item, jobs, notification, onMarkRead }: ItemRowProps) 
     assignee = item.data.patch.creator;
   }
 
+  // Highlight open issues assigned to the current user
+  const currentUsername = user?.actor.type === "user" ? user.actor.username : user?.actor.creator;
+  const isAssignedToMe =
+    item.kind === "issue" && !item.isTerminal && !!assignee && assignee === currentUsername;
+
   // Job status (issues only)
   const jobSummaries = item.kind === "issue" && jobs ? jobs.map(toJobSummary) : undefined;
 
@@ -148,6 +152,7 @@ export function ItemRow({ item, jobs, notification, onMarkRead }: ItemRowProps) 
   const rowClasses = [styles.row];
   if (item.isTerminal) rowClasses.push(styles.terminal);
   if (isUnread) rowClasses.push(styles.unread);
+  if (isAssignedToMe) rowClasses.push(styles.assignedToMe);
 
   return (
     <li
@@ -174,7 +179,6 @@ export function ItemRow({ item, jobs, notification, onMarkRead }: ItemRowProps) 
       {badgeStatus && (
         <span className={styles.status}>
           <Badge status={badgeStatus} />
-          {statusLabel && <span className={styles.statusLabel}>{statusLabel}</span>}
         </span>
       )}
       {jobSummaries && jobSummaries.length > 0 && (

@@ -32,6 +32,10 @@
   background: var(--color-bg-tertiary);
 }
 
+.row.assignedToMe {
+  border-left: 3px solid var(--color-accent);
+}
+
 .unreadDot {
   width: 8px;
   height: 8px;
@@ -85,13 +89,6 @@
   flex-shrink: 0;
 }
 
-.statusLabel {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  text-transform: uppercase;
-  font-weight: 600;
-}
-
 .jobIndicator {
   display: inline-flex;
   align-items: center;
@@ -115,10 +112,6 @@
 @media (max-width: 768px) {
   .row {
     padding: var(--space-2);
-  }
-
-  .statusLabel {
-    display: none;
   }
 
   .title {
