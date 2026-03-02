@@ -12,6 +12,7 @@ interface HeterogeneousItemListProps {
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   onToggleDrawer: () => void;
+  filterRootId: string | null;
 }
 
 /** Active (non-terminal) statuses for segmentation. */
@@ -30,6 +31,7 @@ export function HeterogeneousItemList({
   sidebarCollapsed,
   onToggleSidebar,
   onToggleDrawer,
+  filterRootId,
 }: HeterogeneousItemListProps) {
   const { getItemNotification, markItemRead, notificationMap } =
     useItemNotifications(items, jobsByIssue);
@@ -124,6 +126,7 @@ export function HeterogeneousItemList({
                   }
                   notification={getItemNotification(item)}
                   onMarkRead={markItemRead}
+                  filterRootId={filterRootId}
                 />
               ))}
             </ul>
@@ -147,6 +150,7 @@ export function HeterogeneousItemList({
                   }
                   notification={getItemNotification(item)}
                   onMarkRead={markItemRead}
+                  filterRootId={filterRootId}
                 />
               ))}
             </ul>

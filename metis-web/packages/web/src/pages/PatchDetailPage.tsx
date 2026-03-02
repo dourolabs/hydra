@@ -11,13 +11,18 @@ export function PatchDetailPage() {
   const [searchParams] = useSearchParams();
   const issueId = searchParams.get("issueId");
   const fromDashboard = searchParams.get("from") === "dashboard";
+  const filterParam = searchParams.get("filter");
   const { data: record, isLoading, error } = usePatch(patchId ?? "");
+
+  const dashboardReturnUrl = filterParam ? `/?selected=${filterParam}` : "/";
 
   let breadcrumbItems: BreadcrumbItem[];
   if (fromDashboard && issueId) {
+    const issueParams = new URLSearchParams({ from: "dashboard" });
+    if (filterParam) issueParams.set("filter", filterParam);
     breadcrumbItems = [
-      { label: "Dashboard", to: `/?selected=${issueId}` },
-      { label: `Issue ${issueId}`, to: `/issues/${issueId}?from=dashboard` },
+      { label: "Dashboard", to: dashboardReturnUrl },
+      { label: `Issue ${issueId}`, to: `/issues/${issueId}?${issueParams.toString()}` },
     ];
   } else if (issueId) {
     breadcrumbItems = [
