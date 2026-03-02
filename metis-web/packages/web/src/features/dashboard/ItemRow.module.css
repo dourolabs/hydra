@@ -104,6 +104,14 @@
   white-space: nowrap;
 }
 
+.progressLine {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .jobIndicator {
   display: inline-flex;
   align-items: center;
