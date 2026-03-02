@@ -137,6 +137,7 @@ export function topologicalSortWorkItems(
   }
 
   for (const item of issueItems) {
+    if (item.kind !== "issue") continue;
     for (const dep of item.data.issue.dependencies) {
       if (dep.type === "child-of" && activeIds.has(dep.issue_id)) {
         // child completes before parent: edge child → parent
