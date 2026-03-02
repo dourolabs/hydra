@@ -64,4 +64,35 @@
     height: calc(100vh - 56px - var(--space-6));
     height: calc(100dvh - 56px - var(--space-6));
   }
+
+  .createButton {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    margin: 0;
+    padding: var(--space-3);
+    background-color: var(--color-bg-primary);
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    z-index: 100;
+  }
+
+  .createButton::before {
+    content: "";
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    height: 40px;
+    background: linear-gradient(to bottom, transparent, var(--color-bg-primary));
+    pointer-events: none;
+  }
+
+  .createButton:hover {
+    background-color: var(--color-bg-primary);
+  }
 }
