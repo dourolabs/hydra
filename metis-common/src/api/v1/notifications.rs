@@ -98,11 +98,15 @@ pub struct ListNotificationsQuery {
 #[non_exhaustive]
 pub struct ListNotificationsResponse {
     pub notifications: Vec<NotificationResponse>,
+    pub has_more: bool,
 }
 
 impl ListNotificationsResponse {
-    pub fn new(notifications: Vec<NotificationResponse>) -> Self {
-        Self { notifications }
+    pub fn new(notifications: Vec<NotificationResponse>, has_more: bool) -> Self {
+        Self {
+            notifications,
+            has_more,
+        }
     }
 }
 
@@ -200,5 +204,32 @@ mod tests {
         let json = serde_json::to_string(&resp).expect("serialize");
         let decoded: MarkReadResponse = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded.marked, 5);
+    }
+
+    #[test]
+    fn list_notifications_response_has_more_true() {
+        let resp = ListNotificationsResponse::new(vec![], true);
+        assert!(resp.has_more);
+        let json = serde_json::to_string(&resp).expect("serialize");
+        let decoded: ListNotificationsResponse = serde_json::from_str(&json).expect("deserialize");
+        assert!(decoded.has_more);
+    }
+
+    #[test]
+    fn list_notifications_response_has_more_false() {
+        let resp = ListNotificationsResponse::new(vec![], false);
+        assert!(!resp.has_more);
+        let json = serde_json::to_string(&resp).expect("serialize");
+        let decoded: ListNotificationsResponse = serde_json::from_str(&json).expect("deserialize");
+        assert!(!decoded.has_more);
+    }
+
+    #[test]
+    fn list_notifications_response_backwards_compat() {
+        // Responses without has_more (e.g., from older servers) should fail deserialization,
+        // since has_more is a required field.
+        let json = r#"{"notifications":[]}"#;
+        let result = serde_json::from_str::<ListNotificationsResponse>(json);
+        assert!(result.is_err());
     }
 }

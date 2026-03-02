@@ -23,6 +23,8 @@ pub struct MarkAllReadQuery {
     pub before: Option<DateTime<Utc>>,
 }
 
+const DEFAULT_LIMIT: u32 = 50;
+
 /// GET /v1/notifications — list notifications for the authenticated actor.
 pub async fn list_notifications(
     State(state): State<AppState>,
@@ -31,23 +33,36 @@ pub async fn list_notifications(
 ) -> Result<Json<ListNotificationsResponse>, ApiError> {
     info!(actor = %actor.name(), "list_notifications invoked");
 
+    let limit = query.limit.unwrap_or(DEFAULT_LIMIT);
+
+    // Request one extra row to determine if more results exist beyond this page.
+    let mut fetch_query = query.clone();
+    fetch_query.limit = Some(limit.saturating_add(1));
+
     let results = state
-        .list_notifications(&actor.actor_id, &query)
+        .list_notifications(&actor.actor_id, &fetch_query)
         .await
         .map_err(map_notification_error)?;
 
+    let has_more = results.len() > limit as usize;
+
     let notifications: Vec<NotificationResponse> = results
         .into_iter()
+        .take(limit as usize)
         .map(|(id, notif)| NotificationResponse::new(id, notif.into()))
         .collect();
 
     info!(
         actor = %actor.name(),
         count = notifications.len(),
+        has_more = has_more,
         "list_notifications completed"
     );
 
-    Ok(Json(ListNotificationsResponse::new(notifications)))
+    Ok(Json(ListNotificationsResponse::new(
+        notifications,
+        has_more,
+    )))
 }
 
 /// GET /v1/notifications/unread-count — count unread notifications for the authenticated actor.

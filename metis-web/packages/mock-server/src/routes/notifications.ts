@@ -20,6 +20,9 @@ export function createNotificationRoutes(store: Store): Hono {
   // GET /v1/notifications
   app.get("/v1/notifications", (c) => {
     const isReadParam = c.req.query("is_read");
+    const beforeParam = c.req.query("before");
+    const afterParam = c.req.query("after");
+    const limitParam = c.req.query("limit");
     const items = store.list<Notification>(COLLECTION);
 
     let filtered = items;
@@ -27,11 +30,33 @@ export function createNotificationRoutes(store: Store): Hono {
       const isRead = isReadParam === "true";
       filtered = filtered.filter(({ entry }) => entry.data.is_read === isRead);
     }
+    if (beforeParam) {
+      const before = new Date(beforeParam).getTime();
+      filtered = filtered.filter(
+        ({ entry }) => new Date(entry.data.created_at).getTime() < before,
+      );
+    }
+    if (afterParam) {
+      const after = new Date(afterParam).getTime();
+      filtered = filtered.filter(
+        ({ entry }) => new Date(entry.data.created_at).getTime() > after,
+      );
+    }
 
-    const notifications: NotificationResponse[] = filtered.map(({ id, entry }) =>
+    // Sort by created_at descending (most recent first).
+    filtered.sort(
+      (a, b) =>
+        new Date(b.entry.data.created_at).getTime() - new Date(a.entry.data.created_at).getTime(),
+    );
+
+    const limit = limitParam ? parseInt(limitParam, 10) : 50;
+    const hasMore = filtered.length > limit;
+    const page = filtered.slice(0, limit);
+
+    const notifications: NotificationResponse[] = page.map(({ id, entry }) =>
       toResponse(id, entry.data),
     );
-    const resp: ListNotificationsResponse = { notifications };
+    const resp: ListNotificationsResponse = { notifications, has_more: hasMore };
     return c.json(resp);
   });
 
