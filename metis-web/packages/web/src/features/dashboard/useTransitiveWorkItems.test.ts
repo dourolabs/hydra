@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type {
   IssueSummaryRecord,
-  PatchVersionRecord,
+  PatchSummaryRecord,
   DocumentSummaryRecord,
 } from "@metis/api";
 import {
@@ -49,7 +49,7 @@ function makePatchRecord(
     status?: string;
     timestamp?: string;
   } = {},
-): PatchVersionRecord {
+): PatchSummaryRecord {
   return {
     patch_id: overrides.patch_id ?? "patch-1",
     version: BigInt(1),
@@ -57,12 +57,10 @@ function makePatchRecord(
     creation_time: "2026-01-01T00:00:00Z",
     patch: {
       title: "Test patch",
-      description: "A test patch",
-      diff: "",
-      status: (overrides.status ?? "Open") as PatchVersionRecord["patch"]["status"],
+      status: (overrides.status ?? "Open") as PatchSummaryRecord["patch"]["status"],
       is_automatic_backup: false,
       creator: "testuser",
-      reviews: [],
+      review_summary: { count: 0, approved: false },
       service_repo_name: "test/repo",
     },
   };
