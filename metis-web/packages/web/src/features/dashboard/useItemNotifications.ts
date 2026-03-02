@@ -170,6 +170,7 @@ export function useItemNotifications(
             notifications: old.notifications.filter(
               (n) => !idsToRemove.has(n.notification_id),
             ),
+            has_more: old.has_more,
           };
         },
       );

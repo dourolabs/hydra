@@ -60,6 +60,7 @@ export function NotificationsPage() {
             notifications: old.notifications.filter(
               (n) => n.notification_id !== id,
             ),
+            has_more: old.has_more,
           };
         },
       );
@@ -75,6 +76,7 @@ export function NotificationsPage() {
                 ? { ...n, notification: { ...n.notification, is_read: true } }
                 : n,
             ),
+            has_more: old.has_more,
           };
         },
       );
@@ -123,7 +125,7 @@ export function NotificationsPage() {
       // Unread cache: empty the list
       queryClient.setQueryData<ListNotificationsResponse>(
         ["notifications", { isRead: false }],
-        (old) => (old ? { notifications: [] } : old),
+        (old) => (old ? { notifications: [], has_more: false } : old),
       );
 
       // All cache: still mark every item as read
@@ -136,6 +138,7 @@ export function NotificationsPage() {
               ...n,
               notification: { ...n.notification, is_read: true },
             })),
+            has_more: old.has_more,
           };
         },
       );

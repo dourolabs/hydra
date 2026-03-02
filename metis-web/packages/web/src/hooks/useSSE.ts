@@ -118,7 +118,7 @@ function insertNotificationIfMissing(
       (n) => n.notification_id === record.notification_id,
     );
     if (exists) return old;
-    return { notifications: [record, ...old.notifications] };
+    return { notifications: [record, ...old.notifications], has_more: old.has_more };
   });
 }
 
