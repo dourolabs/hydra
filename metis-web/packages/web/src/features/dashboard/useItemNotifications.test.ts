@@ -140,7 +140,6 @@ describe("buildItemKey", () => {
         : never,
       lastUpdated: "2026-01-01T00:00:00Z",
       isTerminal: false,
-      hasInProgressChild: false,
     };
     expect(buildItemKey(item)).toBe("issue:i-42");
   });
