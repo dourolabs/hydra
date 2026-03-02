@@ -88,7 +88,7 @@ export function IssueUpdateModal({
   }, [mutation.isPending, onClose]);
 
   return (
-    <Modal open={open} onClose={handleClose} title="Update Status">
+    <Modal open={open} onClose={handleClose} title="Update Status" className={styles.largeModal}>
       <div className={styles.form} onKeyDown={handleKeyDown}>
         <Select
           label="Status"
