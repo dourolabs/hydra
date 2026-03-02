@@ -23,7 +23,7 @@ export interface ItemNotificationState {
  * - Patches: match on object_kind === "patch" && object_id === patchId
  * - Documents: match on object_kind === "document" && object_id === documentId
  */
-function notificationToItemKey(
+export function notificationToItemKey(
   n: NotificationResponse,
   itemIdsByKind: Map<string, Set<string>>,
   jobIdToIssueId: Map<string, string>,
@@ -57,8 +57,47 @@ function notificationToItemKey(
   return null;
 }
 
-function buildItemKey(item: WorkItem): string {
+export function buildItemKey(item: WorkItem): string {
   return `${item.kind}:${item.id}`;
+}
+
+export function buildNotificationMap(
+  notifications: NotificationResponse[],
+  itemIdsByKind: Map<string, Set<string>>,
+  jobIdToIssueId: Map<string, string>,
+): Map<string, ItemNotificationState> {
+  const map = new Map<string, ItemNotificationState>();
+
+  // Group notifications by item key
+  const grouped = new Map<string, NotificationResponse[]>();
+  for (const n of notifications) {
+    const key = notificationToItemKey(n, itemIdsByKind, jobIdToIssueId);
+    if (!key) continue;
+    let arr = grouped.get(key);
+    if (!arr) {
+      arr = [];
+      grouped.set(key, arr);
+    }
+    arr.push(n);
+  }
+
+  // Build ItemNotificationState for each group
+  for (const [key, notifs] of grouped) {
+    // Sort by created_at descending to get the latest first
+    notifs.sort(
+      (a, b) =>
+        new Date(b.notification.created_at).getTime() -
+        new Date(a.notification.created_at).getTime(),
+    );
+
+    map.set(key, {
+      unread: true,
+      latestSummary: notifs[0].notification.summary,
+      notificationIds: notifs.map((n) => n.notification_id),
+    });
+  }
+
+  return map;
 }
 
 export function useItemNotifications(
@@ -96,39 +135,8 @@ export function useItemNotifications(
 
   // Map each notification to its work item and group
   const notificationMap = useMemo(() => {
-    const map = new Map<string, ItemNotificationState>();
-    if (!notifications) return map;
-
-    // Group notifications by item key
-    const grouped = new Map<string, NotificationResponse[]>();
-    for (const n of notifications) {
-      const key = notificationToItemKey(n, itemIdsByKind, jobIdToIssueId);
-      if (!key) continue;
-      let arr = grouped.get(key);
-      if (!arr) {
-        arr = [];
-        grouped.set(key, arr);
-      }
-      arr.push(n);
-    }
-
-    // Build ItemNotificationState for each group
-    for (const [key, notifs] of grouped) {
-      // Sort by created_at descending to get the latest first
-      notifs.sort(
-        (a, b) =>
-          new Date(b.notification.created_at).getTime() -
-          new Date(a.notification.created_at).getTime(),
-      );
-
-      map.set(key, {
-        unread: true,
-        latestSummary: notifs[0].notification.summary,
-        notificationIds: notifs.map((n) => n.notification_id),
-      });
-    }
-
-    return map;
+    if (!notifications) return new Map<string, ItemNotificationState>();
+    return buildNotificationMap(notifications, itemIdsByKind, jobIdToIssueId);
   }, [notifications, itemIdsByKind, jobIdToIssueId]);
 
   // Mark all notifications for an item as read
