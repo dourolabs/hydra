@@ -148,7 +148,7 @@ export function IssueFilterSidebar({
   if (progressList.length === 0) return null;
 
   const renderItem = (p: IssueProgress) => {
-    const label = descriptionSnippet(p.rootIssue.issue.description, 40);
+    const label = descriptionSnippet(p.rootIssue.issue.description, 80);
     const isActive = activeFilter === p.rootId;
     return (
       <li
@@ -165,14 +165,16 @@ export function IssueFilterSidebar({
         }}
       >
         <span className={styles.itemLabel}>{label}</span>
-        {p.needsAttentionCount > 0 && (
-          <span className={styles.needsAttentionChip}>
-            {p.needsAttentionCount}
+        <span className={styles.itemRight}>
+          {p.needsAttentionCount > 0 && (
+            <span className={styles.needsAttentionChip}>
+              {p.needsAttentionCount}
+            </span>
+          )}
+          <span className={styles.itemStats}>
+            <ProgressCircle progress={p} />
+            {p.closed}/{p.total}
           </span>
-        )}
-        <span className={styles.itemStats}>
-          <ProgressCircle progress={p} />
-          {p.closed}/{p.total}
         </span>
       </li>
     );
