@@ -19,6 +19,7 @@ export type WorkItem =
       data: IssueSummaryRecord;
       lastUpdated: string;
       isTerminal: boolean;
+      hasInProgressChild: boolean;
     }
   | {
       kind: "patch";
@@ -173,16 +174,34 @@ export function buildWorkItems(
 ): WorkItem[] {
   const items: WorkItem[] = [];
 
+  // Build parent -> children map for in-progress child detection
+  const childrenMap = new Map<string, string[]>();
+  for (const issue of issueMap.values()) {
+    for (const dep of issue.issue.dependencies) {
+      if (dep.type === "child-of") {
+        const siblings = childrenMap.get(dep.issue_id) ?? [];
+        siblings.push(issue.issue_id);
+        childrenMap.set(dep.issue_id, siblings);
+      }
+    }
+  }
+
   // Issue work items
   for (const issueId of issueIds) {
     const issue = issueMap.get(issueId);
     if (!issue) continue;
+    const childIds = childrenMap.get(issueId) ?? [];
+    const hasInProgressChild = childIds.some((childId) => {
+      const child = issueMap.get(childId);
+      return child?.issue.status === "in-progress";
+    });
     items.push({
       kind: "issue",
       id: issue.issue_id,
       data: issue,
       lastUpdated: issue.timestamp,
       isTerminal: TERMINAL_STATUSES.has(issue.issue.status),
+      hasInProgressChild,
     });
   }
 
