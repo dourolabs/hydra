@@ -2,4 +2,11 @@
 import type { RepoName } from "./RepoName";
 import type { RepoWorkflowConfig } from "./RepoWorkflowConfig";
 
-export type CreateRepositoryRequest = { name: RepoName, remote_url: string, default_branch: string | null, default_image: string | null, deleted?: boolean, patch_workflow?: RepoWorkflowConfig | null, };
+export type CreateRepositoryRequest = {
+  name: RepoName;
+  remote_url: string;
+  default_branch: string | null;
+  default_image: string | null;
+  deleted?: boolean;
+  patch_workflow?: RepoWorkflowConfig | null;
+};

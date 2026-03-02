@@ -3,4 +3,4 @@
 /**
  * Configuration for the merge request issue.
  */
-export type MergeRequestConfig = { assignee: string | null, };
+export type MergeRequestConfig = { assignee: string | null };

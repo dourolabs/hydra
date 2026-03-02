@@ -2,4 +2,10 @@
 import type { BundleSpec } from "./BundleSpec";
 import type { IssueId } from "./IssueId";
 
-export type CreateJobRequest = { prompt: string, image?: string | null, context: BundleSpec, variables?: { [key in string]: string }, issue_id?: IssueId | null, };
+export type CreateJobRequest = {
+  prompt: string;
+  image?: string | null;
+  context: BundleSpec;
+  variables?: { [key in string]: string };
+  issue_id?: IssueId | null;
+};
