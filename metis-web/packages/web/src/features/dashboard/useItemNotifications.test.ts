@@ -27,7 +27,7 @@ function makeNotification(
   return {
     notification_id: overrides.notification_id ?? `n-${notifCounter}`,
     notification: {
-      recipient: "actor-1",
+      recipient: { Username: "actor-1" },
       source_actor: null,
       object_kind: overrides.object_kind ?? "issue",
       object_id: overrides.object_id ?? `obj-${notifCounter}`,
