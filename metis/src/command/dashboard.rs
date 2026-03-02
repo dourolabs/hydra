@@ -1653,7 +1653,7 @@ async fn update_issue_status(
     let issue = current.issue;
     let updated_issue = Issue::new(
         issue.issue_type,
-        String::new(),
+        issue.title,
         issue.description,
         issue.creator,
         issue.progress,
