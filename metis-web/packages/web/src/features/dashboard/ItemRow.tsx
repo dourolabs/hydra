@@ -42,14 +42,10 @@ function PatchIcon() {
       className={styles.typeIcon}
       width="16"
       height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      viewBox="0 0 20 20"
+      fill="currentColor"
     >
-      <path d="M10 1L6 15M4 4L1 8l3 4M12 4l3 4-3 4" />
+      <path d="M3 4a2 2 0 1 1 4 0 2 2 0 0 1-4 0zM3 16a2 2 0 1 1 4 0 2 2 0 0 1-4 0zM13 4a2 2 0 1 1 4 0 2 2 0 0 1-4 0zM4 6h2v8H4zM14 6.5C14 10 10 13 6 14V12C9 11 12 9 12 6.5H14Z" />
     </svg>
   );
 }
