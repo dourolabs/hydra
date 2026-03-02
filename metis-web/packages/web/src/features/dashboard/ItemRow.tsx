@@ -183,6 +183,11 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
         <span className={styles.title}>
           {title}
         </span>
+        {item.kind === "issue" && item.data.issue.progress && (
+          <span className={styles.progressLine}>
+            {item.data.issue.progress}
+          </span>
+        )}
       </span>
       {jobSummaries && jobSummaries.length > 0 && (
         <span
