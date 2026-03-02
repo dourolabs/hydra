@@ -122,7 +122,7 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
   if (item.kind === "issue") {
     title = descriptionSnippet(item.data.issue.description);
   } else if (item.kind === "patch") {
-    title = item.data.patch.title || descriptionSnippet(item.data.patch.description);
+    title = item.data.patch.title || item.id;
   } else {
     title = item.data.document.title || item.data.document.path || item.data.document_id;
   }

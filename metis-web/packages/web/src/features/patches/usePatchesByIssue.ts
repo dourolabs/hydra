@@ -1,21 +1,15 @@
-import { useQueries } from "@tanstack/react-query";
-import type { PatchVersionRecord } from "@metis/api";
-import { apiClient } from "../../api/client";
+import { useMemo } from "react";
+import type { PatchSummaryRecord } from "@metis/api";
+import { usePatches } from "./usePatches";
 
 export function usePatchesByIssue(patchIds: string[]) {
-  const queries = useQueries({
-    queries: patchIds.map((patchId) => ({
-      queryKey: ["patch", patchId],
-      queryFn: () => apiClient.getPatch(patchId),
-      enabled: !!patchId,
-    })),
-  });
+  const { data: allPatches, isLoading, error } = usePatches();
 
-  const isLoading = queries.some((q) => q.isLoading);
-  const error = queries.find((q) => q.error)?.error ?? null;
-  const data: PatchVersionRecord[] = queries
-    .map((q) => q.data)
-    .filter((d): d is PatchVersionRecord => d !== undefined);
+  const data: PatchSummaryRecord[] = useMemo(() => {
+    if (!allPatches) return [];
+    const idSet = new Set(patchIds);
+    return allPatches.filter((p) => idSet.has(p.patch_id));
+  }, [allPatches, patchIds]);
 
   return { data, isLoading, error };
 }

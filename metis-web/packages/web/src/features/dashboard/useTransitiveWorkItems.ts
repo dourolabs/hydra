@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type {
   IssueSummaryRecord,
-  PatchVersionRecord,
+  PatchSummaryRecord,
   DocumentSummaryRecord,
 } from "@metis/api";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
@@ -23,7 +23,7 @@ export type WorkItem =
   | {
       kind: "patch";
       id: string;
-      data: PatchVersionRecord;
+      data: PatchSummaryRecord;
       lastUpdated: string;
       isTerminal: boolean;
     }
@@ -167,7 +167,7 @@ export function collectDocumentPaths(
 export function buildWorkItems(
   issueIds: string[],
   issueMap: Map<string, IssueSummaryRecord>,
-  patches: PatchVersionRecord[],
+  patches: PatchSummaryRecord[],
   documents: DocumentSummaryRecord[],
   documentPaths: string[],
 ): WorkItem[] {
