@@ -106,6 +106,26 @@
   }
 }
 
+.inboxCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: var(--font-size-xxs);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+  border-radius: 999px;
+  padding: 1px 6px;
+  min-width: 18px;
+}
+
+.item.active .inboxCount {
+  color: var(--color-accent-dim);
+  background: var(--color-bg-tertiary);
+}
+
 .needsAttentionChip {
   display: inline-flex;
   align-items: center;

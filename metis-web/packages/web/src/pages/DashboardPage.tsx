@@ -19,7 +19,7 @@ export function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [filterRootId, setFilterRootId] = useState<string | null>(
-    searchParams.get("selected"),
+    searchParams.get("selected") ?? "inbox",
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -50,8 +50,19 @@ export function DashboardPage() {
     return Array.from(set).sort();
   }, [issues]);
 
-  const { items: workItems, isLoading: workItemsLoading } =
-    useTransitiveWorkItems(filterRootId, issues ?? []);
+  const hookRootId = filterRootId === "inbox" ? null : filterRootId;
+  const { items: allWorkItems, isLoading: workItemsLoading } =
+    useTransitiveWorkItems(hookRootId, issues ?? []);
+
+  const workItems = useMemo(() => {
+    if (filterRootId !== "inbox") return allWorkItems;
+    return allWorkItems.filter(
+      (item) =>
+        item.kind === "issue" &&
+        !item.isTerminal &&
+        item.data.issue.assignee === username,
+    );
+  }, [filterRootId, allWorkItems, username]);
 
   const handleFilterChange = useCallback(
     (rootId: string | null) => {
@@ -95,6 +106,7 @@ export function DashboardPage() {
       <div className={styles.dashboardRow}>
         <IssueFilterSidebar
           roots={roots}
+          allIssues={issues ?? []}
           activeFilter={filterRootId}
           onFilterChange={handleFilterChange}
           collapsed={sidebarCollapsed}
