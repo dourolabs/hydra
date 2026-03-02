@@ -494,52 +494,6 @@ describe("buildWorkItems", () => {
     expect(items).toHaveLength(0);
   });
 
-  it("sets hasInProgressChild to true when a direct child is in-progress", () => {
-    const issues = [
-      makeIssueRecord({ issue_id: "parent" }),
-      makeIssueRecord({
-        issue_id: "child",
-        status: "in-progress",
-        dependencies: [{ type: "child-of", issue_id: "parent" }],
-      }),
-    ];
-    const map = toMap(issues);
-    const items = buildWorkItems(["parent", "child"], map, [], [], []);
-    const parent = items.find((i) => i.id === "parent");
-    expect(parent?.kind).toBe("issue");
-    if (parent?.kind === "issue") {
-      expect(parent.hasInProgressChild).toBe(true);
-    }
-  });
-
-  it("sets hasInProgressChild to false when no children are in-progress", () => {
-    const issues = [
-      makeIssueRecord({ issue_id: "parent" }),
-      makeIssueRecord({
-        issue_id: "child",
-        status: "open",
-        dependencies: [{ type: "child-of", issue_id: "parent" }],
-      }),
-    ];
-    const map = toMap(issues);
-    const items = buildWorkItems(["parent", "child"], map, [], [], []);
-    const parent = items.find((i) => i.id === "parent");
-    expect(parent?.kind).toBe("issue");
-    if (parent?.kind === "issue") {
-      expect(parent.hasInProgressChild).toBe(false);
-    }
-  });
-
-  it("sets hasInProgressChild to false for issues with no children", () => {
-    const issues = [makeIssueRecord({ issue_id: "solo" })];
-    const items = buildWorkItems(["solo"], toMap(issues), [], [], []);
-    const solo = items.find((i) => i.id === "solo");
-    expect(solo?.kind).toBe("issue");
-    if (solo?.kind === "issue") {
-      expect(solo.hasInProgressChild).toBe(false);
-    }
-  });
-
   it("sets lastUpdated from the record timestamp", () => {
     const issues = [
       makeIssueRecord({

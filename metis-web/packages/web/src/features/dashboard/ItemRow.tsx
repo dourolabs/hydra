@@ -177,6 +177,7 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
 
   // Job status (issues only)
   const jobSummaries = item.kind === "issue" && jobs ? jobs.map(toJobSummary) : undefined;
+  const hasRunningJob = jobs?.some((j) => j.task.status === "running" || j.task.status === "pending") ?? false;
 
   const isUnread = notification?.unread ?? false;
   const rowClasses = [styles.row];
@@ -194,7 +195,7 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
     >
       {badgeStatus && (
         <span
-          className={`${styles.statusDot} ${item.kind === "issue" && item.hasInProgressChild ? styles.statusDotPulsing : (STATUS_DOT_CLASSES[badgeStatus] ?? "")}`}
+          className={`${styles.statusDot} ${hasRunningJob ? styles.statusDotPulsing : (STATUS_DOT_CLASSES[badgeStatus] ?? "")}`}
         />
       )}
       <span className={styles.icon}>
