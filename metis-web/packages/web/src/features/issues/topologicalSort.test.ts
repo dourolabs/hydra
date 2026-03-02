@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import type { IssueSummaryRecord } from "@metis/api";
-import { topologicalSort } from "./topologicalSort";
+import type { IssueSummaryRecord, PatchSummaryRecord } from "@metis/api";
+import type { WorkItem } from "../dashboard/useTransitiveWorkItems";
+import { topologicalSort, topologicalSortWorkItems } from "./topologicalSort";
 
 function makeRecord(
   id: string,
@@ -139,5 +140,184 @@ describe("topologicalSort", () => {
     const result = ids(topologicalSort([q, y, p, x]));
     expect(result.indexOf("x")).toBeLessThan(result.indexOf("y"));
     expect(result.indexOf("p")).toBeLessThan(result.indexOf("q"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// topologicalSortWorkItems tests
+// ---------------------------------------------------------------------------
+
+function makeWorkItem(
+  id: string,
+  dependencies: Array<{ type: string; issue_id: string }> = [],
+  lastUpdated = "2026-01-01T00:00:00Z",
+): WorkItem {
+  return {
+    kind: "issue",
+    id,
+    data: {
+      issue_id: id,
+      version: BigInt(1),
+      timestamp: lastUpdated,
+      creation_time: lastUpdated,
+      issue: {
+        type: "task",
+        description: "",
+        creator: "test",
+        status: "open" as IssueSummaryRecord["issue"]["status"],
+        progress: "",
+        dependencies:
+          dependencies as IssueSummaryRecord["issue"]["dependencies"],
+        patches: [],
+      },
+    },
+    lastUpdated,
+    isTerminal: false,
+  };
+}
+
+function makePatchWorkItem(
+  id: string,
+  lastUpdated = "2026-01-01T00:00:00Z",
+): WorkItem {
+  return {
+    kind: "patch",
+    id,
+    data: {
+      patch_id: id,
+      version: BigInt(1),
+      timestamp: lastUpdated,
+      creation_time: lastUpdated,
+      patch: {
+        status: "Open",
+        title: "",
+        is_automatic_backup: false,
+        creator: "test",
+        review_summary: { count: 0, approved: false },
+        service_repo_name: "test/repo",
+      },
+    } as PatchSummaryRecord,
+    lastUpdated,
+    isTerminal: false,
+  };
+}
+
+function workItemIds(items: WorkItem[]): string[] {
+  return items.map((i) => i.id);
+}
+
+describe("topologicalSortWorkItems", () => {
+  it("returns empty array for empty input", () => {
+    expect(topologicalSortWorkItems([])).toEqual([]);
+  });
+
+  it("returns single item unchanged", () => {
+    const a = makeWorkItem("a");
+    expect(workItemIds(topologicalSortWorkItems([a]))).toEqual(["a"]);
+  });
+
+  it("sorts a linear child-of chain: C child-of B child-of A", () => {
+    // C is child of B, B is child of A → C completes first, then B, then A
+    const a = makeWorkItem("a");
+    const b = makeWorkItem("b", [{ type: "child-of", issue_id: "a" }]);
+    const c = makeWorkItem("c", [{ type: "child-of", issue_id: "b" }]);
+    // Input order reversed; output should be C, B, A (leaf first)
+    const result = workItemIds(topologicalSortWorkItems([a, b, c]));
+    expect(result.indexOf("c")).toBeLessThan(result.indexOf("b"));
+    expect(result.indexOf("b")).toBeLessThan(result.indexOf("a"));
+  });
+
+  it("sorts blocked-on: B blocked-on A means A before B", () => {
+    const a = makeWorkItem("a");
+    const b = makeWorkItem("b", [{ type: "blocked-on", issue_id: "a" }]);
+    const result = workItemIds(topologicalSortWorkItems([b, a]));
+    expect(result).toEqual(["a", "b"]);
+  });
+
+  it("sorts diamond child-of dependencies: leaf first, root last", () => {
+    // A is root; B and C are children of A; D is child of both B and C
+    const a = makeWorkItem("a");
+    const b = makeWorkItem("b", [{ type: "child-of", issue_id: "a" }]);
+    const c = makeWorkItem("c", [{ type: "child-of", issue_id: "a" }]);
+    const d = makeWorkItem("d", [
+      { type: "child-of", issue_id: "b" },
+      { type: "child-of", issue_id: "c" },
+    ]);
+    const result = workItemIds(topologicalSortWorkItems([a, b, c, d]));
+    // D must come before B and C; B and C must come before A
+    expect(result.indexOf("d")).toBeLessThan(result.indexOf("b"));
+    expect(result.indexOf("d")).toBeLessThan(result.indexOf("c"));
+    expect(result.indexOf("b")).toBeLessThan(result.indexOf("a"));
+    expect(result.indexOf("c")).toBeLessThan(result.indexOf("a"));
+  });
+
+  it("handles cycles gracefully without crashing", () => {
+    const a = makeWorkItem("a", [{ type: "blocked-on", issue_id: "b" }]);
+    const b = makeWorkItem("b", [{ type: "blocked-on", issue_id: "a" }]);
+    const c = makeWorkItem("c");
+    const result = workItemIds(topologicalSortWorkItems([a, b, c]));
+    // C has no deps so it comes first; A and B in cycle are appended
+    expect(result[0]).toBe("c");
+    expect(result).toContain("a");
+    expect(result).toContain("b");
+    expect(result.length).toBe(3);
+  });
+
+  it("handles mixed child-of and blocked-on dependencies", () => {
+    // A is root parent, B is child of A, C is child of A and blocked on B
+    const a = makeWorkItem("a");
+    const b = makeWorkItem("b", [{ type: "child-of", issue_id: "a" }]);
+    const c = makeWorkItem("c", [
+      { type: "child-of", issue_id: "a" },
+      { type: "blocked-on", issue_id: "b" },
+    ]);
+    const result = workItemIds(topologicalSortWorkItems([a, c, b]));
+    // B completes first (leaf, no blockers), then C (blocked on B), then A (root)
+    expect(result.indexOf("b")).toBeLessThan(result.indexOf("c"));
+    expect(result.indexOf("c")).toBeLessThan(result.indexOf("a"));
+  });
+
+  it("ignores edges to issues not in the active set", () => {
+    const a = makeWorkItem("a", [
+      { type: "child-of", issue_id: "external" },
+      { type: "blocked-on", issue_id: "also-external" },
+    ]);
+    const b = makeWorkItem("b");
+    const result = workItemIds(topologicalSortWorkItems([a, b]));
+    // No valid edges, so sorted by lastUpdated (same timestamp = stable)
+    expect(result).toEqual(["a", "b"]);
+  });
+
+  it("sorts by lastUpdated within the same tier", () => {
+    // B and C are both children of A; no deps between B and C
+    const a = makeWorkItem("a", [], "2026-01-01T00:00:00Z");
+    const b = makeWorkItem(
+      "b",
+      [{ type: "child-of", issue_id: "a" }],
+      "2026-01-01T01:00:00Z",
+    );
+    const c = makeWorkItem(
+      "c",
+      [{ type: "child-of", issue_id: "a" }],
+      "2026-01-01T02:00:00Z",
+    );
+    const result = workItemIds(topologicalSortWorkItems([a, b, c]));
+    // C has later lastUpdated, so it comes first within the same tier
+    expect(result).toEqual(["c", "b", "a"]);
+  });
+
+  it("places non-issue items after issue items", () => {
+    const issue = makeWorkItem("i1");
+    const patch = makePatchWorkItem("p1");
+    const result = workItemIds(topologicalSortWorkItems([patch, issue]));
+    expect(result).toEqual(["i1", "p1"]);
+  });
+
+  it("handles only non-issue items", () => {
+    const p1 = makePatchWorkItem("p1", "2026-01-01T01:00:00Z");
+    const p2 = makePatchWorkItem("p2", "2026-01-01T02:00:00Z");
+    const result = workItemIds(topologicalSortWorkItems([p1, p2]));
+    // Sorted by lastUpdated descending
+    expect(result).toEqual(["p2", "p1"]);
   });
 });
