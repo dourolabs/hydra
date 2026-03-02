@@ -32,7 +32,7 @@ export function HeterogeneousItemList({
   onToggleDrawer,
 }: HeterogeneousItemListProps) {
   const { getItemNotification, markItemRead, notificationMap } =
-    useItemNotifications(items);
+    useItemNotifications(items, jobsByIssue);
 
   // Sort: unread items first, then by timestamp (descending)
   const sortWithUnread = useCallback(

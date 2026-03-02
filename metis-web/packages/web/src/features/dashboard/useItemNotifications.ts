@@ -2,6 +2,7 @@ import { useMemo, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   NotificationResponse,
+  JobSummaryRecord,
   ListNotificationsResponse,
   UnreadCountResponse,
 } from "@metis/api";
@@ -18,13 +19,14 @@ export interface ItemNotificationState {
 /**
  * Determine the item ID that a notification maps to, given the set of work items.
  * - Issues: match on object_kind === "issue" && object_id === issueId
- * - Jobs: match via source_issue_id to the parent issue
+ * - Jobs: match via source_issue_id (preferred) or jobIdToIssueId fallback
  * - Patches: match on object_kind === "patch" && object_id === patchId
  * - Documents: match on object_kind === "document" && object_id === documentId
  */
 function notificationToItemKey(
   n: NotificationResponse,
   itemIdsByKind: Map<string, Set<string>>,
+  jobIdToIssueId: Map<string, string>,
 ): string | null {
   const { object_kind, object_id, source_issue_id } = n.notification;
 
@@ -36,6 +38,11 @@ function notificationToItemKey(
     // Job notifications link to the parent issue via source_issue_id
     if (source_issue_id && itemIdsByKind.get("issue")?.has(source_issue_id)) {
       return `issue:${source_issue_id}`;
+    }
+    // Fallback: look up the parent issue from the jobsByIssue reverse map
+    const fallbackIssueId = jobIdToIssueId.get(object_id);
+    if (fallbackIssueId && itemIdsByKind.get("issue")?.has(fallbackIssueId)) {
+      return `issue:${fallbackIssueId}`;
     }
   } else if (object_kind === "patch") {
     if (itemIdsByKind.get("patch")?.has(object_id)) {
@@ -54,7 +61,10 @@ function buildItemKey(item: WorkItem): string {
   return `${item.kind}:${item.id}`;
 }
 
-export function useItemNotifications(items: WorkItem[]) {
+export function useItemNotifications(
+  items: WorkItem[],
+  jobsByIssue?: Map<string, JobSummaryRecord[]>,
+) {
   const { data: notifications } = useNotifications(false);
   const queryClient = useQueryClient();
 
@@ -72,6 +82,18 @@ export function useItemNotifications(items: WorkItem[]) {
     return map;
   }, [items]);
 
+  // Build a reverse map from job_id -> issue_id for fallback matching
+  const jobIdToIssueId = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!jobsByIssue) return map;
+    for (const [issueId, jobs] of jobsByIssue) {
+      for (const job of jobs) {
+        map.set(job.job_id, issueId);
+      }
+    }
+    return map;
+  }, [jobsByIssue]);
+
   // Map each notification to its work item and group
   const notificationMap = useMemo(() => {
     const map = new Map<string, ItemNotificationState>();
@@ -80,7 +102,7 @@ export function useItemNotifications(items: WorkItem[]) {
     // Group notifications by item key
     const grouped = new Map<string, NotificationResponse[]>();
     for (const n of notifications) {
-      const key = notificationToItemKey(n, itemIdsByKind);
+      const key = notificationToItemKey(n, itemIdsByKind, jobIdToIssueId);
       if (!key) continue;
       let arr = grouped.get(key);
       if (!arr) {
@@ -107,7 +129,7 @@ export function useItemNotifications(items: WorkItem[]) {
     }
 
     return map;
-  }, [notifications, itemIdsByKind]);
+  }, [notifications, itemIdsByKind, jobIdToIssueId]);
 
   // Mark all notifications for an item as read
   const markItemRead = useMutation({
