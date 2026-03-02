@@ -34,7 +34,7 @@
 
 .row.assignedToMe {
   border-left: 3px solid var(--color-status-blocked);
-  background-color: rgba(224, 120, 80, 0.08);
+  background-color: var(--color-status-blocked-bg);
 }
 
 .unreadDot {
