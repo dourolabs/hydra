@@ -80,7 +80,7 @@ interface ItemRowProps {
   item: WorkItem;
   jobs?: JobSummaryRecord[];
   notification?: ItemNotificationState;
-  onMarkRead?: (item: WorkItem) => void;
+  onMarkRead?: (item: WorkItem) => Promise<void> | void;
   filterRootId?: string | null;
 }
 
@@ -89,9 +89,13 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
   const { user } = useAuth();
   const Icon = TYPE_ICONS[item.kind];
 
-  const handleClick = useCallback(() => {
+  const handleClick = useCallback(async () => {
     if (notification?.unread && onMarkRead) {
-      onMarkRead(item);
+      try {
+        await onMarkRead(item);
+      } catch {
+        // Mark-as-read failed; still navigate
+      }
     }
     const paths: Record<WorkItem["kind"], string> = {
       issue: `/issues/${item.id}`,
