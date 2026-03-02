@@ -157,10 +157,8 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
   const jobSummaries = item.kind === "issue" && jobs ? jobs.map(toJobSummary) : undefined;
   const hasRunningJob = jobs?.some((j) => j.task.status === "running" || j.task.status === "pending") ?? false;
 
-  const isUnread = notification?.unread ?? false;
   const rowClasses = [styles.row];
   if (item.isTerminal) rowClasses.push(styles.terminal);
-  if (isUnread) rowClasses.push(styles.unread);
   if (isAssignedToMe) rowClasses.push(styles.assignedToMe);
 
   return (
@@ -182,7 +180,7 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
         </span>
       )}
       <span className={styles.titleGroup}>
-        <span className={isUnread ? styles.titleUnread : styles.title}>
+        <span className={styles.title}>
           {title}
         </span>
       </span>

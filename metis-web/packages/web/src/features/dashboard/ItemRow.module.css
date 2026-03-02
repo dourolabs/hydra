@@ -24,14 +24,6 @@
   opacity: 0.5;
 }
 
-.row.unread {
-  background: var(--color-bg-unread);
-}
-
-.row.unread:hover {
-  background: var(--color-bg-tertiary);
-}
-
 .row.assignedToMe {
   border-left: 3px solid var(--color-status-blocked);
   background-color: var(--color-status-blocked-bg);
@@ -110,11 +102,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.titleUnread {
-  composes: title;
-  font-weight: 600;
 }
 
 .jobIndicator {
