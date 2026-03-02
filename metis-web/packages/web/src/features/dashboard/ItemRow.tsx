@@ -14,6 +14,16 @@ import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
 import styles from "./ItemRow.module.css";
 
+const STATUS_DOT_CLASSES: Record<string, string> = {
+  open: styles.statusDotOpen,
+  "in-progress": styles.statusDotInProgress,
+  closed: styles.statusDotClosed,
+  failed: styles.statusDotFailed,
+  dropped: styles.statusDotDropped,
+  blocked: styles.statusDotBlocked,
+  rejected: styles.statusDotRejected,
+};
+
 function IssueIcon() {
   return (
     <svg
@@ -165,6 +175,11 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
       role="button"
       tabIndex={0}
     >
+      {badgeStatus && (
+        <span
+          className={`${styles.statusDot} ${STATUS_DOT_CLASSES[badgeStatus] ?? ""}`}
+        />
+      )}
       <span className={styles.icon}>
         <Icon />
       </span>
