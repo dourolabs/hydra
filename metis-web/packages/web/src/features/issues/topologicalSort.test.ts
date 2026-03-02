@@ -173,6 +173,7 @@ function makeWorkItem(
     },
     lastUpdated,
     isTerminal: false,
+    hasInProgressChild: false,
   };
 }
 
