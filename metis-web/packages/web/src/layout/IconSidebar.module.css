@@ -184,7 +184,7 @@
     flex-direction: row;
     width: 100%;
     min-height: auto;
-    height: 56px;
+    height: var(--mobile-nav-height);
     border-right: none;
     border-top: 1px solid var(--color-border);
     position: fixed;
