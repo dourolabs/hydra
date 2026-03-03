@@ -1,5 +1,6 @@
 import { test as base } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { test } from "./fixtures/auth";
 import path from "path";
 
 const SCREENSHOT_DIR = path.join("test-results", "visual-audit");
@@ -20,15 +21,6 @@ const AUTHENTICATED_PAGES = [
   { name: "settings", path: "/settings" },
   { name: "job-log", path: "/issues/i-seed00005/jobs/t-seed00001/logs" },
 ];
-
-async function authenticate(page: Page) {
-  await page.goto("/login");
-  await page.fill('[data-testid="token-input"]', "dev-token-12345");
-  await page.click('[data-testid="login-button"]');
-  await page.waitForFunction(
-    () => !window.location.pathname.startsWith("/login"),
-  );
-}
 
 async function captureScreenshot(
   page: Page,
@@ -55,16 +47,15 @@ base.describe("Visual Audit - Login", () => {
   });
 });
 
-base.describe("Visual Audit - Authenticated Pages", () => {
+test.describe("Visual Audit - Authenticated Pages", () => {
   for (const { name, path: pagePath } of AUTHENTICATED_PAGES) {
-    base(`capture ${name} at desktop and mobile viewports`, async ({ page }) => {
-      await authenticate(page);
-      await page.goto(pagePath);
+    test(`capture ${name} at desktop and mobile viewports`, async ({ authenticatedPage }) => {
+      await authenticatedPage.goto(pagePath);
       // Wait for network to settle so content is loaded
-      await page.waitForLoadState("networkidle");
+      await authenticatedPage.waitForLoadState("networkidle");
 
-      await captureScreenshot(page, name, DESKTOP_VIEWPORT, "desktop");
-      await captureScreenshot(page, name, MOBILE_VIEWPORT, "mobile");
+      await captureScreenshot(authenticatedPage, name, DESKTOP_VIEWPORT, "desktop");
+      await captureScreenshot(authenticatedPage, name, MOBILE_VIEWPORT, "mobile");
     });
   }
 });
