@@ -21,7 +21,7 @@ async fn create_spawnable_issue(
 
     let issue = Issue::new(
         IssueType::Task,
-        String::new(),
+        "Test Title".to_string(),
         description.to_string(),
         Username::from("default"),
         String::new(),

@@ -460,7 +460,7 @@ mod tests {
     ) -> Issue {
         Issue::new(
             issue_type,
-            String::new(),
+            "Test Title".to_string(),
             description.to_string(),
             default_user(),
             String::new(),

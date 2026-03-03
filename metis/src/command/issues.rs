@@ -2080,7 +2080,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 issue_type,
-                String::new(),
+                "Test Title".to_string(),
                 description.into(),
                 empty_user(),
                 String::new(),
@@ -2108,7 +2108,7 @@ mod tests {
                 Utc::now(),
                 Issue::new(
                     IssueType::Bug,
-                    String::new(),
+                    "Test Title".to_string(),
                     "First issue".into(),
                     empty_user(),
                     String::new(),
@@ -2168,7 +2168,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "Edge case bug".into(),
                 empty_user(),
                 String::new(),
@@ -2219,7 +2219,7 @@ mod tests {
                 Utc::now(),
                 Issue::new(
                     IssueType::Task,
-                    String::new(),
+                    "Test Title".to_string(),
                     "Edge case bug".into(),
                     empty_user(),
                     String::new(),
@@ -2603,7 +2603,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
-                String::new(),
+                "Test Title".to_string(),
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
@@ -2628,7 +2628,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::MergeRequest,
-            String::new(),
+            "Test Title".to_string(),
             IssueStatus::Closed,
             Vec::new(),
             patch_ids.clone(),
@@ -2666,7 +2666,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
-                String::new(),
+                "Test Title".to_string(),
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
@@ -2691,7 +2691,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::MergeRequest,
-            String::new(),
+            "Test Title".to_string(),
             IssueStatus::Closed,
             Vec::new(),
             vec![],
@@ -2732,7 +2732,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -2755,7 +2755,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
-                String::new(),
+                "Test Title".to_string(),
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
@@ -2780,7 +2780,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::MergeRequest,
-            String::new(),
+            "Test Title".to_string(),
             IssueStatus::Open,
             Vec::new(),
             vec![],
@@ -2823,7 +2823,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -2852,7 +2852,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
-                String::new(),
+                "Test Title".to_string(),
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
@@ -2877,7 +2877,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::MergeRequest,
-            String::new(),
+            "Test Title".to_string(),
             IssueStatus::Open,
             Vec::new(),
             vec![],
@@ -2913,7 +2913,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "Issue with secrets".into(),
                 Username::from("creator-a"),
                 String::new(),
@@ -2938,7 +2938,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             IssueStatus::Open,
             Vec::new(),
             vec![],
@@ -2976,7 +2976,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "Parent issue".into(),
                 empty_user(),
                 String::new(),
@@ -2999,7 +2999,7 @@ mod tests {
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "Child issue".into(),
                 Username::from("creator-a"),
                 String::new(),
@@ -3024,7 +3024,7 @@ mod tests {
         create_issue(
             &client,
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             IssueStatus::Open,
             Vec::new(),
             vec![],
@@ -3057,7 +3057,7 @@ mod tests {
         assert!(create_issue(
             &client,
             IssueType::Bug,
-            String::new(),
+            "Test Title".to_string(),
             IssueStatus::Open,
             vec![],
             Vec::new(),
@@ -3085,7 +3085,7 @@ mod tests {
         assert!(create_issue(
             &client,
             IssueType::Bug,
-            String::new(),
+            "Test Title".to_string(),
             IssueStatus::Open,
             vec![],
             Vec::new(),
@@ -3193,7 +3193,7 @@ mod tests {
         let updated_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Bug,
-                String::new(),
+                "Test Title".to_string(),
                 "Updated issue description".into(),
                 empty_user(),
                 "New progress".into(),
@@ -3271,7 +3271,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Feature,
-                String::new(),
+                "Test Title".to_string(),
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
@@ -3292,7 +3292,7 @@ mod tests {
         let update_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Feature,
-                String::new(),
+                "Test Title".to_string(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -3365,7 +3365,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Feature,
-                String::new(),
+                "Test Title".to_string(),
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
@@ -3386,7 +3386,7 @@ mod tests {
         let update_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Feature,
-                String::new(),
+                "Test Title".to_string(),
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
@@ -3461,7 +3461,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -3481,7 +3481,7 @@ mod tests {
         let update_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -3555,7 +3555,7 @@ mod tests {
             Utc::now(),
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -3573,7 +3573,7 @@ mod tests {
         let update_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
@@ -3643,7 +3643,7 @@ mod tests {
                 Utc::now(),
                 Issue::new(
                     IssueType::Bug,
-                    String::new(),
+                    "First Title".to_string(),
                     "First issue\nwith context".into(),
                     empty_user(),
                     "Working on repro".into(),
@@ -3667,7 +3667,7 @@ mod tests {
                 Utc::now(),
                 Issue::new(
                     IssueType::Feature,
-                    String::new(),
+                    "Second Title".to_string(),
                     "Follow-up work".into(),
                     empty_user(),
                     String::new(),
@@ -3721,7 +3721,7 @@ mod tests {
                 Utc::now(),
                 Issue::new(
                     IssueType::Task,
-                    String::new(),
+                    "Test Title".to_string(),
                     "has todos".into(),
                     empty_user(),
                     String::new(),
@@ -3911,7 +3911,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Task,
-                        String::new(),
+                        "Main Issue Title".to_string(),
                         "Main issue".into(),
                         empty_user(),
                         String::new(),
@@ -3935,7 +3935,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Feature,
-                        String::new(),
+                        "Parent Issue Title".to_string(),
                         "Parent".into(),
                         empty_user(),
                         String::new(),
@@ -3978,7 +3978,7 @@ mod tests {
 
         let base_issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "Main issue".into(),
             empty_user(),
             String::new(),
@@ -4127,7 +4127,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Task,
-                        String::new(),
+                        "Main Issue Title".to_string(),
                         "Main issue".into(),
                         empty_user(),
                         "Main progress".into(),
@@ -4151,7 +4151,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Feature,
-                        String::new(),
+                        "Parent Issue Title".to_string(),
                         "Parent".into(),
                         empty_user(),
                         String::new(),
@@ -4175,7 +4175,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Bug,
-                        String::new(),
+                        "Child Issue Title".to_string(),
                         "Child".into(),
                         empty_user(),
                         "Child update".into(),
@@ -4219,7 +4219,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Task,
-                        String::new(),
+                        "Main Issue Title".to_string(),
                         "Main issue".into(),
                         empty_user(),
                         String::new(),
@@ -4243,7 +4243,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Task,
-                        String::new(),
+                        "Parent Issue Title".to_string(),
                         "Parent description".into(),
                         empty_user(),
                         String::new(),
@@ -4267,7 +4267,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Bug,
-                        String::new(),
+                        "Child Issue Title".to_string(),
                         "Child description".into(),
                         empty_user(),
                         String::new(),
@@ -4330,7 +4330,7 @@ mod tests {
                     Utc::now(),
                     Issue::new(
                         IssueType::Task,
-                        String::new(),
+                        "Test Title".to_string(),
                         "Main issue".into(),
                         empty_user(),
                         String::new(),

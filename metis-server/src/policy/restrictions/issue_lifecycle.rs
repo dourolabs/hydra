@@ -153,7 +153,7 @@ mod tests {
     fn make_issue(status: IssueStatus) -> Issue {
         Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "test".to_string(),
             Username::from("creator"),
             String::new(),

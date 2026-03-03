@@ -201,7 +201,7 @@ mod tests {
     fn make_issue(status: IssueStatus, deps: Vec<IssueDependency>) -> Issue {
         Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "test".to_string(),
             Username::from("tester"),
             String::new(),

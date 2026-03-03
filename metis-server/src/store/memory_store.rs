@@ -1686,7 +1686,7 @@ mod tests {
     fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
         Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "issue details".to_string(),
             Username::from("creator"),
             String::new(),

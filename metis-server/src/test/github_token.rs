@@ -92,7 +92,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         .add_issue(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "task".to_string(),
                 username.clone(),
                 String::new(),
@@ -213,7 +213,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         .add_issue(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "task".to_string(),
                 username.clone(),
                 String::new(),
@@ -308,7 +308,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         .add_issue(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "task".to_string(),
                 username.clone(),
                 String::new(),

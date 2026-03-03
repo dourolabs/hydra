@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 fn dummy_issue() -> Issue {
     Issue::new(
         IssueType::Task,
-        String::new(),
+        "Test Title".to_string(),
         "test".to_string(),
         Username::from("creator"),
         String::new(),
@@ -169,7 +169,7 @@ fn make_issue_payload() -> OperationPayload {
         issue_id: Some(IssueId::new()),
         new: Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "test issue".to_string(),
             Username::from("tester"),
             String::new(),
@@ -878,7 +878,7 @@ async fn disabling_restriction_allows_blocked_operation() {
 
     let issue_no_creator = Issue::new(
         IssueType::Task,
-        String::new(),
+        "Test Title".to_string(),
         "test".to_string(),
         Username::from(""),
         String::new(),

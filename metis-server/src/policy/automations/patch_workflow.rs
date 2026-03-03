@@ -539,7 +539,7 @@ mod tests {
 
         let parent = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Parent Task Title".to_string(),
             "parent".to_string(),
             Username::from("tester"),
             String::new(),
@@ -554,7 +554,7 @@ mod tests {
 
         let mr_issue = Issue::new(
             IssueType::MergeRequest,
-            String::new(),
+            "Merge Request Title".to_string(),
             "old review".to_string(),
             Username::from("tester"),
             String::new(),
@@ -659,7 +659,7 @@ mod tests {
 
         let parent = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Parent Task Title".to_string(),
             "parent task".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1771,7 +1771,7 @@ merge_request:
         // Pre-create an open ReviewRequest issue for this patch.
         let existing_rr = Issue::new(
             IssueType::ReviewRequest,
-            String::new(),
+            "Existing Review Request Title".to_string(),
             "existing review request".to_string(),
             Username::from("tester"),
             String::new(),
@@ -1860,7 +1860,7 @@ merge_request:
         // Pre-create an open ReviewRequest.
         let existing_rr = Issue::new(
             IssueType::ReviewRequest,
-            String::new(),
+            "Existing Review Request Title".to_string(),
             "existing review request".to_string(),
             Username::from("tester"),
             String::new(),
@@ -1879,7 +1879,7 @@ merge_request:
         // Pre-create a Failed MergeRequest (terminal state, should not block).
         let failed_mr = Issue::new(
             IssueType::MergeRequest,
-            String::new(),
+            "Failed Merge Request Title".to_string(),
             "old merge request".to_string(),
             Username::from("tester"),
             String::new(),
@@ -1964,7 +1964,7 @@ merge_request:
         ] {
             let rr = Issue::new(
                 IssueType::ReviewRequest,
-                String::new(),
+                format!("Review Request ({status:?})"),
                 format!("old review request ({status:?})"),
                 Username::from("tester"),
                 String::new(),
@@ -1979,7 +1979,7 @@ merge_request:
 
             let mr = Issue::new(
                 IssueType::MergeRequest,
-                String::new(),
+                format!("Merge Request ({status:?})"),
                 format!("old merge request ({status:?})"),
                 Username::from("tester"),
                 String::new(),

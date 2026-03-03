@@ -92,7 +92,7 @@ pub fn issue_with_status(
 ) -> Issue {
     Issue::new(
         IssueType::Task,
-        String::new(),
+        "Test Title".to_string(),
         description.to_string(),
         Username::from("creator"),
         String::new(),

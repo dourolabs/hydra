@@ -782,7 +782,7 @@ mod tests {
     fn dummy_issue() -> Issue {
         Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "sse entity test".to_string(),
             Username::from("creator"),
             String::new(),
