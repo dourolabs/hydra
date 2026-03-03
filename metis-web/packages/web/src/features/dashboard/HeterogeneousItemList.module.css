@@ -56,6 +56,11 @@
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.listScrollFetching {
+  opacity: 0.6;
 }
 
 .sectionHeader {
