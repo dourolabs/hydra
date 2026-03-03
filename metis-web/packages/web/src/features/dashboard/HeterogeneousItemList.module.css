@@ -97,7 +97,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .sidebarToggle,
-  .drawerToggle {
+  .drawerToggle,
+  .listScroll {
     transition: none;
   }
 }
