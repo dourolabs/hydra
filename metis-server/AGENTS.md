@@ -8,6 +8,12 @@
 - Routes map domain structs in `crate::domain` to the API types in `metis-common::api::v1`; keep those structs in lockstep and update the conversion impls whenever you add fields.
 - Application-specific validation (like issue lifecycle checks) belongs in `AppState`; store implementations should only persist and index data without enforcing app-level transitions.
 
+## Integration Testing Guidelines
+- Integration tests must use `worker_run` and the metis CLI to perform actions, simulating real agent behavior.
+- Agent status transitions (e.g., setting an issue to Failed) should happen via the CLI inside a worker, not via direct API calls.
+- When testing failure/rejection cascades, include dependent issues (blocked-on, children) to verify cascade behavior.
+- Tests should be end-to-end simulations of real workflows, not shortcuts using internal APIs.
+
 ## Logging Policy
 - All routes must emit `info!` level logs that let us trace an HTTP request from ingress through response. At a minimum log the handler name, identifiers (e.g. repo, job, user), and the decision taken or status returned.
 - Every background job invocation must log at `info!` when it starts (including job name and key parameters) and again when it finishes, capturing whether it succeeded and any high-level outcome so operators can understand what happened in that run.
