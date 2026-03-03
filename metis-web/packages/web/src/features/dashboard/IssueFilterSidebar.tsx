@@ -159,7 +159,7 @@ export function IssueFilterSidebar({
   if (progressList.length === 0) return null;
 
   const renderItem = (p: IssueProgress) => {
-    const label = descriptionSnippet(p.rootIssue.issue.description, 80);
+    const label = p.rootIssue.issue.title || descriptionSnippet(p.rootIssue.issue.description, 80);
     const isActive = activeFilter === p.rootId;
     return (
       <li
