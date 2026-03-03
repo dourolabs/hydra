@@ -56,7 +56,7 @@ export function IssueUpdateModal({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
       queryClient.invalidateQueries({ queryKey: ["issues"] });
-      addToast("Issue status updated", "success");
+      addToast("Issue updated", "success");
       onClose();
     },
     onError: (err) => {

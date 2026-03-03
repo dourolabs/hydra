@@ -370,7 +370,7 @@ export function DemoApp() {
           <div className={styles.preview}>
             <Toast variant="success" message="Issue i-abc123 created successfully" duration={0} />
             <Toast variant="error" message="Failed to create issue: unauthorized" duration={0} />
-            <Toast variant="info" message="Issue status updated" duration={0} />
+            <Toast variant="info" message="Issue updated" duration={0} />
           </div>
           <div className={styles.preview}>
             <Button
