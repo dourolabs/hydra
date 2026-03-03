@@ -52,16 +52,6 @@
   color: var(--color-text-secondary);
 }
 
-.toolbarSummary {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-}
-
-.toolbarDivider {
-  margin: 0 var(--space-1);
-}
-
 .listScroll {
   flex: 1;
   overflow-y: auto;

@@ -4,10 +4,10 @@ import { apiClient } from "../../api/client";
 import { computeBlockedStatus } from "./blockedStatus";
 import { topologicalSort } from "./topologicalSort";
 
-export function useIssues() {
+export function useIssues(q?: string) {
   return useQuery({
-    queryKey: ["issues"],
-    queryFn: () => apiClient.listIssues(),
+    queryKey: ["issues", q ?? null],
+    queryFn: () => apiClient.listIssues(q ? { q } : undefined),
     select: (data) => data.issues,
   });
 }

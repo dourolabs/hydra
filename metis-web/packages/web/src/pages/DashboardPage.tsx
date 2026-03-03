@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
 import { useIssues, buildIssueTree } from "../features/issues/useIssues";
@@ -14,7 +14,23 @@ import styles from "./DashboardPage.module.css";
 
 export function DashboardPage() {
   const { user } = useAuth();
-  const { data: issues, isLoading } = useIssues();
+  const [searchValue, setSearchValue] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchValue(value);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setSearchQuery(value);
+    }, 300);
+  }, []);
+
+  useEffect(() => {
+    return () => clearTimeout(debounceRef.current);
+  }, []);
+
+  const { data: issues, isLoading } = useIssues(searchQuery || undefined);
   const { data: jobsByIssue } = useAllJobs();
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -128,6 +144,8 @@ export function DashboardPage() {
           onToggleSidebar={handleToggleSidebar}
           onToggleDrawer={handleToggleDrawer}
           filterRootId={filterRootId}
+          searchValue={searchValue}
+          onSearchChange={handleSearchChange}
         />
       </div>
       <button
