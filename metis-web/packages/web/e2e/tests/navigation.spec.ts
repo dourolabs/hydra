@@ -33,7 +33,7 @@ test.describe("Navigation", () => {
       page.getByText("i-seed00001", { exact: true })
     ).toBeVisible();
     await expect(
-      page.getByText(/Platform v2\.0 Migration/)
+      page.getByRole("heading", { name: "Platform v2.0 Migration" })
     ).toBeVisible();
   });
 
