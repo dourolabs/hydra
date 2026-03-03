@@ -18,8 +18,9 @@ export function DashboardPage() {
   const { data: jobsByIssue } = useAllJobs();
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const selectedParam = searchParams.get("selected");
   const [filterRootId, setFilterRootId] = useState<string | null>(
-    searchParams.get("selected") ?? "inbox",
+    selectedParam === "everything" ? null : (selectedParam ?? "inbox"),
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
