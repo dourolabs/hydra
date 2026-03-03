@@ -91,6 +91,7 @@
     height: 40px;
     background: linear-gradient(to bottom, transparent, var(--color-bg-primary));
     pointer-events: none;
+    z-index: -1;
   }
 
   .createButton:hover {
