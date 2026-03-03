@@ -127,11 +127,8 @@ function insertNotificationIfMissing(
  * is included in the event payload, the cache is updated directly to avoid
  * unnecessary HTTP re-fetches. Falls back to cache invalidation when entity
  * data is not available (backward compatibility).
- *
- * @param currentUsername - The authenticated user's username, used to filter
- *   notification events so only notifications for this user are cached.
  */
-export function useSSE(currentUsername: string | undefined): SSEConnectionState {
+export function useSSE(): SSEConnectionState {
   const [state, setState] = useState<SSEConnectionState>("disconnected");
   const queryClient = useQueryClient();
   const retriesRef = useRef(0);
@@ -219,21 +216,12 @@ export function useSSE(currentUsername: string | undefined): SSEConnectionState 
         }
       } else if (entity_type === "notification" || eventType.startsWith("notification_")) {
         const record = entity as unknown as NotificationResponse;
-        // Defense in depth: only cache notifications addressed to the current user.
-        const recipient = record.notification?.recipient;
-        if (
-          currentUsername &&
-          recipient &&
-          !("Username" in recipient && recipient.Username === currentUsername)
-        ) {
-          return;
-        }
         // Insert into both the unread filter and all-notifications caches
         insertNotificationIfMissing(queryClient, ["notifications", { isRead: false }], record);
         insertNotificationIfMissing(queryClient, ["notifications", { isRead: null }], record);
       }
     },
-    [queryClient, invalidateForEvent, currentUsername],
+    [queryClient, invalidateForEvent],
   );
 
   const invalidateAll = useCallback(() => {

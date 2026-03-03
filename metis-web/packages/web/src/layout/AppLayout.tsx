@@ -7,9 +7,7 @@ import styles from "./AppLayout.module.css";
 
 export function AppLayout() {
   const { user, loading } = useAuth();
-  const currentUsername =
-    user?.actor.type === "user" ? user.actor.username : undefined;
-  const sseState = useSSE(currentUsername);
+  const sseState = useSSE();
 
   if (loading) {
     return (
