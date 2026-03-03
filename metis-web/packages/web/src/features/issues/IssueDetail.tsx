@@ -74,6 +74,10 @@ export function IssueDetail({ record }: IssueDetailProps) {
         </Button>
       </div>
 
+      {issue.title && (
+        <h1 className={styles.issueTitle}>{issue.title}</h1>
+      )}
+
       <IssueUpdateModal
         open={updateModalOpen}
         onClose={() => setUpdateModalOpen(false)}

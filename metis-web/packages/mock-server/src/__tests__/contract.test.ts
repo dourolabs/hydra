@@ -68,6 +68,7 @@ describe("Issues", () => {
   const issuePayload: UpsertIssueRequest = {
     issue: {
       type: "task",
+      title: "",
       description: "Contract test issue",
       creator: "dev-user",
       progress: "",
@@ -655,6 +656,7 @@ describe("Reset endpoint", () => {
     const created = await client.createIssue({
       issue: {
         type: "task",
+        title: "",
         description: "Ephemeral issue for reset test",
         creator: "dev-user",
         progress: "",
@@ -761,6 +763,7 @@ describe("SSE Events", () => {
     await client.createIssue({
       issue: {
         type: "task",
+        title: "",
         description: "SSE test issue",
         creator: "dev-user",
         progress: "",

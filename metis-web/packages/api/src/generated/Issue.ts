@@ -9,6 +9,7 @@ import type { Username } from "./Username";
 
 export type Issue = {
   type: IssueType;
+  title: string;
   description: string;
   creator: Username;
   progress: string;

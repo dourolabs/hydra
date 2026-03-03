@@ -59,7 +59,13 @@ export function IssueRow({
         <Badge status={issueToBadgeStatus(issue.status)} />
         <span className={`${styles.typeChip} ${chipClass}`}>{issue.type}</span>
         {blocked && <span className={styles.blockedLabel}>BLOCKED</span>}
-        <span className={styles.desc}>{descriptionSnippet(issue.description)}</span>
+        <span className={styles.desc}>
+          {issue.title ? (
+            <><span className={styles.title}>{issue.title}</span>{" "}{descriptionSnippet(issue.description)}</>
+          ) : (
+            descriptionSnippet(issue.description)
+          )}
+        </span>
         {jobSummaries && jobSummaries.length > 0 && (
           <span
             className={styles.jobIndicator}

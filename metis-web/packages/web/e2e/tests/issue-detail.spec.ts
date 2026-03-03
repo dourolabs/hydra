@@ -10,7 +10,7 @@ test.describe("Issue Detail", () => {
       page.getByText("i-seed00002", { exact: true })
     ).toBeVisible();
     await expect(
-      page.getByText(/Migrate authentication to OAuth2/)
+      page.getByRole("heading", { name: "Migrate authentication to OAuth2" })
     ).toBeVisible();
   });
 

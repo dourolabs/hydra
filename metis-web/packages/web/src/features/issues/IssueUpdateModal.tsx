@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Modal, Button, Textarea, Select } from "@metis/ui";
+import { Modal, Button, Input, Textarea, Select } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
 import type { Issue, IssueStatus } from "@metis/api";
 import { apiClient } from "../../api/client";
@@ -32,22 +32,25 @@ export function IssueUpdateModal({
   const { addToast } = useToast();
   const queryClient = useQueryClient();
 
+  const [title, setTitle] = useState(issue.title);
   const [status, setStatus] = useState<IssueStatus>(issue.status);
   const [progress, setProgress] = useState(issue.progress);
 
   // Reset form when modal opens with fresh issue data
   useEffect(() => {
     if (open) {
+      setTitle(issue.title);
       setStatus(issue.status);
       setProgress(issue.progress);
     }
-  }, [open, issue.status, issue.progress]);
+  }, [open, issue.title, issue.status, issue.progress]);
 
   const mutation = useMutation({
-    mutationFn: (params: { status: IssueStatus; progress: string }) =>
+    mutationFn: (params: { title: string; status: IssueStatus; progress: string }) =>
       apiClient.updateIssue(issueId, {
         issue: {
           ...issue,
+          title: params.title,
           status: params.status,
           progress: params.progress,
         },
@@ -68,8 +71,8 @@ export function IssueUpdateModal({
   });
 
   const handleSubmit = useCallback(() => {
-    mutation.mutate({ status, progress });
-  }, [status, progress, mutation]);
+    mutation.mutate({ title: title.trim(), status, progress });
+  }, [title, status, progress, mutation]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -88,8 +91,14 @@ export function IssueUpdateModal({
   }, [mutation.isPending, onClose]);
 
   return (
-    <Modal open={open} onClose={handleClose} title="Update Status" className={styles.largeModal}>
+    <Modal open={open} onClose={handleClose} title="Update Issue" className={styles.largeModal}>
       <div className={styles.form} onKeyDown={handleKeyDown}>
+        <Input
+          label="Title"
+          placeholder="Short summary (optional)"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
         <Select
           label="Status"
           options={statusOptions}

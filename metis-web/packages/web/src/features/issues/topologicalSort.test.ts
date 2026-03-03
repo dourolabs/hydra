@@ -15,6 +15,7 @@ function makeRecord(
     creation_time: "2026-01-01T00:00:00Z",
     issue: {
       type: "task",
+      title: "",
       description: "",
       creator: "test",
       status: status as IssueSummaryRecord["issue"]["status"],
@@ -162,6 +163,7 @@ function makeWorkItem(
       creation_time: lastUpdated,
       issue: {
         type: "task",
+        title: "",
         description: "",
         creator: "test",
         status: "open" as IssueSummaryRecord["issue"]["status"],

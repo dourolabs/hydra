@@ -43,6 +43,7 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
       apiClient.createIssue({
         issue: {
           type: "task",
+          title: "",
           description: params.description,
           creator: params.creator,
           progress: "",

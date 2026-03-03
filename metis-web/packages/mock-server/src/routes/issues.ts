@@ -45,6 +45,7 @@ function toSummaryRecord(
 ): IssueSummaryRecord {
   const summary: IssueSummary = {
     type: issue.type,
+    title: issue.title,
     description: issue.description.split("\n")[0].slice(0, 200),
     creator: issue.creator,
     status: issue.status,
@@ -150,6 +151,7 @@ export function createIssueRoutes(store: Store): Hono {
     if (q) {
       const lower = q.toLowerCase();
       filtered = filtered.filter(({ entry }) =>
+        entry.data.title.toLowerCase().includes(lower) ||
         entry.data.description.toLowerCase().includes(lower),
       );
     }
