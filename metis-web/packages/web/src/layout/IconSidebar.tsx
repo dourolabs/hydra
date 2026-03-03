@@ -3,6 +3,7 @@ import { Avatar, Tooltip } from "@metis/ui";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { useUnreadCount } from "../features/notifications/useUnreadCount";
+import { MetisLogo } from "../components/MetisLogo";
 import type { SSEConnectionState } from "../hooks/useSSE";
 import styles from "./IconSidebar.module.css";
 
@@ -90,7 +91,7 @@ export function IconSidebar({ connectionState }: IconSidebarProps) {
       <div className={styles.top}>
         <Tooltip content="Dashboard" position="right">
           <Link to="/" className={styles.logo}>
-            M
+            <MetisLogo size={24} />
           </Link>
         </Tooltip>
 

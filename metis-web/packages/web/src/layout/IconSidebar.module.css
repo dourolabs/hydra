@@ -40,13 +40,13 @@
   margin-bottom: var(--space-2);
   transition:
     background var(--transition-fast),
-    text-shadow var(--transition-fast);
-  text-shadow: 0 0 10px rgba(0, 204, 102, 0.3);
+    filter var(--transition-fast);
+  filter: drop-shadow(0 0 10px rgba(0, 204, 102, 0.3));
 }
 
 .logo:hover {
   background: var(--color-bg-tertiary);
-  text-shadow: 0 0 20px rgba(0, 204, 102, 0.5);
+  filter: drop-shadow(0 0 20px rgba(0, 204, 102, 0.5));
 }
 
 .navItem {
