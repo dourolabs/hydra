@@ -88,6 +88,9 @@
 
   .nodeRow {
     padding-left: calc(min(var(--tree-depth), 2) * var(--tree-indent));
+    align-items: flex-start;
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
   }
 
   .indentGuide {
@@ -98,5 +101,6 @@
     white-space: normal;
     overflow: visible;
     text-overflow: unset;
+    line-height: 1.4;
   }
 }

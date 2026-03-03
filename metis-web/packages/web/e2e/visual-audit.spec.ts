@@ -51,8 +51,10 @@ test.describe("Visual Audit - Authenticated Pages", () => {
   for (const { name, path: pagePath } of AUTHENTICATED_PAGES) {
     test(`capture ${name} at desktop and mobile viewports`, async ({ authenticatedPage }) => {
       await authenticatedPage.goto(pagePath);
-      // Wait for network to settle so content is loaded
-      await authenticatedPage.waitForLoadState("networkidle");
+      // Wait for DOM to be ready then allow content to render
+      // (networkidle doesn't work here due to SSE connections)
+      await authenticatedPage.waitForLoadState("domcontentloaded");
+      await authenticatedPage.waitForTimeout(2000);
 
       await captureScreenshot(authenticatedPage, name, DESKTOP_VIEWPORT, "desktop");
       await captureScreenshot(authenticatedPage, name, MOBILE_VIEWPORT, "mobile");
