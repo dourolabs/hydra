@@ -11,6 +11,6 @@
 
 @media (max-width: 768px) {
   .container {
-    bottom: calc(56px + var(--space-4));
+    bottom: calc(var(--mobile-nav-height) + var(--space-4));
   }
 }

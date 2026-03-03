@@ -51,8 +51,8 @@
 
 @media (max-width: 768px) {
   .page {
-    height: calc(100vh - 56px - var(--space-6));
-    height: calc(100dvh - 56px - var(--space-6));
+    height: calc(100vh - var(--mobile-nav-height) - var(--space-6));
+    height: calc(100dvh - var(--mobile-nav-height) - var(--space-6));
   }
 
   .dashboardRow {
@@ -61,13 +61,13 @@
   }
 
   .center {
-    height: calc(100vh - 56px - var(--space-6));
-    height: calc(100dvh - 56px - var(--space-6));
+    height: calc(100vh - var(--mobile-nav-height) - var(--space-6));
+    height: calc(100dvh - var(--mobile-nav-height) - var(--space-6));
   }
 
   .createButton {
     position: fixed;
-    bottom: 56px;
+    bottom: var(--mobile-nav-height);
     left: 0;
     right: 0;
     width: 100%;

@@ -75,4 +75,7 @@
   /* Transitions */
   --transition-fast: 120ms ease;
   --transition-normal: 200ms ease;
+
+  /* Layout */
+  --mobile-nav-height: 56px;
 }
