@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
 import { useIssues, buildIssueTree } from "../features/issues/useIssues";
@@ -65,15 +65,20 @@ export function DashboardPage() {
     );
   }, [filterRootId, allWorkItems, username]);
 
+  useEffect(() => {
+    if (!searchParams.has("selected")) {
+      setSearchParams((prev) => {
+        prev.set("selected", "inbox");
+        return prev;
+      }, { replace: true });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleFilterChange = useCallback(
     (rootId: string | null) => {
       setFilterRootId(rootId);
       setSearchParams((prev) => {
-        if (rootId) {
-          prev.set("selected", rootId);
-        } else {
-          prev.delete("selected");
-        }
+        prev.set("selected", rootId ?? "everything");
         return prev;
       }, { replace: true });
     },
