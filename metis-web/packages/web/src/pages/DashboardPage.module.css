@@ -81,19 +81,6 @@
     border-bottom: none;
     z-index: 99;
   }
-
-  .createButton::before {
-    content: "";
-    position: absolute;
-    bottom: 100%;
-    left: 0;
-    right: 0;
-    height: 40px;
-    background: linear-gradient(to bottom, transparent, var(--color-bg-primary));
-    pointer-events: none;
-    z-index: -1;
-  }
-
   .createButton:hover {
     background-color: var(--color-bg-primary);
   }
