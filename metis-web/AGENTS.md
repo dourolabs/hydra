@@ -64,6 +64,9 @@ Theme tokens are defined in `packages/ui/src/theme/tokens.css`.
 - **Singleton instance**: `apiClient` in `packages/web/src/api/client.ts`.
 - **Never create direct `fetch` calls** — add methods to `MetisApiClient` instead.
 
+## Cross-Workspace Build Verification
+When Rust API types in `metis-common` change, TypeScript types must be regenerated. Run `pnpm typecheck` from the `metis-web/` directory to verify the frontend still compiles against the updated types.
+
 ## Build / Dev Commands
 
 Run from the `metis-web/` directory:
