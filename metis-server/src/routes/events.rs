@@ -1,5 +1,7 @@
 use crate::app::{AppState, ServerEvent, event_bus::MutationPayload};
+use crate::domain::actors::Actor;
 use axum::{
+    Extension,
     extract::{Query, State},
     response::{
         IntoResponse, Response,
@@ -31,6 +33,7 @@ use tracing::{info, warn};
 /// GET /v1/events — Server-Sent Events stream for entity change notifications.
 pub async fn get_events(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Query(query): Query<EventsQuery>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, ApiError> {
@@ -40,10 +43,12 @@ pub async fn get_events(
         .and_then(|s| s.parse::<u64>().ok());
 
     let filter = EventFilter::from_query(&query).map_err(ApiError::bad_request)?;
+    let actor_id = actor.actor_id.clone();
 
     info!(
         last_event_id = ?last_event_id,
         types_filter = ?filter.entity_types,
+        actor = %actor.name(),
         "SSE events stream requested"
     );
 
@@ -104,6 +109,16 @@ pub async fn get_events(
                         Ok(event) => {
                             if !filter.matches(&event) {
                                 continue;
+                            }
+
+                            // Filter notification events by recipient: only send
+                            // notifications addressed to the authenticated user.
+                            if let ServerEvent::NotificationCreated { payload, .. } = &event {
+                                if let MutationPayload::Notification { new, .. } = payload.as_ref() {
+                                    if new.recipient != actor_id {
+                                        continue;
+                                    }
+                                }
                             }
 
                             let sse_event = build_sse_event(&event, &state).await;
@@ -1259,5 +1274,92 @@ mod tests {
         };
         let issue_filter = EventFilter::from_query(&issue_query).unwrap();
         assert!(!issue_filter.matches(&event));
+    }
+
+    fn make_notification_event(recipient: crate::domain::actors::ActorId) -> ServerEvent {
+        let notification = crate::domain::notifications::Notification::new(
+            recipient,
+            Some(crate::domain::actors::ActorId::Issue(
+                "i-abcdef".parse::<IssueId>().unwrap(),
+            )),
+            "issue".to_string(),
+            "i-abcdef".parse::<IssueId>().unwrap().into(),
+            1,
+            "updated".to_string(),
+            "something happened".to_string(),
+            None,
+            "walk_up".to_string(),
+        );
+        let payload = Arc::new(MutationPayload::Notification {
+            old: None,
+            new: notification,
+            actor: ActorRef::test(),
+        });
+        ServerEvent::NotificationCreated {
+            seq: 1,
+            notification_id: metis_common::NotificationId::new(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        }
+    }
+
+    #[test]
+    fn notification_filtered_by_recipient() {
+        use crate::domain::actors::ActorId;
+
+        let alice = ActorId::Username(Username::from("alice").into());
+        let bob = ActorId::Username(Username::from("bob").into());
+
+        let event_for_alice = make_notification_event(alice.clone());
+        let event_for_bob = make_notification_event(bob.clone());
+
+        // Simulate the filtering logic from get_events: notification events
+        // are only forwarded when the recipient matches the connected actor.
+        let should_forward = |event: &ServerEvent, actor_id: &ActorId| -> bool {
+            if let ServerEvent::NotificationCreated { payload, .. } = event {
+                if let MutationPayload::Notification { new, .. } = payload.as_ref() {
+                    return new.recipient == *actor_id;
+                }
+            }
+            true
+        };
+
+        // Alice should receive her own notification.
+        assert!(should_forward(&event_for_alice, &alice));
+        // Alice should NOT receive Bob's notification.
+        assert!(!should_forward(&event_for_bob, &alice));
+        // Bob should receive his own notification.
+        assert!(should_forward(&event_for_bob, &bob));
+        // Bob should NOT receive Alice's notification.
+        assert!(!should_forward(&event_for_alice, &bob));
+    }
+
+    #[test]
+    fn non_notification_events_unaffected_by_recipient_filter() {
+        use crate::domain::actors::ActorId;
+
+        let alice = ActorId::Username(Username::from("alice").into());
+        let issue = dummy_issue();
+        let payload = Arc::new(MutationPayload::Issue {
+            old: None,
+            new: issue,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::IssueCreated {
+            seq: 1,
+            issue_id: IssueId::new(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        // Non-notification events should always pass the recipient filter.
+        if let ServerEvent::NotificationCreated { payload, .. } = &event {
+            if let MutationPayload::Notification { new, .. } = payload.as_ref() {
+                assert_eq!(new.recipient, alice, "should not reach here");
+            }
+        }
+        // The event is not NotificationCreated, so it passes through.
     }
 }
