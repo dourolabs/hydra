@@ -88,7 +88,7 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
       document: `/documents/${item.id}`,
     };
     const params = new URLSearchParams({ from: "dashboard" });
-    if (filterRootId) params.set("filter", filterRootId);
+    params.set("filter", filterRootId ?? "everything");
     navigate(`${paths[item.kind]}?${params.toString()}`);
   }, [navigate, item, notification, onMarkRead, filterRootId]);
 
