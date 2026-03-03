@@ -171,7 +171,7 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
     >
       {badgeStatus && (
         <span
-          className={`${styles.statusDot} ${hasRunningJob ? styles.statusDotPulsing : (STATUS_DOT_CLASSES[badgeStatus] ?? "")}`}
+          className={`${styles.statusDot} ${hasRunningJob ? styles.statusDotPulsing : isAssignedToMe ? styles.statusDotAttention : (STATUS_DOT_CLASSES[badgeStatus] ?? "")}`}
         />
       )}
       {Icon && (
