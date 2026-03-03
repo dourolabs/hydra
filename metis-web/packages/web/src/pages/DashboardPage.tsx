@@ -16,7 +16,7 @@ export function DashboardPage() {
   const { user } = useAuth();
   const [searchValue, setSearchValue] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const handleSearchChange = useCallback((value: string) => {
     setSearchValue(value);
