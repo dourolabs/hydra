@@ -3,6 +3,9 @@
 ## Project Structure & Module Organization
 Workspace crates: `metis` (CLI), `metis-server` (Axum API and background workers), and `metis-common` (shared models). CLI subcommands stay under `metis/src/command`; see `metis-server/AGENTS.md` for detailed route and background layout expectations. Copy each crate's sample config (`config.toml.sample` for metis CLI; `config.yaml.sample` for metis-server) to `config.toml` or `config.yaml` respectively for overrides. Dockerfiles live in `images/`; automation scripts are in `scripts/`.
 
+## Frontend Development
+For frontend development and visual testing, see `metis-web/AGENTS.md`.
+
 ## Build, Test, and Development Commands
 - `cargo check --workspace` quickly verifies the entire workspace compiles.
 - `cargo build --workspace --all-targets` produces debug binaries; add `--release` when publishing images.

@@ -138,6 +138,30 @@ pnpm --filter @metis/web exec playwright test --headed  # visible browser
 - Run with `--headed` to watch the browser during test execution.
 - Playwright uses the `webServer` config in `packages/web/playwright.config.ts` to auto-start all three servers when running tests directly via `playwright test`.
 
+### Visual Audit & Screenshot Capture
+
+The visual audit script captures screenshots of every major page at both desktop (1280×720) and mobile (375×812) viewports. Use it before and after making CSS or layout changes to catch visual regressions.
+
+#### Running the visual audit
+
+1. Start the dev stack: `./scripts/dev-test.sh`
+2. Run the visual audit: `cd packages/web && pnpm visual-audit`
+3. Screenshots are saved to `packages/web/test-results/visual-audit/`
+
+Each screenshot is named `{viewport}-{page}.png`, for example:
+- `desktop-dashboard.png`, `mobile-dashboard.png`
+- `desktop-issue-detail.png`, `mobile-issue-detail.png`
+
+#### When to run
+
+- **Before** making CSS, layout, or component changes — to establish a baseline
+- **After** making changes — to verify nothing regressed
+- Compare before/after screenshots side-by-side to spot unintended differences
+
+#### Pages captured
+
+Login, dashboard, issues list, issue detail, patches list, patch detail, documents list, document detail, notifications, settings, and job log page.
+
 ### Contract tests
 
 The `@metis/mock-server` package includes contract tests that validate the mock server's responses against the `@metis/api` client types. These run as part of `pnpm test` in CI and catch drift between the mock and real server.
