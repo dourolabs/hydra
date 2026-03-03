@@ -8,6 +8,9 @@
   font-family: var(--font-family-mono);
   text-transform: lowercase;
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .open {

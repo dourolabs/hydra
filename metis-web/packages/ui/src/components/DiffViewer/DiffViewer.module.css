@@ -3,6 +3,22 @@
   border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
   overflow: auto;
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.container::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+
+.container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.container::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border-radius: 3px;
 }
 
 .diff {
