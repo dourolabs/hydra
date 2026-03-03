@@ -22,7 +22,7 @@ test.describe("Navigation", () => {
 
     // Navigate to Dashboard via sidebar
     await page.getByTestId('nav-dashboard').click();
-    await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/$/);
+    await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/\?selected=inbox$/);
   });
 
   test("deep link to issue detail works", async ({
