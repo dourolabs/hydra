@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import type { IssueSummaryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { computeBlockedStatus } from "./blockedStatus";
@@ -9,6 +9,7 @@ export function useIssues(q?: string) {
     queryKey: ["issues", q ?? null],
     queryFn: () => apiClient.listIssues(q ? { q } : undefined),
     select: (data) => data.issues,
+    placeholderData: keepPreviousData,
   });
 }
 

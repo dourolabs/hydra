@@ -30,7 +30,7 @@ export function DashboardPage() {
     return () => clearTimeout(debounceRef.current);
   }, []);
 
-  const { data: issues, isLoading } = useIssues(searchQuery || undefined);
+  const { data: issues, isLoading, isFetching } = useIssues(searchQuery || undefined);
   const { data: jobsByIssue } = useAllJobs();
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -114,7 +114,7 @@ export function DashboardPage() {
     setDrawerOpen(false);
   }, []);
 
-  if (isLoading) {
+  if (isLoading && !issues) {
     return (
       <div className={styles.center}>
         <Spinner size="lg" />
@@ -140,6 +140,7 @@ export function DashboardPage() {
           items={workItems}
           jobsByIssue={jobsByIssue ?? new Map()}
           isLoading={workItemsLoading}
+          isFetching={isFetching}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={handleToggleSidebar}
           onToggleDrawer={handleToggleDrawer}
