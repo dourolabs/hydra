@@ -4,6 +4,7 @@ import type { WorkItem } from "./useTransitiveWorkItems";
 import { useItemNotifications } from "./useItemNotifications";
 import { topologicalSortWorkItems } from "../issues/topologicalSort";
 import { ItemRow } from "./ItemRow";
+import { SearchBox } from "../../components/SearchBox/SearchBox";
 import styles from "./HeterogeneousItemList.module.css";
 
 interface HeterogeneousItemListProps {
@@ -14,6 +15,8 @@ interface HeterogeneousItemListProps {
   onToggleSidebar: () => void;
   onToggleDrawer: () => void;
   filterRootId: string | null;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
 }
 
 /** Artifacts are patches and documents regardless of terminal status. */
@@ -38,6 +41,8 @@ export function HeterogeneousItemList({
   onToggleSidebar,
   onToggleDrawer,
   filterRootId,
+  searchValue,
+  onSearchChange,
 }: HeterogeneousItemListProps) {
   const { getItemNotification, markItemRead } =
     useItemNotifications(items);
@@ -60,6 +65,31 @@ export function HeterogeneousItemList({
     [items],
   );
 
+  const hamburgerButton = (
+    <button
+      type="button"
+      className={styles.drawerToggle}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggleDrawer();
+      }}
+      aria-label="Open issue menu"
+    >
+      <svg
+        viewBox="0 0 20 20"
+        fill="currentColor"
+        width="16"
+        height="16"
+      >
+        <path
+          fillRule="evenodd"
+          d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"
+          clipRule="evenodd"
+        />
+      </svg>
+    </button>
+  );
+
   return (
     <div className={styles.container}>
       <div className={styles.toolbar}>
@@ -75,37 +105,13 @@ export function HeterogeneousItemList({
         >
           {sidebarCollapsed ? "\u25B6" : "\u25C0"}
         </button>
-        <button
-          type="button"
-          className={styles.drawerToggle}
-          onClick={onToggleDrawer}
-          aria-label="Open issue menu"
-        >
-          <svg
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            width="16"
-            height="16"
-          >
-            <path
-              fillRule="evenodd"
-              d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"
-              clipRule="evenodd"
-            />
-          </svg>
-        </button>
-        <span className={styles.toolbarSummary}>
-          {activeItems.length} active
-          {artifactItems.length > 0 && (
-            <span className={styles.toolbarDivider}>&middot;</span>
-          )}
-          {artifactItems.length > 0 &&
-            `${artifactItems.length} artifact${artifactItems.length !== 1 ? "s" : ""}`}
-          {completeItems.length > 0 && (
-            <span className={styles.toolbarDivider}>&middot;</span>
-          )}
-          {completeItems.length > 0 && `${completeItems.length} complete`}
-        </span>
+        <SearchBox
+          value={searchValue}
+          onChange={onSearchChange}
+          onSettingsClick={() => {}}
+          placeholder="Search issues..."
+          leftElement={hamburgerButton}
+        />
       </div>
 
       <div className={styles.listScroll}>
