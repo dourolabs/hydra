@@ -3,12 +3,21 @@
   gap: 0;
   border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE/Edge */
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: var(--color-border) transparent;
 }
 
 .tabs::-webkit-scrollbar {
-  display: none; /* Chrome/Safari */
+  height: 4px;
+}
+
+.tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tabs::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border-radius: 2px;
 }
 
 .tab {

@@ -23,11 +23,12 @@ const AUTHENTICATED_PAGES = [
 
 async function authenticate(page: Page) {
   await page.goto("/login");
+  await page.waitForSelector('[data-testid="token-input"]');
   await page.fill('[data-testid="token-input"]', "dev-token-12345");
   await page.click('[data-testid="login-button"]');
-  await page.waitForFunction(
-    () => !window.location.pathname.startsWith("/login"),
-  );
+  await page.waitForURL((url) => !url.pathname.startsWith("/login"), {
+    timeout: 10000,
+  });
 }
 
 async function captureScreenshot(
@@ -60,8 +61,10 @@ base.describe("Visual Audit - Authenticated Pages", () => {
     base(`capture ${name} at desktop and mobile viewports`, async ({ page }) => {
       await authenticate(page);
       await page.goto(pagePath);
-      // Wait for network to settle so content is loaded
-      await page.waitForLoadState("networkidle");
+      // Wait for DOM to be ready then allow content to render
+      // (networkidle doesn't work here due to SSE connections)
+      await page.waitForLoadState("domcontentloaded");
+      await page.waitForTimeout(2000);
 
       await captureScreenshot(page, name, DESKTOP_VIEWPORT, "desktop");
       await captureScreenshot(page, name, MOBILE_VIEWPORT, "mobile");
