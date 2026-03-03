@@ -79,7 +79,7 @@
     border-left: none;
     border-right: none;
     border-bottom: none;
-    z-index: 100;
+    z-index: 99;
   }
 
   .createButton::before {

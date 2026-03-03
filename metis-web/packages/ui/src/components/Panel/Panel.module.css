@@ -21,7 +21,7 @@
 
 .scrollable {
   overflow-y: auto;
-  max-height: 400px;
+  max-height: min(400px, 60vh);
 }
 
 .interactive {
