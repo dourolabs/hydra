@@ -88,7 +88,7 @@ impl UserHandle {
     pub async fn create_issue(&self, description: &str) -> Result<IssueId> {
         let issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),
@@ -113,7 +113,7 @@ impl UserHandle {
     pub async fn create_child_issue(&self, parent: &IssueId, description: &str) -> Result<IssueId> {
         let issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),
@@ -287,7 +287,7 @@ impl UserHandle {
     ) -> Result<IssueId> {
         let issue = Issue::new(
             issue_type,
-            String::new(),
+            "Test Title".to_string(),
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),
@@ -326,7 +326,7 @@ impl UserHandle {
     ) -> Result<IssueId> {
         let issue = Issue::new(
             issue_type,
-            String::new(),
+            "Test Title".to_string(),
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),

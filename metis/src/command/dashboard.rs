@@ -6569,7 +6569,7 @@ mod tests {
             now,
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "test issue".to_string(),
                 Username::from("alice"),
                 "Investigating root cause".to_string(),
@@ -6601,7 +6601,7 @@ mod tests {
             now,
             metis_common::issues::IssueSummary::from(&Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "test issue".to_string(),
                 Username::from("alice"),
                 "Some progress text".to_string(),

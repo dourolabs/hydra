@@ -3269,7 +3269,7 @@ mod tests {
     fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
         Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "details".to_string(),
             Username::from("creator"),
             String::new(),
@@ -3427,7 +3427,7 @@ mod tests {
     fn sample_issue_all_fields(dependencies: Vec<IssueDependency>, patches: Vec<PatchId>) -> Issue {
         Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "full description".to_string(),
             Username::from("issue-creator"),
             "50%".to_string(),
@@ -3987,7 +3987,7 @@ mod tests {
         // Create an issue with a unique description
         let issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Original Title".to_string(),
             "original_unique_description_abc123".to_string(),
             Username::from("creator"),
             String::new(),
@@ -4003,7 +4003,7 @@ mod tests {
         // Update the issue to change the description
         let updated_issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Updated Title".to_string(),
             "changed_unique_description_xyz789".to_string(),
             Username::from("creator"),
             String::new(),

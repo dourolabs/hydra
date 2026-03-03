@@ -209,7 +209,7 @@ mod tests {
     ) -> Issue {
         Issue::new(
             IssueType::ReviewRequest,
-            String::new(),
+            "Test Title".to_string(),
             format!("Review request for patch {}", patch_id.as_ref()),
             Username::from("tester"),
             String::new(),

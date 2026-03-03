@@ -1182,7 +1182,7 @@ mod tests {
 
         Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1264,7 +1264,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1307,7 +1307,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1358,7 +1358,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1407,7 +1407,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "payload test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1450,7 +1450,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "before update".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1504,7 +1504,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "to be deleted".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1625,7 +1625,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "actor test".to_string(),
             Username::from("creator"),
             String::new(),
@@ -1674,7 +1674,7 @@ mod tests {
 
         let issue = Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "system actor test".to_string(),
             Username::from("creator"),
             String::new(),

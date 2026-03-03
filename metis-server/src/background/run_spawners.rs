@@ -154,7 +154,7 @@ mod tests {
     fn issue_for_agent(agent: &str, repo_name: &RepoName) -> Issue {
         Issue::new(
             IssueType::Task,
-            String::new(),
+            "Test Title".to_string(),
             "Run agent".to_string(),
             Username::from("worker"),
             String::new(),

@@ -28,7 +28,7 @@ fn issue(
 ) -> Issue {
     Issue::new(
         issue_type,
-        String::new(),
+        "Test Title".to_string(),
         description.to_string(),
         creator,
         progress,
@@ -67,7 +67,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "original details".to_string(),
                 default_user(),
                 "Initial progress".to_string(),
@@ -95,7 +95,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "updated details".to_string(),
                 default_user(),
                 "Updated progress".to_string(),
@@ -128,7 +128,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "initial".to_string(),
                 default_user(),
                 "Initial progress".to_string(),
@@ -156,7 +156,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "updated".to_string(),
                 default_user(),
                 "Updated progress".to_string(),
@@ -234,7 +234,7 @@ async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             Issue::new(
                 IssueType::Task,
-                String::new(),
+                "Test Title".to_string(),
                 "initial".to_string(),
                 default_user(),
                 "Initial progress".to_string(),
