@@ -1,6 +1,13 @@
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 
+export interface ChildStatus {
+  id: string;
+  status: string;
+  hasActiveTask: boolean;
+  assignedToUser: boolean;
+}
+
 export interface IssueProgress {
   rootId: string;
   rootIssue: IssueSummaryRecord;
@@ -10,6 +17,7 @@ export interface IssueProgress {
   total: number;
   hasActive: boolean;
   needsAttentionCount: number;
+  children: ChildStatus[];
 }
 
 export function computeIssueProgress(
@@ -52,6 +60,7 @@ export function computeIssueProgress(
     let open = 0;
     let inProgress = 0;
     let closed = 0;
+    const childStatuses: ChildStatus[] = [];
 
     for (const child of root.children) {
       if (child.hardBlocked) continue;
@@ -63,6 +72,21 @@ export function computeIssueProgress(
       } else if (status === "open") {
         open++;
       }
+
+      const jobs = jobsByIssue?.get(child.id) ?? [];
+      const hasActiveTask = jobs.some(
+        (j) => j.task.status === "running" || j.task.status === "pending",
+      );
+      const assignedToUser = !!(
+        username &&
+        child.issue.issue.assignee === username
+      );
+      childStatuses.push({
+        id: child.id,
+        status,
+        hasActiveTask,
+        assignedToUser,
+      });
     }
 
     return {
@@ -74,6 +98,7 @@ export function computeIssueProgress(
       total: open + inProgress + closed,
       hasActive: hasActiveDescendant(root),
       needsAttentionCount: countNeedsAttention(root),
+      children: childStatuses,
     };
   });
 }

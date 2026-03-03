@@ -3,7 +3,7 @@ import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 import { descriptionSnippet } from "../../utils/text";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
-import { computeIssueProgress, type IssueProgress } from "./computeIssueProgress";
+import { computeIssueProgress, type ChildStatus, type IssueProgress } from "./computeIssueProgress";
 import styles from "./IssueFilterSidebar.module.css";
 
 interface IssueFilterSidebarProps {
@@ -18,92 +18,26 @@ interface IssueFilterSidebarProps {
   username: string;
 }
 
-/** Small SVG donut ring showing completed / in-progress / open segments. */
-function ProgressCircle({ progress }: { progress: IssueProgress }) {
-  const size = 24;
-  const strokeWidth = 3;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
+function getBoxClass(child: ChildStatus): string {
+  // Priority: active task > assigned to user (open) > base status
+  if (child.hasActiveTask) return styles.statusBoxActive;
+  if (child.assignedToUser && child.status === "open") return styles.statusBoxAttention;
+  if (child.status === "closed") return styles.statusBoxClosed;
+  if (child.status === "in-progress") return styles.statusBoxInProgress;
+  if (child.status === "failed") return styles.statusBoxFailed;
+  return styles.statusBoxOpen;
+}
 
-  if (progress.total === 0) {
-    return (
-      <svg
-        width={size}
-        height={size}
-        viewBox={`0 0 ${size} ${size}`}
-        className={progress.hasActive ? styles.pulse : undefined}
-      >
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke="var(--color-text-tertiary)"
-          strokeWidth={strokeWidth}
-        />
-      </svg>
-    );
-  }
-
-  const closedFrac = progress.closed / progress.total;
-  const inProgressFrac = progress.inProgress / progress.total;
-  const openFrac = progress.open / progress.total;
-
-  const closedLen = closedFrac * circumference;
-  const inProgressLen = inProgressFrac * circumference;
-  const openLen = openFrac * circumference;
-
-  // Each segment: dasharray = "segment gap", dashoffset rotates start position.
-  // Rotation starts at 12 o'clock (-90deg). Segments go: closed, inProgress, open.
-  const closedOffset = 0;
-  const inProgressOffset = -(closedLen);
-  const openOffset = -(closedLen + inProgressLen);
+/** Row of small colored squares — one per child issue, color-coded by status. */
+function StatusBoxes({ progress }: { progress: IssueProgress }) {
+  if (progress.children.length === 0) return null;
 
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox={`0 0 ${size} ${size}`}
-      className={progress.hasActive ? styles.pulse : undefined}
-      style={{ transform: "rotate(-90deg)" }}
-    >
-      {closedLen > 0 && (
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke="var(--color-status-closed)"
-          strokeWidth={strokeWidth}
-          strokeDasharray={`${closedLen} ${circumference - closedLen}`}
-          strokeDashoffset={closedOffset}
-        />
-      )}
-      {inProgressLen > 0 && (
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke="var(--color-status-in-progress)"
-          strokeWidth={strokeWidth}
-          strokeDasharray={`${inProgressLen} ${circumference - inProgressLen}`}
-          strokeDashoffset={inProgressOffset}
-        />
-      )}
-      {openLen > 0 && (
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke="var(--color-text-tertiary)"
-          strokeWidth={strokeWidth}
-          strokeDasharray={`${openLen} ${circumference - openLen}`}
-          strokeDashoffset={openOffset}
-        />
-      )}
-    </svg>
+    <span className={styles.statusBoxes}>
+      {progress.children.map((child) => (
+        <span key={child.id} className={`${styles.statusBox} ${getBoxClass(child)}`} />
+      ))}
+    </span>
   );
 }
 
@@ -183,7 +117,7 @@ export function IssueFilterSidebar({
             </span>
           )}
           <span className={styles.itemStats}>
-            <ProgressCircle progress={p} />
+            <StatusBoxes progress={p} />
             {p.closed}/{p.total}
           </span>
         </span>
