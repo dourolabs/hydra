@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Textarea, Select } from "@metis/ui";
+import { Button, Input, Textarea, Select } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
 import type { RepositoryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
@@ -30,6 +30,7 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
   const { addToast } = useToast();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
+  const [title, setTitle, clearTitleDraft] = useFormDraft("metis:draft:issue-creator:title", "");
   const [description, setDescription, clearDescriptionDraft] = useFormDraft("metis:draft:issue-creator:description", "");
   const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft("metis:draft:issue-creator:assignee", "");
   const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft("metis:draft:issue-creator:repoName", "");
@@ -39,11 +40,11 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
   const { data: repos } = useRepositories();
 
   const mutation = useMutation({
-    mutationFn: (params: { description: string; creator: string; assignee?: string; repoName?: string }) =>
+    mutationFn: (params: { title: string; description: string; creator: string; assignee?: string; repoName?: string }) =>
       apiClient.createIssue({
         issue: {
           type: "task",
-          title: "",
+          title: params.title,
           description: params.description,
           creator: params.creator,
           progress: "",
@@ -56,9 +57,11 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
         job_id: null,
       }),
     onSuccess: (data) => {
+      setTitle("");
       setDescription("");
       setAssignee("");
       setRepoName("");
+      clearTitleDraft();
       clearDescriptionDraft();
       clearAssigneeDraft();
       clearRepoNameDraft();
@@ -78,6 +81,7 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
     if (!desc) return;
 
     mutation.mutate({
+      title: title.trim(),
       description: desc,
       creator: currentUsername,
       ...(assignee && { assignee }),
@@ -98,6 +102,12 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
 
   return (
     <div className={styles.creator}>
+      <Input
+        placeholder="Title (optional)"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={handleKeyDown}
+      />
       <Textarea
         placeholder="Create a new issue..."
         value={description}
