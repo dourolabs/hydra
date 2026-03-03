@@ -83,3 +83,11 @@
     transform: translateY(0);
   }
 }
+
+@media (max-width: 768px) {
+  .modal {
+    min-width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 56px - 2rem);
+    border-radius: var(--radius-md);
+  }
+}

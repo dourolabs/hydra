@@ -8,3 +8,9 @@
   z-index: 9999;
   pointer-events: none;
 }
+
+@media (max-width: 768px) {
+  .container {
+    bottom: calc(56px + var(--space-4));
+  }
+}

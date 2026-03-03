@@ -55,8 +55,8 @@
 
 @media (max-width: 768px) {
   .logViewer {
-    max-height: calc(100vh - 240px);
-    max-height: calc(100dvh - 240px);
+    max-height: calc(100vh - 56px - 120px);
+    max-height: calc(100dvh - 56px - 120px);
     min-height: 200px;
   }
 }
