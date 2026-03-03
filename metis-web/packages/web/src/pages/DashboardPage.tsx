@@ -60,7 +60,6 @@ export function DashboardPage() {
     return allWorkItems.filter(
       (item) =>
         item.kind === "issue" &&
-        !item.isTerminal &&
         item.data.issue.assignee === username,
     );
   }, [filterRootId, allWorkItems, username]);

@@ -157,7 +157,7 @@
       "creator": "bob",
       "progress": "",
       "status": "dropped",
-      "assignee": null,
+      "assignee": "dev-user",
       "dependencies": [],
       "patches": [],
       "todo_list": []
