@@ -109,18 +109,18 @@ export function IssueFilterSidebar({
           }
         }}
       >
-        <span className={styles.itemLabel}>{label}</span>
-        <span className={styles.itemRight}>
-          {p.needsAttentionCount > 0 && (
-            <span className={styles.needsAttentionChip}>
-              {p.needsAttentionCount}
-            </span>
-          )}
+        <span className={styles.itemLeft}>
+          <span className={styles.itemLabel}>{label}</span>
           <span className={styles.itemStats}>
             <StatusBoxes progress={p} />
             {p.closed}/{p.total}
           </span>
         </span>
+        {p.needsAttentionCount > 0 && (
+          <span className={styles.needsAttentionChip}>
+            {p.needsAttentionCount}
+          </span>
+        )}
       </li>
     );
   };
