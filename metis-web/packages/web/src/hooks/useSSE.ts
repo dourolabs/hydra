@@ -53,7 +53,7 @@ function upsertInList<TResp, TItem extends VersionedRecord>(
   entityId: string,
   record: TItem,
 ) {
-  qc.setQueryData<TResp>(key, (old) => {
+  qc.setQueriesData<TResp>({ queryKey: key }, (old) => {
     if (!old) return old;
     const arr = getItems(old);
     const idx = arr.findIndex((a) => getId(a) === entityId);
@@ -76,7 +76,7 @@ function removeFromList<TResp, TItem>(
   getId: (item: TItem) => string,
   entityId: string,
 ) {
-  qc.setQueryData<TResp>(key, (old) => {
+  qc.setQueriesData<TResp>({ queryKey: key }, (old) => {
     if (!old) return old;
     return wrapItems(getItems(old).filter((a) => getId(a) !== entityId));
   });
