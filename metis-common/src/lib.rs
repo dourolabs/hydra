@@ -125,8 +125,8 @@ mod ts_export {
         crate::labels::Label::export_all(&cfg).expect("Label");
         crate::labels::LabelSummary::export_all(&cfg).expect("LabelSummary");
         crate::labels::LabelRecord::export_all(&cfg).expect("LabelRecord");
-        crate::labels::CreateLabelRequest::export_all(&cfg).expect("CreateLabelRequest");
-        crate::labels::CreateLabelResponse::export_all(&cfg).expect("CreateLabelResponse");
+        crate::labels::UpsertLabelRequest::export_all(&cfg).expect("UpsertLabelRequest");
+        crate::labels::UpsertLabelResponse::export_all(&cfg).expect("UpsertLabelResponse");
         crate::labels::SearchLabelsQuery::export_all(&cfg).expect("SearchLabelsQuery");
         crate::labels::ListLabelsResponse::export_all(&cfg).expect("ListLabelsResponse");
 

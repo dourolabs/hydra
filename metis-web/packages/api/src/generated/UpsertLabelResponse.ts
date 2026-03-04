@@ -2,6 +2,6 @@
 import type { LabelId } from "./LabelId";
 
 /**
- * Response body after creating a label.
+ * Response body after creating or updating a label.
  */
-export type CreateLabelResponse = { label_id: LabelId, };
+export type UpsertLabelResponse = { label_id: LabelId, };
