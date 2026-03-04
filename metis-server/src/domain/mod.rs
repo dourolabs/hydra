@@ -2,6 +2,7 @@ pub mod actors;
 pub mod documents;
 pub mod issues;
 pub mod jobs;
+pub mod labels;
 pub mod messages;
 pub mod notifications;
 pub mod patches;

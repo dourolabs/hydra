@@ -2,6 +2,7 @@ use crate::domain::{
     actors::{Actor, ActorError, ActorId, ActorRef},
     documents::Document,
     issues::{Issue, IssueGraphFilter},
+    labels::Label,
     messages::Message,
     notifications::Notification,
     patches::Patch,
@@ -17,8 +18,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber,
-    Versioned,
+    DocumentId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, TaskId,
+    VersionNumber, Versioned,
+    api::v1::labels::SearchLabelsQuery,
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -111,6 +113,10 @@ pub enum StoreError {
     MessageNotFound(MessageId),
     #[error("Notification not found: {0}")]
     NotificationNotFound(NotificationId),
+    #[error("Label not found: {0}")]
+    LabelNotFound(LabelId),
+    #[error("Label already exists: {0}")]
+    LabelAlreadyExists(String),
     #[error("Invalid dependency: {0}")]
     InvalidDependency(IssueId),
     #[error("Invalid issue status: {0}")]
@@ -388,6 +394,28 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchMessagesQuery,
     ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError>;
+
+    // ---- Label (read-only) ----
+
+    /// Retrieves a label by its LabelId.
+    ///
+    /// Returns `StoreError::LabelNotFound` if the label does not exist or
+    /// has been soft-deleted.
+    async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError>;
+
+    /// Lists labels matching the search query.
+    ///
+    /// By default, deleted labels are filtered out unless `include_deleted: true`
+    /// is set in the query.
+    async fn list_labels(
+        &self,
+        query: &SearchLabelsQuery,
+    ) -> Result<Vec<(LabelId, Label)>, StoreError>;
+
+    /// Finds a label by its name (case-insensitive).
+    ///
+    /// Returns `None` if no non-deleted label with the given name exists.
+    async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError>;
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.
@@ -631,6 +659,24 @@ pub trait Store: ReadOnlyStore {
         message: Message,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
+
+    // ---- Label mutations ----
+
+    /// Adds a new label to the store and assigns it a LabelId.
+    ///
+    /// Returns the new LabelId, or `StoreError::LabelAlreadyExists` if a
+    /// non-deleted label with the same name already exists.
+    async fn add_label(&self, label: Label) -> Result<LabelId, StoreError>;
+
+    /// Updates an existing label's name and/or color.
+    ///
+    /// Returns `StoreError::LabelNotFound` if the label does not exist.
+    /// Returns `StoreError::LabelAlreadyExists` if renaming to a name that
+    /// is already taken by another non-deleted label.
+    async fn update_label(&self, id: &LabelId, label: Label) -> Result<(), StoreError>;
+
+    /// Soft-deletes a label by setting its `deleted` flag to true.
+    async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError>;
 }
 
 pub use memory_store::MemoryStore;

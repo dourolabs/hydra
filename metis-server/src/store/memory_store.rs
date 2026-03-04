@@ -11,6 +11,7 @@ use crate::domain::{
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
     },
+    labels::Label,
     messages::Message,
     notifications::Notification,
     patches::Patch,
@@ -23,8 +24,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber,
-    Versioned,
+    DocumentId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, TaskId,
+    VersionNumber, Versioned,
+    api::v1::labels::SearchLabelsQuery,
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -62,6 +64,8 @@ pub struct MemoryStore {
     messages: DashMap<MessageId, Vec<Versioned<Message>>>,
     /// Maps notification IDs to their Notification data (non-versioned)
     notifications: DashMap<NotificationId, Notification>,
+    /// Maps label IDs to their Label data (non-versioned)
+    labels: DashMap<LabelId, Label>,
 }
 
 impl MemoryStore {
@@ -82,6 +86,7 @@ impl MemoryStore {
             actors: DashMap::new(),
             messages: DashMap::new(),
             notifications: DashMap::new(),
+            labels: DashMap::new(),
         }
     }
 
@@ -1055,6 +1060,59 @@ impl ReadOnlyStore for MemoryStore {
             .count();
         Ok(count as u64)
     }
+
+    // ---- Label (read-only) ----
+
+    async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError> {
+        let label = self
+            .labels
+            .get(id)
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| StoreError::LabelNotFound(id.clone()))?;
+        if label.deleted {
+            return Err(StoreError::LabelNotFound(id.clone()));
+        }
+        Ok(label)
+    }
+
+    async fn list_labels(
+        &self,
+        query: &SearchLabelsQuery,
+    ) -> Result<Vec<(LabelId, Label)>, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+
+        let mut results: Vec<(LabelId, Label)> = Vec::new();
+        for entry in self.labels.iter() {
+            let label = entry.value();
+
+            if !include_deleted && label.deleted {
+                continue;
+            }
+
+            if let Some(ref q) = query.q {
+                let q_lower = q.to_lowercase();
+                if !label.name.to_lowercase().contains(&q_lower) {
+                    continue;
+                }
+            }
+
+            results.push((entry.key().clone(), label.clone()));
+        }
+
+        results.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+        Ok(results)
+    }
+
+    async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
+        let name_lower = name.to_lowercase();
+        for entry in self.labels.iter() {
+            let label = entry.value();
+            if !label.deleted && label.name == name_lower {
+                return Ok(Some((entry.key().clone(), label.clone())));
+            }
+        }
+        Ok(None)
+    }
 }
 
 #[async_trait]
@@ -1546,6 +1604,54 @@ impl Store for MemoryStore {
         let next_version = Self::next_version(&versions);
         versions.push(Self::versioned_now_with_actor(message, next_version, actor));
         Ok(next_version)
+    }
+
+    // ---- Label mutations ----
+
+    async fn add_label(&self, label: Label) -> Result<LabelId, StoreError> {
+        // Check uniqueness by name
+        if self.get_label_by_name(&label.name).await?.is_some() {
+            return Err(StoreError::LabelAlreadyExists(label.name.clone()));
+        }
+
+        let count = self.labels.len() as u64;
+        let mut len = metis_common::ids::compute_random_len(count);
+        let id = loop {
+            let candidate =
+                LabelId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
+            if !self.labels.contains_key(&candidate) {
+                break candidate;
+            }
+            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
+        };
+
+        self.labels.insert(id.clone(), label);
+        Ok(id)
+    }
+
+    async fn update_label(&self, id: &LabelId, label: Label) -> Result<(), StoreError> {
+        // Check the label exists
+        if !self.labels.contains_key(id) {
+            return Err(StoreError::LabelNotFound(id.clone()));
+        }
+
+        // Check name uniqueness (exclude self)
+        if let Some((existing_id, _)) = self.get_label_by_name(&label.name).await? {
+            if existing_id != *id {
+                return Err(StoreError::LabelAlreadyExists(label.name.clone()));
+            }
+        }
+
+        self.labels.insert(id.clone(), label);
+        Ok(())
+    }
+
+    async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError> {
+        let mut label = self.get_label(id).await?;
+        label.deleted = true;
+        label.updated_at = Utc::now();
+        self.labels.insert(id.clone(), label);
+        Ok(())
     }
 }
 

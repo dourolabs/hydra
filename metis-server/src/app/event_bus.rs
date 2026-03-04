@@ -2,6 +2,7 @@ use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     documents::Document,
     issues::{Issue, IssueGraphFilter},
+    labels::Label,
     messages::Message,
     notifications::Notification,
     patches::Patch,
@@ -17,7 +18,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    DocumentId, LabelId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber,
+    Versioned,
+    api::v1::labels::SearchLabelsQuery,
     api::v1::notifications::ListNotificationsQuery,
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -933,6 +936,20 @@ impl StoreWithEvents {
             .mark_all_notifications_read(recipient, before)
             .await
     }
+
+    // ---- Label mutations ----
+
+    pub async fn add_label(&self, label: Label) -> Result<LabelId, StoreError> {
+        self.inner.add_label(label).await
+    }
+
+    pub async fn update_label(&self, id: &LabelId, label: Label) -> Result<(), StoreError> {
+        self.inner.update_label(id, label).await
+    }
+
+    pub async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError> {
+        self.inner.delete_label(id).await
+    }
 }
 
 #[async_trait]
@@ -1157,6 +1174,23 @@ impl ReadOnlyStore for StoreWithEvents {
 
     async fn count_unread_notifications(&self, recipient: &ActorId) -> Result<u64, StoreError> {
         self.inner.count_unread_notifications(recipient).await
+    }
+
+    // ---- Label (read-only) ----
+
+    async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError> {
+        self.inner.get_label(id).await
+    }
+
+    async fn list_labels(
+        &self,
+        query: &SearchLabelsQuery,
+    ) -> Result<Vec<(LabelId, Label)>, StoreError> {
+        self.inner.list_labels(query).await
+    }
+
+    async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
+        self.inner.get_label_by_name(name).await
     }
 }
 
