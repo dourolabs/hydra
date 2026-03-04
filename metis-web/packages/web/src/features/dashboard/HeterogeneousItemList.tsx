@@ -11,7 +11,6 @@ interface HeterogeneousItemListProps {
   items: WorkItem[];
   jobsByIssue: Map<string, JobSummaryRecord[]>;
   isLoading: boolean;
-  isFetching: boolean;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   onToggleDrawer: () => void;
@@ -38,7 +37,6 @@ export function HeterogeneousItemList({
   items,
   jobsByIssue,
   isLoading,
-  isFetching,
   sidebarCollapsed,
   onToggleSidebar,
   onToggleDrawer,
@@ -116,7 +114,7 @@ export function HeterogeneousItemList({
         />
       </div>
 
-      <div className={`${styles.listScroll}${isFetching ? ` ${styles.listScrollFetching}` : ""}`}>
+      <div className={styles.listScroll}>
         {isLoading && items.length === 0 && (
           <div className={styles.empty}>Loading items&hellip;</div>
         )}
