@@ -16,6 +16,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 #[cfg(test)]
 use metis_common::RepoName;
+use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::{IssueId, VersionNumber};
 use std::collections::{HashMap, HashSet};
@@ -68,6 +69,23 @@ impl AgentQueue {
         }
     }
 
+    async fn prompt_from_document_store(
+        &self,
+        state: &AppState,
+    ) -> Result<Option<String>, StoreError> {
+        let query = SearchDocumentsQuery::new(
+            None,
+            Some(format!("/agents/{}/prompt.md", self.name)),
+            Some(true),
+            None,
+            None,
+        );
+        let docs = state.list_documents(&query).await?;
+        Ok(docs
+            .first()
+            .map(|(_, versioned)| versioned.item.body_markdown.clone()))
+    }
+
     async fn build_task(
         &self,
         state: &AppState,
@@ -107,7 +125,10 @@ impl AgentQueue {
             _ => BundleSpec::None,
         };
 
-        let prompt = self.prompt.trim_end().to_string();
+        let prompt = match self.prompt_from_document_store(state).await {
+            Ok(Some(doc_prompt)) => doc_prompt,
+            _ => self.prompt.trim_end().to_string(),
+        };
 
         let image = job_settings
             .image
@@ -1829,6 +1850,73 @@ mod tests {
             tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
             Some(issue_id.as_ref())
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn build_task_uses_prompt_from_document_store() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Test issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let doc = crate::domain::documents::Document {
+            title: String::new(),
+            body_markdown: "Prompt from document store".to_string(),
+            path: Some("agents/agent-a/prompt.md".parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        handles.store.add_document(doc, &ActorRef::test()).await?;
+
+        let queue = queue("agent-a");
+        let issue = handles.store.get_issue(&issue_id, false).await?.item;
+        let task = queue
+            .build_task(&handles.state, &issue_id, &issue)
+            .await?
+            .expect("should produce a task");
+
+        assert_eq!(task.prompt, "Prompt from document store");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn build_task_falls_back_to_config_prompt_without_document() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Test issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue("agent-a");
+        let issue = handles.store.get_issue(&issue_id, false).await?.item;
+        let task = queue
+            .build_task(&handles.state, &issue_id, &issue)
+            .await?
+            .expect("should produce a task");
+
+        assert_eq!(task.prompt, "Fix the issue");
 
         Ok(())
     }

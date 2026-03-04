@@ -387,6 +387,7 @@ impl BackgroundSection {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AgentQueueConfig {
     pub name: String,
+    #[serde(default)]
     pub prompt: String,
     #[serde(default = "default_agent_max_tries")]
     pub max_tries: u32,
