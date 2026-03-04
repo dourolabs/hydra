@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import type { JobSummaryRecord } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
-import { useItemNotifications } from "./useItemNotifications";
 import { topologicalSortWorkItems } from "../issues/topologicalSort";
 import { ItemRow } from "./ItemRow";
 import { SearchBox } from "../../components/SearchBox/SearchBox";
@@ -44,9 +43,6 @@ export function HeterogeneousItemList({
   searchValue,
   onSearchChange,
 }: HeterogeneousItemListProps) {
-  const { getItemNotification, markItemRead } =
-    useItemNotifications(items);
-
   const activeItems = useMemo(
     () => topologicalSortWorkItems(items.filter(isActiveItem)),
     [items],
@@ -138,8 +134,6 @@ export function HeterogeneousItemList({
                       ? jobsByIssue.get(item.id)
                       : undefined
                   }
-                  notification={getItemNotification(item)}
-                  onMarkRead={markItemRead}
                   filterRootId={filterRootId}
                 />
               ))}
@@ -158,8 +152,6 @@ export function HeterogeneousItemList({
                   key={`${item.kind}-${item.id}`}
                   item={item}
                   jobs={undefined}
-                  notification={getItemNotification(item)}
-                  onMarkRead={markItemRead}
                   filterRootId={filterRootId}
                 />
               ))}
@@ -182,8 +174,6 @@ export function HeterogeneousItemList({
                       ? jobsByIssue.get(item.id)
                       : undefined
                   }
-                  notification={getItemNotification(item)}
-                  onMarkRead={markItemRead}
                   filterRootId={filterRootId}
                 />
               ))}
