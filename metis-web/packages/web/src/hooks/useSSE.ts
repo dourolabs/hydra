@@ -199,10 +199,8 @@ export function useSSE(): SSEConnectionState {
     queryClient.invalidateQueries({ queryKey: ["issues"] });
     queryClient.invalidateQueries({ queryKey: ["jobs"] });
     queryClient.invalidateQueries({ queryKey: ["allJobs"] });
-    queryClient.invalidateQueries({ queryKey: ["patch"] });
     queryClient.invalidateQueries({ queryKey: ["patches"] });
     queryClient.invalidateQueries({ queryKey: ["documents"] });
-    queryClient.invalidateQueries({ queryKey: ["document"] });
   }, [queryClient]);
 
   const connect = useCallback(() => {
