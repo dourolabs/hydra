@@ -23,5 +23,14 @@
   background: var(--color-bg-tertiary);
 }
 
+.sectionLabel {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: var(--space-1) var(--space-2);
+}
+
 .empty { composes: empty from '../detail.module.css'; }
 .emptyText { composes: emptyText from '../detail.module.css'; }
