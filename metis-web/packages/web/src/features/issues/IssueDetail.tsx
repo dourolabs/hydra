@@ -6,7 +6,7 @@ import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import { useIssue } from "./useIssue";
 import { IssueTodoList } from "./IssueTodoList";
-import { IssueChildren } from "./IssueChildren";
+import { IssueRelatedIssues } from "./IssueRelatedIssues";
 import { IssueActivity } from "./IssueActivity";
 import { IssueUpdateModal } from "./IssueUpdateModal";
 import { JobList } from "../jobs/JobList";
@@ -36,7 +36,7 @@ interface IssueDetailProps {
 }
 
 const TABS = [
-  { id: "children", label: "Children" },
+  { id: "related", label: "Related Issues" },
   { id: "jobs", label: "Jobs" },
   { id: "patches", label: "Patches" },
   { id: "todo", label: "Todo" },
@@ -45,7 +45,7 @@ const TABS = [
 ];
 
 export function IssueDetail({ record }: IssueDetailProps) {
-  const [activeTab, setActiveTab] = useState("children");
+  const [activeTab, setActiveTab] = useState("related");
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const { issue } = record;
 
@@ -162,8 +162,8 @@ export function IssueDetail({ record }: IssueDetailProps) {
         }
       >
         <div className={styles.sectionBody}>
-          {activeTab === "children" && (
-            <IssueChildren issueId={record.issue_id} />
+          {activeTab === "related" && (
+            <IssueRelatedIssues issueId={record.issue_id} />
           )}
           {activeTab === "jobs" && <JobList issueId={record.issue_id} />}
           {activeTab === "patches" && (
