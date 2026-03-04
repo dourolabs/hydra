@@ -1,6 +1,7 @@
 use crate::app::{AppState, CreateLabelError, UpdateLabelError};
+use crate::domain::actors::Actor;
 use crate::store::StoreError;
-use axum::{Json, extract::Path, extract::Query, extract::State};
+use axum::{Extension, Json, extract::Path, extract::Query, extract::State};
 use metis_common::{
     LabelId,
     api::v1::{
@@ -15,16 +16,17 @@ use metis_common::api::v1::labels::CreateLabelRequest;
 /// POST /v1/labels — create a new label.
 pub async fn create_label(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Json(payload): Json<CreateLabelRequest>,
 ) -> Result<Json<CreateLabelResponse>, ApiError> {
-    info!("create_label invoked");
+    info!(actor = %actor.name(), "create_label invoked");
 
     let label_id = state
         .create_label(payload.label.name, payload.label.color)
         .await
         .map_err(map_create_label_error)?;
 
-    info!(label_id = %label_id, "create_label completed");
+    info!(actor = %actor.name(), label_id = %label_id, "create_label completed");
 
     Ok(Json(CreateLabelResponse::new(label_id)))
 }
@@ -32,9 +34,10 @@ pub async fn create_label(
 /// GET /v1/labels — list labels.
 pub async fn list_labels(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Query(query): Query<SearchLabelsQuery>,
 ) -> Result<Json<ListLabelsResponse>, ApiError> {
-    info!("list_labels invoked");
+    info!(actor = %actor.name(), "list_labels invoked");
 
     let labels = state.list_labels(&query).await.map_err(map_store_error)?;
 
@@ -51,7 +54,7 @@ pub async fn list_labels(
         })
         .collect();
 
-    info!(count = records.len(), "list_labels completed");
+    info!(actor = %actor.name(), count = records.len(), "list_labels completed");
 
     Ok(Json(ListLabelsResponse::new(records)))
 }
@@ -59,16 +62,17 @@ pub async fn list_labels(
 /// GET /v1/labels/:label_id — get a single label.
 pub async fn get_label(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Path(label_id): Path<LabelId>,
 ) -> Result<Json<LabelRecord>, ApiError> {
-    info!(label_id = %label_id, "get_label invoked");
+    info!(actor = %actor.name(), label_id = %label_id, "get_label invoked");
 
     let label = state
         .get_label(&label_id)
         .await
         .map_err(|e| map_label_not_found(e, &label_id))?;
 
-    info!(label_id = %label_id, "get_label completed");
+    info!(actor = %actor.name(), label_id = %label_id, "get_label completed");
 
     Ok(Json(LabelRecord::new(
         label_id,
@@ -82,10 +86,11 @@ pub async fn get_label(
 /// PUT /v1/labels/:label_id — update a label.
 pub async fn update_label(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Path(label_id): Path<LabelId>,
     Json(payload): Json<CreateLabelRequest>,
 ) -> Result<Json<LabelRecord>, ApiError> {
-    info!(label_id = %label_id, "update_label invoked");
+    info!(actor = %actor.name(), label_id = %label_id, "update_label invoked");
 
     state
         .update_label(&label_id, payload.label.name, payload.label.color)
@@ -97,7 +102,7 @@ pub async fn update_label(
         .await
         .map_err(|e| map_label_not_found(e, &label_id))?;
 
-    info!(label_id = %label_id, "update_label completed");
+    info!(actor = %actor.name(), label_id = %label_id, "update_label completed");
 
     Ok(Json(LabelRecord::new(
         label_id,
@@ -111,16 +116,17 @@ pub async fn update_label(
 /// DELETE /v1/labels/:label_id — soft-delete a label.
 pub async fn delete_label(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Path(label_id): Path<LabelId>,
 ) -> Result<Json<()>, ApiError> {
-    info!(label_id = %label_id, "delete_label invoked");
+    info!(actor = %actor.name(), label_id = %label_id, "delete_label invoked");
 
     state
         .delete_label(&label_id)
         .await
         .map_err(|e| map_label_not_found(e, &label_id))?;
 
-    info!(label_id = %label_id, "delete_label completed");
+    info!(actor = %actor.name(), label_id = %label_id, "delete_label completed");
 
     Ok(Json(()))
 }

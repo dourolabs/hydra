@@ -5389,4 +5389,223 @@ mod tests {
         assert_eq!(results[1].1.summary, "middle");
         assert_eq!(results[2].1.summary, "oldest");
     }
+
+    // ---- Label tests ----
+
+    fn sample_label(name: &str, color: &str) -> Label {
+        Label::new(name.to_string(), color.to_string())
+    }
+
+    #[tokio::test]
+    async fn label_crud_round_trip() {
+        let store = MemoryStore::new();
+
+        // CREATE
+        let label = sample_label("bug", "#e74c3c");
+        let label_id = store.add_label(label.clone()).await.unwrap();
+
+        // READ
+        let fetched = store.get_label(&label_id).await.unwrap();
+        assert_eq!(fetched.name, "bug");
+        assert_eq!(fetched.color, "#e74c3c");
+        assert!(!fetched.deleted);
+
+        // LIST
+        let results = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, label_id);
+        assert_eq!(results[0].1.name, "bug");
+
+        // GET BY NAME
+        let found = store.get_label_by_name("bug").await.unwrap();
+        assert!(found.is_some());
+        let (found_id, found_label) = found.unwrap();
+        assert_eq!(found_id, label_id);
+        assert_eq!(found_label.name, "bug");
+    }
+
+    #[tokio::test]
+    async fn add_label_rejects_duplicates() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        let err = store
+            .add_label(sample_label("bug", "#3498db"))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::LabelAlreadyExists(name) if name == "bug"
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_label_soft_deletes() {
+        let store = MemoryStore::new();
+
+        let label_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        // Delete (soft delete)
+        store.delete_label(&label_id).await.unwrap();
+
+        // get_label returns not found for soft-deleted labels
+        let err = store.get_label(&label_id).await.unwrap_err();
+        assert!(matches!(err, StoreError::LabelNotFound(_)));
+
+        // list_labels excludes deleted labels by default
+        let results = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+
+        // list_labels with include_deleted returns soft-deleted labels
+        let mut query = SearchLabelsQuery::default();
+        query.include_deleted = Some(true);
+        let results = store.list_labels(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.deleted);
+    }
+
+    #[tokio::test]
+    async fn update_label_changes_name_and_color() {
+        let store = MemoryStore::new();
+
+        let label_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        let mut updated = store.get_label(&label_id).await.unwrap();
+        updated.name = "defect".to_string();
+        updated.color = "#3498db".to_string();
+        updated.updated_at = Utc::now();
+        store.update_label(&label_id, updated).await.unwrap();
+
+        let fetched = store.get_label(&label_id).await.unwrap();
+        assert_eq!(fetched.name, "defect");
+        assert_eq!(fetched.color, "#3498db");
+    }
+
+    #[tokio::test]
+    async fn update_label_rejects_name_collision() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+        let feature_id = store
+            .add_label(sample_label("feature", "#3498db"))
+            .await
+            .unwrap();
+
+        // Try to rename "feature" to "bug" — should fail
+        let mut updated = store.get_label(&feature_id).await.unwrap();
+        updated.name = "bug".to_string();
+        let err = store.update_label(&feature_id, updated).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::LabelAlreadyExists(name) if name == "bug"
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_label_allows_same_name() {
+        let store = MemoryStore::new();
+
+        let label_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        // Update with same name but different color — should succeed
+        let mut updated = store.get_label(&label_id).await.unwrap();
+        updated.color = "#3498db".to_string();
+        store.update_label(&label_id, updated).await.unwrap();
+
+        let fetched = store.get_label(&label_id).await.unwrap();
+        assert_eq!(fetched.name, "bug");
+        assert_eq!(fetched.color, "#3498db");
+    }
+
+    #[tokio::test]
+    async fn get_label_by_name_case_insensitive() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        // Search with different casing
+        let found = store.get_label_by_name("BUG").await.unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().1.name, "bug");
+    }
+
+    #[tokio::test]
+    async fn list_labels_filters_by_query() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("feature", "#3498db"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("bugfix", "#2ecc71"))
+            .await
+            .unwrap();
+
+        let mut query = SearchLabelsQuery::default();
+        query.q = Some("bug".to_string());
+        let results = store.list_labels(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+        // Results sorted by name
+        assert_eq!(results[0].1.name, "bug");
+        assert_eq!(results[1].1.name, "bugfix");
+    }
+
+    #[tokio::test]
+    async fn list_labels_sorted_by_name() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("zebra", "#000"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("alpha", "#111"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("middle", "#222"))
+            .await
+            .unwrap();
+
+        let results = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].1.name, "alpha");
+        assert_eq!(results[1].1.name, "middle");
+        assert_eq!(results[2].1.name, "zebra");
+    }
 }
