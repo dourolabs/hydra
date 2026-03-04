@@ -162,6 +162,25 @@ pub fn test_state_with_store(store: Arc<dyn Store>) -> TestStateHandles {
     test_state_with_store_and_engine(store, Arc::new(MockJobEngine::new()))
 }
 
+pub fn test_state_with_github_app(github_app: octocrab::Octocrab) -> TestStateHandles {
+    let store = Arc::new(MemoryStore::new());
+    let agents = Arc::new(RwLock::new(Vec::new()));
+    let state = AppState::new(
+        Arc::new(test_app_config()),
+        Some(github_app),
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        agents.clone(),
+    );
+
+    TestStateHandles {
+        state,
+        store,
+        agents,
+    }
+}
+
 pub async fn add_repository(
     state: &AppState,
     name: RepoName,

@@ -356,6 +356,8 @@ mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
     use crate::domain::users::Username;
+    use httpmock::prelude::*;
+    use serde_json::json;
 
     #[test]
     fn parse_github_owner_repo_https_with_git_suffix() {
@@ -664,5 +666,168 @@ mod tests {
         };
 
         assert!(worker.is_branch_stale(&branch).await);
+    }
+
+    /// Helper: create an issue in the store, then soft-delete it so it appears stale.
+    /// Returns the generated issue ID.
+    async fn create_deleted_issue(store: &dyn crate::store::Store, label: &str) -> IssueId {
+        let issue = crate::domain::issues::Issue::new(
+            crate::domain::issues::IssueType::Task,
+            "Test Title".to_string(),
+            label.to_string(),
+            Username::from("creator"),
+            String::new(),
+            crate::domain::issues::IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        store
+            .delete_issue(&issue_id, &ActorRef::test())
+            .await
+            .unwrap();
+        issue_id
+    }
+
+    #[tokio::test]
+    async fn cleanup_repo_branches_stops_after_budget_exhausted_by_failures() {
+        let handles = crate::test_utils::test_state_handles();
+
+        // Create 5 deleted (stale) issues.
+        let mut issue_ids = Vec::new();
+        for i in 0..5 {
+            let id = create_deleted_issue(handles.store.as_ref(), &format!("stale-{i}")).await;
+            issue_ids.push(id);
+        }
+
+        // Stand up an httpmock server and mock the list-refs endpoint.
+        let server = MockServer::start();
+        let refs_json: Vec<serde_json::Value> = issue_ids
+            .iter()
+            .map(|id| json!({"ref": format!("refs/heads/metis/{id}/head")}))
+            .collect();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/repos/testowner/testrepo/git/matching-refs/heads/metis/");
+            then.status(200).json_body(json!(refs_json));
+        });
+
+        // Branch 0: delete succeeds
+        let ref_path_0 = format!("heads/metis/{}/head", issue_ids[0]);
+        server.mock(|when, then| {
+            when.method(DELETE)
+                .path(format!("/repos/testowner/testrepo/git/refs/{ref_path_0}"));
+            then.status(200).json_body(json!({}));
+        });
+        // Branch 1: delete fails (422)
+        let ref_path_1 = format!("heads/metis/{}/head", issue_ids[1]);
+        server.mock(|when, then| {
+            when.method(DELETE)
+                .path(format!("/repos/testowner/testrepo/git/refs/{ref_path_1}"));
+            then.status(422)
+                .json_body(json!({"message": "Reference does not exist"}));
+        });
+        // Branch 2: delete succeeds
+        let ref_path_2 = format!("heads/metis/{}/head", issue_ids[2]);
+        server.mock(|when, then| {
+            when.method(DELETE)
+                .path(format!("/repos/testowner/testrepo/git/refs/{ref_path_2}"));
+            then.status(200).json_body(json!({}));
+        });
+        // Branches 3 and 4 should never be reached because budget is exhausted.
+
+        // Build a plain Octocrab client pointed at the mock server.
+        let client = Octocrab::builder()
+            .base_uri(server.base_url())
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let worker = CleanupBranchesWorker::new(handles.state);
+        let stats = worker
+            .cleanup_repo_branches(&client, "testowner", "testrepo", 3)
+            .await
+            .unwrap();
+
+        assert_eq!(stats.deleted, 2);
+        assert_eq!(stats.failed, 1);
+        assert_eq!(stats.deleted + stats.failed, 3);
+    }
+
+    #[tokio::test]
+    async fn run_iteration_counts_failed_deletions_against_budget() {
+        // Build a mock GitHub App so get_installation_client() succeeds.
+        let (server, github_app) = crate::test_utils::GitHubMockBuilder::new()
+            .with_installation("testowner", "testrepo")
+            .build()
+            .unwrap();
+
+        let handles = crate::test_utils::test_state_with_github_app(github_app);
+
+        // Register a GitHub-hosted repository in the store.
+        crate::test_utils::add_repository(
+            &handles.state,
+            metis_common::RepoName::from_str("testowner/testrepo").unwrap(),
+            metis_common::Repository::new(
+                "https://github.com/testowner/testrepo.git".to_string(),
+                None,
+                None,
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+
+        // Create and delete 4 issues so their branches are stale.
+        let mut issue_ids = Vec::new();
+        for i in 0..4 {
+            let id = create_deleted_issue(handles.store.as_ref(), &format!("iter-{i}")).await;
+            issue_ids.push(id);
+        }
+
+        // Mock the list-refs endpoint on the same mock server.
+        let refs_json: Vec<serde_json::Value> = issue_ids
+            .iter()
+            .map(|id| json!({"ref": format!("refs/heads/metis/{id}/head")}))
+            .collect();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/repos/testowner/testrepo/git/matching-refs/heads/metis/");
+            then.status(200).json_body(json!(refs_json));
+        });
+
+        // Mock delete-ref calls: even-indexed succeed, odd-indexed fail.
+        for (i, id) in issue_ids.iter().enumerate() {
+            let ref_path = format!("heads/metis/{id}/head");
+            if i % 2 == 0 {
+                server.mock(|when, then| {
+                    when.method(DELETE)
+                        .path(format!("/repos/testowner/testrepo/git/refs/{ref_path}"));
+                    then.status(200).json_body(json!({}));
+                });
+            } else {
+                server.mock(|when, then| {
+                    when.method(DELETE)
+                        .path(format!("/repos/testowner/testrepo/git/refs/{ref_path}"));
+                    then.status(422)
+                        .json_body(json!({"message": "Reference does not exist"}));
+                });
+            }
+        }
+
+        let worker = CleanupBranchesWorker::new(handles.state);
+        let outcome = worker.run_iteration().await;
+
+        match outcome {
+            WorkerOutcome::Progress { processed, failed } => {
+                assert_eq!(processed, 2);
+                assert_eq!(failed, 2);
+                assert!(processed + failed <= MAX_DELETIONS_PER_ITERATION);
+            }
+            other => panic!("expected WorkerOutcome::Progress, got {other:?}"),
+        }
     }
 }
