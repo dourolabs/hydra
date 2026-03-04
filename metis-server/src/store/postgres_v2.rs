@@ -1219,6 +1219,13 @@ struct LabelRow {
 }
 
 fn map_sqlx_error(err: sqlx::Error) -> StoreError {
+    if let sqlx::Error::Database(ref db_err) = err {
+        if db_err.code().as_deref() == Some("23505")
+            && db_err.constraint() == Some("labels_name_idx")
+        {
+            return StoreError::LabelAlreadyExists(db_err.message().to_string());
+        }
+    }
     StoreError::Internal(err.to_string())
 }
 
@@ -4941,6 +4948,93 @@ mod tests {
         assert_eq!(
             store.count_unread_notifications(&recipient).await.unwrap(),
             1
+        );
+    }
+
+    /// Mock database error for testing map_sqlx_error.
+    #[derive(Debug)]
+    struct MockDbError {
+        code: Option<String>,
+        constraint: Option<String>,
+        message: String,
+    }
+
+    impl std::error::Error for MockDbError {}
+
+    impl std::fmt::Display for MockDbError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.message)
+        }
+    }
+
+    impl sqlx::error::DatabaseError for MockDbError {
+        fn message(&self) -> &str {
+            &self.message
+        }
+
+        fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+            self.code.as_deref().map(std::borrow::Cow::Borrowed)
+        }
+
+        fn constraint(&self) -> Option<&str> {
+            self.constraint.as_deref()
+        }
+
+        fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            self
+        }
+
+        fn kind(&self) -> sqlx::error::ErrorKind {
+            sqlx::error::ErrorKind::UniqueViolation
+        }
+    }
+
+    #[test]
+    fn map_sqlx_error_labels_unique_violation_returns_label_already_exists() {
+        let db_err = MockDbError {
+            code: Some("23505".to_string()),
+            constraint: Some("labels_name_idx".to_string()),
+            message: "duplicate key value violates unique constraint \"labels_name_idx\""
+                .to_string(),
+        };
+        let err = sqlx::Error::Database(Box::new(db_err));
+        let result = map_sqlx_error(err);
+        assert!(
+            matches!(&result, StoreError::LabelAlreadyExists(msg) if msg.contains("labels_name_idx")),
+            "expected LabelAlreadyExists, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn map_sqlx_error_other_unique_violation_returns_internal() {
+        let db_err = MockDbError {
+            code: Some("23505".to_string()),
+            constraint: Some("other_idx".to_string()),
+            message: "duplicate key value violates unique constraint \"other_idx\"".to_string(),
+        };
+        let err = sqlx::Error::Database(Box::new(db_err));
+        let result = map_sqlx_error(err);
+        assert!(
+            matches!(&result, StoreError::Internal(_)),
+            "expected Internal, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn map_sqlx_error_non_database_error_returns_internal() {
+        let err = sqlx::Error::RowNotFound;
+        let result = map_sqlx_error(err);
+        assert!(
+            matches!(&result, StoreError::Internal(_)),
+            "expected Internal, got: {result:?}"
         );
     }
 }
