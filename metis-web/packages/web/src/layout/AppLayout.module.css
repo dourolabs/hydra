@@ -37,7 +37,8 @@
 
   .main {
     padding: var(--space-3);
-    padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: 120px;
+    animation: none;
   }
 }
 
