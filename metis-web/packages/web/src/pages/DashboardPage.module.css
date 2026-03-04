@@ -67,18 +67,15 @@
 
   .createButton {
     position: fixed;
-    bottom: var(--mobile-nav-height);
-    left: 0;
-    right: 0;
+    bottom: calc(var(--mobile-nav-height) + var(--space-3));
+    left: var(--space-3);
+    right: var(--space-3);
     width: auto;
     margin: 0;
     padding: var(--space-3);
     background-color: var(--color-bg-primary);
-    border-radius: 0;
-    border-top: 1px solid var(--color-accent-dim);
-    border-left: none;
-    border-right: none;
-    border-bottom: none;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-accent-dim);
     z-index: 99;
   }
   .createButton:hover {
