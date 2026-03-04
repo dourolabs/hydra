@@ -21,13 +21,13 @@ pub use activity_log::{
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
-    agents, documents, events, issues, job_status, jobs, login, logs, merge_queues, notifications,
-    patches, repositories, task_status, users, whoami,
+    agents, documents, events, issues, job_status, jobs, labels, login, logs, merge_queues,
+    notifications, patches, repositories, task_status, users, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
 pub use ids::{
-    DocumentId, IssueId, MessageId, MetisId, MetisIdError, NotificationId, PatchId, TaskId,
+    DocumentId, IssueId, LabelId, MessageId, MetisId, MetisIdError, NotificationId, PatchId, TaskId,
 };
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use repo_name::{RepoName, RepoNameError};
@@ -72,6 +72,7 @@ mod ts_export {
         crate::DocumentId::export_all(&cfg).expect("DocumentId");
         crate::TaskId::export_all(&cfg).expect("TaskId");
         crate::NotificationId::export_all(&cfg).expect("NotificationId");
+        crate::LabelId::export_all(&cfg).expect("LabelId");
         crate::DocumentPath::export_all(&cfg).expect("DocumentPath");
         crate::RepoName::export_all(&cfg).expect("RepoName");
         crate::ActorId::export_all(&cfg).expect("ActorId");
@@ -119,6 +120,15 @@ mod ts_export {
         crate::events::SnapshotEventData::export_all(&cfg).expect("SnapshotEventData");
         crate::events::ResyncEventData::export_all(&cfg).expect("ResyncEventData");
         crate::events::HeartbeatEventData::export_all(&cfg).expect("HeartbeatEventData");
+
+        // API v1: labels
+        crate::labels::Label::export_all(&cfg).expect("Label");
+        crate::labels::LabelSummary::export_all(&cfg).expect("LabelSummary");
+        crate::labels::LabelRecord::export_all(&cfg).expect("LabelRecord");
+        crate::labels::CreateLabelRequest::export_all(&cfg).expect("CreateLabelRequest");
+        crate::labels::CreateLabelResponse::export_all(&cfg).expect("CreateLabelResponse");
+        crate::labels::SearchLabelsQuery::export_all(&cfg).expect("SearchLabelsQuery");
+        crate::labels::ListLabelsResponse::export_all(&cfg).expect("ListLabelsResponse");
 
         // API v1: issues
         crate::issues::IssueStatus::export_all(&cfg).expect("IssueStatus");

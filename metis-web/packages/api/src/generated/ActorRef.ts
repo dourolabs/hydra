@@ -6,7 +6,4 @@ import type { ActorId } from "./ActorId";
  *
  * Used in event payloads (`MutationPayload`) to attribute mutations.
  */
-export type ActorRef =
-  | { Authenticated: { actor_id: ActorId } }
-  | { System: { worker_name: string; on_behalf_of: ActorId | null } }
-  | { Automation: { automation_name: string; triggered_by: ActorRef | null } };
+export type ActorRef = { "Authenticated": { actor_id: ActorId, } } | { "System": { worker_name: string, on_behalf_of: ActorId | null, } } | { "Automation": { automation_name: string, triggered_by: ActorRef | null, } };

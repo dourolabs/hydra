@@ -11,6 +11,7 @@ use crate::domain::{
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
     },
+    labels::Label,
     messages::Message,
     notifications::Notification,
     patches::Patch,
@@ -23,8 +24,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber,
-    Versioned,
+    DocumentId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, TaskId,
+    VersionNumber, Versioned,
+    api::v1::labels::SearchLabelsQuery,
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -62,6 +64,8 @@ pub struct MemoryStore {
     messages: DashMap<MessageId, Vec<Versioned<Message>>>,
     /// Maps notification IDs to their Notification data (non-versioned)
     notifications: DashMap<NotificationId, Notification>,
+    /// Maps label IDs to their Label data (non-versioned)
+    labels: DashMap<LabelId, Label>,
 }
 
 impl MemoryStore {
@@ -82,6 +86,7 @@ impl MemoryStore {
             actors: DashMap::new(),
             messages: DashMap::new(),
             notifications: DashMap::new(),
+            labels: DashMap::new(),
         }
     }
 
@@ -1055,6 +1060,59 @@ impl ReadOnlyStore for MemoryStore {
             .count();
         Ok(count as u64)
     }
+
+    // ---- Label (read-only) ----
+
+    async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError> {
+        let label = self
+            .labels
+            .get(id)
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| StoreError::LabelNotFound(id.clone()))?;
+        if label.deleted {
+            return Err(StoreError::LabelNotFound(id.clone()));
+        }
+        Ok(label)
+    }
+
+    async fn list_labels(
+        &self,
+        query: &SearchLabelsQuery,
+    ) -> Result<Vec<(LabelId, Label)>, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+
+        let mut results: Vec<(LabelId, Label)> = Vec::new();
+        for entry in self.labels.iter() {
+            let label = entry.value();
+
+            if !include_deleted && label.deleted {
+                continue;
+            }
+
+            if let Some(ref q) = query.q {
+                let q_lower = q.to_lowercase();
+                if !label.name.to_lowercase().contains(&q_lower) {
+                    continue;
+                }
+            }
+
+            results.push((entry.key().clone(), label.clone()));
+        }
+
+        results.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+        Ok(results)
+    }
+
+    async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
+        let name_lower = name.to_lowercase();
+        for entry in self.labels.iter() {
+            let label = entry.value();
+            if !label.deleted && label.name == name_lower {
+                return Ok(Some((entry.key().clone(), label.clone())));
+            }
+        }
+        Ok(None)
+    }
 }
 
 #[async_trait]
@@ -1546,6 +1604,54 @@ impl Store for MemoryStore {
         let next_version = Self::next_version(&versions);
         versions.push(Self::versioned_now_with_actor(message, next_version, actor));
         Ok(next_version)
+    }
+
+    // ---- Label mutations ----
+
+    async fn add_label(&self, label: Label) -> Result<LabelId, StoreError> {
+        // Check uniqueness by name
+        if self.get_label_by_name(&label.name).await?.is_some() {
+            return Err(StoreError::LabelAlreadyExists(label.name.clone()));
+        }
+
+        let count = self.labels.len() as u64;
+        let mut len = metis_common::ids::compute_random_len(count);
+        let id = loop {
+            let candidate =
+                LabelId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
+            if !self.labels.contains_key(&candidate) {
+                break candidate;
+            }
+            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
+        };
+
+        self.labels.insert(id.clone(), label);
+        Ok(id)
+    }
+
+    async fn update_label(&self, id: &LabelId, label: Label) -> Result<(), StoreError> {
+        // Check the label exists
+        if !self.labels.contains_key(id) {
+            return Err(StoreError::LabelNotFound(id.clone()));
+        }
+
+        // Check name uniqueness (exclude self)
+        if let Some((existing_id, _)) = self.get_label_by_name(&label.name).await? {
+            if existing_id != *id {
+                return Err(StoreError::LabelAlreadyExists(label.name.clone()));
+            }
+        }
+
+        self.labels.insert(id.clone(), label);
+        Ok(())
+    }
+
+    async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError> {
+        let mut label = self.get_label(id).await?;
+        label.deleted = true;
+        label.updated_at = Utc::now();
+        self.labels.insert(id.clone(), label);
+        Ok(())
     }
 }
 
@@ -5282,5 +5388,224 @@ mod tests {
         assert_eq!(results[0].1.summary, "newest");
         assert_eq!(results[1].1.summary, "middle");
         assert_eq!(results[2].1.summary, "oldest");
+    }
+
+    // ---- Label tests ----
+
+    fn sample_label(name: &str, color: &str) -> Label {
+        Label::new(name.to_string(), color.to_string())
+    }
+
+    #[tokio::test]
+    async fn label_crud_round_trip() {
+        let store = MemoryStore::new();
+
+        // CREATE
+        let label = sample_label("bug", "#e74c3c");
+        let label_id = store.add_label(label.clone()).await.unwrap();
+
+        // READ
+        let fetched = store.get_label(&label_id).await.unwrap();
+        assert_eq!(fetched.name, "bug");
+        assert_eq!(fetched.color, "#e74c3c");
+        assert!(!fetched.deleted);
+
+        // LIST
+        let results = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, label_id);
+        assert_eq!(results[0].1.name, "bug");
+
+        // GET BY NAME
+        let found = store.get_label_by_name("bug").await.unwrap();
+        assert!(found.is_some());
+        let (found_id, found_label) = found.unwrap();
+        assert_eq!(found_id, label_id);
+        assert_eq!(found_label.name, "bug");
+    }
+
+    #[tokio::test]
+    async fn add_label_rejects_duplicates() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        let err = store
+            .add_label(sample_label("bug", "#3498db"))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::LabelAlreadyExists(name) if name == "bug"
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_label_soft_deletes() {
+        let store = MemoryStore::new();
+
+        let label_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        // Delete (soft delete)
+        store.delete_label(&label_id).await.unwrap();
+
+        // get_label returns not found for soft-deleted labels
+        let err = store.get_label(&label_id).await.unwrap_err();
+        assert!(matches!(err, StoreError::LabelNotFound(_)));
+
+        // list_labels excludes deleted labels by default
+        let results = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+
+        // list_labels with include_deleted returns soft-deleted labels
+        let mut query = SearchLabelsQuery::default();
+        query.include_deleted = Some(true);
+        let results = store.list_labels(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.deleted);
+    }
+
+    #[tokio::test]
+    async fn update_label_changes_name_and_color() {
+        let store = MemoryStore::new();
+
+        let label_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        let mut updated = store.get_label(&label_id).await.unwrap();
+        updated.name = "defect".to_string();
+        updated.color = "#3498db".to_string();
+        updated.updated_at = Utc::now();
+        store.update_label(&label_id, updated).await.unwrap();
+
+        let fetched = store.get_label(&label_id).await.unwrap();
+        assert_eq!(fetched.name, "defect");
+        assert_eq!(fetched.color, "#3498db");
+    }
+
+    #[tokio::test]
+    async fn update_label_rejects_name_collision() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+        let feature_id = store
+            .add_label(sample_label("feature", "#3498db"))
+            .await
+            .unwrap();
+
+        // Try to rename "feature" to "bug" — should fail
+        let mut updated = store.get_label(&feature_id).await.unwrap();
+        updated.name = "bug".to_string();
+        let err = store.update_label(&feature_id, updated).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::LabelAlreadyExists(name) if name == "bug"
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_label_allows_same_name() {
+        let store = MemoryStore::new();
+
+        let label_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        // Update with same name but different color — should succeed
+        let mut updated = store.get_label(&label_id).await.unwrap();
+        updated.color = "#3498db".to_string();
+        store.update_label(&label_id, updated).await.unwrap();
+
+        let fetched = store.get_label(&label_id).await.unwrap();
+        assert_eq!(fetched.name, "bug");
+        assert_eq!(fetched.color, "#3498db");
+    }
+
+    #[tokio::test]
+    async fn get_label_by_name_case_insensitive() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        // Search with different casing
+        let found = store.get_label_by_name("BUG").await.unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().1.name, "bug");
+    }
+
+    #[tokio::test]
+    async fn list_labels_filters_by_query() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("feature", "#3498db"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("bugfix", "#2ecc71"))
+            .await
+            .unwrap();
+
+        let mut query = SearchLabelsQuery::default();
+        query.q = Some("bug".to_string());
+        let results = store.list_labels(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+        // Results sorted by name
+        assert_eq!(results[0].1.name, "bug");
+        assert_eq!(results[1].1.name, "bugfix");
+    }
+
+    #[tokio::test]
+    async fn list_labels_sorted_by_name() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("zebra", "#000"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("alpha", "#111"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("middle", "#222"))
+            .await
+            .unwrap();
+
+        let results = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].1.name, "alpha");
+        assert_eq!(results[1].1.name, "middle");
+        assert_eq!(results[2].1.name, "zebra");
     }
 }

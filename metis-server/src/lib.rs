@@ -131,6 +131,16 @@ pub async fn run_with_state(
             get(routes::documents::get_document_version),
         )
         .route(
+            "/v1/labels",
+            get(routes::labels::list_labels).post(routes::labels::create_label),
+        )
+        .route(
+            "/v1/labels/:label_id",
+            get(routes::labels::get_label)
+                .put(routes::labels::update_label)
+                .delete(routes::labels::delete_label),
+        )
+        .route(
             "/v1/repositories",
             get(routes::repositories::list_repositories)
                 .post(routes::repositories::create_repository),

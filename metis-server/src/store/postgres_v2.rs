@@ -12,6 +12,7 @@ use crate::{
             JobSettings, TodoItem,
         },
         jobs::{BundleSpec, Task},
+        labels::Label,
         messages::Message,
         notifications::Notification,
         patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
@@ -30,8 +31,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
+    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
     VersionNumber, Versioned,
+    api::v1::labels::SearchLabelsQuery,
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -100,6 +102,7 @@ const TABLE_ACTORS_V2: &str = "metis.actors_v2";
 const TABLE_DOCUMENTS_V2: &str = "metis.documents_v2";
 const TABLE_MESSAGES_V2: &str = "metis.messages_v2";
 const TABLE_NOTIFICATIONS: &str = "metis.notifications";
+const TABLE_LABELS: &str = "metis.labels";
 
 /// PostgresStoreV2 uses the v2 tables with proper column definitions.
 #[derive(Clone)]
@@ -1203,6 +1206,16 @@ struct NotificationRow {
     policy: String,
     is_read: bool,
     created_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct LabelRow {
+    id: String,
+    name: String,
+    color: String,
+    deleted: bool,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 fn map_sqlx_error(err: sqlx::Error) -> StoreError {
@@ -2658,6 +2671,94 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         Ok(u64::try_from(count).unwrap_or(0))
     }
+
+    // ---- Label (read-only) ----
+
+    async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError> {
+        let sql = format!(
+            "SELECT id, name, color, deleted, created_at, updated_at \
+             FROM {TABLE_LABELS} WHERE id = $1"
+        );
+        let row = sqlx::query_as::<_, LabelRow>(&sql)
+            .bind(id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .ok_or_else(|| StoreError::LabelNotFound(id.clone()))?;
+        let label = row_to_label(&row);
+        if label.deleted {
+            return Err(StoreError::LabelNotFound(id.clone()));
+        }
+        Ok(label)
+    }
+
+    async fn list_labels(
+        &self,
+        query: &SearchLabelsQuery,
+    ) -> Result<Vec<(LabelId, Label)>, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let mut conditions = Vec::new();
+
+        if !include_deleted {
+            conditions.push("deleted = false".to_string());
+        }
+
+        let q_val = query.q.clone();
+        if q_val.is_some() {
+            conditions.push("LOWER(name) LIKE $1".to_string());
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let sql = format!(
+            "SELECT id, name, color, deleted, created_at, updated_at \
+             FROM {TABLE_LABELS}{where_clause} ORDER BY name"
+        );
+
+        let mut qb = sqlx::query_as::<_, LabelRow>(&sql);
+        if let Some(ref q) = q_val {
+            qb = qb.bind(format!("%{}%", q.to_lowercase()));
+        }
+
+        let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+
+        let mut labels = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let label_id = row.id.parse::<LabelId>().map_err(|err| {
+                StoreError::Internal(format!("invalid label id stored in database: {err}"))
+            })?;
+            let label = row_to_label(row);
+            labels.push((label_id, label));
+        }
+
+        Ok(labels)
+    }
+
+    async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
+        let sql = format!(
+            "SELECT id, name, color, deleted, created_at, updated_at \
+             FROM {TABLE_LABELS} WHERE name = $1 AND deleted = false"
+        );
+        let row = sqlx::query_as::<_, LabelRow>(&sql)
+            .bind(name.to_lowercase())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        match row {
+            Some(row) => {
+                let label_id = row.id.parse::<LabelId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid label id stored in database: {err}"))
+                })?;
+                Ok(Some((label_id, row_to_label(&row))))
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 #[async_trait]
@@ -3228,6 +3329,91 @@ impl Store for PostgresStoreV2 {
         self.insert_message(id, next_version, &message, Some(&actor_json))
             .await?;
         Ok(next_version)
+    }
+
+    // ---- Label mutations ----
+
+    async fn add_label(&self, label: Label) -> Result<LabelId, StoreError> {
+        // Check uniqueness by name
+        if self.get_label_by_name(&label.name).await?.is_some() {
+            return Err(StoreError::LabelAlreadyExists(label.name.clone()));
+        }
+
+        let count = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {TABLE_LABELS}"))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        let count = u64::try_from(count).unwrap_or(0);
+        let id = LabelId::new_for_count(count);
+
+        let sql = format!(
+            "INSERT INTO {TABLE_LABELS} (id, name, color, deleted, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6)"
+        );
+        sqlx::query(&sql)
+            .bind(id.as_ref())
+            .bind(&label.name)
+            .bind(&label.color)
+            .bind(label.deleted)
+            .bind(label.created_at)
+            .bind(label.updated_at)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(id)
+    }
+
+    async fn update_label(&self, id: &LabelId, label: Label) -> Result<(), StoreError> {
+        // Check it exists
+        let _ = self.get_label(id).await?;
+
+        // Check name uniqueness (exclude self)
+        if let Some((existing_id, _)) = self.get_label_by_name(&label.name).await? {
+            if existing_id != *id {
+                return Err(StoreError::LabelAlreadyExists(label.name.clone()));
+            }
+        }
+
+        let sql = format!(
+            "UPDATE {TABLE_LABELS} SET name = $1, color = $2, updated_at = $3 WHERE id = $4"
+        );
+        sqlx::query(&sql)
+            .bind(&label.name)
+            .bind(&label.color)
+            .bind(Utc::now())
+            .bind(id.as_ref())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError> {
+        // Check it exists
+        let _ = self.get_label(id).await?;
+
+        let sql =
+            format!("UPDATE {TABLE_LABELS} SET deleted = true, updated_at = $1 WHERE id = $2");
+        sqlx::query(&sql)
+            .bind(Utc::now())
+            .bind(id.as_ref())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+}
+
+fn row_to_label(row: &LabelRow) -> Label {
+    Label {
+        name: row.name.clone(),
+        color: row.color.clone(),
+        deleted: row.deleted,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
     }
 }
 

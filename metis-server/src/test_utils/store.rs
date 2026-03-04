@@ -3,6 +3,7 @@ use crate::{
         actors::{Actor, ActorId, ActorRef},
         documents::Document,
         issues::{Issue, IssueGraphFilter},
+        labels::Label,
         messages::Message,
         notifications::Notification,
         patches::Patch,
@@ -19,8 +20,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber,
-    Versioned,
+    DocumentId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, TaskId,
+    VersionNumber, Versioned,
+    api::v1::labels::SearchLabelsQuery,
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -236,6 +238,21 @@ impl ReadOnlyStore for FailingStore {
     async fn count_unread_notifications(&self, _recipient: &ActorId) -> Result<u64, StoreError> {
         fail()
     }
+
+    async fn get_label(&self, _id: &LabelId) -> Result<Label, StoreError> {
+        fail()
+    }
+
+    async fn list_labels(
+        &self,
+        _query: &SearchLabelsQuery,
+    ) -> Result<Vec<(LabelId, Label)>, StoreError> {
+        fail()
+    }
+
+    async fn get_label_by_name(&self, _name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
+        fail()
+    }
 }
 
 #[async_trait]
@@ -424,6 +441,18 @@ impl Store for FailingStore {
         _message: Message,
         _actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn add_label(&self, _label: Label) -> Result<LabelId, StoreError> {
+        fail()
+    }
+
+    async fn update_label(&self, _id: &LabelId, _label: Label) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn delete_label(&self, _id: &LabelId) -> Result<(), StoreError> {
         fail()
     }
 }
