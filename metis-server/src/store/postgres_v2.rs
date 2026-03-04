@@ -4911,6 +4911,81 @@ mod tests {
         assert_eq!(marked, 0);
     }
 
+    fn sample_label() -> Label {
+        Label::new("bug".to_string(), "#ff0000".to_string())
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn label_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let label = sample_label();
+
+        // CREATE
+        let label_id = store.add_label(label).await.unwrap();
+
+        // READ
+        let fetched = store.get_label(&label_id).await.unwrap();
+        assert_eq!(fetched.name, "bug");
+        assert_eq!(fetched.color, "#ff0000");
+        assert!(!fetched.deleted);
+
+        // UPDATE
+        let updated_label = Label::new("critical-bug".to_string(), "#cc0000".to_string());
+        store.update_label(&label_id, updated_label).await.unwrap();
+
+        let fetched_updated = store.get_label(&label_id).await.unwrap();
+        assert_eq!(fetched_updated.name, "critical-bug");
+        assert_eq!(fetched_updated.color, "#cc0000");
+
+        // LIST
+        let list = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, label_id);
+        assert_eq!(list[0].1.name, "critical-bug");
+        assert_eq!(list[0].1.color, "#cc0000");
+
+        // GET BY NAME
+        let by_name = store.get_label_by_name("critical-bug").await.unwrap();
+        assert!(by_name.is_some());
+        let (found_id, found_label) = by_name.unwrap();
+        assert_eq!(found_id, label_id);
+        assert_eq!(found_label.name, "critical-bug");
+
+        // DELETE
+        store.delete_label(&label_id).await.unwrap();
+
+        // get_label should return LabelNotFound for deleted label
+        let get_result = store.get_label(&label_id).await;
+        assert!(matches!(get_result, Err(StoreError::LabelNotFound(_))));
+
+        // list_labels with include_deleted should still show the soft-deleted label
+        let mut query_deleted = SearchLabelsQuery::default();
+        query_deleted.include_deleted = Some(true);
+        let list_with_deleted = store.list_labels(&query_deleted).await.unwrap();
+        assert_eq!(list_with_deleted.len(), 1);
+        assert_eq!(list_with_deleted[0].0, label_id);
+        assert!(list_with_deleted[0].1.deleted);
+
+        // list_labels without include_deleted should not show deleted label
+        let list_without_deleted = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert!(list_without_deleted.is_empty());
+
+        // UNIQUENESS — creating a label with a duplicate name should fail
+        let label2 = Label::new("feature".to_string(), "#00ff00".to_string());
+        store.add_label(label2).await.unwrap();
+
+        let duplicate = Label::new("feature".to_string(), "#0000ff".to_string());
+        let dup_result = store.add_label(duplicate).await;
+        assert!(matches!(dup_result, Err(StoreError::LabelAlreadyExists(_))));
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn notification_mark_all_read_with_before_filter_v2(pool: PgStorePool) {
