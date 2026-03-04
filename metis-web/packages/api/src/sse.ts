@@ -99,7 +99,6 @@ export class MetisEventSource {
       "document_deleted",
       "message_created",
       "message_updated",
-      "notification_created",
       "snapshot",
       "resync",
       "heartbeat",

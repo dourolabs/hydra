@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { Avatar, JobStatusIndicator } from "@metis/ui";
 import type { JobSummaryRecord } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
-import type { ItemNotificationState } from "./useItemNotifications";
 import { useAuth } from "../auth/useAuth";
 import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
@@ -64,24 +63,15 @@ const TYPE_ICONS: Record<WorkItem["kind"], (() => React.JSX.Element) | null> = {
 interface ItemRowProps {
   item: WorkItem;
   jobs?: JobSummaryRecord[];
-  notification?: ItemNotificationState;
-  onMarkRead?: (item: WorkItem) => Promise<void> | void;
   filterRootId?: string | null;
 }
 
-export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: ItemRowProps) {
+export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const Icon = TYPE_ICONS[item.kind];
 
-  const handleClick = useCallback(async () => {
-    if (notification?.unread && onMarkRead) {
-      try {
-        await onMarkRead(item);
-      } catch {
-        // Mark-as-read failed; still navigate
-      }
-    }
+  const handleClick = useCallback(() => {
     const paths: Record<WorkItem["kind"], string> = {
       issue: `/issues/${item.id}`,
       patch: `/patches/${item.id}`,
@@ -90,7 +80,7 @@ export function ItemRow({ item, jobs, notification, onMarkRead, filterRootId }: 
     const params = new URLSearchParams({ from: "dashboard" });
     params.set("filter", filterRootId ?? "everything");
     navigate(`${paths[item.kind]}?${params.toString()}`);
-  }, [navigate, item, notification, onMarkRead, filterRootId]);
+  }, [navigate, item, filterRootId]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

@@ -6,12 +6,10 @@ import type {
   JobSummaryRecord,
   PatchSummaryRecord,
   DocumentSummaryRecord,
-  NotificationResponse,
   ListIssuesResponse,
   ListJobsResponse,
   ListPatchesResponse,
   ListDocumentsResponse,
-  ListNotificationsResponse,
 } from "@metis/api";
 
 export type SSEConnectionState = "connecting" | "connected" | "disconnected";
@@ -28,7 +26,6 @@ const ENTITY_EVENT_TYPES = [
   "document_created",
   "document_updated",
   "document_deleted",
-  "notification_created",
 ] as const;
 
 const MAX_BACKOFF_MS = 30_000;
@@ -103,25 +100,6 @@ const wrapDocs = (items: DocumentSummaryRecord[]): ListDocumentsResponse => ({ d
 const docRecordId = (r: DocumentSummaryRecord) => r.document_id;
 
 /**
- * Insert a notification into a cached list if not already present (by notification_id).
- * Notifications are non-versioned, so no version guard is needed.
- */
-function insertNotificationIfMissing(
-  qc: QueryClient,
-  key: readonly unknown[],
-  record: NotificationResponse,
-) {
-  qc.setQueryData<ListNotificationsResponse>(key, (old) => {
-    if (!old) return old;
-    const exists = old.notifications.some(
-      (n) => n.notification_id === record.notification_id,
-    );
-    if (exists) return old;
-    return { notifications: [record, ...old.notifications] };
-  });
-}
-
-/**
  * SSE hook that connects to the BFF /api/v1/events endpoint, listens for
  * entity mutation events, and updates React Query caches. When entity data
  * is included in the event payload, the cache is updated directly to avoid
@@ -152,8 +130,6 @@ export function useSSE(): SSEConnectionState {
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
         queryClient.invalidateQueries({ queryKey: ["documents"] });
         queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
-      } else if (entity_type === "notification" || eventType.startsWith("notification_")) {
-        queryClient.invalidateQueries({ queryKey: ["notifications"] });
       }
     },
     [queryClient],
@@ -214,11 +190,6 @@ export function useSSE(): SSEConnectionState {
           queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
           upsertInList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id, record);
         }
-      } else if (entity_type === "notification" || eventType.startsWith("notification_")) {
-        const record = entity as unknown as NotificationResponse;
-        // Insert into both the unread filter and all-notifications caches
-        insertNotificationIfMissing(queryClient, ["notifications", { isRead: false }], record);
-        insertNotificationIfMissing(queryClient, ["notifications", { isRead: null }], record);
       }
     },
     [queryClient, invalidateForEvent],
@@ -232,7 +203,6 @@ export function useSSE(): SSEConnectionState {
     queryClient.invalidateQueries({ queryKey: ["patches"] });
     queryClient.invalidateQueries({ queryKey: ["documents"] });
     queryClient.invalidateQueries({ queryKey: ["document"] });
-    queryClient.invalidateQueries({ queryKey: ["notifications"] });
   }, [queryClient]);
 
   const connect = useCallback(() => {
@@ -244,7 +214,7 @@ export function useSSE(): SSEConnectionState {
 
     setState("connecting");
 
-    const es = new EventSource("/api/v1/events?types=issues,jobs,patches,documents,notifications");
+    const es = new EventSource("/api/v1/events?types=issues,jobs,patches,documents");
     esRef.current = es;
 
     es.onopen = () => {

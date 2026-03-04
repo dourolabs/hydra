@@ -10,7 +10,6 @@ import { IssueDetailPage } from "./pages/IssueDetailPage";
 import { JobLogPage } from "./pages/JobLogPage";
 import { PatchDetailPage } from "./pages/PatchDetailPage";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
-import { NotificationsPage } from "./pages/NotificationsPage";
 
 export const router = createBrowserRouter([
   {
@@ -52,10 +51,6 @@ export const router = createBrowserRouter([
       {
         path: "patches/:patchId",
         element: <PatchDetailPage />,
-      },
-      {
-        path: "notifications",
-        element: <NotificationsPage />,
       },
       {
         path: "settings",

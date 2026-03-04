@@ -48,9 +48,6 @@ import type { DeleteAgentResponse } from "./generated/DeleteAgentResponse";
 import type { MergeQueue } from "./generated/MergeQueue";
 import type { EnqueueMergePatchRequest } from "./generated/EnqueueMergePatchRequest";
 import type { DeleteRepositoryResponse } from "./generated/DeleteRepositoryResponse";
-import type { ListNotificationsResponse } from "./generated/ListNotificationsResponse";
-import type { ListNotificationsQuery } from "./generated/ListNotificationsQuery";
-import type { MarkReadResponse } from "./generated/MarkReadResponse";
 import {
   MetisEventSource,
   buildEventsUrl,
@@ -489,25 +486,6 @@ export class MetisApiClient {
       `/v1/merge-queues/${repoName}/${encodeURIComponent(branch)}/patches`,
       body,
     );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Notifications
-  // ---------------------------------------------------------------------------
-
-  /** GET /v1/notifications */
-  listNotifications(query?: Partial<ListNotificationsQuery>): Promise<ListNotificationsResponse> {
-    return this.get("/v1/notifications", query as Record<string, unknown>);
-  }
-
-  /** POST /v1/notifications/:notificationId/read */
-  markNotificationRead(notificationId: string): Promise<MarkReadResponse> {
-    return this.post(`/v1/notifications/${encodeURIComponent(notificationId)}/read`);
-  }
-
-  /** POST /v1/notifications/read-all */
-  markAllNotificationsRead(): Promise<MarkReadResponse> {
-    return this.post("/v1/notifications/read-all");
   }
 
   // ---------------------------------------------------------------------------

@@ -5,7 +5,6 @@ const PREFIXES = {
   job: "t-",
   patch: "p-",
   document: "d-",
-  notification: "nf-",
 } as const;
 
 export type EntityType = keyof typeof PREFIXES;
