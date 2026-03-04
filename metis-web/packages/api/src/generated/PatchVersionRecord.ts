@@ -3,4 +3,11 @@ import type { ActorRef } from "./ActorRef";
 import type { Patch } from "./Patch";
 import type { PatchId } from "./PatchId";
 
-export type PatchVersionRecord = { patch_id: PatchId, version: bigint, timestamp: string, patch: Patch, actor?: ActorRef | null, creation_time: string, };
+export type PatchVersionRecord = {
+  patch_id: PatchId;
+  version: bigint;
+  timestamp: string;
+  patch: Patch;
+  actor?: ActorRef | null;
+  creation_time: string;
+};

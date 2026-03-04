@@ -2685,7 +2685,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .await
             .map_err(map_sqlx_error)?
             .ok_or_else(|| StoreError::LabelNotFound(id.clone()))?;
-        let label = row_to_label(&row);
+        let label = row_to_label(&row)?;
         if label.deleted {
             return Err(StoreError::LabelNotFound(id.clone()));
         }
@@ -2731,7 +2731,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let label_id = row.id.parse::<LabelId>().map_err(|err| {
                 StoreError::Internal(format!("invalid label id stored in database: {err}"))
             })?;
-            let label = row_to_label(row);
+            let label = row_to_label(row)?;
             labels.push((label_id, label));
         }
 
@@ -2754,7 +2754,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 let label_id = row.id.parse::<LabelId>().map_err(|err| {
                     StoreError::Internal(format!("invalid label id stored in database: {err}"))
                 })?;
-                Ok(Some((label_id, row_to_label(&row))))
+                Ok(Some((label_id, row_to_label(&row)?)))
             }
             None => Ok(None),
         }
@@ -3353,7 +3353,7 @@ impl Store for PostgresStoreV2 {
         sqlx::query(&sql)
             .bind(id.as_ref())
             .bind(&label.name)
-            .bind(&label.color)
+            .bind(label.color.as_ref())
             .bind(label.deleted)
             .bind(label.created_at)
             .bind(label.updated_at)
@@ -3380,7 +3380,7 @@ impl Store for PostgresStoreV2 {
         );
         sqlx::query(&sql)
             .bind(&label.name)
-            .bind(&label.color)
+            .bind(label.color.as_ref())
             .bind(Utc::now())
             .bind(id.as_ref())
             .execute(&self.pool)
@@ -3407,14 +3407,18 @@ impl Store for PostgresStoreV2 {
     }
 }
 
-fn row_to_label(row: &LabelRow) -> Label {
-    Label {
+fn row_to_label(row: &LabelRow) -> Result<Label, StoreError> {
+    let color = row
+        .color
+        .parse()
+        .map_err(|err| StoreError::Internal(format!("invalid label color in database: {err}")))?;
+    Ok(Label {
         name: row.name.clone(),
-        color: row.color.clone(),
+        color,
         deleted: row.deleted,
         created_at: row.created_at,
         updated_at: row.updated_at,
-    }
+    })
 }
 
 #[cfg(test)]

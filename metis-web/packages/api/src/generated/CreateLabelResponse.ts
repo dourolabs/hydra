@@ -4,4 +4,4 @@ import type { LabelId } from "./LabelId";
 /**
  * Response body after creating a label.
  */
-export type CreateLabelResponse = { label_id: LabelId, };
+export type CreateLabelResponse = { label_id: LabelId };

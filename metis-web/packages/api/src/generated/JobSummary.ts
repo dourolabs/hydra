@@ -11,4 +11,14 @@ import type { Username } from "./Username";
  * `memory_limit`, `secrets`, and `last_message`.
  * The `prompt` field is truncated to the first 100 characters.
  */
-export type JobSummary = { prompt: string, spawned_from?: IssueId | null, creator: Username, status: Status, error?: TaskError | null, deleted?: boolean, creation_time?: string | null, start_time?: string | null, end_time?: string | null, };
+export type JobSummary = {
+  prompt: string;
+  spawned_from?: IssueId | null;
+  creator: Username;
+  status: Status;
+  error?: TaskError | null;
+  deleted?: boolean;
+  creation_time?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+};
