@@ -6,19 +6,20 @@ use metis_common::{
     LabelId,
     api::v1::{
         ApiError,
-        labels::{CreateLabelResponse, LabelRecord, ListLabelsResponse, SearchLabelsQuery},
+        labels::{
+            LabelRecord, ListLabelsResponse, SearchLabelsQuery, UpsertLabelRequest,
+            UpsertLabelResponse,
+        },
     },
 };
 use tracing::{error, info};
-
-use metis_common::api::v1::labels::CreateLabelRequest;
 
 /// POST /v1/labels — create a new label.
 pub async fn create_label(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
-    Json(payload): Json<CreateLabelRequest>,
-) -> Result<Json<CreateLabelResponse>, ApiError> {
+    Json(payload): Json<UpsertLabelRequest>,
+) -> Result<Json<UpsertLabelResponse>, ApiError> {
     info!(actor = %actor.name(), "create_label invoked");
 
     let label_id = state
@@ -28,7 +29,7 @@ pub async fn create_label(
 
     info!(actor = %actor.name(), label_id = %label_id, "create_label completed");
 
-    Ok(Json(CreateLabelResponse::new(label_id)))
+    Ok(Json(UpsertLabelResponse::new(label_id)))
 }
 
 /// GET /v1/labels — list labels.
@@ -88,7 +89,7 @@ pub async fn update_label(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     Path(label_id): Path<LabelId>,
-    Json(payload): Json<CreateLabelRequest>,
+    Json(payload): Json<UpsertLabelRequest>,
 ) -> Result<Json<LabelRecord>, ApiError> {
     info!(actor = %actor.name(), label_id = %label_id, "update_label invoked");
 

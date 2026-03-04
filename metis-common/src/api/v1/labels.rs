@@ -72,25 +72,25 @@ impl LabelRecord {
     }
 }
 
-/// Request body for creating a label.
+/// Request body for creating or updating a label.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct CreateLabelRequest {
+pub struct UpsertLabelRequest {
     pub label: Label,
 }
 
-/// Response body after creating a label.
+/// Response body after creating or updating a label.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct CreateLabelResponse {
+pub struct UpsertLabelResponse {
     pub label_id: LabelId,
 }
 
-impl CreateLabelResponse {
+impl UpsertLabelResponse {
     pub fn new(label_id: LabelId) -> Self {
         Self { label_id }
     }
