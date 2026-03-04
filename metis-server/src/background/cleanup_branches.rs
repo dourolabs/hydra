@@ -49,7 +49,8 @@ impl ScheduledWorker for CleanupBranchesWorker {
         let mut total_failed = 0usize;
 
         for (repo_name, repo_versioned) in &repositories {
-            let remaining_budget = MAX_DELETIONS_PER_ITERATION.saturating_sub(total_deleted);
+            let remaining_budget =
+                MAX_DELETIONS_PER_ITERATION.saturating_sub(total_deleted + total_failed);
             if remaining_budget == 0 {
                 info!(
                     worker = WORKER_NAME,
@@ -148,7 +149,7 @@ impl CleanupBranchesWorker {
         let mut failed = 0usize;
 
         for branch in &branches {
-            if deleted >= max_deletions {
+            if (deleted + failed) >= max_deletions {
                 debug!(
                     owner = owner,
                     repo = repo,
