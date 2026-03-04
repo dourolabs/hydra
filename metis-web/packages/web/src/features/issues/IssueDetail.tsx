@@ -151,7 +151,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
         </Panel>
       )}
 
-      {/* Tabbed sections: Children, Tasks, Patches, Todo */}
+      {/* Tabbed sections: Related Issues, Jobs, Patches, Todo, Activity, Settings */}
       <Panel
         header={
           <Tabs
