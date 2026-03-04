@@ -2698,7 +2698,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
         let include_deleted = query.include_deleted.unwrap_or(false);
         let mut conditions = Vec::new();
-        let mut param_idx = 1u32;
 
         if !include_deleted {
             conditions.push("deleted = false".to_string());
@@ -2706,10 +2705,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let q_val = query.q.clone();
         if q_val.is_some() {
-            conditions.push(format!("LOWER(name) LIKE ${param_idx}"));
-            param_idx += 1;
+            conditions.push("LOWER(name) LIKE $1".to_string());
         }
-        let _ = param_idx;
 
         let where_clause = if conditions.is_empty() {
             String::new()
