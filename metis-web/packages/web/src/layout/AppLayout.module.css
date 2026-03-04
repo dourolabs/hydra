@@ -38,6 +38,7 @@
   .main {
     padding: var(--space-3);
     padding-bottom: 120px;
+    animation: none;
   }
 }
 
