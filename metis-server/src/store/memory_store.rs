@@ -5393,7 +5393,7 @@ mod tests {
     // ---- Label tests ----
 
     fn sample_label(name: &str, color: &str) -> Label {
-        Label::new(name.to_string(), color.to_string())
+        Label::new(name.to_string(), color.parse().unwrap())
     }
 
     #[tokio::test]
@@ -5407,7 +5407,7 @@ mod tests {
         // READ
         let fetched = store.get_label(&label_id).await.unwrap();
         assert_eq!(fetched.name, "bug");
-        assert_eq!(fetched.color, "#e74c3c");
+        assert_eq!(fetched.color.as_ref(), "#e74c3c");
         assert!(!fetched.deleted);
 
         // LIST
@@ -5489,13 +5489,13 @@ mod tests {
 
         let mut updated = store.get_label(&label_id).await.unwrap();
         updated.name = "defect".to_string();
-        updated.color = "#3498db".to_string();
+        updated.color = "#3498db".parse().unwrap();
         updated.updated_at = Utc::now();
         store.update_label(&label_id, updated).await.unwrap();
 
         let fetched = store.get_label(&label_id).await.unwrap();
         assert_eq!(fetched.name, "defect");
-        assert_eq!(fetched.color, "#3498db");
+        assert_eq!(fetched.color.as_ref(), "#3498db");
     }
 
     #[tokio::test]
@@ -5533,12 +5533,12 @@ mod tests {
 
         // Update with same name but different color — should succeed
         let mut updated = store.get_label(&label_id).await.unwrap();
-        updated.color = "#3498db".to_string();
+        updated.color = "#3498db".parse().unwrap();
         store.update_label(&label_id, updated).await.unwrap();
 
         let fetched = store.get_label(&label_id).await.unwrap();
         assert_eq!(fetched.name, "bug");
-        assert_eq!(fetched.color, "#3498db");
+        assert_eq!(fetched.color.as_ref(), "#3498db");
     }
 
     #[tokio::test]
@@ -5587,15 +5587,15 @@ mod tests {
         let store = MemoryStore::new();
 
         store
-            .add_label(sample_label("zebra", "#000"))
+            .add_label(sample_label("zebra", "#000000"))
             .await
             .unwrap();
         store
-            .add_label(sample_label("alpha", "#111"))
+            .add_label(sample_label("alpha", "#111111"))
             .await
             .unwrap();
         store
-            .add_label(sample_label("middle", "#222"))
+            .add_label(sample_label("middle", "#222222"))
             .await
             .unwrap();
 

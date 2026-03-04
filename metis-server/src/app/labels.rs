@@ -1,6 +1,7 @@
 use crate::domain::labels::Label;
 use crate::store::{ReadOnlyStore, StoreError};
 use metis_common::LabelId;
+use metis_common::Rgb;
 use metis_common::api::v1::labels::SearchLabelsQuery;
 use thiserror::Error;
 
@@ -20,13 +21,15 @@ const DEFAULT_COLORS: &[&str] = &[
     "#607d8b", // blue grey
 ];
 
-fn default_color_for_name(name: &str) -> String {
+fn default_color_for_name(name: &str) -> Rgb {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
     name.hash(&mut hasher);
     let idx = (hasher.finish() as usize) % DEFAULT_COLORS.len();
-    DEFAULT_COLORS[idx].to_string()
+    DEFAULT_COLORS[idx]
+        .parse()
+        .expect("DEFAULT_COLORS entries are valid hex colors")
 }
 
 #[derive(Debug, Error)]
@@ -61,7 +64,7 @@ impl AppState {
     pub async fn create_label(
         &self,
         name: String,
-        color: Option<String>,
+        color: Option<Rgb>,
     ) -> Result<LabelId, CreateLabelError> {
         let name = name.trim().to_lowercase();
         if name.is_empty() {
@@ -83,7 +86,7 @@ impl AppState {
         &self,
         label_id: &LabelId,
         name: String,
-        color: Option<String>,
+        color: Option<Rgb>,
     ) -> Result<(), UpdateLabelError> {
         let existing = self.store.get_label(label_id).await.map_err(|e| match e {
             StoreError::LabelNotFound(id) => UpdateLabelError::NotFound(id),
@@ -138,7 +141,7 @@ mod tests {
     async fn create_label_normalizes_name() {
         let state = test_state();
         let label_id = state
-            .create_label("  My Label  ".to_string(), Some("#e74c3c".to_string()))
+            .create_label("  My Label  ".to_string(), Some("#e74c3c".parse().unwrap()))
             .await
             .unwrap();
 
@@ -164,7 +167,7 @@ mod tests {
         let label = state.get_label(&label_id).await.unwrap();
         // Color should be one of the DEFAULT_COLORS palette entries
         assert!(
-            DEFAULT_COLORS.contains(&label.color.as_str()),
+            DEFAULT_COLORS.contains(&label.color.as_ref()),
             "expected default palette color, got {}",
             label.color,
         );
@@ -173,13 +176,14 @@ mod tests {
     #[tokio::test]
     async fn create_label_uses_explicit_color() {
         let state = test_state();
+        let color: Rgb = "#abcdef".parse().unwrap();
         let label_id = state
-            .create_label("bug".to_string(), Some("#abcdef".to_string()))
+            .create_label("bug".to_string(), Some(color.clone()))
             .await
             .unwrap();
 
         let label = state.get_label(&label_id).await.unwrap();
-        assert_eq!(label.color, "#abcdef");
+        assert_eq!(label.color, color);
     }
 
     #[tokio::test]
@@ -197,8 +201,9 @@ mod tests {
     #[tokio::test]
     async fn update_label_preserves_color_when_none() {
         let state = test_state();
+        let color: Rgb = "#e74c3c".parse().unwrap();
         let label_id = state
-            .create_label("bug".to_string(), Some("#e74c3c".to_string()))
+            .create_label("bug".to_string(), Some(color.clone()))
             .await
             .unwrap();
 
@@ -209,7 +214,7 @@ mod tests {
 
         let label = state.get_label(&label_id).await.unwrap();
         assert_eq!(label.name, "defect");
-        assert_eq!(label.color, "#e74c3c");
+        assert_eq!(label.color, color);
     }
 
     #[tokio::test]
@@ -276,6 +281,6 @@ mod tests {
         // Different names can produce different colors
         let color3 = default_color_for_name("feature");
         // Just verify it's a valid palette color
-        assert!(DEFAULT_COLORS.contains(&color3.as_str()));
+        assert!(DEFAULT_COLORS.contains(&color3.as_ref()));
     }
 }

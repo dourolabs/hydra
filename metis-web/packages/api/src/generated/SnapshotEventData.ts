@@ -3,8 +3,9 @@
 /**
  * Data payload for the snapshot event sent on initial connection.
  */
-export type SnapshotEventData = { 
-/**
- * Map from entity ID to its current version number.
- */
-versions: { [key in string]: bigint }, };
+export type SnapshotEventData = {
+  /**
+   * Map from entity ID to its current version number.
+   */
+  versions: { [key in string]: bigint };
+};

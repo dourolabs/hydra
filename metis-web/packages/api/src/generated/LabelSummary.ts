@@ -4,4 +4,4 @@ import type { LabelId } from "./LabelId";
 /**
  * A lightweight label representation for embedding in other responses.
  */
-export type LabelSummary = { label_id: LabelId, name: string, color: string, };
+export type LabelSummary = { label_id: LabelId; name: string; color: string };

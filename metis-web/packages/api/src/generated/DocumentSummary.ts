@@ -7,4 +7,9 @@ import type { TaskId } from "./TaskId";
  *
  * Excludes `body_markdown`.
  */
-export type DocumentSummary = { title: string, path?: DocumentPath | null, created_by?: TaskId | null, deleted?: boolean, };
+export type DocumentSummary = {
+  title: string;
+  path?: DocumentPath | null;
+  created_by?: TaskId | null;
+  deleted?: boolean;
+};

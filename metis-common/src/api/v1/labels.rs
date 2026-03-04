@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::LabelId;
+use crate::rgb::Rgb;
 
 /// The input representation of a label (name + optional color).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,11 +12,11 @@ use crate::ids::LabelId;
 pub struct Label {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub color: Option<String>,
+    pub color: Option<Rgb>,
 }
 
 impl Label {
-    pub fn new(name: String, color: Option<String>) -> Self {
+    pub fn new(name: String, color: Option<Rgb>) -> Self {
         Self { name, color }
     }
 }
@@ -28,11 +29,11 @@ impl Label {
 pub struct LabelSummary {
     pub label_id: LabelId,
     pub name: String,
-    pub color: String,
+    pub color: Rgb,
 }
 
 impl LabelSummary {
-    pub fn new(label_id: LabelId, name: String, color: String) -> Self {
+    pub fn new(label_id: LabelId, name: String, color: Rgb) -> Self {
         Self {
             label_id,
             name,
@@ -49,7 +50,7 @@ impl LabelSummary {
 pub struct LabelRecord {
     pub label_id: LabelId,
     pub name: String,
-    pub color: String,
+    pub color: Rgb,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -58,7 +59,7 @@ impl LabelRecord {
     pub fn new(
         label_id: LabelId,
         name: String,
-        color: String,
+        color: Rgb,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
