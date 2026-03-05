@@ -17,6 +17,7 @@ import { createRepositoryRoutes } from "./routes/repositories.js";
 import { createAgentRoutes } from "./routes/agents.js";
 import { createMergeQueueRoutes } from "./routes/merge-queues.js";
 import { createEventRoutes } from "./routes/events.js";
+import { createLabelRoutes } from "./routes/labels.js";
 import { loadSeedData } from "./seed.js";
 
 const store = new Store();
@@ -73,6 +74,7 @@ app.route("", createPatchRoutes(store));
 app.route("", createDocumentRoutes(store));
 app.route("", createRepositoryRoutes(store));
 app.route("", createAgentRoutes(store));
+app.route("", createLabelRoutes(store));
 app.route("", createMergeQueueRoutes());
 app.route("", createEventRoutes(store));
 

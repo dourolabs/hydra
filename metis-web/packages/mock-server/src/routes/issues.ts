@@ -16,6 +16,7 @@ import type {
   TodoListResponse,
   TodoItem,
 } from "@metis/api";
+import { getLabelsForObject } from "./labels.js";
 
 const COLLECTION = "issues";
 const SSE_PREFIX = "issue";
@@ -33,6 +34,7 @@ function toVersionRecord(
     timestamp,
     issue,
     creation_time: creationTime,
+    labels: getLabelsForObject(issueId),
   };
 }
 
@@ -62,6 +64,7 @@ function toSummaryRecord(
     timestamp,
     issue: summary,
     creation_time: creationTime,
+    labels: getLabelsForObject(issueId),
   };
 }
 

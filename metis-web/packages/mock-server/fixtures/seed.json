@@ -436,5 +436,28 @@
       "max_tries": 2,
       "max_simultaneous": 1
     }
-  }
+  },
+  "labels": {
+    "l-seed00001": {
+      "name": "platform-v2",
+      "color": "#3498db"
+    },
+    "l-seed00002": {
+      "name": "auth",
+      "color": "#e74c3c"
+    },
+    "l-seed00003": {
+      "name": "infra",
+      "color": "#2ecc71"
+    }
+  },
+  "label_associations": [
+    { "label_id": "l-seed00001", "object_id": "i-seed00001" },
+    { "label_id": "l-seed00001", "object_id": "i-seed00002" },
+    { "label_id": "l-seed00002", "object_id": "i-seed00002" },
+    { "label_id": "l-seed00002", "object_id": "i-seed00003" },
+    { "label_id": "l-seed00002", "object_id": "i-seed00004" },
+    { "label_id": "l-seed00003", "object_id": "i-seed00006" },
+    { "label_id": "l-seed00001", "object_id": "i-seed00008" }
+  ]
 }

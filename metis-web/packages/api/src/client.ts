@@ -48,6 +48,11 @@ import type { DeleteAgentResponse } from "./generated/DeleteAgentResponse";
 import type { MergeQueue } from "./generated/MergeQueue";
 import type { EnqueueMergePatchRequest } from "./generated/EnqueueMergePatchRequest";
 import type { DeleteRepositoryResponse } from "./generated/DeleteRepositoryResponse";
+import type { UpsertLabelRequest } from "./generated/UpsertLabelRequest";
+import type { UpsertLabelResponse } from "./generated/UpsertLabelResponse";
+import type { SearchLabelsQuery } from "./generated/SearchLabelsQuery";
+import type { ListLabelsResponse } from "./generated/ListLabelsResponse";
+import type { LabelRecord } from "./generated/LabelRecord";
 import {
   MetisEventSource,
   buildEventsUrl,
@@ -486,6 +491,36 @@ export class MetisApiClient {
       `/v1/merge-queues/${repoName}/${encodeURIComponent(branch)}/patches`,
       body,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Labels
+  // ---------------------------------------------------------------------------
+
+  /** POST /v1/labels */
+  createLabel(request: UpsertLabelRequest): Promise<UpsertLabelResponse> {
+    return this.post("/v1/labels", request);
+  }
+
+  /** GET /v1/labels */
+  listLabels(query?: Partial<SearchLabelsQuery>): Promise<ListLabelsResponse> {
+    return this.get("/v1/labels", query as Record<string, unknown>);
+  }
+
+  /** GET /v1/labels/:labelId */
+  getLabel(labelId: string): Promise<LabelRecord> {
+    return this.get(`/v1/labels/${encodeURIComponent(labelId)}`);
+  }
+
+  /** PUT /v1/labels/:labelId/objects/:objectId */
+  addLabelToObject(labelId: string, objectId: string, cascade?: boolean): Promise<void> {
+    const query = cascade ? { cascade: "true" } : undefined;
+    return this.request("PUT", `/v1/labels/${encodeURIComponent(labelId)}/objects/${encodeURIComponent(objectId)}`, { query });
+  }
+
+  /** DELETE /v1/labels/:labelId/objects/:objectId */
+  removeLabelFromObject(labelId: string, objectId: string): Promise<void> {
+    return this.del(`/v1/labels/${encodeURIComponent(labelId)}/objects/${encodeURIComponent(objectId)}`);
   }
 
   // ---------------------------------------------------------------------------
