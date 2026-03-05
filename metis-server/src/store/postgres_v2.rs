@@ -33,7 +33,7 @@ use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
     VersionNumber, Versioned,
-    api::v1::labels::SearchLabelsQuery,
+    api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -103,6 +103,7 @@ const TABLE_DOCUMENTS_V2: &str = "metis.documents_v2";
 const TABLE_MESSAGES_V2: &str = "metis.messages_v2";
 const TABLE_NOTIFICATIONS: &str = "metis.notifications";
 const TABLE_LABELS: &str = "metis.labels";
+const TABLE_LABEL_ASSOCIATIONS: &str = "metis.label_associations";
 
 /// PostgresStoreV2 uses the v2 tables with proper column definitions.
 #[derive(Clone)]
@@ -2759,6 +2760,50 @@ impl ReadOnlyStore for PostgresStoreV2 {
             None => Ok(None),
         }
     }
+
+    async fn get_labels_for_object(
+        &self,
+        object_id: &MetisId,
+    ) -> Result<Vec<LabelSummary>, StoreError> {
+        let sql = format!(
+            "SELECT l.id, l.name, l.color \
+             FROM {TABLE_LABELS} l \
+             INNER JOIN {TABLE_LABEL_ASSOCIATIONS} la ON l.id = la.label_id \
+             WHERE la.object_id = $1 AND l.deleted = false \
+             ORDER BY l.name"
+        );
+        let rows = sqlx::query_as::<_, (String, String, String)>(&sql)
+            .bind(object_id.as_ref())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        rows.into_iter()
+            .map(|(id, name, color)| {
+                let label_id = id.parse::<LabelId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid label id stored in database: {err}"))
+                })?;
+                Ok(LabelSummary::new(label_id, name, color))
+            })
+            .collect()
+    }
+
+    async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
+        let sql = format!("SELECT object_id FROM {TABLE_LABEL_ASSOCIATIONS} WHERE label_id = $1");
+        let rows = sqlx::query_scalar::<_, String>(&sql)
+            .bind(label_id.as_ref())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        rows.into_iter()
+            .map(|id| {
+                id.parse::<MetisId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid object id stored in database: {err}"))
+                })
+            })
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -3403,6 +3448,44 @@ impl Store for PostgresStoreV2 {
             .await
             .map_err(map_sqlx_error)?;
 
+        Ok(())
+    }
+
+    async fn add_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<(), StoreError> {
+        let object_kind = super::object_kind_from_id(object_id);
+        let sql = format!(
+            "INSERT INTO {TABLE_LABEL_ASSOCIATIONS} (label_id, object_id, object_kind) \
+             VALUES ($1, $2, $3) \
+             ON CONFLICT (label_id, object_id) DO NOTHING"
+        );
+        sqlx::query(&sql)
+            .bind(label_id.as_ref())
+            .bind(object_id.as_ref())
+            .bind(object_kind)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    async fn remove_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<(), StoreError> {
+        let sql = format!(
+            "DELETE FROM {TABLE_LABEL_ASSOCIATIONS} WHERE label_id = $1 AND object_id = $2"
+        );
+        sqlx::query(&sql)
+            .bind(label_id.as_ref())
+            .bind(object_id.as_ref())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
         Ok(())
     }
 }

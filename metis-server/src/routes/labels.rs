@@ -3,7 +3,7 @@ use crate::domain::actors::Actor;
 use crate::store::StoreError;
 use axum::{Extension, Json, extract::Path, extract::Query, extract::State};
 use metis_common::{
-    LabelId,
+    LabelId, MetisId,
     api::v1::{
         ApiError,
         labels::{CreateLabelResponse, LabelRecord, ListLabelsResponse, SearchLabelsQuery},
@@ -127,6 +127,62 @@ pub async fn delete_label(
         .map_err(|e| map_label_not_found(e, &label_id))?;
 
     info!(actor = %actor.name(), label_id = %label_id, "delete_label completed");
+
+    Ok(Json(()))
+}
+
+/// PUT /v1/labels/:label_id/objects/:object_id — associate a label with an object.
+pub async fn add_label_association(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path((label_id, object_id)): Path<(LabelId, MetisId)>,
+) -> Result<Json<()>, ApiError> {
+    info!(
+        actor = %actor.name(),
+        label_id = %label_id,
+        object_id = %object_id,
+        "add_label_association invoked"
+    );
+
+    state
+        .add_label_association(&label_id, &object_id)
+        .await
+        .map_err(map_store_error)?;
+
+    info!(
+        actor = %actor.name(),
+        label_id = %label_id,
+        object_id = %object_id,
+        "add_label_association completed"
+    );
+
+    Ok(Json(()))
+}
+
+/// DELETE /v1/labels/:label_id/objects/:object_id — remove a label association.
+pub async fn remove_label_association(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path((label_id, object_id)): Path<(LabelId, MetisId)>,
+) -> Result<Json<()>, ApiError> {
+    info!(
+        actor = %actor.name(),
+        label_id = %label_id,
+        object_id = %object_id,
+        "remove_label_association invoked"
+    );
+
+    state
+        .remove_label_association(&label_id, &object_id)
+        .await
+        .map_err(map_store_error)?;
+
+    info!(
+        actor = %actor.name(),
+        label_id = %label_id,
+        object_id = %object_id,
+        "remove_label_association completed"
+    );
 
     Ok(Json(()))
 }
