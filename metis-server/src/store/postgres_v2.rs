@@ -3492,52 +3492,94 @@ impl Store for PostgresStoreV2 {
     // ---- Agent mutations ----
 
     async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
-        // Check if a non-deleted agent with this name already exists.
-        let existing = sqlx::query_scalar::<_, bool>(&format!(
-            "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} WHERE name = $1 AND NOT deleted)"
+        // Check if an agent with this name already exists (including soft-deleted).
+        let existing_deleted = sqlx::query_scalar::<_, bool>(&format!(
+            "SELECT deleted FROM {TABLE_AGENTS} WHERE name = $1"
         ))
         .bind(&agent.name)
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
-        if existing {
-            return Err(StoreError::AgentAlreadyExists(agent.name));
-        }
 
-        // Validate assignment agent uniqueness.
-        if agent.is_assignment_agent {
-            let has_assignment = sqlx::query_scalar::<_, bool>(&format!(
-                "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                 WHERE is_assignment_agent = true AND NOT deleted)"
-            ))
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-            if has_assignment {
-                return Err(StoreError::AssignmentAgentAlreadyExists);
+        match existing_deleted {
+            Some(false) => {
+                // Active agent exists — conflict.
+                return Err(StoreError::AgentAlreadyExists(agent.name));
+            }
+            Some(true) => {
+                // Soft-deleted agent exists — validate assignment uniqueness, then reactivate.
+                if agent.is_assignment_agent {
+                    let has_assignment = sqlx::query_scalar::<_, bool>(&format!(
+                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
+                         WHERE is_assignment_agent = true AND NOT deleted)"
+                    ))
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                    if has_assignment {
+                        return Err(StoreError::AssignmentAgentAlreadyExists);
+                    }
+                }
+
+                let now = Utc::now();
+                let sql = format!(
+                    "UPDATE {TABLE_AGENTS} \
+                     SET prompt_path = $1, max_tries = $2, max_simultaneous = $3, \
+                         is_assignment_agent = $4, deleted = false, \
+                         created_at = $5, updated_at = $6 \
+                     WHERE name = $7"
+                );
+                sqlx::query(&sql)
+                    .bind(&agent.prompt_path)
+                    .bind(agent.max_tries)
+                    .bind(agent.max_simultaneous)
+                    .bind(agent.is_assignment_agent)
+                    .bind(now)
+                    .bind(now)
+                    .bind(&agent.name)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+
+                Ok(())
+            }
+            None => {
+                // No existing row — validate assignment uniqueness, then insert.
+                if agent.is_assignment_agent {
+                    let has_assignment = sqlx::query_scalar::<_, bool>(&format!(
+                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
+                         WHERE is_assignment_agent = true AND NOT deleted)"
+                    ))
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                    if has_assignment {
+                        return Err(StoreError::AssignmentAgentAlreadyExists);
+                    }
+                }
+
+                let sql = format!(
+                    "INSERT INTO {TABLE_AGENTS} \
+                     (name, prompt_path, max_tries, max_simultaneous, is_assignment_agent, \
+                      deleted, created_at, updated_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+                );
+                sqlx::query(&sql)
+                    .bind(&agent.name)
+                    .bind(&agent.prompt_path)
+                    .bind(agent.max_tries)
+                    .bind(agent.max_simultaneous)
+                    .bind(agent.is_assignment_agent)
+                    .bind(agent.deleted)
+                    .bind(agent.created_at)
+                    .bind(agent.updated_at)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+
+                Ok(())
             }
         }
-
-        let sql = format!(
-            "INSERT INTO {TABLE_AGENTS} \
-             (name, prompt_path, max_tries, max_simultaneous, is_assignment_agent, \
-              deleted, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
-        );
-        sqlx::query(&sql)
-            .bind(&agent.name)
-            .bind(&agent.prompt_path)
-            .bind(agent.max_tries)
-            .bind(agent.max_simultaneous)
-            .bind(agent.is_assignment_agent)
-            .bind(agent.deleted)
-            .bind(agent.created_at)
-            .bind(agent.updated_at)
-            .execute(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        Ok(())
     }
 
     async fn update_agent(&self, agent: Agent) -> Result<(), StoreError> {

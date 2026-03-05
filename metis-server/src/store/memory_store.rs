@@ -5945,4 +5945,21 @@ mod tests {
         let fetched = store.get_agent("pm2").await.unwrap();
         assert!(fetched.is_assignment_agent);
     }
+
+    #[tokio::test]
+    async fn add_agent_after_soft_deletion_same_name() {
+        let store = MemoryStore::new();
+        let agent = sample_agent("swe");
+        store.add_agent(agent).await.unwrap();
+        store.delete_agent("swe").await.unwrap();
+
+        // Re-creating with the same name should succeed.
+        let mut agent2 = sample_agent("swe");
+        agent2.prompt_path = "new/path".to_string();
+        store.add_agent(agent2).await.unwrap();
+
+        let fetched = store.get_agent("swe").await.unwrap();
+        assert_eq!(fetched.prompt_path, "new/path");
+        assert!(!fetched.deleted);
+    }
 }
