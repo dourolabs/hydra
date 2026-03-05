@@ -566,7 +566,7 @@ impl JobEngine for KubernetesJobEngine {
         let mut container = Container {
             name: "metis-worker".to_string(),
             image: Some(image.to_string()),
-            image_pull_policy: Some("IfNotPresent".into()),
+            image_pull_policy: Some("Always".into()),
             command: Some(vec!["metis".to_string()]),
             args: Some(vec![
                 "jobs".to_string(),
