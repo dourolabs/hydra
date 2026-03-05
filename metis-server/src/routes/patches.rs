@@ -151,6 +151,15 @@ pub async fn list_patch_versions(
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
+    let object_id = MetisId::from(patch_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(patch_id = %patch_id, error = %err, "failed to fetch labels for patch");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     let records = versions
         .into_iter()
         .map(|version| {
@@ -161,7 +170,7 @@ pub async fn list_patch_versions(
                 version.item.into(),
                 version.actor,
                 version.creation_time,
-                Vec::new(),
+                labels.clone(),
             )
         })
         .collect();
@@ -198,6 +207,15 @@ pub async fn get_patch_version(
             ApiError::not_found(format!("patch '{patch_id}' version {version} not found"))
         })?;
 
+    let object_id = MetisId::from(patch_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(patch_id = %patch_id, error = %err, "failed to fetch labels for patch");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     let response = v1::patches::PatchVersionRecord::new(
         patch_id.clone(),
         entry.version,
@@ -205,7 +223,7 @@ pub async fn get_patch_version(
         entry.item.into(),
         entry.actor,
         entry.creation_time,
-        Vec::new(),
+        labels,
     );
     info!(patch_id = %patch_id, version, "get_patch_version completed");
     Ok(Json(response))
@@ -581,6 +599,15 @@ pub async fn delete_patch(
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
+    let object_id = MetisId::from(patch_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(patch_id = %patch_id, error = %err, "failed to fetch labels for patch");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     info!(patch_id = %patch_id, "delete_patch completed");
     let response = v1::patches::PatchVersionRecord::new(
         patch_id,
@@ -589,7 +616,7 @@ pub async fn delete_patch(
         patch.item.into(),
         patch.actor,
         patch.creation_time,
-        Vec::new(),
+        labels,
     );
     Ok(Json(response))
 }

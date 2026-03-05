@@ -170,6 +170,15 @@ pub async fn list_issue_versions(
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
+    let object_id = MetisId::from(issue_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(issue_id = %issue_id, error = %err, "failed to fetch labels for issue");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     let records = versions
         .into_iter()
         .map(|version| {
@@ -180,7 +189,7 @@ pub async fn list_issue_versions(
                 version.item.into(),
                 version.actor,
                 version.creation_time,
-                Vec::new(),
+                labels.clone(),
             )
         })
         .collect();
@@ -217,6 +226,15 @@ pub async fn get_issue_version(
             ApiError::not_found(format!("issue '{issue_id}' version {version} not found"))
         })?;
 
+    let object_id = MetisId::from(issue_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(issue_id = %issue_id, error = %err, "failed to fetch labels for issue");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     let response = api_issues::IssueVersionRecord::new(
         issue_id.clone(),
         entry.version,
@@ -224,7 +242,7 @@ pub async fn get_issue_version(
         entry.item.into(),
         entry.actor,
         entry.creation_time,
-        Vec::new(),
+        labels,
     );
     info!(issue_id = %issue_id, version, "get_issue_version completed");
     Ok(Json(response))
@@ -539,6 +557,15 @@ pub async fn delete_issue(
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
+    let object_id = MetisId::from(issue_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(issue_id = %issue_id, error = %err, "failed to fetch labels for issue");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     info!(issue_id = %issue_id, "delete_issue completed");
     let response = api_issues::IssueVersionRecord::new(
         issue_id,
@@ -547,7 +574,7 @@ pub async fn delete_issue(
         issue.item.into(),
         issue.actor,
         issue.creation_time,
-        Vec::new(),
+        labels,
     );
     Ok(Json(response))
 }
