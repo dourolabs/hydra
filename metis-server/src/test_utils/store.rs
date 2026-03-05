@@ -20,9 +20,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, TaskId,
+    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
     VersionNumber, Versioned,
-    api::v1::labels::SearchLabelsQuery,
+    api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -253,6 +253,17 @@ impl ReadOnlyStore for FailingStore {
     async fn get_label_by_name(&self, _name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
         fail()
     }
+
+    async fn get_labels_for_object(
+        &self,
+        _object_id: &MetisId,
+    ) -> Result<Vec<LabelSummary>, StoreError> {
+        fail()
+    }
+
+    async fn get_objects_for_label(&self, _label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
+        fail()
+    }
 }
 
 #[async_trait]
@@ -453,6 +464,22 @@ impl Store for FailingStore {
     }
 
     async fn delete_label(&self, _id: &LabelId) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn add_label_association(
+        &self,
+        _label_id: &LabelId,
+        _object_id: &MetisId,
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn remove_label_association(
+        &self,
+        _label_id: &LabelId,
+        _object_id: &MetisId,
+    ) -> Result<(), StoreError> {
         fail()
     }
 }

@@ -141,6 +141,11 @@ pub async fn run_with_state(
                 .delete(routes::labels::delete_label),
         )
         .route(
+            "/v1/labels/:label_id/objects/:object_id",
+            put(routes::labels::add_label_association)
+                .delete(routes::labels::remove_label_association),
+        )
+        .route(
             "/v1/repositories",
             get(routes::repositories::list_repositories)
                 .post(routes::repositories::create_repository),

@@ -137,7 +137,13 @@ impl AppState {
         request: api::issues::UpsertIssueRequest,
         actor: ActorRef,
     ) -> Result<(IssueId, VersionNumber), UpsertIssueError> {
-        let api::issues::UpsertIssueRequest { issue, job_id, .. } = request;
+        let api::issues::UpsertIssueRequest {
+            issue,
+            job_id,
+            label_ids,
+            label_names,
+            ..
+        } = request;
         let issue: Issue = issue.into();
 
         let store = self.store.as_ref();
@@ -237,6 +243,55 @@ impl AppState {
         };
 
         info!(issue_id = %issue_id, "issue stored successfully");
+
+        // Sync label associations if requested
+        if label_ids.is_some() || label_names.is_some() {
+            let resolved = self
+                .resolve_label_ids(label_ids, label_names)
+                .await
+                .map_err(|e| UpsertIssueError::Store {
+                    source: match e {
+                        super::CreateLabelError::Store { source } => source,
+                        other => StoreError::Internal(other.to_string()),
+                    },
+                    issue_id: Some(issue_id.clone()),
+                })?;
+
+            let object_id = metis_common::MetisId::from(issue_id.clone());
+
+            // Get current labels and compute diff
+            let current_labels =
+                self.get_labels_for_object(&object_id)
+                    .await
+                    .map_err(|source| UpsertIssueError::Store {
+                        source,
+                        issue_id: Some(issue_id.clone()),
+                    })?;
+
+            let current_ids: HashSet<metis_common::LabelId> =
+                current_labels.iter().map(|l| l.label_id.clone()).collect();
+            let desired_ids: HashSet<metis_common::LabelId> = resolved.into_iter().collect();
+
+            // Remove labels that are no longer desired
+            for old_id in current_ids.difference(&desired_ids) {
+                self.remove_label_association(old_id, &object_id)
+                    .await
+                    .map_err(|source| UpsertIssueError::Store {
+                        source,
+                        issue_id: Some(issue_id.clone()),
+                    })?;
+            }
+
+            // Add newly desired labels
+            for new_id in desired_ids.difference(&current_ids) {
+                self.add_label_association(new_id, &object_id)
+                    .await
+                    .map_err(|source| UpsertIssueError::Store {
+                        source,
+                        issue_id: Some(issue_id.clone()),
+                    })?;
+            }
+        }
 
         Ok((issue_id, version))
     }

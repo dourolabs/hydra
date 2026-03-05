@@ -18,9 +18,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, TaskId,
+    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
     VersionNumber, Versioned,
-    api::v1::labels::SearchLabelsQuery,
+    api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -416,6 +416,17 @@ pub trait ReadOnlyStore: Send + Sync {
     ///
     /// Returns `None` if no non-deleted label with the given name exists.
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError>;
+
+    // ---- Label association (read-only) ----
+
+    /// Returns all labels associated with the given object.
+    async fn get_labels_for_object(
+        &self,
+        object_id: &MetisId,
+    ) -> Result<Vec<LabelSummary>, StoreError>;
+
+    /// Returns all object IDs associated with the given label.
+    async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError>;
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.
@@ -677,6 +688,37 @@ pub trait Store: ReadOnlyStore {
 
     /// Soft-deletes a label by setting its `deleted` flag to true.
     async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError>;
+
+    // ---- Label association mutations ----
+
+    /// Associates a label with an object. The object_kind is inferred from the
+    /// MetisId prefix. No-ops if the association already exists.
+    async fn add_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<(), StoreError>;
+
+    /// Removes a label association. No-ops if the association does not exist.
+    async fn remove_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<(), StoreError>;
+}
+
+/// Infers the object kind string from a MetisId prefix.
+pub(crate) fn object_kind_from_id(id: &MetisId) -> &'static str {
+    let s: &str = id.as_ref();
+    if s.starts_with(IssueId::prefix()) {
+        "issue"
+    } else if s.starts_with(PatchId::prefix()) {
+        "patch"
+    } else if s.starts_with(DocumentId::prefix()) {
+        "document"
+    } else {
+        "unknown"
+    }
 }
 
 pub use memory_store::MemoryStore;

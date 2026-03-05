@@ -24,9 +24,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, LabelId, MessageId, NotificationId, PatchId, RepoName, TaskId,
+    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
     VersionNumber, Versioned,
-    api::v1::labels::SearchLabelsQuery,
+    api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -66,6 +66,10 @@ pub struct MemoryStore {
     notifications: DashMap<NotificationId, Notification>,
     /// Maps label IDs to their Label data (non-versioned)
     labels: DashMap<LabelId, Label>,
+    /// Maps object IDs to associated label IDs
+    object_labels: DashMap<MetisId, HashSet<LabelId>>,
+    /// Maps label IDs to associated object IDs
+    label_objects: DashMap<LabelId, HashSet<MetisId>>,
 }
 
 impl MemoryStore {
@@ -87,6 +91,8 @@ impl MemoryStore {
             messages: DashMap::new(),
             notifications: DashMap::new(),
             labels: DashMap::new(),
+            object_labels: DashMap::new(),
+            label_objects: DashMap::new(),
         }
     }
 
@@ -1113,6 +1119,40 @@ impl ReadOnlyStore for MemoryStore {
         }
         Ok(None)
     }
+
+    async fn get_labels_for_object(
+        &self,
+        object_id: &MetisId,
+    ) -> Result<Vec<LabelSummary>, StoreError> {
+        let label_ids = match self.object_labels.get(object_id) {
+            Some(ids) => ids.clone(),
+            None => return Ok(Vec::new()),
+        };
+
+        let mut result: Vec<LabelSummary> = label_ids
+            .iter()
+            .filter_map(|label_id| {
+                let label = self.labels.get(label_id)?;
+                if label.deleted {
+                    return None;
+                }
+                Some(LabelSummary::new(
+                    label_id.clone(),
+                    label.name.clone(),
+                    label.color.clone(),
+                ))
+            })
+            .collect();
+        result.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(result)
+    }
+
+    async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
+        match self.label_objects.get(label_id) {
+            Some(ids) => Ok(ids.iter().cloned().collect()),
+            None => Ok(Vec::new()),
+        }
+    }
 }
 
 #[async_trait]
@@ -1651,6 +1691,36 @@ impl Store for MemoryStore {
         label.deleted = true;
         label.updated_at = Utc::now();
         self.labels.insert(id.clone(), label);
+        Ok(())
+    }
+
+    async fn add_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<(), StoreError> {
+        self.object_labels
+            .entry(object_id.clone())
+            .or_default()
+            .insert(label_id.clone());
+        self.label_objects
+            .entry(label_id.clone())
+            .or_default()
+            .insert(object_id.clone());
+        Ok(())
+    }
+
+    async fn remove_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<(), StoreError> {
+        if let Some(mut label_ids) = self.object_labels.get_mut(object_id) {
+            label_ids.remove(label_id);
+        }
+        if let Some(mut object_ids) = self.label_objects.get_mut(label_id) {
+            object_ids.remove(object_id);
+        }
         Ok(())
     }
 }

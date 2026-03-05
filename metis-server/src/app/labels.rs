@@ -1,8 +1,7 @@
 use crate::domain::labels::Label;
 use crate::store::{ReadOnlyStore, StoreError};
-use metis_common::LabelId;
-use metis_common::Rgb;
-use metis_common::api::v1::labels::SearchLabelsQuery;
+use metis_common::api::v1::labels::{LabelSummary, SearchLabelsQuery};
+use metis_common::{LabelId, MetisId, Rgb};
 use thiserror::Error;
 
 use super::AppState;
@@ -129,6 +128,64 @@ impl AppState {
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
         self.store.list_labels(query).await
+    }
+
+    pub async fn add_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<(), StoreError> {
+        self.store.add_label_association(label_id, object_id).await
+    }
+
+    pub async fn remove_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<(), StoreError> {
+        self.store
+            .remove_label_association(label_id, object_id)
+            .await
+    }
+
+    pub async fn get_labels_for_object(
+        &self,
+        object_id: &MetisId,
+    ) -> Result<Vec<LabelSummary>, StoreError> {
+        self.store.get_labels_for_object(object_id).await
+    }
+
+    /// Resolve a mix of label IDs and label names into a deduplicated set of LabelIds.
+    /// Label names that don't exist are created automatically.
+    pub async fn resolve_label_ids(
+        &self,
+        label_ids: Option<Vec<LabelId>>,
+        label_names: Option<Vec<String>>,
+    ) -> Result<Vec<LabelId>, CreateLabelError> {
+        let mut resolved: Vec<LabelId> = label_ids.unwrap_or_default();
+
+        if let Some(names) = label_names {
+            for name in names {
+                let name_lower = name.trim().to_lowercase();
+                if name_lower.is_empty() {
+                    continue;
+                }
+                match self.store.get_label_by_name(&name_lower).await {
+                    Ok(Some((id, _))) => {
+                        if !resolved.contains(&id) {
+                            resolved.push(id);
+                        }
+                    }
+                    Ok(None) => {
+                        let id = self.create_label(name, None).await?;
+                        resolved.push(id);
+                    }
+                    Err(e) => return Err(CreateLabelError::Store { source: e }),
+                }
+            }
+        }
+
+        Ok(resolved)
     }
 }
 
