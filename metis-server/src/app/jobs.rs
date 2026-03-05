@@ -281,10 +281,9 @@ impl AppState {
                 }
             }
 
-            // 2. Fall back to server env var, then config file value
-            let global_value = std::env::var(secret_name)
-                .ok()
-                .or_else(|| config_fallback.map(str::to_string))
+            // 2. Fall back to config file value
+            let global_value = config_fallback
+                .map(str::to_string)
                 .filter(|v| !v.trim().is_empty());
 
             if let Some(value) = global_value {
