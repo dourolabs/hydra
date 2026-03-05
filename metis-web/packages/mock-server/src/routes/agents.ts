@@ -38,8 +38,10 @@ export function createAgentRoutes(store: Store): Hono {
     const agent: AgentRecord = {
       name: body.name,
       prompt: body.prompt,
+      prompt_path: body.prompt_path,
       max_tries: body.max_tries,
       max_simultaneous: body.max_simultaneous,
+      is_assignment_agent: body.is_assignment_agent,
     };
     store.create<AgentRecord>(COLLECTION, body.name, agent, null);
     const resp: AgentResponse = { agent };
@@ -53,8 +55,10 @@ export function createAgentRoutes(store: Store): Hono {
     const agent: AgentRecord = {
       name: body.name,
       prompt: body.prompt,
+      prompt_path: body.prompt_path,
       max_tries: body.max_tries,
       max_simultaneous: body.max_simultaneous,
+      is_assignment_agent: body.is_assignment_agent,
     };
     store.update<AgentRecord>(COLLECTION, name, agent, null);
     const resp: AgentResponse = { agent };

@@ -13,7 +13,7 @@ test.describe("Label display on dashboard item rows", () => {
     await expect(
       page.getByText("auth", { exact: true }).first()
     ).toBeVisible();
-    await expect(page.getByText("infra")).toBeVisible();
+    await expect(page.getByText("infra").first()).toBeVisible();
   });
 
   test("label chips appear within their respective issue rows", async ({

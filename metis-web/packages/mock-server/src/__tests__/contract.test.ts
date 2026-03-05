@@ -519,8 +519,10 @@ describe("Agents", () => {
   const agentPayload: UpsertAgentRequest = {
     name: "test-agent",
     prompt: "You are a test agent.",
+    prompt_path: "",
     max_tries: 5,
     max_simultaneous: 3,
+    is_assignment_agent: false,
   };
 
   it("round-trip: create → get → list → update → delete", async () => {
