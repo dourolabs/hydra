@@ -439,8 +439,8 @@ fn default_namespace() -> String {
     "default".to_string()
 }
 
-pub const DEFAULT_AGENT_MAX_TRIES: u32 = 3;
-pub const DEFAULT_AGENT_MAX_SIMULTANEOUS: u32 = u32::MAX;
+pub const DEFAULT_AGENT_MAX_TRIES: i32 = 3;
+pub const DEFAULT_AGENT_MAX_SIMULTANEOUS: i32 = i32::MAX;
 const fn default_min_connections() -> u32 {
     1
 }

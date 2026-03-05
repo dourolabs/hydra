@@ -28,7 +28,7 @@ async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
             name.to_string(),
             format!("/agents/{name}/prompt.md"),
             3,
-            DEFAULT_AGENT_MAX_SIMULTANEOUS as i32,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
         );
         store.add_agent(agent).await.unwrap();
