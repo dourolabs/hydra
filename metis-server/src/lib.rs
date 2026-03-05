@@ -19,6 +19,7 @@ mod test;
 use crate::app::{AppState, ServiceState};
 use crate::background::start_background_scheduler;
 use crate::config::{AppConfig, GithubAppSection, build_kube_client};
+use crate::domain::secrets::{ENV_SECRET_ENCRYPTION_KEY, SecretManager};
 use crate::job_engine::KubernetesJobEngine;
 use crate::store::{
     MemoryStore, Store, migration,
@@ -319,12 +320,29 @@ pub async fn run() -> anyhow::Result<()> {
         image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
     };
 
+    // Initialize SecretManager from METIS_SECRET_ENCRYPTION_KEY env var (optional)
+    let secret_manager = env::var(ENV_SECRET_ENCRYPTION_KEY)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(|key| {
+            let mgr =
+                SecretManager::from_base64(&key).context("invalid METIS_SECRET_ENCRYPTION_KEY")?;
+            info!("secret encryption enabled");
+            Ok::<_, anyhow::Error>(Arc::new(mgr))
+        })
+        .transpose()?;
+
+    if secret_manager.is_none() {
+        info!("METIS_SECRET_ENCRYPTION_KEY not set; user secret encryption disabled");
+    }
+
     let state = AppState::new(
         Arc::new(app_config),
         github_app,
         Arc::new(service_state),
         store,
         Arc::new(job_engine),
+        secret_manager,
     );
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;

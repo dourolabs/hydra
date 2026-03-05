@@ -1,5 +1,6 @@
 use crate::{
     config::AppConfig,
+    domain::secrets::SecretManager,
     job_engine::JobEngine,
     store::{ReadOnlyStore, Store},
 };
@@ -20,6 +21,7 @@ pub struct AppState {
     pub(crate) store: Arc<StoreWithEvents>,
     pub job_engine: Arc<dyn JobEngine>,
     pub(crate) policy_engine: Arc<crate::policy::PolicyEngine>,
+    pub secret_manager: Option<Arc<SecretManager>>,
 }
 
 impl AppState {
@@ -29,6 +31,7 @@ impl AppState {
         service_state: Arc<ServiceState>,
         store: Arc<dyn Store>,
         job_engine: Arc<dyn JobEngine>,
+        secret_manager: Option<Arc<SecretManager>>,
     ) -> Self {
         let event_bus = Arc::new(EventBus::new());
         let policy_engine = Self::build_policy_engine(config.policies.as_ref());
@@ -39,6 +42,7 @@ impl AppState {
             store: Arc::new(StoreWithEvents::new(store, event_bus)),
             job_engine,
             policy_engine: Arc::new(policy_engine),
+            secret_manager,
         }
     }
 

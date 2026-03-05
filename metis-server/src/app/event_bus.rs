@@ -992,6 +992,27 @@ impl StoreWithEvents {
         Ok(())
     }
 
+    // ---- User secret mutations ----
+
+    pub async fn set_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+        encrypted_value: &[u8],
+    ) -> Result<(), StoreError> {
+        self.inner
+            .set_user_secret(username, secret_name, encrypted_value)
+            .await
+    }
+
+    pub async fn delete_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<(), StoreError> {
+        self.inner.delete_user_secret(username, secret_name).await
+    }
+
     /// Re-fetch the entity identified by `object_id` and emit an appropriate
     /// updated event so SSE subscribers see the label change.
     async fn emit_entity_updated_on_label_change(&self, object_id: &MetisId) {
@@ -1302,6 +1323,20 @@ impl ReadOnlyStore for StoreWithEvents {
 
     async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
         self.inner.get_objects_for_label(label_id).await
+    }
+
+    // ---- User secrets (read-only) ----
+
+    async fn get_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        self.inner.get_user_secret(username, secret_name).await
+    }
+
+    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError> {
+        self.inner.list_user_secret_names(username).await
     }
 }
 

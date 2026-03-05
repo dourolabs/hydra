@@ -58,6 +58,7 @@ pub fn state_with_default_model(model: &str) -> AppState {
         Arc::new(ServiceState::default()),
         Arc::new(MemoryStore::new()),
         Arc::new(MockJobEngine::new()),
+        None,
     )
 }
 
