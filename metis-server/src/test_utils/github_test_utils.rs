@@ -4,7 +4,6 @@ use crate::{
 };
 use serde_json::json;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use super::{MockJobEngine, TestStateHandles, test_app_config};
 
@@ -56,19 +55,13 @@ pub fn test_state_with_github_urls_and_allowed_orgs(
     config.metis.allowed_orgs = allowed_orgs;
 
     let store = Arc::new(MemoryStore::new());
-    let agents = Arc::new(RwLock::new(Vec::new()));
     let state = AppState::new(
         Arc::new(config),
         None,
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        agents.clone(),
     );
 
-    TestStateHandles {
-        state,
-        store,
-        agents,
-    }
+    TestStateHandles { state, store }
 }

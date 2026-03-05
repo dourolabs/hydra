@@ -1,8 +1,8 @@
 use crate::{
     app::{AppState, ServiceState},
-    background::AgentQueue,
-    config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
-    store::MemoryStore,
+    config::DEFAULT_AGENT_MAX_SIMULTANEOUS,
+    domain::{actors::ActorRef, agents::Agent},
+    store::{MemoryStore, Store},
     test_utils::{
         MockJobEngine, TestStateHandles, spawn_test_server_with_state, test_app_config, test_client,
     },
@@ -11,56 +11,53 @@ use metis_common::agents::{
     AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest,
 };
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
-fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
-    let mut config = test_app_config();
-    let agents: Vec<AgentQueueConfig> = agent_names
-        .iter()
-        .map(|name| AgentQueueConfig {
-            name: (*name).to_string(),
-            prompt: format!("prompt for {name}"),
-            max_tries: DEFAULT_AGENT_MAX_TRIES,
-            max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
-        })
-        .collect();
-    config.background.agent_queues = agents.clone();
-
-    let store = Arc::new(MemoryStore::new());
-    let agents = Arc::new(RwLock::new(
-        agents
-            .iter()
-            .map(|queue| Arc::new(AgentQueue::from_config(queue)))
-            .collect(),
-    ));
+async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
+    let config = test_app_config();
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
     let state = AppState::new(
         Arc::new(config),
         None,
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        agents.clone(),
     );
 
-    TestStateHandles {
-        state,
-        store,
-        agents,
+    for name in agent_names {
+        let agent = Agent::new(
+            name.to_string(),
+            format!("/agents/{name}/prompt.md"),
+            3,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS as i32,
+            false,
+        );
+        store.add_agent(agent).await.unwrap();
+
+        let doc = crate::domain::documents::Document {
+            title: format!("{name} prompt"),
+            body_markdown: format!("prompt for {name}"),
+            path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        store.add_document(doc, &ActorRef::test()).await.unwrap();
     }
+
+    TestStateHandles { state, store }
 }
 
 fn agent_request(name: &str) -> UpsertAgentRequest {
     UpsertAgentRequest::new(
         name,
         format!("prompt for {name}"),
-        DEFAULT_AGENT_MAX_TRIES,
+        3,
         DEFAULT_AGENT_MAX_SIMULTANEOUS,
     )
 }
 
 #[tokio::test]
 async fn list_agents_returns_configured_queues() -> anyhow::Result<()> {
-    let state = test_state_with_agents(&["alpha", "beta"]);
+    let state = test_state_with_agents(&["alpha", "beta"]).await;
     let server = spawn_test_server_with_state(state.state, state.store).await?;
     let client = test_client();
 
@@ -84,7 +81,7 @@ async fn list_agents_returns_configured_queues() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn get_agent_returns_single_queue() -> anyhow::Result<()> {
-    let state = test_state_with_agents(&["alpha"]);
+    let state = test_state_with_agents(&["alpha"]).await;
     let server = spawn_test_server_with_state(state.state, state.store).await?;
     let client = test_client();
 
@@ -97,13 +94,13 @@ async fn get_agent_returns_single_queue() -> anyhow::Result<()> {
     let body: AgentResponse = response.json().await?;
     assert_eq!(body.agent.name, "alpha");
     assert_eq!(body.agent.prompt, "prompt for alpha");
-    assert_eq!(body.agent.max_tries, DEFAULT_AGENT_MAX_TRIES);
+    assert_eq!(body.agent.max_tries, 3);
     Ok(())
 }
 
 #[tokio::test]
 async fn create_agent_adds_to_state() -> anyhow::Result<()> {
-    let state = test_state_with_agents(&[]);
+    let state = test_state_with_agents(&[]).await;
     let server = spawn_test_server_with_state(state.state.clone(), state.store.clone()).await?;
     let client = test_client();
 
@@ -118,16 +115,15 @@ async fn create_agent_adds_to_state() -> anyhow::Result<()> {
     let body: AgentResponse = response.json().await?;
     assert_eq!(body.agent.name, "gamma");
 
-    let agents = state.state.list_agent_configs().await;
+    let agents = state.state.list_agents().await.unwrap();
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0].name, "gamma");
-    assert_eq!(agents[0].prompt, "prompt for gamma");
     Ok(())
 }
 
 #[tokio::test]
 async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
-    let state = test_state_with_agents(&["alpha"]);
+    let state = test_state_with_agents(&["alpha"]).await;
     let server = spawn_test_server_with_state(state.state.clone(), state.store.clone()).await?;
     let client = test_client();
 
@@ -144,8 +140,7 @@ async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
     assert_eq!(body.agent.max_tries, 7);
     assert_eq!(body.agent.max_simultaneous, 11);
 
-    let agents = state.state.list_agent_configs().await;
-    assert_eq!(agents[0].prompt, "updated prompt");
+    let agents = state.state.list_agents().await.unwrap();
     assert_eq!(agents[0].max_tries, 7);
     assert_eq!(agents[0].max_simultaneous, 11);
     Ok(())
@@ -153,7 +148,7 @@ async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn delete_agent_removes_queue() -> anyhow::Result<()> {
-    let state = test_state_with_agents(&["alpha"]);
+    let state = test_state_with_agents(&["alpha"]).await;
     let server = spawn_test_server_with_state(state.state.clone(), state.store.clone()).await?;
     let client = test_client();
 
@@ -166,14 +161,14 @@ async fn delete_agent_removes_queue() -> anyhow::Result<()> {
     let body: DeleteAgentResponse = response.json().await?;
     assert_eq!(body.agent.name, "alpha");
 
-    let agents = state.state.list_agent_configs().await;
+    let agents = state.state.list_agents().await.unwrap();
     assert!(agents.is_empty());
     Ok(())
 }
 
 #[tokio::test]
 async fn update_agent_rejects_name_mismatch() -> anyhow::Result<()> {
-    let state = test_state_with_agents(&["alpha"]);
+    let state = test_state_with_agents(&["alpha"]).await;
     let server = spawn_test_server_with_state(state.state, state.store).await?;
     let client = test_client();
 

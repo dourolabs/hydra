@@ -5,7 +5,6 @@ use crate::{
 };
 use metis_common::github::GithubAppClientIdResponse;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn github_app_client_id_returns_configured_value() -> anyhow::Result<()> {
@@ -13,14 +12,12 @@ async fn github_app_client_id_returns_configured_value() -> anyhow::Result<()> {
     config.github_app.client_id = "client-123".to_string();
 
     let store = Arc::new(MemoryStore::new());
-    let agents = Arc::new(RwLock::new(Vec::new()));
     let state = AppState::new(
         Arc::new(config),
         None,
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        agents,
     );
 
     let server = spawn_test_server_with_state(state, store).await?;

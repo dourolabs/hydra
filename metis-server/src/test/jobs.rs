@@ -9,7 +9,6 @@ use crate::domain::{
     users::Username,
 };
 use crate::{
-    background::AgentQueue,
     job_engine::JobStatus,
     store::{MemoryStore, Status, Task},
     test_utils::{
@@ -28,7 +27,6 @@ use metis_common::{
 use reqwest::StatusCode;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn create_job_enqueues_task() -> anyhow::Result<()> {
@@ -392,7 +390,6 @@ async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        Arc::new(RwLock::new(Vec::<Arc<AgentQueue>>::new())),
     );
     let server = spawn_test_server_with_state(state, store).await?;
 

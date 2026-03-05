@@ -30,16 +30,18 @@ impl AgentRecord {
     pub fn new(
         name: impl Into<String>,
         prompt: impl Into<String>,
+        prompt_path: impl Into<String>,
         max_tries: u32,
         max_simultaneous: u32,
+        is_assignment_agent: bool,
     ) -> Self {
         Self {
             name: name.into(),
             prompt: prompt.into(),
-            prompt_path: String::new(),
+            prompt_path: prompt_path.into(),
             max_tries,
             max_simultaneous,
-            is_assignment_agent: false,
+            is_assignment_agent,
         }
     }
 }

@@ -596,11 +596,7 @@ github_app:
   client_id: "c"
   client_secret: "s"
   private_key: "k"
-background:
-  assignment_agent: "swe"
-  agent_queues:
-    - name: "swe"
-      prompt: "p"
+background: {}
 policies:
   restrictions:
     - "issue_lifecycle_validation"
@@ -1035,11 +1031,7 @@ github_app:
   client_secret: "test"
   private_key: "test"
 
-background:
-  assignment_agent: "swe"
-  agent_queues:
-    - name: "swe"
-      prompt: "test"
+background: {}
 
 policies:
   restrictions:
@@ -1135,11 +1127,7 @@ github_app:
   client_secret: "test"
   private_key: "test"
 
-background:
-  assignment_agent: "swe"
-  agent_queues:
-    - name: "swe"
-      prompt: "test"
+background: {}
     "#;
 
     let config: crate::config::AppConfig =

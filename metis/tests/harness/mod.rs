@@ -26,9 +26,7 @@ use metis_server::{
         process_pending_jobs::ProcessPendingJobsWorker,
         run_spawners::RunSpawnersWorker,
         scheduler::{ScheduledWorker, WorkerOutcome},
-        spawner::AgentQueue,
     },
-    config::AgentQueueConfig,
     domain::actors::{Actor, ActorRef},
     policy::{
         config::{PolicyConfig, PolicyEntry, PolicyList},
@@ -43,7 +41,6 @@ use metis_server::{
 };
 use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc};
 use tempfile::TempDir;
-use tokio::sync::RwLock;
 
 pub use assertions::{
     find_children_by_type, find_children_by_type_and_status, find_children_of,
@@ -176,7 +173,6 @@ pub struct TestHarness {
     state: AppState,
     store: Arc<dyn Store>,
     engine: Arc<MockJobEngine>,
-    agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     _tempdir: TempDir,
     users: HashMap<String, UserHandle>,
     remotes: HashMap<RepoName, GitRemote>,
@@ -267,11 +263,6 @@ impl TestHarness {
     /// Return a reference to the GitHub mock, if configured.
     pub fn github(&self) -> Option<&GitHubMock> {
         self.github.as_ref()
-    }
-
-    /// Return the agents queue.
-    pub fn agents(&self) -> &Arc<RwLock<Vec<Arc<AgentQueue>>>> {
-        &self.agents
     }
 
     /// Create a `MetisClient` authenticated as the default user.
@@ -499,11 +490,10 @@ impl TestHarnessBuilder {
         self
     }
 
-    /// Register an agent queue with the given name and prompt.
+    /// Register an agent with the given name and prompt.
     ///
-    /// Agent queues registered here are available immediately when the
-    /// harness is built, removing the need to manually call
-    /// `harness.agents().write().await`.
+    /// Agents registered here are seeded in the database and available
+    /// immediately when the harness is built.
     pub fn with_agent(mut self, name: &str, prompt: &str) -> Self {
         self.agent_configs
             .push((name.to_string(), prompt.to_string()));
@@ -528,21 +518,38 @@ impl TestHarnessBuilder {
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let engine = Arc::new(MockJobEngine::new());
 
-        // Pre-populate agent queues from builder config.
-        let initial_agents: Vec<Arc<AgentQueue>> = self
-            .agent_configs
-            .iter()
-            .map(|(name, prompt)| {
-                Arc::new(AgentQueue::from_config(&AgentQueueConfig {
-                    name: name.clone(),
-                    prompt: prompt.clone(),
-                    max_tries: 3,
-                    max_simultaneous: 10,
-                }))
-            })
-            .collect();
-        let agents = Arc::new(RwLock::new(initial_agents));
+        // Pre-populate agent queues from builder config by adding to DB store.
+        use metis_server::domain::{agents::Agent, documents::Document};
+        for (name, prompt) in &self.agent_configs {
+            let is_assignment = self
+                .assignment_agent
+                .as_ref()
+                .map(|a| a == name)
+                .unwrap_or(false);
+            let agent = Agent::new(
+                name.clone(),
+                format!("/agents/{name}/prompt.md"),
+                3,
+                10,
+                is_assignment,
+            );
+            store
+                .add_agent(agent)
+                .await
+                .with_context(|| format!("failed to add agent '{name}' to store"))?;
 
+            let doc = Document {
+                title: format!("{name} prompt"),
+                body_markdown: prompt.clone(),
+                path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
+                created_by: None,
+                deleted: false,
+            };
+            store
+                .add_document(doc, &ActorRef::test())
+                .await
+                .with_context(|| format!("failed to add prompt for agent '{name}'"))?;
+        }
         // Create git remotes and register repositories in the store.
         let mut remotes = HashMap::new();
         for repo_name_str in &self.repos {
@@ -591,19 +598,14 @@ impl TestHarnessBuilder {
             None => (None, None),
         };
 
-        // Build AppState, optionally overriding the assignment agent.
-        let mut server_config = test_app_config();
-        if let Some(ref agent_name) = self.assignment_agent {
-            server_config.background.assignment_agent = agent_name.clone();
-        }
-        let server_config = Arc::new(server_config);
+        // Build AppState.
+        let server_config = Arc::new(test_app_config());
         let mut state = AppState::new(
             server_config,
             octocrab_client,
             Arc::new(ServiceState::default()),
             store.clone(),
             engine.clone(),
-            agents.clone(),
         );
 
         // Override the policy engine if a custom patch_workflow config was provided.
@@ -698,7 +700,6 @@ impl TestHarnessBuilder {
             state,
             store,
             engine,
-            agents,
             _tempdir: tempdir,
             users,
             remotes,

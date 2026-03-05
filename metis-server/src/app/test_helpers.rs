@@ -12,7 +12,6 @@ use crate::{
 use metis_common::IssueId;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
 
 pub fn sample_task() -> Task {
     Task::new(
@@ -59,7 +58,6 @@ pub fn state_with_default_model(model: &str) -> AppState {
         Arc::new(ServiceState::default()),
         Arc::new(MemoryStore::new()),
         Arc::new(MockJobEngine::new()),
-        Arc::new(RwLock::new(Vec::new())),
     )
 }
 

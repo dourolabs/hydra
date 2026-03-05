@@ -1,12 +1,10 @@
 use crate::{
-    background::AgentQueue,
     config::AppConfig,
     job_engine::JobEngine,
     store::{ReadOnlyStore, Store},
 };
 use octocrab::Octocrab;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio::sync::broadcast;
 
 use super::event_bus::{EventBus, ServerEvent, StoreWithEvents};
@@ -21,7 +19,6 @@ pub struct AppState {
     pub service_state: Arc<ServiceState>,
     pub(crate) store: Arc<StoreWithEvents>,
     pub job_engine: Arc<dyn JobEngine>,
-    pub(crate) agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     pub(crate) policy_engine: Arc<crate::policy::PolicyEngine>,
 }
 
@@ -32,7 +29,6 @@ impl AppState {
         service_state: Arc<ServiceState>,
         store: Arc<dyn Store>,
         job_engine: Arc<dyn JobEngine>,
-        agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     ) -> Self {
         let event_bus = Arc::new(EventBus::new());
         let policy_engine = Self::build_policy_engine(config.policies.as_ref());
@@ -42,7 +38,6 @@ impl AppState {
             service_state,
             store: Arc::new(StoreWithEvents::new(store, event_bus)),
             job_engine,
-            agents,
             policy_engine: Arc::new(policy_engine),
         }
     }

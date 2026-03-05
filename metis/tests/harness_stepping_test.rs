@@ -3,9 +3,7 @@ mod harness;
 use anyhow::Result;
 use metis_common::issues::{Issue, IssueStatus, IssueType, JobSettings, UpsertIssueRequest};
 use metis_common::users::Username;
-use metis_server::{background::spawner::AgentQueue, config::AgentQueueConfig};
 use std::str::FromStr;
-use std::sync::Arc;
 
 /// Helper: register an agent queue in the harness and create an issue
 /// assigned to that agent with the given repo.
@@ -42,16 +40,33 @@ async fn create_spawnable_issue(
     Ok(response.issue_id)
 }
 
-/// Helper: register an agent queue in the harness.
+/// Helper: register an agent queue in the harness by adding it to the DB store
+/// and creating a prompt document.
 async fn register_agent(harness: &harness::TestHarness, name: &str) {
-    let config = AgentQueueConfig {
-        name: name.to_string(),
-        prompt: format!("test prompt for {name}"),
-        max_tries: 3,
-        max_simultaneous: 10,
+    use metis_server::domain::actors::ActorRef;
+    use metis_server::domain::{agents::Agent, documents::Document};
+
+    let agent = Agent::new(
+        name.to_string(),
+        format!("/agents/{name}/prompt.md"),
+        3,
+        10,
+        false,
+    );
+    harness.store().add_agent(agent).await.unwrap();
+
+    let doc = Document {
+        title: format!("{name} prompt"),
+        body_markdown: format!("test prompt for {name}"),
+        path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
+        created_by: None,
+        deleted: false,
     };
-    let mut agents = harness.agents().write().await;
-    agents.push(Arc::new(AgentQueue::from_config(&config)));
+    harness
+        .store()
+        .add_document(doc, &ActorRef::test())
+        .await
+        .unwrap();
 }
 
 /// step_spawner with no agents configured returns empty vec.

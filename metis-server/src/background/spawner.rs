@@ -4,7 +4,6 @@ use crate::domain::issues::{IssueDependency, IssueType};
 use crate::domain::users::Username;
 use crate::{
     app::AppState,
-    config::AgentQueueConfig,
     domain::{
         actors::ActorId,
         issues::{Issue, IssueDependencyType, IssueStatus},
@@ -41,30 +40,15 @@ struct SpawnAttempt {
 }
 
 pub struct AgentQueue {
-    pub name: String,
-    pub prompt: String,
-    pub max_tries: u32,
-    pub max_simultaneous: u32,
+    pub agent: crate::domain::agents::Agent,
     spawn_attempts: RwLock<HashMap<IssueId, SpawnAttempt>>,
 }
 
 impl AgentQueue {
-    pub fn from_config(config: &AgentQueueConfig) -> Self {
+    pub fn new(agent: crate::domain::agents::Agent) -> Self {
         Self {
-            name: config.name.clone(),
-            prompt: config.prompt.clone(),
-            max_tries: config.max_tries,
-            max_simultaneous: config.max_simultaneous,
+            agent,
             spawn_attempts: RwLock::new(HashMap::new()),
-        }
-    }
-
-    pub fn as_config(&self) -> AgentQueueConfig {
-        AgentQueueConfig {
-            name: self.name.clone(),
-            prompt: self.prompt.clone(),
-            max_tries: self.max_tries,
-            max_simultaneous: self.max_simultaneous,
         }
     }
 
@@ -107,7 +91,15 @@ impl AgentQueue {
             _ => BundleSpec::None,
         };
 
-        let prompt = self.prompt.trim_end().to_string();
+        let prompt = state
+            .resolve_agent_prompt(&self.agent.prompt_path)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to fetch prompt for agent '{}' at path '{}'",
+                    self.agent.name, self.agent.prompt_path
+                )
+            })?;
 
         let image = job_settings
             .image
@@ -118,7 +110,7 @@ impl AgentQueue {
 
         let mut env_vars = HashMap::new();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
-        env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
+        env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.agent.name.clone());
 
         Ok(Some(Task::new(
             prompt,
@@ -177,22 +169,25 @@ impl AgentQueue {
     }
 
     fn max_tries_for_issue(&self, issue: &Issue) -> u32 {
-        issue.job_settings.max_retries.unwrap_or(self.max_tries)
+        issue
+            .job_settings
+            .max_retries
+            .unwrap_or(self.agent.max_tries as u32)
     }
 }
 
 #[async_trait]
 impl Spawner for AgentQueue {
     fn name(&self) -> &str {
-        &self.name
+        &self.agent.name
     }
 
     async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Task>> {
-        let task_state = agent_task_state(state, &self.name)
+        let task_state = agent_task_state(state, &self.agent.name)
             .await
             .context("failed to list tasks for agent queue")?;
 
-        let max_simultaneous = self.max_simultaneous as usize;
+        let max_simultaneous = self.agent.max_simultaneous as usize;
         if max_simultaneous == 0 {
             return Ok(Vec::new());
         }
@@ -204,8 +199,7 @@ impl Spawner for AgentQueue {
 
         let mut remaining_capacity = max_simultaneous - active_tasks;
 
-        let assignment_agent = state.config.background.assignment_agent.trim().to_string();
-        let is_assignment_agent = !assignment_agent.is_empty() && self.name == assignment_agent;
+        let is_assignment_agent = self.agent.is_assignment_agent;
 
         let issues = state
             .list_issues()
@@ -217,11 +211,11 @@ impl Spawner for AgentQueue {
             let issue = issue.item;
             if is_assignment_agent {
                 if let Some(name) = &issue.assignee
-                    && name != &self.name
+                    && name != &self.agent.name
                 {
                     continue;
                 }
-            } else if issue.assignee.as_deref() != Some(self.name.as_str()) {
+            } else if issue.assignee.as_deref() != Some(self.agent.name.as_str()) {
                 continue;
             }
 
@@ -385,7 +379,7 @@ mod tests {
     use crate::domain::patches::{Patch, PatchStatus, Review};
     use crate::{
         app::Repository,
-        config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
+        config::{DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
         test::{TestStateHandles, test_state_handles, test_state_with_repo_handles},
     };
     use chrono::Utc;
@@ -395,13 +389,32 @@ mod tests {
     }
 
     fn queue(agent_name: &str) -> AgentQueue {
-        AgentQueue {
-            name: agent_name.to_string(),
-            prompt: "Fix the issue".to_string(),
-            max_tries: DEFAULT_AGENT_MAX_TRIES,
-            max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
-            spawn_attempts: RwLock::new(HashMap::new()),
-        }
+        use crate::domain::agents::Agent;
+        AgentQueue::new(Agent::new(
+            agent_name.to_string(),
+            format!("/agents/{agent_name}/prompt.md"),
+            DEFAULT_AGENT_MAX_TRIES as i32,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS as i32,
+            false,
+        ))
+    }
+
+    async fn seed_agent_prompt(
+        handles: &TestStateHandles,
+        agent_name: &str,
+        prompt: &str,
+    ) -> anyhow::Result<()> {
+        use crate::domain::documents::Document;
+        let path = format!("/agents/{agent_name}/prompt.md");
+        let doc = Document {
+            title: format!("{agent_name} prompt"),
+            body_markdown: prompt.to_string(),
+            path: Some(path.parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        handles.store.add_document(doc, &ActorRef::test()).await?;
+        Ok(())
     }
 
     fn repository() -> (RepoName, Repository) {
@@ -427,6 +440,8 @@ mod tests {
     async fn state_with_repository() -> anyhow::Result<(TestStateHandles, RepoName)> {
         let (repo_name, repository) = repository();
         let handles = test_state_with_repo_handles(repo_name.clone(), repository).await?;
+        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
+        seed_agent_prompt(&handles, "agent-b", "Fix the issue").await?;
         Ok((handles, repo_name))
     }
 
@@ -592,7 +607,7 @@ mod tests {
                 ..
             } = task;
 
-            assert_eq!(prompt, "Fix the issue".to_string());
+            assert_eq!(prompt, "Fix the issue");
             assert_eq!(
                 context,
                 BundleSpec::ServiceRepository {
@@ -754,6 +769,7 @@ mod tests {
     #[tokio::test]
     async fn assignment_agent_spawns_for_unassigned_issue() -> anyhow::Result<()> {
         let handles = test_state_handles();
+        seed_agent_prompt(&handles, "assignment", "Assign unowned issues").await?;
         let (issue_id, _) = handles
             .store
             .add_issue(
@@ -762,8 +778,17 @@ mod tests {
             )
             .await?;
 
-        let queue = queue("assignment");
-        let tasks = queue.spawn(&handles.state).await?;
+        let q = {
+            use crate::domain::agents::Agent;
+            AgentQueue::new(Agent::new(
+                "assignment".to_string(),
+                "/agents/assignment/prompt.md".to_string(),
+                DEFAULT_AGENT_MAX_TRIES as i32,
+                DEFAULT_AGENT_MAX_SIMULTANEOUS as i32,
+                true,
+            ))
+        };
+        let tasks = q.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].context, BundleSpec::None);
         assert_eq!(
@@ -980,7 +1005,7 @@ mod tests {
     #[tokio::test]
     async fn uses_job_settings_max_retries_override() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
-        queue.max_tries = 3;
+        queue.agent.max_tries = 3;
 
         let (handles, repo_name) = state_with_repository().await?;
         handles
@@ -1027,7 +1052,7 @@ mod tests {
     #[tokio::test]
     async fn does_not_spawn_when_at_max_simultaneous() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
-        queue.max_simultaneous = 1;
+        queue.agent.max_simultaneous = 1;
 
         let (handles, repo_name) = state_with_repository().await?;
         let (issue_id, _) = handles
@@ -1091,7 +1116,7 @@ mod tests {
     #[tokio::test]
     async fn caps_new_tasks_to_remaining_capacity() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
-        queue.max_simultaneous = 2;
+        queue.agent.max_simultaneous = 2;
 
         let (handles, repo_name) = state_with_repository().await?;
         let (first_issue_id, _) = handles
@@ -1175,7 +1200,7 @@ mod tests {
     #[tokio::test]
     async fn enforces_max_spawn_attempts_per_state() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
-        queue.max_tries = 2;
+        queue.agent.max_tries = 2;
 
         let (handles, repo_name) = state_with_repository().await?;
         handles
@@ -1209,7 +1234,7 @@ mod tests {
     #[tokio::test]
     async fn resets_attempt_counter_when_status_changes() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
-        queue.max_tries = 1;
+        queue.agent.max_tries = 1;
 
         let (handles, repo_name) = state_with_repository().await?;
         let (issue_id, _) = handles
@@ -1247,7 +1272,7 @@ mod tests {
     #[tokio::test]
     async fn resets_attempt_counter_when_child_created() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
-        queue.max_tries = 1;
+        queue.agent.max_tries = 1;
 
         let (handles, repo_name) = state_with_repository().await?;
         let (parent_id, _) = handles
@@ -1305,7 +1330,7 @@ mod tests {
     #[tokio::test]
     async fn resets_attempt_counter_when_child_updated() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
-        queue.max_tries = 1;
+        queue.agent.max_tries = 1;
 
         let (handles, repo_name) = state_with_repository().await?;
         let (parent_id, _) = handles
@@ -1370,7 +1395,7 @@ mod tests {
     #[tokio::test]
     async fn does_not_reset_counter_when_children_unchanged() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
-        queue.max_tries = 1;
+        queue.agent.max_tries = 1;
 
         let (handles, repo_name) = state_with_repository().await?;
         let (parent_id, _) = handles
@@ -1420,20 +1445,24 @@ mod tests {
     }
 
     #[test]
-    fn builds_from_config() {
-        let config = AgentQueueConfig {
-            name: "agent-config".to_string(),
-            prompt: "Handle issues".to_string(),
-            max_tries: DEFAULT_AGENT_MAX_TRIES,
-            max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
-        };
+    fn builds_from_agent() {
+        use crate::domain::agents::Agent;
 
-        let queue = AgentQueue::from_config(&config);
+        let agent = Agent::new(
+            "test-agent".to_string(),
+            "/agents/test-agent/prompt.md".to_string(),
+            5,
+            10,
+            true,
+        );
 
-        assert_eq!(queue.name, "agent-config");
-        assert_eq!(queue.prompt, "Handle issues");
-        assert_eq!(queue.max_tries, DEFAULT_AGENT_MAX_TRIES);
-        assert_eq!(queue.max_simultaneous, DEFAULT_AGENT_MAX_SIMULTANEOUS);
+        let queue = AgentQueue::new(agent);
+
+        assert_eq!(queue.agent.name, "test-agent");
+        assert_eq!(queue.agent.prompt_path, "/agents/test-agent/prompt.md");
+        assert_eq!(queue.agent.max_tries, 5);
+        assert_eq!(queue.agent.max_simultaneous, 10);
+        assert!(queue.agent.is_assignment_agent);
     }
 
     #[tokio::test]
@@ -1491,6 +1520,7 @@ mod tests {
             .unwrap_or_else(|| "main".into());
         let default_image = "agent-image".to_string();
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
+        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
         let (issue_id, _) = handles
             .store
             .add_issue(
@@ -1557,6 +1587,7 @@ mod tests {
     async fn spawner_passes_secrets_from_job_settings() -> anyhow::Result<()> {
         let (repo_name, repository) = repository();
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
+        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
         let secrets = vec!["db-secret".to_string(), "api-key".to_string()];
         handles
             .store
@@ -1603,6 +1634,7 @@ mod tests {
     async fn spawner_handles_none_secrets() -> anyhow::Result<()> {
         let (repo_name, repository) = repository();
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
+        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
         handles
             .store
             .add_issue(
@@ -1792,7 +1824,7 @@ mod tests {
     #[tokio::test]
     async fn retry_counter_resets_on_new_unread_message() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
-        queue.max_tries = 1;
+        queue.agent.max_tries = 1;
 
         let (handles, repo_name) = state_with_repository().await?;
         let (issue_id, _) = handles
