@@ -104,9 +104,7 @@ export function SettingsPage() {
       )}
 
       {agents && agents.length > 0 && (
-        <Panel
-          header={<span className={styles.sectionTitle}>Agents</span>}
-        >
+        <Panel>
           <div className={styles.repoList}>
             {agents.map((agent) => (
               <AgentRow
