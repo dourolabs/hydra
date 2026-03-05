@@ -53,6 +53,8 @@ import type { UpsertLabelResponse } from "./generated/UpsertLabelResponse";
 import type { SearchLabelsQuery } from "./generated/SearchLabelsQuery";
 import type { ListLabelsResponse } from "./generated/ListLabelsResponse";
 import type { LabelRecord } from "./generated/LabelRecord";
+import type { ListSecretsResponse } from "./generated/ListSecretsResponse";
+import type { SetSecretRequest } from "./generated/SetSecretRequest";
 import {
   MetisEventSource,
   buildEventsUrl,
@@ -521,6 +523,26 @@ export class MetisApiClient {
   /** DELETE /v1/labels/:labelId/objects/:objectId */
   removeLabelFromObject(labelId: string, objectId: string): Promise<void> {
     return this.del(`/v1/labels/${encodeURIComponent(labelId)}/objects/${encodeURIComponent(objectId)}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Secrets
+  // ---------------------------------------------------------------------------
+
+  /** GET /v1/users/me/secrets */
+  listSecrets(): Promise<ListSecretsResponse> {
+    return this.get("/v1/users/me/secrets");
+  }
+
+  /** PUT /v1/users/me/secrets/:name */
+  setSecret(name: string, value: string): Promise<void> {
+    const body: SetSecretRequest = { value };
+    return this.put(`/v1/users/me/secrets/${encodeURIComponent(name)}`, body);
+  }
+
+  /** DELETE /v1/users/me/secrets/:name */
+  deleteSecret(name: string): Promise<void> {
+    return this.del(`/v1/users/me/secrets/${encodeURIComponent(name)}`);
   }
 
   // ---------------------------------------------------------------------------
