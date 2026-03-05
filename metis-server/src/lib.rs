@@ -208,6 +208,14 @@ pub async fn run_with_state(
         )
         .route("/v1/whoami", get(routes::whoami::whoami))
         .route("/v1/users/:username", get(routes::users::get_user))
+        .route(
+            "/v1/users/:username/secrets",
+            get(routes::secrets::list_secrets),
+        )
+        .route(
+            "/v1/users/:username/secrets/:name",
+            put(routes::secrets::set_secret).delete(routes::secrets::delete_secret),
+        )
         .route("/v1/events", get(routes::events::get_events))
         .route(
             "/v1/notifications",

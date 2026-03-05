@@ -14,6 +14,7 @@ pub mod messages;
 pub mod notifications;
 pub mod patches;
 pub mod repositories;
+pub mod secrets;
 pub mod users;
 pub mod whoami;
 

@@ -27,6 +27,7 @@ toml = "0.8"
 metis-common = { path = "../metis-common" }
 metis-build-cache = { path = "../metis-build-cache" }
 reqwest = { version = "0.12", features = ["json", "stream"] }
+rpassword = "5"
 tempfile = "3.13"
 textwrap = { version = "0.16", features = ["terminal_size"] }
 chrono = { version = "0.4", features = ["clock"] }
