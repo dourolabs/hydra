@@ -1,8 +1,8 @@
 use super::resolve_username;
 use crate::{app::AppState, domain::actors::Actor, store::StoreError};
+use axum::Extension;
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::Extension;
 use metis_common::api::v1::{self, ApiError};
 use tracing::info;
 
