@@ -4,14 +4,6 @@ test.describe("Navigation", () => {
   test("sidebar links navigate to correct pages", async ({
     authenticatedPage: page,
   }) => {
-    // Navigate to Issues via sidebar (icon-only links, use href selector)
-    await page.locator('nav a[href="/issues"]').click();
-    await expect(page).toHaveURL(/\/issues/);
-
-    // Navigate to Patches via sidebar
-    await page.locator('nav a[href="/patches"]').click();
-    await expect(page).toHaveURL(/\/patches/);
-
     // Navigate to Documents via sidebar
     await page.locator('nav a[href="/documents"]').click();
     await expect(page).toHaveURL(/\/documents/);
@@ -50,9 +42,9 @@ test.describe("Navigation", () => {
   });
 
   test("browser back button works", async ({ authenticatedPage: page }) => {
-    // Navigate to issues
-    await page.goto("/issues");
-    await expect(page).toHaveURL(/\/issues/);
+    // Navigate to dashboard
+    await page.goto("/");
+    await expect(page).toHaveURL(/\/\?selected=inbox$/);
 
     // Navigate to an issue detail
     await page.goto("/issues/i-seed00001");
@@ -60,6 +52,6 @@ test.describe("Navigation", () => {
 
     // Go back
     await page.goBack();
-    await expect(page).toHaveURL(/\/issues$/);
+    await expect(page).toHaveURL(/\/\?selected=inbox$/);
   });
 });

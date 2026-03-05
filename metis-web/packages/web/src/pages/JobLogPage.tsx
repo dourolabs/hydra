@@ -27,7 +27,7 @@ export function JobLogPage() {
     <div className={styles.page}>
       <Breadcrumbs
         items={[
-          { label: "Issues", to: "/issues" },
+          { label: "Dashboard", to: "/" },
           { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
         ]}
         current={`Job ${jobId}`}

@@ -11,9 +11,7 @@ const MOBILE_VIEWPORT = { width: 375, height: 812 };
 // Pages that require authentication
 const AUTHENTICATED_PAGES = [
   { name: "dashboard", path: "/" },
-  { name: "issues-list", path: "/issues" },
   { name: "issue-detail", path: "/issues/i-seed00001" },
-  { name: "patches-list", path: "/patches" },
   { name: "patch-detail", path: "/patches/p-seed00001" },
   { name: "documents-list", path: "/documents" },
   { name: "document-detail", path: "/documents/d-seed00001" },

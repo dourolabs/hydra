@@ -28,31 +28,11 @@ const NAV_ITEMS = [
     end: true,
   },
   {
-    to: "/issues",
-    label: "Issues",
-    icon: (
-      <svg className={styles.navIcon} viewBox="0 0 20 20" fill="currentColor">
-        <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
-      </svg>
-    ),
-    end: false,
-  },
-  {
     to: "/documents",
     label: "Documents",
     icon: (
       <svg className={styles.navIcon} viewBox="0 0 20 20" fill="currentColor">
         <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-      </svg>
-    ),
-    end: false,
-  },
-  {
-    to: "/patches",
-    label: "Patches",
-    icon: (
-      <svg className={styles.navIcon} viewBox="0 0 20 20" fill="currentColor">
-        <path d="M3 4a2 2 0 1 1 4 0 2 2 0 0 1-4 0zM3 16a2 2 0 1 1 4 0 2 2 0 0 1-4 0zM13 4a2 2 0 1 1 4 0 2 2 0 0 1-4 0zM4 6h2v8H4zM14 6.5C14 10 10 13 6 14V12C9 11 12 9 12 6.5H14Z" />
       </svg>
     ),
     end: false,
