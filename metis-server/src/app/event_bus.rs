@@ -1,5 +1,6 @@
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
+    agents::Agent,
     documents::Document,
     issues::{Issue, IssueGraphFilter},
     labels::Label,
@@ -937,6 +938,20 @@ impl StoreWithEvents {
             .await
     }
 
+    // ---- Agent mutations ----
+
+    pub async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
+        self.inner.add_agent(agent).await
+    }
+
+    pub async fn update_agent(&self, agent: Agent) -> Result<(), StoreError> {
+        self.inner.update_agent(agent).await
+    }
+
+    pub async fn delete_agent(&self, name: &str) -> Result<(), StoreError> {
+        self.inner.delete_agent(name).await
+    }
+
     // ---- Label mutations ----
 
     pub async fn add_label(&self, label: Label) -> Result<LabelId, StoreError> {
@@ -1194,6 +1209,16 @@ impl ReadOnlyStore for StoreWithEvents {
 
     async fn count_unread_notifications(&self, recipient: &ActorId) -> Result<u64, StoreError> {
         self.inner.count_unread_notifications(recipient).await
+    }
+
+    // ---- Agent (read-only) ----
+
+    async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
+        self.inner.get_agent(name).await
+    }
+
+    async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
+        self.inner.list_agents().await
     }
 
     // ---- Label (read-only) ----

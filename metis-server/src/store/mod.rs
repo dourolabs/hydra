@@ -1,5 +1,6 @@
 use crate::domain::{
     actors::{Actor, ActorError, ActorId, ActorRef},
+    agents::Agent,
     documents::Document,
     issues::{Issue, IssueGraphFilter},
     labels::Label,
@@ -113,6 +114,12 @@ pub enum StoreError {
     MessageNotFound(MessageId),
     #[error("Notification not found: {0}")]
     NotificationNotFound(NotificationId),
+    #[error("Agent not found: {0}")]
+    AgentNotFound(String),
+    #[error("Agent already exists: {0}")]
+    AgentAlreadyExists(String),
+    #[error("Only one assignment agent is allowed")]
+    AssignmentAgentAlreadyExists,
     #[error("Label not found: {0}")]
     LabelNotFound(LabelId),
     #[error("Label already exists: {0}")]
@@ -394,6 +401,17 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchMessagesQuery,
     ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError>;
+
+    // ---- Agent (read-only) ----
+
+    /// Retrieves an agent by its name.
+    ///
+    /// Returns `StoreError::AgentNotFound` if the agent does not exist or
+    /// has been soft-deleted.
+    async fn get_agent(&self, name: &str) -> Result<Agent, StoreError>;
+
+    /// Lists all non-deleted agents, ordered by name.
+    async fn list_agents(&self) -> Result<Vec<Agent>, StoreError>;
 
     // ---- Label (read-only) ----
 
@@ -679,6 +697,28 @@ pub trait Store: ReadOnlyStore {
         message: Message,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
+
+    // ---- Agent mutations ----
+
+    /// Adds a new agent to the store.
+    ///
+    /// Returns `StoreError::AgentAlreadyExists` if a non-deleted agent with
+    /// the same name already exists.
+    /// Returns `StoreError::AssignmentAgentAlreadyExists` if `is_assignment_agent`
+    /// is true and another non-deleted agent already has this flag set.
+    async fn add_agent(&self, agent: Agent) -> Result<(), StoreError>;
+
+    /// Updates an existing agent.
+    ///
+    /// Returns `StoreError::AgentNotFound` if the agent does not exist.
+    /// Returns `StoreError::AssignmentAgentAlreadyExists` if setting
+    /// `is_assignment_agent` to true when another agent already has it set.
+    async fn update_agent(&self, agent: Agent) -> Result<(), StoreError>;
+
+    /// Soft-deletes an agent by setting its `deleted` flag to true.
+    ///
+    /// Returns `StoreError::AgentNotFound` if the agent does not exist.
+    async fn delete_agent(&self, name: &str) -> Result<(), StoreError>;
 
     // ---- Label mutations ----
 

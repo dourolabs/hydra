@@ -259,8 +259,10 @@ mod tests {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "writer",
                 "prompt": "draft this",
+                "prompt_path": "",
                 "max_tries": 2,
-                "max_simultaneous": 4
+                "max_simultaneous": 4,
+                "is_assignment_agent": false
             }));
             then.status(200).json_body_obj(&response);
         });
@@ -291,8 +293,10 @@ mod tests {
             when.method(PUT).path("/v1/agents/writer").json_body(json!({
                 "name": "writer",
                 "prompt": "revised",
+                "prompt_path": "",
                 "max_tries": 3,
-                "max_simultaneous": 10
+                "max_simultaneous": 10,
+                "is_assignment_agent": false
             }));
             then.status(200).json_body_obj(&updated);
         });
