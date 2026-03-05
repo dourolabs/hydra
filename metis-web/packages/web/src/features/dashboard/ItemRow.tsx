@@ -1,13 +1,14 @@
 import React, { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Avatar, JobStatusIndicator } from "@metis/ui";
-import type { JobSummaryRecord } from "@metis/api";
+import type { JobSummaryRecord, LabelSummary } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { useAuth } from "../auth/useAuth";
 import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
+import { LabelChip } from "../labels/LabelChip";
 import styles from "./ItemRow.module.css";
 
 const STATUS_DOT_CLASSES: Record<string, string> = {
@@ -179,6 +180,17 @@ export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
           </span>
         )}
       </span>
+      {item.kind === "issue" && item.data.labels && item.data.labels.length > 0 && (
+        <span className={styles.labels}>
+          {item.data.labels.map((label: LabelSummary) => (
+            <LabelChip
+              key={label.label_id}
+              name={label.name}
+              color={label.color}
+            />
+          ))}
+        </span>
+      )}
       {jobSummaries && jobSummaries.length > 0 && (
         <span
           className={styles.jobIndicator}

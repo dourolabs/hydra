@@ -9,6 +9,7 @@ import { useFormDraft } from "../../hooks/useFormDraft";
 import { useAuth } from "../auth/useAuth";
 import { useToast } from "../toast/useToast";
 import { actorDisplayName } from "../../api/auth";
+import { LabelPicker } from "../labels/LabelPicker";
 import styles from "./IssueCreateModal.module.css";
 
 const issueTypeOptions: SelectOption[] = [
@@ -52,6 +53,7 @@ export function IssueCreateModal({
   const [issueType, setIssueType, clearIssueTypeDraft] = useFormDraft<IssueType>("metis:draft:issue-create-modal:issueType", "task");
   const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft("metis:draft:issue-create-modal:assignee", "");
   const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft("metis:draft:issue-create-modal:repoName", "");
+  const [labelNames, setLabelNames, clearLabelNamesDraft] = useFormDraft<string[]>("metis:draft:issue-create-modal:labelNames", []);
 
   const resetForm = useCallback(() => {
     setTitle("");
@@ -59,12 +61,14 @@ export function IssueCreateModal({
     setIssueType("task");
     setAssignee("");
     setRepoName("");
+    setLabelNames([]);
     clearTitleDraft();
     clearDescriptionDraft();
     clearIssueTypeDraft();
     clearAssigneeDraft();
     clearRepoNameDraft();
-  }, [setTitle, setDescription, setIssueType, setAssignee, setRepoName, clearTitleDraft, clearDescriptionDraft, clearIssueTypeDraft, clearAssigneeDraft, clearRepoNameDraft]);
+    clearLabelNamesDraft();
+  }, [setTitle, setDescription, setIssueType, setAssignee, setRepoName, setLabelNames, clearTitleDraft, clearDescriptionDraft, clearIssueTypeDraft, clearAssigneeDraft, clearRepoNameDraft, clearLabelNamesDraft]);
 
   const mutation = useMutation({
     mutationFn: (params: {
@@ -74,6 +78,7 @@ export function IssueCreateModal({
       type: IssueType;
       assignee?: string;
       repoName?: string;
+      labelNames?: string[];
     }) =>
       apiClient.createIssue({
         issue: {
@@ -91,6 +96,9 @@ export function IssueCreateModal({
           }),
         },
         job_id: null,
+        ...(params.labelNames && params.labelNames.length > 0 && {
+          label_names: params.labelNames,
+        }),
       }),
     onSuccess: (data) => {
       resetForm();
@@ -116,8 +124,9 @@ export function IssueCreateModal({
       type: issueType,
       ...(assignee && { assignee }),
       ...(repoName && { repoName }),
+      ...(labelNames.length > 0 && { labelNames }),
     });
-  }, [title, description, currentUsername, issueType, assignee, repoName, mutation]);
+  }, [title, description, currentUsername, issueType, assignee, repoName, labelNames, mutation]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -184,6 +193,7 @@ export function IssueCreateModal({
             onChange={(e) => setRepoName(e.target.value)}
           />
         </div>
+        <LabelPicker selectedNames={labelNames} onChange={setLabelNames} />
         <div className={styles.footer}>
           <span className={styles.hint}>
             {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to
