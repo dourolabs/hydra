@@ -393,14 +393,19 @@ async fn serialize_entity(
                     .map(|v| v.creation_time)
                     .unwrap_or(timestamp)
             };
+            let issue_id: IssueId = entity_id.parse().ok()?;
+            let labels = state
+                .get_labels_for_object(&metis_common::MetisId::from(issue_id.clone()))
+                .await
+                .unwrap_or_default();
             let record = IssueSummaryRecord::new(
-                entity_id.parse().ok()?,
+                issue_id,
                 version,
                 timestamp,
                 summary,
                 Some(payload.actor().clone()),
                 creation_time,
-                Vec::new(),
+                labels,
             );
             serde_json::to_value(record).ok()?
         }
@@ -1362,5 +1367,55 @@ mod tests {
             }
         }
         // The event is not NotificationCreated, so it passes through.
+    }
+
+    #[tokio::test]
+    async fn serialize_entity_includes_labels_for_issue() {
+        let store = Arc::new(MemoryStore::new());
+        let handles = test_state_with_store(store.clone());
+        let state = handles.state;
+
+        // Create an issue in the store so the labels lookup works.
+        let issue = dummy_issue();
+        let (issue_id, _) = store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Add a label and associate it with the issue.
+        let label =
+            crate::domain::labels::Label::new("bug".to_string(), "#e74c3c".parse().unwrap());
+        let label_id = store.add_label(label).await.unwrap();
+        let object_id = metis_common::MetisId::from(issue_id.clone());
+        store
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+
+        // Build an IssueUpdated event.
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(issue.clone()),
+            new: issue,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::IssueUpdated {
+            seq: 2,
+            issue_id: issue_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let (_, data) = server_event_to_sse(&event, &state).await;
+
+        let entity = data.entity.expect("entity should be present");
+        let issue_obj = entity.get("issue").expect("should contain issue field");
+        let labels = issue_obj
+            .get("labels")
+            .expect("should contain labels field")
+            .as_array()
+            .expect("labels should be an array");
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].get("name").unwrap().as_str().unwrap(), "bug");
     }
 }
