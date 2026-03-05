@@ -8,6 +8,9 @@ use metis_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::error::ApiErrorBody,
     api::v1::events::EventsQuery,
+    api::v1::labels::{
+        ListLabelsResponse, SearchLabelsQuery, UpsertLabelRequest, UpsertLabelResponse,
+    },
     api::v1::login::{LoginRequest, LoginResponse},
     api::v1::messages::{
         ListMessagesResponse, ReceiveMessagesQuery, SearchMessagesQuery, SendMessageRequest,
@@ -45,7 +48,8 @@ use metis_common::{
     },
     users::UserSummary,
     whoami::WhoAmIResponse,
-    ActorId, DocumentId, IssueId, NotificationId, PatchId, RelativeVersionNumber, RepoName, TaskId,
+    ActorId, DocumentId, IssueId, LabelId, MetisId, NotificationId, PatchId, RelativeVersionNumber,
+    RepoName, TaskId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
 use sse::SseEventStream;
@@ -276,6 +280,12 @@ pub trait MetisClientInterface: Send + Sync {
         &self,
         before: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<MarkReadResponse>;
+
+    async fn list_labels(&self, query: &SearchLabelsQuery) -> Result<ListLabelsResponse>;
+    async fn create_label(&self, request: &UpsertLabelRequest) -> Result<UpsertLabelResponse>;
+    async fn add_label_association(&self, label_id: &LabelId, object_id: &MetisId) -> Result<()>;
+    async fn remove_label_association(&self, label_id: &LabelId, object_id: &MetisId)
+        -> Result<()>;
 
     /// Resolve the current actor's ID from the auth context.
     async fn current_actor_id(&self) -> Result<ActorId> {
@@ -1661,6 +1671,80 @@ impl MetisClient {
             .context("failed to decode mark all read response")
     }
 
+    /// Call `GET /v1/labels` to list labels with optional filters.
+    pub async fn list_labels(&self, query: &SearchLabelsQuery) -> Result<ListLabelsResponse> {
+        let url = self.endpoint("/v1/labels")?;
+        let response = self
+            .authed(self.http.get(url))
+            .query(query)
+            .send()
+            .await
+            .context("failed to fetch labels list")?
+            .error_for_status_with_body("metis-server returned an error while listing labels")
+            .await?;
+
+        response
+            .json::<ListLabelsResponse>()
+            .await
+            .context("failed to decode list labels response")
+    }
+
+    /// Call `POST /v1/labels` to create a new label.
+    pub async fn create_label(&self, request: &UpsertLabelRequest) -> Result<UpsertLabelResponse> {
+        let url = self.endpoint("/v1/labels")?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit create label request")?
+            .error_for_status_with_body("metis-server rejected create label request")
+            .await?;
+
+        response
+            .json::<UpsertLabelResponse>()
+            .await
+            .context("failed to decode create label response")
+    }
+
+    /// Call `PUT /v1/labels/:label_id/objects/:object_id` to add a label association.
+    pub async fn add_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<()> {
+        let path = format!("/v1/labels/{label_id}/objects/{object_id}");
+        let url = self.endpoint(&path)?;
+        self.authed(self.http.put(url))
+            .send()
+            .await
+            .context("failed to add label association")?
+            .error_for_status_with_body(
+                "metis-server returned an error while adding label association",
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Call `DELETE /v1/labels/:label_id/objects/:object_id` to remove a label association.
+    pub async fn remove_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<()> {
+        let path = format!("/v1/labels/{label_id}/objects/{object_id}");
+        let url = self.endpoint(&path)?;
+        self.authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to remove label association")?
+            .error_for_status_with_body(
+                "metis-server returned an error while removing label association",
+            )
+            .await?;
+        Ok(())
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -2098,6 +2182,26 @@ impl MetisClientInterface for MetisClient {
         before: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<MarkReadResponse> {
         MetisClient::mark_all_notifications_read(self, before).await
+    }
+
+    async fn list_labels(&self, query: &SearchLabelsQuery) -> Result<ListLabelsResponse> {
+        MetisClient::list_labels(self, query).await
+    }
+
+    async fn create_label(&self, request: &UpsertLabelRequest) -> Result<UpsertLabelResponse> {
+        MetisClient::create_label(self, request).await
+    }
+
+    async fn add_label_association(&self, label_id: &LabelId, object_id: &MetisId) -> Result<()> {
+        MetisClient::add_label_association(self, label_id, object_id).await
+    }
+
+    async fn remove_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<()> {
+        MetisClient::remove_label_association(self, label_id, object_id).await
     }
 }
 
