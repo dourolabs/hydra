@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, JobSummaryRecord, LabelRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
+import { useLabels } from "../labels/useLabels";
 import { descriptionSnippet } from "../../utils/text";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { computeIssueProgress, type ChildStatus, type IssueProgress } from "./computeIssueProgress";
@@ -39,6 +40,61 @@ function StatusBoxes({ progress }: { progress: IssueProgress }) {
       ))}
     </span>
   );
+}
+
+/** Label filter prefix used in activeFilter to distinguish label filters from issue filters. */
+export const LABEL_FILTER_PREFIX = "label:";
+
+interface LabelProgress {
+  labelId: string;
+  name: string;
+  color: string;
+  closed: number;
+  total: number;
+  children: ChildStatus[];
+}
+
+function computeLabelProgress(
+  labels: LabelRecord[],
+  allIssues: IssueSummaryRecord[],
+  jobsByIssue: Map<string, JobSummaryRecord[]>,
+  username: string,
+): LabelProgress[] {
+  return labels.map((label) => {
+    const labelIssues = allIssues.filter((issue) =>
+      issue.labels?.some((l: { label_id: string }) => l.label_id === label.label_id),
+    );
+
+    let closed = 0;
+    const children: ChildStatus[] = [];
+
+    for (const issue of labelIssues) {
+      const status = issue.issue.status;
+      if (status === "closed") closed++;
+
+      const jobs = jobsByIssue.get(issue.issue_id) ?? [];
+      const hasActiveTask = jobs.some(
+        (j) => j.task.status === "running" || j.task.status === "pending",
+      );
+      const assignedToUser = !!(username && issue.issue.assignee === username);
+
+      children.push({
+        id: issue.issue_id,
+        status,
+        hasActiveTask,
+        assignedToUser,
+      });
+    }
+
+    return {
+      labelId: label.label_id,
+      name: label.name,
+      color: label.color,
+      closed,
+      total: labelIssues.length,
+      children,
+    };
+  });
 }
 
 export function IssueFilterSidebar({
@@ -90,7 +146,14 @@ export function IssueFilterSidebar({
 
   const [completedExpanded, setCompletedExpanded] = useState(false);
 
-  if (progressList.length === 0) return null;
+  const { data: labels } = useLabels();
+
+  const labelProgressList = useMemo(() => {
+    if (!labels || labels.length === 0) return [];
+    return computeLabelProgress(labels, allIssues, jobsByIssue, username);
+  }, [labels, allIssues, jobsByIssue, username]);
+
+  if (progressList.length === 0 && labelProgressList.length === 0) return null;
 
   const renderItem = (p: IssueProgress) => {
     const label = p.rootIssue.issue.title || descriptionSnippet(p.rootIssue.issue.description, 80);
@@ -121,6 +184,40 @@ export function IssueFilterSidebar({
             {p.needsAttentionCount}
           </span>
         )}
+      </li>
+    );
+  };
+
+  const renderLabelItem = (lp: LabelProgress) => {
+    const filterId = `${LABEL_FILTER_PREFIX}${lp.labelId}`;
+    const isActive = activeFilter === filterId;
+    return (
+      <li
+        key={lp.labelId}
+        className={`${styles.item} ${isActive ? styles.active : ""}`}
+        onClick={() => handleFilterChange(isActive ? null : filterId)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleFilterChange(isActive ? null : filterId);
+          }
+        }}
+      >
+        <span className={styles.itemLeft}>
+          <span className={styles.itemLabel}>
+            <span
+              className={styles.labelDot}
+              style={{ background: lp.color }}
+            />
+            {lp.name}
+          </span>
+          <span className={styles.itemStats}>
+            <StatusBoxes progress={{ children: lp.children } as IssueProgress} />
+            {lp.closed}/{lp.total}
+          </span>
+        </span>
       </li>
     );
   };
@@ -178,6 +275,12 @@ export function IssueFilterSidebar({
             </span>
           </li>
           {completedExpanded && completedList.map(renderItem)}
+        </>
+      )}
+      {labelProgressList.length > 0 && (
+        <>
+          <li className={styles.labelSectionHeader}>Labels</li>
+          {labelProgressList.map(renderLabelItem)}
         </>
       )}
     </ul>

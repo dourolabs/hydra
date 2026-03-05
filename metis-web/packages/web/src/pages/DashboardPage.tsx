@@ -5,7 +5,7 @@ import { useIssues, buildIssueTree } from "../features/issues/useIssues";
 import { useAllJobs } from "../features/jobs/useAllJobs";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
-import { IssueFilterSidebar } from "../features/dashboard/IssueFilterSidebar";
+import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/IssueFilterSidebar";
 import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
 import { useTransitiveWorkItems } from "../features/dashboard/useTransitiveWorkItems";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
@@ -67,18 +67,27 @@ export function DashboardPage() {
     return Array.from(set).sort();
   }, [issues]);
 
-  const hookRootId = filterRootId === "inbox" ? null : filterRootId;
+  const isLabelFilter = filterRootId?.startsWith(LABEL_FILTER_PREFIX) ?? false;
+  const hookRootId = filterRootId === "inbox" || isLabelFilter ? null : filterRootId;
   const { items: allWorkItems, isLoading: workItemsLoading } =
     useTransitiveWorkItems(hookRootId, issues ?? []);
 
   const workItems = useMemo(() => {
+    if (isLabelFilter) {
+      const labelId = filterRootId!.slice(LABEL_FILTER_PREFIX.length);
+      return allWorkItems.filter(
+        (item) =>
+          item.kind === "issue" &&
+          item.data.labels?.some((l: { label_id: string }) => l.label_id === labelId),
+      );
+    }
     if (filterRootId !== "inbox") return allWorkItems;
     return allWorkItems.filter(
       (item) =>
         item.kind === "issue" &&
         item.data.issue.assignee === username,
     );
-  }, [filterRootId, allWorkItems, username]);
+  }, [filterRootId, isLabelFilter, allWorkItems, username]);
 
   useEffect(() => {
     if (!searchParams.has("selected")) {
