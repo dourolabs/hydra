@@ -7,7 +7,12 @@ import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/IssueFilterSidebar";
 import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
-import { useTransitiveWorkItems } from "../features/dashboard/useTransitiveWorkItems";
+import {
+  useTransitiveWorkItems,
+  findRootIssueIds,
+  findTransitiveChildren,
+} from "../features/dashboard/useTransitiveWorkItems";
+import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import styles from "./DashboardPage.module.css";
@@ -71,6 +76,25 @@ export function DashboardPage() {
   const hookRootId = filterRootId === "inbox" || isLabelFilter ? null : filterRootId;
   const { items: allWorkItems, isLoading: workItemsLoading } =
     useTransitiveWorkItems(hookRootId, issues ?? []);
+
+  // Compute inbox badge count using the same tree-walk logic as
+  // useTransitiveWorkItems so it matches the displayed "Active (N)" count.
+  const inboxCount = useMemo(() => {
+    if (!issues) return 0;
+    const rootIds = findRootIssueIds(issues);
+    const reachableIds = new Set<string>();
+    for (const rootId of rootIds) {
+      for (const id of findTransitiveChildren(rootId, issues)) {
+        reachableIds.add(id);
+      }
+    }
+    return issues.filter(
+      (issue) =>
+        reachableIds.has(issue.issue_id) &&
+        !TERMINAL_STATUSES.has(issue.issue.status) &&
+        issue.issue.assignee === username,
+    ).length;
+  }, [issues, username]);
 
   const workItems = useMemo(() => {
     if (isLabelFilter) {
@@ -144,6 +168,7 @@ export function DashboardPage() {
           onDrawerClose={handleDrawerClose}
           jobsByIssue={jobsByIssue ?? new Map()}
           username={username}
+          inboxCount={inboxCount}
         />
         <HeterogeneousItemList
           items={workItems}
