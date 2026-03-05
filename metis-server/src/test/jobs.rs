@@ -13,7 +13,8 @@ use crate::{
     store::{MemoryStore, Status, Task},
     test_utils::{
         MockJobEngine, add_repository, spawn_test_server, spawn_test_server_with_state,
-        test_app_config, test_client, test_state_handles, test_state_with_engine_handles,
+        test_app_config, test_client, test_secret_manager, test_state_handles,
+        test_state_with_engine_handles,
     },
 };
 use chrono::{Duration, Utc};
@@ -390,7 +391,7 @@ async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        None,
+        test_secret_manager(),
     );
     let server = spawn_test_server_with_state(state, store).await?;
 

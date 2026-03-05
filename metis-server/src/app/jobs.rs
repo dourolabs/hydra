@@ -250,33 +250,31 @@ impl AppState {
         ];
 
         for (secret_name, config_fallback) in secret_entries {
-            // 1. Try user-specific secret (if SecretManager is available)
-            if let Some(secret_manager) = &self.secret_manager {
-                match self.store.get_user_secret(creator, secret_name).await {
-                    Ok(Some(encrypted)) => match secret_manager.decrypt(&encrypted) {
-                        Ok(value) if !value.trim().is_empty() => {
-                            env_vars.insert(secret_name.to_string(), value);
-                            continue;
-                        }
-                        Ok(_) => {}
-                        Err(err) => {
-                            warn!(
-                                username = %creator,
-                                secret = secret_name,
-                                error = %err,
-                                "failed to decrypt user secret, falling back to global config"
-                            );
-                        }
-                    },
-                    Ok(None) => {}
+            // 1. Try user-specific secret
+            match self.store.get_user_secret(creator, secret_name).await {
+                Ok(Some(encrypted)) => match self.secret_manager.decrypt(&encrypted) {
+                    Ok(value) if !value.trim().is_empty() => {
+                        env_vars.insert(secret_name.to_string(), value);
+                        continue;
+                    }
+                    Ok(_) => {}
                     Err(err) => {
                         warn!(
                             username = %creator,
                             secret = secret_name,
                             error = %err,
-                            "failed to look up user secret, falling back to global config"
+                            "failed to decrypt user secret, falling back to global config"
                         );
                     }
+                },
+                Ok(None) => {}
+                Err(err) => {
+                    warn!(
+                        username = %creator,
+                        secret = secret_name,
+                        error = %err,
+                        "failed to look up user secret, falling back to global config"
+                    );
                 }
             }
 

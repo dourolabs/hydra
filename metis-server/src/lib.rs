@@ -19,7 +19,7 @@ mod test;
 use crate::app::{AppState, ServiceState};
 use crate::background::start_background_scheduler;
 use crate::config::{AppConfig, GithubAppSection, build_kube_client};
-use crate::domain::secrets::{ENV_SECRET_ENCRYPTION_KEY, SecretManager};
+use crate::domain::secrets::SecretManager;
 use crate::job_engine::KubernetesJobEngine;
 use crate::store::{
     MemoryStore, Store, migration,
@@ -34,7 +34,7 @@ use jsonwebtoken::EncodingKey;
 use metis_common::constants::ENV_METIS_CONFIG;
 use octocrab::Octocrab;
 use serde_json::json;
-use std::{env, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 
 pub async fn run_with_state(
@@ -304,21 +304,12 @@ pub async fn run() -> anyhow::Result<()> {
         image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
     };
 
-    // Initialize SecretManager from METIS_SECRET_ENCRYPTION_KEY env var (optional)
-    let secret_manager = env::var(ENV_SECRET_ENCRYPTION_KEY)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .map(|key| {
-            let mgr =
-                SecretManager::from_base64(&key).context("invalid METIS_SECRET_ENCRYPTION_KEY")?;
-            info!("secret encryption enabled");
-            Ok::<_, anyhow::Error>(Arc::new(mgr))
-        })
-        .transpose()?;
-
-    if secret_manager.is_none() {
-        info!("METIS_SECRET_ENCRYPTION_KEY not set; user secret encryption disabled");
-    }
+    // Initialize SecretManager from config (mandatory)
+    let secret_manager = Arc::new(
+        SecretManager::from_base64(&app_config.metis.secret_encryption_key)
+            .context("invalid metis.secret_encryption_key")?,
+    );
+    info!("secret encryption enabled");
 
     let state = AppState::new(
         Arc::new(app_config),

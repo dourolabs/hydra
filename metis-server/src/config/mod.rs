@@ -15,7 +15,6 @@ use crate::policy::config::PolicyConfig;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
-    #[serde(default)]
     pub metis: MetisSection,
     pub job: JobSection,
     #[serde(default)]
@@ -73,6 +72,7 @@ pub struct MetisSection {
     pub namespace: String,
     #[serde(default)]
     pub server_hostname: String,
+    pub secret_encryption_key: String,
     #[serde(default)]
     pub allowed_orgs: Vec<String>,
     #[serde(default, rename = "OPENAI_API_KEY")]
@@ -86,6 +86,22 @@ pub struct MetisSection {
 impl MetisSection {
     fn validate(&self) -> Result<()> {
         ensure!(
+            non_empty(&self.secret_encryption_key).is_some(),
+            "metis.secret_encryption_key must be set"
+        );
+        // Validate it's valid base64 and exactly 32 bytes
+        {
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(self.secret_encryption_key.trim())
+                .context("metis.secret_encryption_key is not valid base64")?;
+            ensure!(
+                bytes.len() == 32,
+                "metis.secret_encryption_key must decode to exactly 32 bytes (got {})",
+                bytes.len()
+            );
+        }
+        ensure!(
             self.allowed_orgs.iter().all(|org| non_empty(org).is_some()),
             "metis.allowed_orgs must not contain empty values"
         );
@@ -93,11 +109,14 @@ impl MetisSection {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl Default for MetisSection {
     fn default() -> Self {
+        use base64::Engine;
         Self {
             namespace: default_namespace(),
             server_hostname: String::new(),
+            secret_encryption_key: base64::engine::general_purpose::STANDARD.encode([42u8; 32]),
             allowed_orgs: Vec::new(),
             openai_api_key: None,
             anthropic_api_key: None,
@@ -541,6 +560,9 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// Valid base64-encoded 32-byte key for test configs.
+    const TEST_SECRET_KEY: &str = "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=";
+
     fn error_chain_contains(error: &anyhow::Error, needle: &str) -> bool {
         error
             .chain()
@@ -633,12 +655,20 @@ mod tests {
         let path = temp_dir.path().join("config.yaml");
         fs::write(
             &path,
-            r#"
+            format!(
+                r#"
+metis:
+  secret_encryption_key: "{TEST_SECRET_KEY}"
+
+job:
+  default_image: "metis-worker:latest"
+
 github_app:
   app_id: 1
   client_id: "client-id"
   client_secret: "client-secret"
-"#,
+"#
+            ),
         )?;
 
         let error = AppConfig::load(&path).expect_err("expected missing private_key");
@@ -653,8 +683,10 @@ github_app:
         let path = temp_dir.path().join("config.yaml");
         fs::write(
             &path,
-            r#"
+            format!(
+                r#"
 metis:
+  secret_encryption_key: "{TEST_SECRET_KEY}"
   allowed_orgs: []
 
 job:
@@ -671,7 +703,8 @@ github_app:
   api_base_url: "https://api.github.com"
   oauth_base_url: "https://github.com"
   private_key: "private-key"
-"#,
+"#
+            ),
         )?;
 
         let config = AppConfig::load(&path)?;
@@ -686,8 +719,10 @@ github_app:
         let path = temp_dir.path().join("config.yaml");
         fs::write(
             &path,
-            r#"
+            format!(
+                r#"
 metis:
+  secret_encryption_key: "{TEST_SECRET_KEY}"
   allowed_orgs: [" ", ""]
 
 job:
@@ -704,13 +739,115 @@ github_app:
   api_base_url: "https://api.github.com"
   oauth_base_url: "https://github.com"
   private_key: "private-key"
-"#,
+"#
+            ),
         )?;
 
         let error = AppConfig::load(&path).expect_err("expected blank allowed_orgs entry");
         assert!(error_chain_contains(
             &error,
             "metis.allowed_orgs must not contain empty values"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_rejects_missing_secret_encryption_key() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            r#"
+metis:
+  allowed_orgs: []
+
+job:
+  default_image: "metis-worker:latest"
+
+github_app:
+  app_id: 1
+  client_id: "client-id"
+  client_secret: "client-secret"
+  api_base_url: "https://api.github.com"
+  oauth_base_url: "https://github.com"
+  private_key: "private-key"
+"#,
+        )?;
+
+        let error = AppConfig::load(&path).expect_err("expected missing secret_encryption_key");
+        assert!(error_chain_contains(
+            &error,
+            "missing field `secret_encryption_key`"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_rejects_invalid_base64_secret_encryption_key() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            r#"
+metis:
+  secret_encryption_key: "not-valid-base64!!!"
+
+job:
+  default_image: "metis-worker:latest"
+
+github_app:
+  app_id: 1
+  client_id: "client-id"
+  client_secret: "client-secret"
+  api_base_url: "https://api.github.com"
+  oauth_base_url: "https://github.com"
+  private_key: "private-key"
+"#,
+        )?;
+
+        let error = AppConfig::load(&path).expect_err("expected invalid base64");
+        assert!(error_chain_contains(
+            &error,
+            "metis.secret_encryption_key is not valid base64"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_rejects_wrong_length_secret_encryption_key() -> anyhow::Result<()> {
+        use base64::Engine;
+        let short_key = base64::engine::general_purpose::STANDARD.encode([42u8; 16]);
+
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+metis:
+  secret_encryption_key: "{short_key}"
+
+job:
+  default_image: "metis-worker:latest"
+
+github_app:
+  app_id: 1
+  client_id: "client-id"
+  client_secret: "client-secret"
+  api_base_url: "https://api.github.com"
+  oauth_base_url: "https://github.com"
+  private_key: "private-key"
+"#
+            ),
+        )?;
+
+        let error = AppConfig::load(&path).expect_err("expected wrong-length key");
+        assert!(error_chain_contains(
+            &error,
+            "metis.secret_encryption_key must decode to exactly 32 bytes"
         ));
 
         Ok(())

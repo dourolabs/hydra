@@ -4,7 +4,8 @@ use crate::{
     domain::{actors::ActorRef, agents::Agent},
     store::{MemoryStore, Store},
     test_utils::{
-        MockJobEngine, TestStateHandles, spawn_test_server_with_state, test_app_config, test_client,
+        MockJobEngine, TestStateHandles, spawn_test_server_with_state, test_app_config,
+        test_client, test_secret_manager,
     },
 };
 use metis_common::agents::{
@@ -21,7 +22,7 @@ async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        None,
+        test_secret_manager(),
     );
 
     for name in agent_names {

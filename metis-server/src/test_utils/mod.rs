@@ -4,7 +4,10 @@ use crate::{
         AppConfig, BackgroundSection, BuildCacheSection, DatabaseSection, GithubAppSection,
         JobSection, KubernetesSection, MetisSection, SchedulerSection, WorkerSchedulerConfig,
     },
-    domain::actors::{Actor, ActorRef},
+    domain::{
+        actors::{Actor, ActorRef},
+        secrets::SecretManager,
+    },
     job_engine::JobEngine,
     run_with_state,
     store::{MemoryStore, Store, StoreError},
@@ -33,6 +36,10 @@ pub use github_test_utils::{
 };
 pub use job_engine::MockJobEngine;
 pub use store::FailingStore;
+
+pub fn test_secret_manager() -> Arc<SecretManager> {
+    Arc::new(SecretManager::new([42u8; 32]))
+}
 
 pub struct TestStateHandles {
     pub state: AppState,
@@ -129,7 +136,7 @@ pub fn test_state_with_store_and_engine(
         Arc::new(ServiceState::default()),
         store.clone(),
         job_engine,
-        None,
+        test_secret_manager(),
     );
 
     TestStateHandles { state, store }
@@ -147,7 +154,7 @@ pub fn test_state_with_github_app(github_app: octocrab::Octocrab) -> TestStateHa
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        None,
+        test_secret_manager(),
     );
 
     TestStateHandles { state, store }

@@ -5,7 +5,7 @@ use crate::{
 use serde_json::json;
 use std::sync::Arc;
 
-use super::{MockJobEngine, TestStateHandles, test_app_config};
+use super::{MockJobEngine, TestStateHandles, test_app_config, test_secret_manager};
 
 pub fn github_user_response(login: &str, id: u64) -> serde_json::Value {
     json!({
@@ -61,7 +61,7 @@ pub fn test_state_with_github_urls_and_allowed_orgs(
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        None,
+        test_secret_manager(),
     );
 
     TestStateHandles { state, store }

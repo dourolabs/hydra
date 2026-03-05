@@ -2,6 +2,10 @@ metis:
   # Namespace the CLI uses when creating Jobs.
   namespace: "default"
 
+  # Required: base64-encoded 32-byte encryption key for user secrets.
+  # Generate with: openssl rand -base64 32
+  secret_encryption_key: "REPLACE_WITH_BASE64_ENCODED_32_BYTE_KEY"
+
   # Optional fallback if the OPENAI_API_KEY environment variable is unset.
   OPENAI_API_KEY: ""
   # Optional fallback if the CLAUDE_CODE_OAUTH_TOKEN environment variable is unset.
