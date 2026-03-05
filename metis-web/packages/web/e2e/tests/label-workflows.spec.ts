@@ -60,7 +60,9 @@ test.describe("Creating an issue with labels via LabelPicker", () => {
     const labelInput = modal.getByPlaceholder("Add labels...");
     await labelInput.click();
     await labelInput.fill("plat");
-    await modal.locator("li").filter({ hasText: "platform-v2" }).click();
+    const existingOption = modal.locator("li").filter({ hasText: "platform-v2" });
+    await expect(existingOption).toBeVisible();
+    await existingOption.click();
 
     // Create a new label by typing a name that doesn't exist
     // After selecting a label the placeholder is empty, so locate the input
@@ -70,7 +72,9 @@ test.describe("Creating an issue with labels via LabelPicker", () => {
       .locator("..")
       .locator("input");
     await pickerInput.fill("e2e-test-label");
-    await modal.locator("li").filter({ hasText: /Create/ }).click();
+    const createOption = modal.locator("li").filter({ hasText: /Create/ });
+    await expect(createOption).toBeVisible();
+    await createOption.click();
 
     // Verify both labels appear as chips in the modal
     await expect(modal.getByText("platform-v2")).toBeVisible();
@@ -132,7 +136,9 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor", () => 
       .locator("..")
       .locator("input");
     await labelInput.fill("infra");
-    await page.locator("li").filter({ hasText: "infra" }).click();
+    const infraOption = page.locator("li").filter({ hasText: "infra" });
+    await expect(infraOption).toBeVisible();
+    await infraOption.click();
 
     // Close the dropdown by clicking the page heading (away from the picker)
     await page
