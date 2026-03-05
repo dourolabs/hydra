@@ -30,7 +30,7 @@ test.describe("Login", () => {
   });
 
   test("redirects unauthenticated user to login", async ({ page }) => {
-    await page.goto("/issues");
+    await page.goto("/");
     await expect(page).toHaveURL(/\/login/);
   });
 });

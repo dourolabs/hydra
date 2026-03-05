@@ -160,7 +160,7 @@ Each screenshot is named `{viewport}-{page}.png`, for example:
 
 #### Pages captured
 
-Login, dashboard, issues list, issue detail, patches list, patch detail, documents list, document detail, settings, and job log page.
+Login, dashboard, issue detail, patch detail, documents list, document detail, settings, and job log page.
 
 ### Contract tests
 

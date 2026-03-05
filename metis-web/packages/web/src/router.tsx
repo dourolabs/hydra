@@ -2,9 +2,7 @@ import { createBrowserRouter } from "react-router-dom";
 import { AppLayout } from "./layout/AppLayout";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
-import { IssuesPage } from "./pages/IssuesPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
-import { PatchesPage } from "./pages/PatchesPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { IssueDetailPage } from "./pages/IssueDetailPage";
 import { JobLogPage } from "./pages/JobLogPage";
@@ -25,10 +23,6 @@ export const router = createBrowserRouter([
         element: <DashboardPage />,
       },
       {
-        path: "issues",
-        element: <IssuesPage />,
-      },
-      {
         path: "issues/:issueId",
         element: <IssueDetailPage />,
       },
@@ -43,10 +37,6 @@ export const router = createBrowserRouter([
       {
         path: "documents/:documentId",
         element: <DocumentDetailPage />,
-      },
-      {
-        path: "patches",
-        element: <PatchesPage />,
       },
       {
         path: "patches/:patchId",

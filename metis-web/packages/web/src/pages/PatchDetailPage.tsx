@@ -26,11 +26,11 @@ export function PatchDetailPage() {
     ];
   } else if (issueId) {
     breadcrumbItems = [
-      { label: "Issues", to: "/issues" },
+      { label: "Dashboard", to: "/" },
       { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
     ];
   } else {
-    breadcrumbItems = [{ label: "Patches", to: "/patches" }];
+    breadcrumbItems = [{ label: "Dashboard", to: "/" }];
   }
 
   return (

@@ -25,7 +25,7 @@ export function IssueDetailPage() {
 
   const breadcrumbItems: BreadcrumbItem[] = fromDashboard
     ? [{ label: "Dashboard", to: dashboardReturnUrl }]
-    : [{ label: "Issues", to: "/issues" }];
+    : [{ label: "Dashboard", to: "/" }];
 
   return (
     <div className={styles.page}>
