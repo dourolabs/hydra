@@ -167,6 +167,19 @@ async fn delete_agent_removes_queue() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn resolve_agent_prompts_batch_returns_correct_prompts() -> anyhow::Result<()> {
+    let state = test_state_with_agents(&["alpha", "beta", "gamma"]).await;
+    let agents = state.state.list_agents().await?;
+    let prompt_map = state.state.resolve_agent_prompts(&agents).await;
+
+    assert_eq!(prompt_map.len(), 3);
+    assert_eq!(prompt_map.get("alpha").unwrap(), "prompt for alpha");
+    assert_eq!(prompt_map.get("beta").unwrap(), "prompt for beta");
+    assert_eq!(prompt_map.get("gamma").unwrap(), "prompt for gamma");
+    Ok(())
+}
+
+#[tokio::test]
 async fn update_agent_rejects_name_mismatch() -> anyhow::Result<()> {
     let state = test_state_with_agents(&["alpha"]).await;
     let server = spawn_test_server_with_state(state.state, state.store).await?;

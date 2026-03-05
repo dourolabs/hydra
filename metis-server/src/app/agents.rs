@@ -1,5 +1,6 @@
 use crate::{domain::agents::Agent, store::ReadOnlyStore};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
+use std::collections::HashMap;
 use thiserror::Error;
 use tracing::info;
 
@@ -95,6 +96,35 @@ impl AppState {
             .ok_or_else(|| anyhow::anyhow!("no document found at path '{prompt_path}'"))?;
 
         Ok(versioned.item.body_markdown.trim_end().to_string())
+    }
+
+    /// Batch-fetch prompt texts for multiple agents with a single document store query.
+    ///
+    /// Returns a map from agent name to prompt text.
+    pub async fn resolve_agent_prompts(&self, agents: &[Agent]) -> HashMap<String, String> {
+        let query = SearchDocumentsQuery::new(None, Some("/agents/".into()), None, None, None);
+
+        let documents = match self.list_documents(&query).await {
+            Ok(docs) => docs,
+            Err(_) => return HashMap::new(),
+        };
+
+        // Build a map from document path -> body_markdown
+        let path_to_body: HashMap<String, String> = documents
+            .into_iter()
+            .filter_map(|(_, versioned)| {
+                let path = versioned.item.path.as_ref()?.to_string();
+                Some((path, versioned.item.body_markdown.trim_end().to_string()))
+            })
+            .collect();
+
+        agents
+            .iter()
+            .filter_map(|agent| {
+                let body = path_to_body.get(&agent.prompt_path)?;
+                Some((agent.name.clone(), body.clone()))
+            })
+            .collect()
     }
 
     pub async fn delete_agent(&self, agent_name: &str) -> Result<Agent, AgentError> {

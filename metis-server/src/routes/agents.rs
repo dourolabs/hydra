@@ -29,14 +29,14 @@ pub async fn list_agents(
     info!("list_agents invoked");
     let agents = state.list_agents().await.map_err(map_agent_error)?;
 
-    let mut records = Vec::with_capacity(agents.len());
-    for agent in agents {
-        let prompt = state
-            .resolve_agent_prompt(&agent.prompt_path)
-            .await
-            .unwrap_or_default();
-        records.push(agent_to_record(agent, prompt));
-    }
+    let prompt_map = state.resolve_agent_prompts(&agents).await;
+    let records: Vec<AgentRecord> = agents
+        .into_iter()
+        .map(|agent| {
+            let prompt = prompt_map.get(&agent.name).cloned().unwrap_or_default();
+            agent_to_record(agent, prompt)
+        })
+        .collect();
 
     let response = ListAgentsResponse::new(records);
     info!(agent_count = response.agents.len(), "list_agents completed");
