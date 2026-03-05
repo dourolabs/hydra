@@ -606,6 +606,7 @@ impl TestHarnessBuilder {
             Arc::new(ServiceState::default()),
             store.clone(),
             engine.clone(),
+            None,
         );
 
         // Override the policy engine if a custom patch_workflow config was provided.

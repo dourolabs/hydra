@@ -280,6 +280,21 @@ impl ReadOnlyStore for FailingStore {
     async fn get_objects_for_label(&self, _label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
         fail()
     }
+
+    async fn get_user_secret(
+        &self,
+        _username: &Username,
+        _secret_name: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        fail()
+    }
+
+    async fn list_user_secret_names(
+        &self,
+        _username: &Username,
+    ) -> Result<Vec<String>, StoreError> {
+        fail()
+    }
 }
 
 #[async_trait]
@@ -507,6 +522,23 @@ impl Store for FailingStore {
         &self,
         _label_id: &LabelId,
         _object_id: &MetisId,
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn set_user_secret(
+        &self,
+        _username: &Username,
+        _secret_name: &str,
+        _encrypted_value: &[u8],
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn delete_user_secret(
+        &self,
+        _username: &Username,
+        _secret_name: &str,
     ) -> Result<(), StoreError> {
         fail()
     }

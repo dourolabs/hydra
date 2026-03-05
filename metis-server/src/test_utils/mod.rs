@@ -129,6 +129,7 @@ pub fn test_state_with_store_and_engine(
         Arc::new(ServiceState::default()),
         store.clone(),
         job_engine,
+        None,
     );
 
     TestStateHandles { state, store }
@@ -146,6 +147,7 @@ pub fn test_state_with_github_app(github_app: octocrab::Octocrab) -> TestStateHa
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
+        None,
     );
 
     TestStateHandles { state, store }

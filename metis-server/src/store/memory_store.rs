@@ -73,6 +73,8 @@ pub struct MemoryStore {
     object_labels: DashMap<MetisId, HashSet<LabelId>>,
     /// Maps label IDs to associated object IDs
     label_objects: DashMap<LabelId, HashSet<MetisId>>,
+    /// Maps (username, secret_name) to encrypted secret value
+    user_secrets: DashMap<(Username, String), Vec<u8>>,
 }
 
 impl MemoryStore {
@@ -97,6 +99,7 @@ impl MemoryStore {
             labels: DashMap::new(),
             object_labels: DashMap::new(),
             label_objects: DashMap::new(),
+            user_secrets: DashMap::new(),
         }
     }
 
@@ -1209,6 +1212,28 @@ impl ReadOnlyStore for MemoryStore {
             None => Ok(Vec::new()),
         }
     }
+
+    // ---- User secrets (read-only) ----
+
+    async fn get_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let key = (username.clone(), secret_name.to_string());
+        Ok(self.user_secrets.get(&key).map(|v| v.value().clone()))
+    }
+
+    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError> {
+        let mut names: Vec<String> = self
+            .user_secrets
+            .iter()
+            .filter(|entry| &entry.key().0 == username)
+            .map(|entry| entry.key().1.clone())
+            .collect();
+        names.sort();
+        Ok(names)
+    }
 }
 
 #[async_trait]
@@ -1828,6 +1853,29 @@ impl Store for MemoryStore {
         if let Some(mut object_ids) = self.label_objects.get_mut(label_id) {
             object_ids.remove(object_id);
         }
+        Ok(())
+    }
+
+    // ---- User secret mutations ----
+
+    async fn set_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+        encrypted_value: &[u8],
+    ) -> Result<(), StoreError> {
+        let key = (username.clone(), secret_name.to_string());
+        self.user_secrets.insert(key, encrypted_value.to_vec());
+        Ok(())
+    }
+
+    async fn delete_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<(), StoreError> {
+        let key = (username.clone(), secret_name.to_string());
+        self.user_secrets.remove(&key);
         Ok(())
     }
 }
