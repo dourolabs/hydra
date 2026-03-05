@@ -19,6 +19,7 @@ use metis_common::{
     api::v1::notifications::{
         ListNotificationsQuery, ListNotificationsResponse, MarkReadResponse, UnreadCountResponse,
     },
+    api::v1::secrets::{ListSecretsResponse, SetSecretRequest},
     documents::{
         DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
         SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
@@ -239,6 +240,9 @@ pub trait MetisClientInterface: Send + Sync {
     async fn get_github_token(&self) -> Result<String>;
     async fn whoami(&self) -> Result<WhoAmIResponse>;
     async fn get_user_info(&self, username: &str) -> Result<UserSummary>;
+    async fn list_user_secrets(&self) -> Result<ListSecretsResponse>;
+    async fn set_user_secret(&self, name: &str, value: &str) -> Result<()>;
+    async fn delete_user_secret(&self, name: &str) -> Result<()>;
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue>;
     async fn enqueue_merge_patch(
         &self,
@@ -1280,6 +1284,50 @@ impl MetisClient {
             .context("failed to decode user info response")
     }
 
+    pub async fn list_user_secrets(&self) -> Result<ListSecretsResponse> {
+        let url = self.endpoint("/v1/users/me/secrets")?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to list user secrets")?
+            .error_for_status_with_body("metis-server returned an error while listing secrets")
+            .await?;
+
+        response
+            .json::<ListSecretsResponse>()
+            .await
+            .context("failed to decode list secrets response")
+    }
+
+    pub async fn set_user_secret(&self, name: &str, value: &str) -> Result<()> {
+        let path = format!("/v1/users/me/secrets/{name}");
+        let url = self.endpoint(&path)?;
+        let body = SetSecretRequest {
+            value: value.to_string(),
+        };
+        self.authed(self.http.put(url))
+            .json(&body)
+            .send()
+            .await
+            .context("failed to set user secret")?
+            .error_for_status_with_body("metis-server returned an error while setting secret")
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_user_secret(&self, name: &str) -> Result<()> {
+        let path = format!("/v1/users/me/secrets/{name}");
+        let url = self.endpoint(&path)?;
+        self.authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to delete user secret")?
+            .error_for_status_with_body("metis-server returned an error while deleting secret")
+            .await?;
+        Ok(())
+    }
+
     /// Call `GET /v1/merge-queues/:organization/:repo/:branch/patches` to fetch the merge queue.
     pub async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
         let path = format!(
@@ -2088,6 +2136,18 @@ impl MetisClientInterface for MetisClient {
 
     async fn get_user_info(&self, username: &str) -> Result<UserSummary> {
         MetisClient::get_user_info(self, username).await
+    }
+
+    async fn list_user_secrets(&self) -> Result<ListSecretsResponse> {
+        MetisClient::list_user_secrets(self).await
+    }
+
+    async fn set_user_secret(&self, name: &str, value: &str) -> Result<()> {
+        MetisClient::set_user_secret(self, name, value).await
+    }
+
+    async fn delete_user_secret(&self, name: &str) -> Result<()> {
+        MetisClient::delete_user_secret(self, name).await
     }
 
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {

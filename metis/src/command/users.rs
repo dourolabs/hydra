@@ -14,6 +14,32 @@ pub enum UsersCommand {
         #[arg(value_name = "USERNAME")]
         username: Option<String>,
     },
+    /// Manage per-user secrets.
+    Secrets {
+        #[command(subcommand)]
+        command: SecretsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SecretsCommand {
+    /// List configured secret names.
+    List,
+    /// Set a secret value.
+    Set {
+        /// Secret name (e.g., OPENAI_API_KEY).
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Secret value. If omitted, you will be prompted to enter it.
+        #[arg(long)]
+        value: Option<String>,
+    },
+    /// Delete a secret.
+    Delete {
+        /// Secret name to delete.
+        #[arg(value_name = "NAME")]
+        name: String,
+    },
 }
 
 pub async fn run(client: &dyn MetisClientInterface, command: UsersCommand) -> Result<()> {
@@ -24,6 +50,9 @@ pub async fn run(client: &dyn MetisClientInterface, command: UsersCommand) -> Re
         }
         UsersCommand::Info { username } => {
             show_user_info(client, username).await?;
+        }
+        UsersCommand::Secrets { command } => {
+            run_secrets(client, command).await?;
         }
     }
 
@@ -62,12 +91,54 @@ async fn show_user_info(client: &dyn MetisClientInterface, username: Option<Stri
     Ok(())
 }
 
+async fn run_secrets(client: &dyn MetisClientInterface, command: SecretsCommand) -> Result<()> {
+    match command {
+        SecretsCommand::List => {
+            let response = client
+                .list_user_secrets()
+                .await
+                .context("failed to list secrets")?;
+            if response.secrets.is_empty() {
+                println!("No secrets configured.");
+            } else {
+                for name in &response.secrets {
+                    println!("{name}");
+                }
+            }
+        }
+        SecretsCommand::Set { name, value } => {
+            let value = match value {
+                Some(v) => v,
+                None => rpassword::prompt_password_stdout(&format!("Enter value for {name}: "))
+                    .context("failed to read secret value")?,
+            };
+            client
+                .set_user_secret(&name, &value)
+                .await
+                .with_context(|| format!("failed to set secret '{name}'"))?;
+            println!("Secret '{name}' set successfully.");
+        }
+        SecretsCommand::Delete { name } => {
+            client
+                .delete_user_secret(&name)
+                .await
+                .with_context(|| format!("failed to delete secret '{name}'"))?;
+            println!("Secret '{name}' deleted.");
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::client::MetisClient;
     use httpmock::prelude::*;
-    use metis_common::{api::v1::users::Username, users::UserSummary, whoami::WhoAmIResponse};
+    use metis_common::{
+        api::v1::{secrets::ListSecretsResponse, users::Username},
+        users::UserSummary,
+        whoami::WhoAmIResponse,
+    };
     use reqwest::Client as HttpClient;
     use serde_json::json;
 
@@ -167,5 +238,75 @@ mod tests {
             error.to_string().contains("failed to fetch user info"),
             "error should mention fetch failure: {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn secrets_list_displays_names() -> Result<()> {
+        let server = MockServer::start();
+        let response = ListSecretsResponse {
+            secrets: vec![
+                "OPENAI_API_KEY".to_string(),
+                "ANTHROPIC_API_KEY".to_string(),
+            ],
+        };
+
+        let mock = server.mock(move |when, then| {
+            when.method(GET).path("/v1/users/me/secrets");
+            then.status(200).json_body_obj(&response);
+        });
+
+        let client = mock_client(&server);
+        run_secrets(&client, SecretsCommand::List).await?;
+
+        mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn secrets_set_sends_put() -> Result<()> {
+        let server = MockServer::start();
+
+        let mock = server.mock(move |when, then| {
+            when.method(PUT)
+                .path("/v1/users/me/secrets/OPENAI_API_KEY")
+                .json_body(json!({ "value": "sk-test123" }));
+            then.status(200).json_body(json!(null));
+        });
+
+        let client = mock_client(&server);
+        run_secrets(
+            &client,
+            SecretsCommand::Set {
+                name: "OPENAI_API_KEY".to_string(),
+                value: Some("sk-test123".to_string()),
+            },
+        )
+        .await?;
+
+        mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn secrets_delete_sends_delete() -> Result<()> {
+        let server = MockServer::start();
+
+        let mock = server.mock(move |when, then| {
+            when.method(DELETE)
+                .path("/v1/users/me/secrets/OPENAI_API_KEY");
+            then.status(200).json_body(json!(null));
+        });
+
+        let client = mock_client(&server);
+        run_secrets(
+            &client,
+            SecretsCommand::Delete {
+                name: "OPENAI_API_KEY".to_string(),
+            },
+        )
+        .await?;
+
+        mock.assert();
+        Ok(())
     }
 }

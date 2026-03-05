@@ -34,8 +34,16 @@ impl ApiError {
         Self::new(StatusCode::UNAUTHORIZED, message)
     }
 
+    pub fn forbidden(message: impl Display) -> Self {
+        Self::new(StatusCode::FORBIDDEN, message)
+    }
+
     pub fn not_found(message: impl Display) -> Self {
         Self::new(StatusCode::NOT_FOUND, message)
+    }
+
+    pub fn service_unavailable(message: impl Display) -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, message)
     }
 
     pub fn internal(message: impl Display) -> Self {

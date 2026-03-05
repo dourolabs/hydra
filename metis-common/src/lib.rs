@@ -23,7 +23,7 @@ pub use activity_log::{
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
     agents, documents, events, issues, job_status, jobs, labels, login, logs, merge_queues,
-    notifications, patches, repositories, task_status, users, whoami,
+    notifications, patches, repositories, secrets, task_status, users, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};

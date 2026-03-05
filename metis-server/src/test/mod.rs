@@ -16,6 +16,7 @@ mod messages_e2e;
 mod notifications;
 mod patches;
 mod repositories;
+mod secrets;
 mod users;
 mod whoami;
 
