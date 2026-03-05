@@ -195,6 +195,49 @@
   border-top: 1px solid var(--color-border);
 }
 
+/* Agent header row */
+.agentHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-6);
+  margin-bottom: var(--space-4);
+}
+
+/* Assignment badge */
+.assignmentBadge {
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* Checkbox label */
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.checkboxLabel input[type="checkbox"] {
+  accent-color: var(--color-accent);
+}
+
+/* Field-level error */
+.fieldError {
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+  margin: 0;
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   .detailRow {
