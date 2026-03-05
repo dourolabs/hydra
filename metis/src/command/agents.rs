@@ -455,9 +455,9 @@ mod tests {
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, false));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false));
         let updated =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, true));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true));
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
@@ -469,7 +469,7 @@ mod tests {
                 "prompt": "draft",
                 "prompt_path": "",
                 "max_tries": 3,
-                "max_simultaneous": 4294967295u64,
+                "max_simultaneous": 2147483647,
                 "is_assignment_agent": true
             }));
             then.status(200).json_body_obj(&updated);
@@ -498,9 +498,9 @@ mod tests {
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, true));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true));
         let updated =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, false));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false));
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
@@ -512,7 +512,7 @@ mod tests {
                 "prompt": "draft",
                 "prompt_path": "",
                 "max_tries": 3,
-                "max_simultaneous": 4294967295u64,
+                "max_simultaneous": 2147483647,
                 "is_assignment_agent": false
             }));
             then.status(200).json_body_obj(&updated);
@@ -541,9 +541,9 @@ mod tests {
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, true));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true));
         let updated =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, true));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, true));
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
@@ -555,7 +555,7 @@ mod tests {
                 "prompt": "draft",
                 "prompt_path": "",
                 "max_tries": 3,
-                "max_simultaneous": 4294967295u64,
+                "max_simultaneous": 2147483647,
                 "is_assignment_agent": true
             }));
             then.status(200).json_body_obj(&updated);
