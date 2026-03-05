@@ -5577,4 +5577,188 @@ mod tests {
             );
         }
     }
+
+    // ---- Agent helpers & round-trip tests ----
+
+    fn sample_agent() -> Agent {
+        Agent::new(
+            "test-agent".to_string(),
+            "/agents/test-agent/prompt.md".to_string(),
+            3,
+            5,
+            false,
+        )
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn agent_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let agent = sample_agent();
+
+        // ADD
+        store.add_agent(agent).await.unwrap();
+
+        // GET — verify all fields
+        let fetched = store.get_agent("test-agent").await.unwrap();
+        assert_eq!(fetched.name, "test-agent");
+        assert_eq!(fetched.prompt_path, "/agents/test-agent/prompt.md");
+        assert_eq!(fetched.max_tries, 3);
+        assert_eq!(fetched.max_simultaneous, 5);
+        assert!(!fetched.is_assignment_agent);
+        assert!(!fetched.deleted);
+
+        // UPDATE — change prompt_path, max_tries, max_simultaneous
+        let updated = Agent::new(
+            "test-agent".to_string(),
+            "/agents/test-agent/prompt_v2.md".to_string(),
+            5,
+            10,
+            false,
+        );
+        store.update_agent(updated).await.unwrap();
+
+        // GET — verify updated fields persisted
+        let fetched2 = store.get_agent("test-agent").await.unwrap();
+        assert_eq!(fetched2.prompt_path, "/agents/test-agent/prompt_v2.md");
+        assert_eq!(fetched2.max_tries, 5);
+        assert_eq!(fetched2.max_simultaneous, 10);
+        assert!(fetched2.updated_at >= fetched.created_at);
+
+        // LIST — verify agent appears with updated values
+        let list = store.list_agents().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "test-agent");
+        assert_eq!(list[0].prompt_path, "/agents/test-agent/prompt_v2.md");
+
+        // DELETE
+        store.delete_agent("test-agent").await.unwrap();
+
+        // GET after delete — should return AgentNotFound
+        let get_result = store.get_agent("test-agent").await;
+        assert!(
+            matches!(get_result, Err(StoreError::AgentNotFound(_))),
+            "expected AgentNotFound, got: {get_result:?}"
+        );
+
+        // LIST after delete — should return empty vec
+        let list_after = store.list_agents().await.unwrap();
+        assert!(list_after.is_empty());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn agent_duplicate_name_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Add first agent
+        store.add_agent(sample_agent()).await.unwrap();
+
+        // Adding another agent with the same name should fail
+        let dup_result = store.add_agent(sample_agent()).await;
+        assert!(
+            matches!(dup_result, Err(StoreError::AgentAlreadyExists(_))),
+            "expected AgentAlreadyExists, got: {dup_result:?}"
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn agent_assignment_uniqueness_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Add agent A with is_assignment_agent = true
+        let agent_a = Agent::new(
+            "agent-a".to_string(),
+            "/agents/a/prompt.md".to_string(),
+            3,
+            5,
+            true,
+        );
+        store.add_agent(agent_a).await.unwrap();
+
+        // Add agent B with is_assignment_agent = true — should fail
+        let agent_b = Agent::new(
+            "agent-b".to_string(),
+            "/agents/b/prompt.md".to_string(),
+            3,
+            5,
+            true,
+        );
+        let add_result = store.add_agent(agent_b).await;
+        assert!(
+            matches!(add_result, Err(StoreError::AssignmentAgentAlreadyExists)),
+            "expected AssignmentAgentAlreadyExists, got: {add_result:?}"
+        );
+
+        // Add agent B with is_assignment_agent = false — should succeed
+        let agent_b_no_assign = Agent::new(
+            "agent-b".to_string(),
+            "/agents/b/prompt.md".to_string(),
+            3,
+            5,
+            false,
+        );
+        store.add_agent(agent_b_no_assign).await.unwrap();
+
+        // Update agent B to set is_assignment_agent = true — should fail
+        let agent_b_assign = Agent::new(
+            "agent-b".to_string(),
+            "/agents/b/prompt.md".to_string(),
+            3,
+            5,
+            true,
+        );
+        let update_result = store.update_agent(agent_b_assign).await;
+        assert!(
+            matches!(update_result, Err(StoreError::AssignmentAgentAlreadyExists)),
+            "expected AssignmentAgentAlreadyExists, got: {update_result:?}"
+        );
+
+        // Delete agent A, then add agent C with is_assignment_agent = true — should succeed
+        store.delete_agent("agent-a").await.unwrap();
+        let agent_c = Agent::new(
+            "agent-c".to_string(),
+            "/agents/c/prompt.md".to_string(),
+            3,
+            5,
+            true,
+        );
+        store.add_agent(agent_c).await.unwrap();
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn agent_reactivation_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Add and then soft-delete an agent
+        store.add_agent(sample_agent()).await.unwrap();
+        store.delete_agent("test-agent").await.unwrap();
+
+        // Verify it's gone
+        assert!(matches!(
+            store.get_agent("test-agent").await,
+            Err(StoreError::AgentNotFound(_))
+        ));
+
+        // Add a new agent with the same name but different fields — reactivation
+        let reactivated = Agent::new(
+            "test-agent".to_string(),
+            "/agents/test-agent/prompt_new.md".to_string(),
+            7,
+            12,
+            false,
+        );
+        store.add_agent(reactivated).await.unwrap();
+
+        // Get the agent — verify it has the new field values and deleted = false
+        let fetched = store.get_agent("test-agent").await.unwrap();
+        assert_eq!(fetched.name, "test-agent");
+        assert_eq!(fetched.prompt_path, "/agents/test-agent/prompt_new.md");
+        assert_eq!(fetched.max_tries, 7);
+        assert_eq!(fetched.max_simultaneous, 12);
+        assert!(!fetched.is_assignment_agent);
+        assert!(!fetched.deleted);
+    }
 }
