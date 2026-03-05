@@ -116,6 +116,14 @@
   white-space: nowrap;
 }
 
+.labels {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
 .jobIndicator {
   display: inline-flex;
   align-items: center;
