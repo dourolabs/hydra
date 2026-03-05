@@ -2,6 +2,7 @@
 import type { IssueDependency } from "./IssueDependency";
 import type { IssueStatus } from "./IssueStatus";
 import type { IssueType } from "./IssueType";
+import type { LabelSummary } from "./LabelSummary";
 import type { PatchId } from "./PatchId";
 import type { TodoItem } from "./TodoItem";
 import type { Username } from "./Username";
@@ -25,4 +26,5 @@ export type IssueSummary = {
   patches: Array<PatchId>;
   todo_list?: Array<TodoItem>;
   deleted?: boolean;
+  labels?: Array<LabelSummary>;
 };
