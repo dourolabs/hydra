@@ -3,4 +3,4 @@
 /**
  * The input representation of a label (name + optional color).
  */
-export type Label = { name: string, color?: string | null, };
+export type Label = { name: string; color?: string | null };

@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use metis_common::Rgb;
 use serde::{Deserialize, Serialize};
 
 /// Server-side domain label type.
@@ -7,14 +8,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Label {
     pub name: String,
-    pub color: String,
+    pub color: Rgb,
     pub deleted: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 impl Label {
-    pub fn new(name: String, color: String) -> Self {
+    pub fn new(name: String, color: Rgb) -> Self {
         let now = Utc::now();
         Self {
             name,

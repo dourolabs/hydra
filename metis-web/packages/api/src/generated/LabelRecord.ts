@@ -4,4 +4,10 @@ import type { LabelId } from "./LabelId";
 /**
  * Full label record returned by GET endpoints.
  */
-export type LabelRecord = { label_id: LabelId, name: string, color: string, created_at: string, updated_at: string, };
+export type LabelRecord = {
+  label_id: LabelId;
+  name: string;
+  color: string;
+  created_at: string;
+  updated_at: string;
+};

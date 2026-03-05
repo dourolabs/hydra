@@ -11,6 +11,7 @@ pub mod ids;
 pub mod models;
 pub mod repo_name;
 pub mod review_utils;
+pub mod rgb;
 pub mod util;
 pub mod versioning;
 
@@ -35,6 +36,7 @@ pub use repositories::{
     CreateRepositoryRequest, DeleteRepositoryResponse, ListRepositoriesResponse, Repository,
     RepositoryRecord, SearchRepositoriesQuery, UpdateRepositoryRequest, UpsertRepositoryResponse,
 };
+pub use rgb::{Rgb, RgbError};
 pub use util::EnvGuard;
 pub use versioning::{RelativeVersionNumber, VersionNumber, Versioned};
 
@@ -74,6 +76,7 @@ mod ts_export {
         crate::NotificationId::export_all(&cfg).expect("NotificationId");
         crate::LabelId::export_all(&cfg).expect("LabelId");
         crate::DocumentPath::export_all(&cfg).expect("DocumentPath");
+        crate::Rgb::export_all(&cfg).expect("Rgb");
         crate::RepoName::export_all(&cfg).expect("RepoName");
         crate::ActorId::export_all(&cfg).expect("ActorId");
         crate::ActorRef::export_all(&cfg).expect("ActorRef");

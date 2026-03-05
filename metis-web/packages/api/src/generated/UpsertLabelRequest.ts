@@ -4,4 +4,4 @@ import type { Label } from "./Label";
 /**
  * Request body for creating or updating a label.
  */
-export type UpsertLabelRequest = { label: Label, };
+export type UpsertLabelRequest = { label: Label };
