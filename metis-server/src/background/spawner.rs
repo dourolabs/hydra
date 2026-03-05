@@ -57,6 +57,7 @@ impl AgentQueue {
         state: &AppState,
         issue_id: &IssueId,
         issue: &Issue,
+        prompt: &str,
     ) -> anyhow::Result<Option<Task>> {
         let job_settings = state.apply_job_settings_defaults(issue.job_settings.clone());
         let bundle = match (
@@ -91,16 +92,6 @@ impl AgentQueue {
             _ => BundleSpec::None,
         };
 
-        let prompt = state
-            .resolve_agent_prompt(&self.agent.prompt_path)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to fetch prompt for agent '{}' at path '{}'",
-                    self.agent.name, self.agent.prompt_path
-                )
-            })?;
-
         let image = job_settings
             .image
             .as_ref()
@@ -113,7 +104,7 @@ impl AgentQueue {
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.agent.name.clone());
 
         Ok(Some(Task::new(
-            prompt,
+            prompt.to_string(),
             bundle,
             Some(issue_id.clone()),
             issue.creator.clone(),
@@ -206,6 +197,8 @@ impl Spawner for AgentQueue {
             .await
             .context("failed to list issues for agent queue")?;
 
+        let mut cached_prompt: Option<String> = None;
+
         let mut tasks = Vec::new();
         for (issue_id, issue) in issues {
             let issue = issue.item;
@@ -253,7 +246,22 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            let maybe_task = self.build_task(state, &issue_id, &issue).await?;
+            if cached_prompt.is_none() {
+                cached_prompt = Some(
+                    state
+                        .resolve_agent_prompt(&self.agent.prompt_path)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "failed to fetch prompt for agent '{}' at path '{}'",
+                                self.agent.name, self.agent.prompt_path
+                            )
+                        })?,
+                );
+            }
+            let prompt = cached_prompt.as_deref().unwrap();
+
+            let maybe_task = self.build_task(state, &issue_id, &issue, prompt).await?;
             let Some(task) = maybe_task else {
                 continue;
             };
