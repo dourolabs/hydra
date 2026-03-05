@@ -605,9 +605,19 @@ fn render_agent_records_pretty(agents: &[AgentRecord], writer: &mut impl Write) 
 
 fn write_agent_details(agent: &AgentRecord, writer: &mut impl Write) -> Result<()> {
     writeln!(writer, "- {}", agent.name)?;
-    writeln!(writer, "  prompt: {}", agent.prompt)?;
+    if !agent.prompt_path.is_empty() {
+        writeln!(writer, "  prompt_path: {}", agent.prompt_path)?;
+    }
+    if !agent.prompt.is_empty() {
+        writeln!(writer, "  prompt: {}", agent.prompt)?;
+    }
     writeln!(writer, "  max_tries: {}", agent.max_tries)?;
     writeln!(writer, "  max_simultaneous: {}", agent.max_simultaneous)?;
+    writeln!(
+        writer,
+        "  is_assignment_agent: {}",
+        agent.is_assignment_agent
+    )?;
     Ok(())
 }
 
