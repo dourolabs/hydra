@@ -93,21 +93,6 @@ github_app:
     -----END RSA PRIVATE KEY-----
 
 background:
-  # Agent queue name to use for assignment decisions on unassigned issues.
-  assignment_agent: "assignment"
-  # Agent queues automatically enqueue work for assigned issues.
-  # Add additional entries to run multiple queues.
-  agent_queues:
-    - name: "agent-a"
-      # Prompt provided to the agent; forwarded directly to Codex.
-      prompt: "You are agent-a working on assigned issues."
-      # Maximum number of times to spawn a task for the same issue state.
-      max_tries: 3
-      # Maximum number of simultaneously running jobs for this queue (defaults to unlimited).
-      max_simultaneous: 1
-    - name: "assignment"
-      prompt: "You are the assignment agent."
-
   github_poller:
     # Polling interval (in seconds) used when syncing GitHub PRs for patches.
     interval_secs: 60
