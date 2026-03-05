@@ -194,6 +194,15 @@ pub async fn list_document_versions(
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
+    let object_id = MetisId::from(document_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(document_id = %document_id, error = %err, "failed to fetch labels for document");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     let records = versions
         .into_iter()
         .map(|version| {
@@ -204,7 +213,7 @@ pub async fn list_document_versions(
                 version.item.into(),
                 version.actor,
                 version.creation_time,
-                Vec::new(),
+                labels.clone(),
             )
         })
         .collect();
@@ -240,6 +249,15 @@ pub async fn get_document_version(
             ))
         })?;
 
+    let object_id = MetisId::from(document_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(document_id = %document_id, error = %err, "failed to fetch labels for document");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     let response = v1::documents::DocumentVersionRecord::new(
         document_id.clone(),
         entry.version,
@@ -247,7 +265,7 @@ pub async fn get_document_version(
         entry.item.into(),
         entry.actor,
         entry.creation_time,
-        Vec::new(),
+        labels,
     );
     info!(document_id = %document_id, version, "get_document_version completed");
     Ok(Json(response))
@@ -314,6 +332,15 @@ pub async fn delete_document(
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
+    let object_id = MetisId::from(document_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(document_id = %document_id, error = %err, "failed to fetch labels for document");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     info!(document_id = %document_id, "delete_document completed");
     let response = v1::documents::DocumentVersionRecord::new(
         document_id,
@@ -322,7 +349,7 @@ pub async fn delete_document(
         document.item.into(),
         document.actor,
         document.creation_time,
-        Vec::new(),
+        labels,
     );
     Ok(Json(response))
 }

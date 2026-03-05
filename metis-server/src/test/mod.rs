@@ -8,6 +8,7 @@ mod github_token;
 mod health;
 mod issues;
 mod jobs;
+mod labels;
 mod login;
 pub(crate) mod merge_queues;
 mod messages;
