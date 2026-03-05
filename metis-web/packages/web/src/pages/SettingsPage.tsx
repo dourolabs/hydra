@@ -13,6 +13,7 @@ import { apiClient } from "../api/client";
 import { useRepositories } from "../hooks/useRepositories";
 import { useAgents } from "../hooks/useAgents";
 import { useToast } from "../features/toast/useToast";
+import { SecretsSection } from "../features/secrets/SecretsSection";
 import styles from "./SettingsPage.module.css";
 
 export function SettingsPage() {
@@ -117,6 +118,8 @@ export function SettingsPage() {
           </div>
         </Panel>
       )}
+
+      <SecretsSection />
 
       <RepositoryCreateModal
         open={createOpen}

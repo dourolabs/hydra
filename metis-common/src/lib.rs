@@ -243,6 +243,11 @@ mod ts_export {
         crate::whoami::ActorIdentity::export_all(&cfg).expect("ActorIdentity");
         crate::whoami::WhoAmIResponse::export_all(&cfg).expect("WhoAmIResponse");
 
+        // API v1: secrets
+        crate::api::v1::secrets::ListSecretsResponse::export_all(&cfg)
+            .expect("ListSecretsResponse");
+        crate::api::v1::secrets::SetSecretRequest::export_all(&cfg).expect("SetSecretRequest");
+
         // API v1: error
         crate::api::v1::error::ApiErrorBody::export_all(&cfg).expect("ApiErrorBody");
     }

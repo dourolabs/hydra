@@ -18,6 +18,7 @@ import { createAgentRoutes } from "./routes/agents.js";
 import { createMergeQueueRoutes } from "./routes/merge-queues.js";
 import { createEventRoutes } from "./routes/events.js";
 import { createLabelRoutes } from "./routes/labels.js";
+import { createSecretRoutes, resetSecrets } from "./routes/secrets.js";
 import { loadSeedData } from "./seed.js";
 
 const store = new Store();
@@ -64,6 +65,7 @@ app.onError((err, c) => {
 // POST /v1/dev/reset — restore store to seed data state
 app.post("/v1/dev/reset", (c) => {
   loadSeedData(store);
+  resetSecrets();
   return c.json({ ok: true });
 });
 
@@ -77,6 +79,7 @@ app.route("", createAgentRoutes(store));
 app.route("", createLabelRoutes(store));
 app.route("", createMergeQueueRoutes());
 app.route("", createEventRoutes(store));
+app.route("", createSecretRoutes());
 
 export interface MockServerHandle {
   port: number;
