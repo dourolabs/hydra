@@ -31,8 +31,8 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
-    VersionNumber, Versioned,
+    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, Rgb,
+    TaskId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -2804,6 +2804,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 let label_id = id.parse::<LabelId>().map_err(|err| {
                     StoreError::Internal(format!("invalid label id stored in database: {err}"))
                 })?;
+                let color: Rgb = color.parse().map_err(|err| {
+                    StoreError::Internal(format!("invalid color stored in database: {err}"))
+                })?;
                 Ok(LabelSummary::new(label_id, name, color))
             })
             .collect()
@@ -2838,6 +2841,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
             })?;
             let label_id = label_id_str.parse::<LabelId>().map_err(|err| {
                 StoreError::Internal(format!("invalid label id stored in database: {err}"))
+            })?;
+            let color: Rgb = color.parse().map_err(|err| {
+                StoreError::Internal(format!("invalid color stored in database: {err}"))
             })?;
             result
                 .entry(obj_id)
@@ -5171,10 +5177,10 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
 
         // Create two labels
-        let label1 = Label::new("bug".to_string(), "#e74c3c".to_string());
+        let label1 = Label::new("bug".to_string(), "#e74c3c".parse().unwrap());
         let label1_id = store.add_label(label1).await.unwrap();
 
-        let label2 = Label::new("feature".to_string(), "#3498db".to_string());
+        let label2 = Label::new("feature".to_string(), "#3498db".parse().unwrap());
         let label2_id = store.add_label(label2).await.unwrap();
 
         // Create an issue to associate labels with
