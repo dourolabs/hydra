@@ -329,6 +329,11 @@ pub async fn run() -> anyhow::Result<()> {
         secret_manager,
     );
 
+    // Migrate existing GitHub tokens from plaintext users_v2 columns to
+    // encrypted user_secrets storage. Idempotent — already-migrated users are
+    // skipped.
+    state.migrate_github_tokens_to_secrets().await;
+
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 
     run_with_state(state, listener).await
