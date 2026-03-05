@@ -1,4 +1,5 @@
 pub mod actors;
+pub mod agents;
 pub mod documents;
 pub mod issues;
 pub mod jobs;

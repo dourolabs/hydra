@@ -6,6 +6,7 @@
 use crate::{
     domain::{
         actors::{Actor, ActorId, ActorRef, UNKNOWN_CREATOR},
+        agents::Agent,
         documents::Document,
         issues::{
             Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
@@ -102,6 +103,7 @@ const TABLE_ACTORS_V2: &str = "metis.actors_v2";
 const TABLE_DOCUMENTS_V2: &str = "metis.documents_v2";
 const TABLE_MESSAGES_V2: &str = "metis.messages_v2";
 const TABLE_NOTIFICATIONS: &str = "metis.notifications";
+const TABLE_AGENTS: &str = "metis.agents";
 const TABLE_LABELS: &str = "metis.labels";
 const TABLE_LABEL_ASSOCIATIONS: &str = "metis.label_associations";
 
@@ -1214,6 +1216,18 @@ struct LabelRow {
     id: String,
     name: String,
     color: String,
+    deleted: bool,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct AgentRow {
+    name: String,
+    prompt_path: String,
+    max_tries: i32,
+    max_simultaneous: i32,
+    is_assignment_agent: bool,
     deleted: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -2708,6 +2722,40 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(u64::try_from(count).unwrap_or(0))
     }
 
+    // ---- Agent (read-only) ----
+
+    async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
+        let sql = format!(
+            "SELECT name, prompt_path, max_tries, max_simultaneous, \
+                    is_assignment_agent, deleted, created_at, updated_at \
+             FROM {TABLE_AGENTS} WHERE name = $1"
+        );
+        let row = sqlx::query_as::<_, AgentRow>(&sql)
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .ok_or_else(|| StoreError::AgentNotFound(name.to_string()))?;
+        let agent = row_to_agent(row);
+        if agent.deleted {
+            return Err(StoreError::AgentNotFound(name.to_string()));
+        }
+        Ok(agent)
+    }
+
+    async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
+        let sql = format!(
+            "SELECT name, prompt_path, max_tries, max_simultaneous, \
+                    is_assignment_agent, deleted, created_at, updated_at \
+             FROM {TABLE_AGENTS} WHERE deleted = false ORDER BY name"
+        );
+        let rows = sqlx::query_as::<_, AgentRow>(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(rows.into_iter().map(row_to_agent).collect())
+    }
+
     // ---- Label (read-only) ----
 
     async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError> {
@@ -3455,6 +3503,154 @@ impl Store for PostgresStoreV2 {
         Ok(next_version)
     }
 
+    // ---- Agent mutations ----
+
+    async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
+        // Check if an agent with this name already exists (including soft-deleted).
+        let existing_deleted = sqlx::query_scalar::<_, bool>(&format!(
+            "SELECT deleted FROM {TABLE_AGENTS} WHERE name = $1"
+        ))
+        .bind(&agent.name)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        match existing_deleted {
+            Some(false) => {
+                // Active agent exists — conflict.
+                return Err(StoreError::AgentAlreadyExists(agent.name));
+            }
+            Some(true) => {
+                // Soft-deleted agent exists — validate assignment uniqueness, then reactivate.
+                if agent.is_assignment_agent {
+                    let has_assignment = sqlx::query_scalar::<_, bool>(&format!(
+                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
+                         WHERE is_assignment_agent = true AND NOT deleted)"
+                    ))
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                    if has_assignment {
+                        return Err(StoreError::AssignmentAgentAlreadyExists);
+                    }
+                }
+
+                let now = Utc::now();
+                let sql = format!(
+                    "UPDATE {TABLE_AGENTS} \
+                     SET prompt_path = $1, max_tries = $2, max_simultaneous = $3, \
+                         is_assignment_agent = $4, deleted = false, \
+                         created_at = $5, updated_at = $6 \
+                     WHERE name = $7"
+                );
+                sqlx::query(&sql)
+                    .bind(&agent.prompt_path)
+                    .bind(agent.max_tries)
+                    .bind(agent.max_simultaneous)
+                    .bind(agent.is_assignment_agent)
+                    .bind(now)
+                    .bind(now)
+                    .bind(&agent.name)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+
+                Ok(())
+            }
+            None => {
+                // No existing row — validate assignment uniqueness, then insert.
+                if agent.is_assignment_agent {
+                    let has_assignment = sqlx::query_scalar::<_, bool>(&format!(
+                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
+                         WHERE is_assignment_agent = true AND NOT deleted)"
+                    ))
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                    if has_assignment {
+                        return Err(StoreError::AssignmentAgentAlreadyExists);
+                    }
+                }
+
+                let sql = format!(
+                    "INSERT INTO {TABLE_AGENTS} \
+                     (name, prompt_path, max_tries, max_simultaneous, is_assignment_agent, \
+                      deleted, created_at, updated_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+                );
+                sqlx::query(&sql)
+                    .bind(&agent.name)
+                    .bind(&agent.prompt_path)
+                    .bind(agent.max_tries)
+                    .bind(agent.max_simultaneous)
+                    .bind(agent.is_assignment_agent)
+                    .bind(agent.deleted)
+                    .bind(agent.created_at)
+                    .bind(agent.updated_at)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+
+                Ok(())
+            }
+        }
+    }
+
+    async fn update_agent(&self, agent: Agent) -> Result<(), StoreError> {
+        // Check it exists (and is not deleted).
+        let _ = self.get_agent(&agent.name).await?;
+
+        // Validate assignment agent uniqueness (exclude self).
+        if agent.is_assignment_agent {
+            let conflict = sqlx::query_scalar::<_, bool>(&format!(
+                "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
+                 WHERE is_assignment_agent = true AND NOT deleted AND name != $1)"
+            ))
+            .bind(&agent.name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+            if conflict {
+                return Err(StoreError::AssignmentAgentAlreadyExists);
+            }
+        }
+
+        let sql = format!(
+            "UPDATE {TABLE_AGENTS} \
+             SET prompt_path = $1, max_tries = $2, max_simultaneous = $3, \
+                 is_assignment_agent = $4, updated_at = $5 \
+             WHERE name = $6"
+        );
+        sqlx::query(&sql)
+            .bind(&agent.prompt_path)
+            .bind(agent.max_tries)
+            .bind(agent.max_simultaneous)
+            .bind(agent.is_assignment_agent)
+            .bind(Utc::now())
+            .bind(&agent.name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    async fn delete_agent(&self, name: &str) -> Result<(), StoreError> {
+        // Check it exists (and is not deleted).
+        let _ = self.get_agent(name).await?;
+
+        let sql =
+            format!("UPDATE {TABLE_AGENTS} SET deleted = true, updated_at = $1 WHERE name = $2");
+        sqlx::query(&sql)
+            .bind(Utc::now())
+            .bind(name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
     // ---- Label mutations ----
 
     async fn add_label(&self, label: Label) -> Result<LabelId, StoreError> {
@@ -3581,6 +3777,19 @@ fn row_to_label(row: &LabelRow) -> Result<Label, StoreError> {
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
+}
+
+fn row_to_agent(row: AgentRow) -> Agent {
+    Agent {
+        name: row.name,
+        prompt_path: row.prompt_path,
+        max_tries: row.max_tries,
+        max_simultaneous: row.max_simultaneous,
+        is_assignment_agent: row.is_assignment_agent,
+        deleted: row.deleted,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
 }
 
 #[cfg(test)]

@@ -16,10 +16,14 @@ pub struct AgentRecord {
     pub name: String,
     #[serde(default)]
     pub prompt: String,
+    #[serde(default)]
+    pub prompt_path: String,
     #[serde(default = "default_max_tries")]
     pub max_tries: u32,
     #[serde(default = "default_max_simultaneous")]
     pub max_simultaneous: u32,
+    #[serde(default)]
+    pub is_assignment_agent: bool,
 }
 
 impl AgentRecord {
@@ -32,8 +36,10 @@ impl AgentRecord {
         Self {
             name: name.into(),
             prompt: prompt.into(),
+            prompt_path: String::new(),
             max_tries,
             max_simultaneous,
+            is_assignment_agent: false,
         }
     }
 }
@@ -45,10 +51,14 @@ impl AgentRecord {
 pub struct UpsertAgentRequest {
     pub name: String,
     pub prompt: String,
+    #[serde(default)]
+    pub prompt_path: String,
     #[serde(default = "default_max_tries")]
     pub max_tries: u32,
     #[serde(default = "default_max_simultaneous")]
     pub max_simultaneous: u32,
+    #[serde(default)]
+    pub is_assignment_agent: bool,
 }
 
 impl UpsertAgentRequest {
@@ -61,8 +71,10 @@ impl UpsertAgentRequest {
         Self {
             name: name.into(),
             prompt: prompt.into(),
+            prompt_path: String::new(),
             max_tries,
             max_simultaneous,
+            is_assignment_agent: false,
         }
     }
 }
@@ -72,8 +84,10 @@ impl From<UpsertAgentRequest> for AgentRecord {
         Self {
             name: request.name,
             prompt: request.prompt,
+            prompt_path: request.prompt_path,
             max_tries: request.max_tries,
             max_simultaneous: request.max_simultaneous,
+            is_assignment_agent: request.is_assignment_agent,
         }
     }
 }
@@ -83,8 +97,10 @@ impl From<AgentRecord> for UpsertAgentRequest {
         Self {
             name: record.name,
             prompt: record.prompt,
+            prompt_path: record.prompt_path,
             max_tries: record.max_tries,
             max_simultaneous: record.max_simultaneous,
+            is_assignment_agent: record.is_assignment_agent,
         }
     }
 }

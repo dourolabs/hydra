@@ -1,6 +1,7 @@
 use crate::{
     domain::{
         actors::{Actor, ActorId, ActorRef},
+        agents::Agent,
         documents::Document,
         issues::{Issue, IssueGraphFilter},
         labels::Label,
@@ -239,6 +240,14 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn get_agent(&self, _name: &str) -> Result<Agent, StoreError> {
+        fail()
+    }
+
+    async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
+        fail()
+    }
+
     async fn get_label(&self, _id: &LabelId) -> Result<Label, StoreError> {
         fail()
     }
@@ -459,6 +468,18 @@ impl Store for FailingStore {
         _message: Message,
         _actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn add_agent(&self, _agent: Agent) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn update_agent(&self, _agent: Agent) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn delete_agent(&self, _name: &str) -> Result<(), StoreError> {
         fail()
     }
 

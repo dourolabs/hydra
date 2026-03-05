@@ -7,6 +7,7 @@ use super::issue_graph::IssueGraphContext;
 use super::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
+    agents::Agent,
     documents::Document,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
@@ -64,6 +65,8 @@ pub struct MemoryStore {
     messages: DashMap<MessageId, Vec<Versioned<Message>>>,
     /// Maps notification IDs to their Notification data (non-versioned)
     notifications: DashMap<NotificationId, Notification>,
+    /// Maps agent names to their Agent data (non-versioned)
+    agents: DashMap<String, Agent>,
     /// Maps label IDs to their Label data (non-versioned)
     labels: DashMap<LabelId, Label>,
     /// Maps object IDs to associated label IDs
@@ -90,6 +93,7 @@ impl MemoryStore {
             actors: DashMap::new(),
             messages: DashMap::new(),
             notifications: DashMap::new(),
+            agents: DashMap::new(),
             labels: DashMap::new(),
             object_labels: DashMap::new(),
             label_objects: DashMap::new(),
@@ -1080,6 +1084,31 @@ impl ReadOnlyStore for MemoryStore {
         Ok(count as u64)
     }
 
+    // ---- Agent (read-only) ----
+
+    async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
+        let agent = self
+            .agents
+            .get(name)
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| StoreError::AgentNotFound(name.to_string()))?;
+        if agent.deleted {
+            return Err(StoreError::AgentNotFound(name.to_string()));
+        }
+        Ok(agent)
+    }
+
+    async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
+        let mut results: Vec<Agent> = self
+            .agents
+            .iter()
+            .filter(|entry| !entry.value().deleted)
+            .map(|entry| entry.value().clone())
+            .collect();
+        results.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(results)
+    }
+
     // ---- Label (read-only) ----
 
     async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError> {
@@ -1671,6 +1700,57 @@ impl Store for MemoryStore {
         let next_version = Self::next_version(&versions);
         versions.push(Self::versioned_now_with_actor(message, next_version, actor));
         Ok(next_version)
+    }
+
+    // ---- Agent mutations ----
+
+    async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
+        // Check if a non-deleted agent with this name already exists.
+        if let Some(entry) = self.agents.get(&agent.name) {
+            if !entry.value().deleted {
+                return Err(StoreError::AgentAlreadyExists(agent.name));
+            }
+        }
+
+        // Validate assignment agent uniqueness.
+        if agent.is_assignment_agent {
+            let has_assignment = self
+                .agents
+                .iter()
+                .any(|e| e.value().is_assignment_agent && !e.value().deleted);
+            if has_assignment {
+                return Err(StoreError::AssignmentAgentAlreadyExists);
+            }
+        }
+
+        self.agents.insert(agent.name.clone(), agent);
+        Ok(())
+    }
+
+    async fn update_agent(&self, agent: Agent) -> Result<(), StoreError> {
+        // Check the agent exists and is not deleted.
+        let _ = self.get_agent(&agent.name).await?;
+
+        // Validate assignment agent uniqueness (exclude self).
+        if agent.is_assignment_agent {
+            let conflict = self.agents.iter().any(|e| {
+                e.value().is_assignment_agent && !e.value().deleted && e.key() != &agent.name
+            });
+            if conflict {
+                return Err(StoreError::AssignmentAgentAlreadyExists);
+            }
+        }
+
+        self.agents.insert(agent.name.clone(), agent);
+        Ok(())
+    }
+
+    async fn delete_agent(&self, name: &str) -> Result<(), StoreError> {
+        let mut agent = self.get_agent(name).await?;
+        agent.deleted = true;
+        agent.updated_at = Utc::now();
+        self.agents.insert(name.to_string(), agent);
+        Ok(())
     }
 
     // ---- Label mutations ----
@@ -5704,5 +5784,182 @@ mod tests {
         assert_eq!(results[0].1.name, "alpha");
         assert_eq!(results[1].1.name, "middle");
         assert_eq!(results[2].1.name, "zebra");
+    }
+
+    // ---- Agent tests ----
+
+    fn sample_agent(name: &str) -> Agent {
+        Agent::new(
+            name.to_string(),
+            format!("/agents/{name}/prompt.md"),
+            3,
+            i32::MAX,
+            false,
+        )
+    }
+
+    #[tokio::test]
+    async fn add_and_get_agent() {
+        let store = MemoryStore::new();
+        let agent = sample_agent("swe");
+
+        store.add_agent(agent.clone()).await.unwrap();
+
+        let fetched = store.get_agent("swe").await.unwrap();
+        assert_eq!(fetched.name, "swe");
+        assert_eq!(fetched.prompt_path, "/agents/swe/prompt.md");
+        assert_eq!(fetched.max_tries, 3);
+        assert!(!fetched.is_assignment_agent);
+    }
+
+    #[tokio::test]
+    async fn add_agent_duplicate_returns_error() {
+        let store = MemoryStore::new();
+        store.add_agent(sample_agent("swe")).await.unwrap();
+
+        let err = store.add_agent(sample_agent("swe")).await.unwrap_err();
+        assert!(matches!(err, StoreError::AgentAlreadyExists(_)));
+    }
+
+    #[tokio::test]
+    async fn list_agents_excludes_deleted() {
+        let store = MemoryStore::new();
+        store.add_agent(sample_agent("alpha")).await.unwrap();
+        store.add_agent(sample_agent("beta")).await.unwrap();
+        store.delete_agent("alpha").await.unwrap();
+
+        let agents = store.list_agents().await.unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].name, "beta");
+    }
+
+    #[tokio::test]
+    async fn list_agents_sorted_by_name() {
+        let store = MemoryStore::new();
+        store.add_agent(sample_agent("zebra")).await.unwrap();
+        store.add_agent(sample_agent("alpha")).await.unwrap();
+
+        let agents = store.list_agents().await.unwrap();
+        assert_eq!(agents[0].name, "alpha");
+        assert_eq!(agents[1].name, "zebra");
+    }
+
+    #[tokio::test]
+    async fn update_agent_changes_fields() {
+        let store = MemoryStore::new();
+        store.add_agent(sample_agent("swe")).await.unwrap();
+
+        let mut updated = sample_agent("swe");
+        updated.max_tries = 5;
+        updated.prompt_path = "/agents/swe/v2.md".to_string();
+        store.update_agent(updated).await.unwrap();
+
+        let fetched = store.get_agent("swe").await.unwrap();
+        assert_eq!(fetched.max_tries, 5);
+        assert_eq!(fetched.prompt_path, "/agents/swe/v2.md");
+    }
+
+    #[tokio::test]
+    async fn update_nonexistent_agent_returns_error() {
+        let store = MemoryStore::new();
+        let err = store
+            .update_agent(sample_agent("missing"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::AgentNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_agent_soft_deletes() {
+        let store = MemoryStore::new();
+        store.add_agent(sample_agent("swe")).await.unwrap();
+        store.delete_agent("swe").await.unwrap();
+
+        let err = store.get_agent("swe").await.unwrap_err();
+        assert!(matches!(err, StoreError::AgentNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_agent_returns_error() {
+        let store = MemoryStore::new();
+        let err = store.delete_agent("missing").await.unwrap_err();
+        assert!(matches!(err, StoreError::AgentNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn assignment_agent_uniqueness_on_add() {
+        let store = MemoryStore::new();
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        store.add_agent(pm).await.unwrap();
+
+        let mut pm2 = sample_agent("pm2");
+        pm2.is_assignment_agent = true;
+        let err = store.add_agent(pm2).await.unwrap_err();
+        assert!(matches!(err, StoreError::AssignmentAgentAlreadyExists));
+    }
+
+    #[tokio::test]
+    async fn assignment_agent_uniqueness_on_update() {
+        let store = MemoryStore::new();
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        store.add_agent(pm).await.unwrap();
+        store.add_agent(sample_agent("swe")).await.unwrap();
+
+        let mut swe_updated = sample_agent("swe");
+        swe_updated.is_assignment_agent = true;
+        let err = store.update_agent(swe_updated).await.unwrap_err();
+        assert!(matches!(err, StoreError::AssignmentAgentAlreadyExists));
+    }
+
+    #[tokio::test]
+    async fn assignment_agent_can_update_itself() {
+        let store = MemoryStore::new();
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        store.add_agent(pm).await.unwrap();
+
+        let mut pm_updated = sample_agent("pm");
+        pm_updated.is_assignment_agent = true;
+        pm_updated.max_tries = 10;
+        store.update_agent(pm_updated).await.unwrap();
+
+        let fetched = store.get_agent("pm").await.unwrap();
+        assert_eq!(fetched.max_tries, 10);
+        assert!(fetched.is_assignment_agent);
+    }
+
+    #[tokio::test]
+    async fn deleted_assignment_agent_allows_new_one() {
+        let store = MemoryStore::new();
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        store.add_agent(pm).await.unwrap();
+        store.delete_agent("pm").await.unwrap();
+
+        let mut pm2 = sample_agent("pm2");
+        pm2.is_assignment_agent = true;
+        store.add_agent(pm2).await.unwrap();
+
+        let fetched = store.get_agent("pm2").await.unwrap();
+        assert!(fetched.is_assignment_agent);
+    }
+
+    #[tokio::test]
+    async fn add_agent_after_soft_deletion_same_name() {
+        let store = MemoryStore::new();
+        let agent = sample_agent("swe");
+        store.add_agent(agent).await.unwrap();
+        store.delete_agent("swe").await.unwrap();
+
+        // Re-creating with the same name should succeed.
+        let mut agent2 = sample_agent("swe");
+        agent2.prompt_path = "new/path".to_string();
+        store.add_agent(agent2).await.unwrap();
+
+        let fetched = store.get_agent("swe").await.unwrap();
+        assert_eq!(fetched.prompt_path, "new/path");
+        assert!(!fetched.deleted);
     }
 }

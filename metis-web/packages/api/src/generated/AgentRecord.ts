@@ -3,6 +3,8 @@
 export type AgentRecord = {
   name: string;
   prompt: string;
+  prompt_path: string;
   max_tries: number;
   max_simultaneous: number;
+  is_assignment_agent: boolean;
 };
