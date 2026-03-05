@@ -17,6 +17,7 @@ interface IssueFilterSidebarProps {
   onDrawerClose: () => void;
   jobsByIssue: Map<string, JobSummaryRecord[]>;
   username: string;
+  inboxCount: number;
 }
 
 function getBoxClass(child: ChildStatus): string {
@@ -107,20 +108,13 @@ export function IssueFilterSidebar({
   onDrawerClose,
   jobsByIssue,
   username,
+  inboxCount,
 }: IssueFilterSidebarProps) {
   /** On mobile, selecting an issue should also close the drawer. */
   const handleFilterChange = (rootId: string | null) => {
     onFilterChange(rootId);
     onDrawerClose();
   };
-
-  const inboxCount = useMemo(() => {
-    return allIssues.filter(
-      (issue) =>
-        !TERMINAL_STATUSES.has(issue.issue.status) &&
-        issue.issue.assignee === username,
-    ).length;
-  }, [allIssues, username]);
 
   const progressList = useMemo(() => {
     const list = computeIssueProgress(roots, jobsByIssue, username);
