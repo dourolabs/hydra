@@ -224,8 +224,7 @@ impl AppState {
     ///
     /// For each API key (OPENAI_API_KEY, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN):
     /// 1. Check user_secrets for the task creator (requires SecretManager)
-    /// 2. Fall back to the server environment variable
-    /// 3. Fall back to the config file value
+    /// 2. Fall back to the config file value
     async fn resolve_secrets_into_env_vars(
         &self,
         creator: &Username,
