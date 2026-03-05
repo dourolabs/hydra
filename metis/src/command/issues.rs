@@ -1731,22 +1731,23 @@ async fn resolve_label_names_to_ids(
         return Ok(Vec::new());
     }
 
-    let response = client
-        .list_labels(&SearchLabelsQuery::default())
-        .await
-        .context("failed to list labels")?;
-
     let mut ids = Vec::with_capacity(names.len());
     for name in names {
-        let trimmed = name.trim().to_lowercase();
+        let trimmed = name.trim();
         if trimmed.is_empty() {
             continue;
         }
+        let mut query = SearchLabelsQuery::default();
+        query.q = Some(trimmed.to_string());
+        let response = client
+            .list_labels(&query)
+            .await
+            .context("failed to list labels")?;
         let label = response
             .labels
             .iter()
-            .find(|l| l.name.to_lowercase() == trimmed)
-            .ok_or_else(|| anyhow!("label '{}' not found", name.trim()))?;
+            .find(|l| l.name.eq_ignore_ascii_case(trimmed))
+            .ok_or_else(|| anyhow!("label '{trimmed}' not found"))?;
         ids.push(label.label_id.clone());
     }
     Ok(ids)
@@ -4650,13 +4651,23 @@ mod tests {
     async fn resolve_label_names_to_ids_happy_path() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let labels_response = ListLabelsResponse::new(vec![
-            sample_label_record("l-aaaa", "frontend", "#e74c3c"),
-            sample_label_record("l-bbbb", "urgent", "#3498db"),
-        ]);
-        let list_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/labels");
-            then.status(200).json_body_obj(&labels_response);
+        let frontend_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/labels")
+                .query_param("q", "frontend");
+            then.status(200)
+                .json_body_obj(&ListLabelsResponse::new(vec![sample_label_record(
+                    "l-aaaa", "frontend", "#e74c3c",
+                )]));
+        });
+        let urgent_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/labels")
+                .query_param("q", "urgent");
+            then.status(200)
+                .json_body_obj(&ListLabelsResponse::new(vec![sample_label_record(
+                    "l-bbbb", "urgent", "#3498db",
+                )]));
         });
 
         let ids =
@@ -4664,7 +4675,8 @@ mod tests {
                 .await
                 .unwrap();
 
-        list_mock.assert();
+        frontend_mock.assert();
+        urgent_mock.assert();
         assert_eq!(ids.len(), 2);
         assert_eq!(ids[0], label_id("l-aaaa"));
         assert_eq!(ids[1], label_id("l-bbbb"));
@@ -4674,11 +4686,14 @@ mod tests {
     async fn resolve_label_names_to_ids_case_insensitive() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let labels_response =
-            ListLabelsResponse::new(vec![sample_label_record("l-aaaa", "Frontend", "#e74c3c")]);
         let list_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/labels");
-            then.status(200).json_body_obj(&labels_response);
+            when.method(GET)
+                .path("/v1/labels")
+                .query_param("q", "FRONTEND");
+            then.status(200)
+                .json_body_obj(&ListLabelsResponse::new(vec![sample_label_record(
+                    "l-aaaa", "Frontend", "#e74c3c",
+                )]));
         });
 
         let ids = resolve_label_names_to_ids(&client, &["FRONTEND".to_string()])
@@ -4694,11 +4709,12 @@ mod tests {
     async fn resolve_label_names_to_ids_missing_label_errors() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let labels_response =
-            ListLabelsResponse::new(vec![sample_label_record("l-aaaa", "frontend", "#e74c3c")]);
         server.mock(|when, then| {
-            when.method(GET).path("/v1/labels");
-            then.status(200).json_body_obj(&labels_response);
+            when.method(GET)
+                .path("/v1/labels")
+                .query_param("q", "nonexistent");
+            then.status(200)
+                .json_body_obj(&ListLabelsResponse::new(vec![]));
         });
 
         let result = resolve_label_names_to_ids(&client, &["nonexistent".to_string()]).await;
