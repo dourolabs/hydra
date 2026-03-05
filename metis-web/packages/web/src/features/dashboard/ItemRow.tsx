@@ -157,8 +157,8 @@ export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
   if (isAssignedToMe) rowClasses.push(styles.assignedToMe);
 
   // Label overflow (issues only)
-  const allLabels = item.kind === "issue" && item.data.labels && item.data.labels.length > 0
-    ? item.data.labels
+  const allLabels = item.kind === "issue" && item.data.issue.labels && item.data.issue.labels.length > 0
+    ? item.data.issue.labels
     : null;
   const visibleLabels = allLabels
     ? (isMobile ? allLabels.slice(0, MOBILE_MAX_LABELS) : allLabels)

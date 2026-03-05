@@ -57,6 +57,7 @@ function toSummaryRecord(
     patches: issue.patches,
     todo_list: issue.todo_list,
     deleted: issue.deleted,
+    labels: getLabelsForObject(issueId),
   };
   return {
     issue_id: issueId,
@@ -64,7 +65,6 @@ function toSummaryRecord(
     timestamp,
     issue: summary,
     creation_time: creationTime,
-    labels: getLabelsForObject(issueId),
   };
 }
 
