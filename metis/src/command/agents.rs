@@ -77,6 +77,13 @@ pub struct UpdateAgentArgs {
     /// Mark this agent as the assignment agent (at most one allowed).
     #[arg(long = "is-assignment-agent")]
     pub is_assignment_agent: bool,
+
+    /// Remove the assignment agent designation from this agent.
+    #[arg(
+        long = "no-is-assignment-agent",
+        conflicts_with = "is_assignment_agent"
+    )]
+    pub no_is_assignment_agent: bool,
 }
 
 pub async fn run(
@@ -180,6 +187,8 @@ async fn update_agent(
     }
     if args.is_assignment_agent {
         request.is_assignment_agent = true;
+    } else if args.no_is_assignment_agent {
+        request.is_assignment_agent = false;
     }
 
     let response = client
@@ -427,6 +436,7 @@ mod tests {
             max_tries: None,
             max_simultaneous: Some(10),
             is_assignment_agent: false,
+            no_is_assignment_agent: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -437,6 +447,159 @@ mod tests {
         assert_eq!(response.max_tries, 3);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_agent_sets_is_assignment_agent_true() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+        let existing =
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, false));
+        let updated =
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, true));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/writer");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/writer").json_body(json!({
+                "name": "writer",
+                "prompt": "draft",
+                "prompt_path": "",
+                "max_tries": 3,
+                "max_simultaneous": 4294967295u64,
+                "is_assignment_agent": true
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "writer".to_string(),
+            prompt_file: None,
+            max_tries: None,
+            max_simultaneous: None,
+            is_assignment_agent: true,
+            no_is_assignment_agent: false,
+        };
+
+        let response = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
+        assert!(response.is_assignment_agent);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_agent_unsets_is_assignment_agent() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+        let existing =
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, true));
+        let updated =
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, false));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/writer");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/writer").json_body(json!({
+                "name": "writer",
+                "prompt": "draft",
+                "prompt_path": "",
+                "max_tries": 3,
+                "max_simultaneous": 4294967295u64,
+                "is_assignment_agent": false
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "writer".to_string(),
+            prompt_file: None,
+            max_tries: None,
+            max_simultaneous: None,
+            is_assignment_agent: false,
+            no_is_assignment_agent: true,
+        };
+
+        let response = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
+        assert!(!response.is_assignment_agent);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_agent_preserves_is_assignment_agent_when_neither_flag() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+        let existing =
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, true));
+        let updated =
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, true));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/writer");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/writer").json_body(json!({
+                "name": "writer",
+                "prompt": "draft",
+                "prompt_path": "",
+                "max_tries": 3,
+                "max_simultaneous": 4294967295u64,
+                "is_assignment_agent": true
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "writer".to_string(),
+            prompt_file: None,
+            max_tries: None,
+            max_simultaneous: None,
+            is_assignment_agent: false,
+            no_is_assignment_agent: false,
+        };
+
+        let response = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
+        assert!(response.is_assignment_agent);
+
+        Ok(())
+    }
+
+    #[test]
+    fn update_agent_rejects_both_assignment_flags() {
+        use clap::Parser;
+
+        #[derive(Debug, Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: UpdateAgentArgs,
+        }
+
+        let result = Cli::try_parse_from([
+            "cli",
+            "writer",
+            "--is-assignment-agent",
+            "--no-is-assignment-agent",
+        ]);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("cannot be used with"),
+            "expected conflict error, got: {err}"
+        );
     }
 
     #[tokio::test]
