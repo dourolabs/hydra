@@ -156,6 +156,15 @@ export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
   if (item.isTerminal) rowClasses.push(styles.terminal);
   if (isAssignedToMe) rowClasses.push(styles.assignedToMe);
 
+  // Label overflow (issues only)
+  const allLabels = item.kind === "issue" && item.data.labels && item.data.labels.length > 0
+    ? item.data.labels
+    : null;
+  const visibleLabels = allLabels
+    ? (isMobile ? allLabels.slice(0, MOBILE_MAX_LABELS) : allLabels)
+    : [];
+  const overflowCount = allLabels && isMobile ? allLabels.length - MOBILE_MAX_LABELS : 0;
+
   return (
     <li
       className={rowClasses.join(" ")}
@@ -184,25 +193,20 @@ export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
           </span>
         )}
       </span>
-      {item.kind === "issue" && item.data.labels && item.data.labels.length > 0 && (() => {
-        const allLabels = item.data.labels;
-        const visibleLabels = isMobile ? allLabels.slice(0, MOBILE_MAX_LABELS) : allLabels;
-        const overflowCount = isMobile ? allLabels.length - MOBILE_MAX_LABELS : 0;
-        return (
-          <span className={styles.labels}>
-            {visibleLabels.map((label: LabelSummary) => (
-              <LabelChip
-                key={label.label_id}
-                name={label.name}
-                color={label.color}
-              />
-            ))}
-            {overflowCount > 0 && (
-              <span className={styles.overflowBadge}>+{overflowCount}</span>
-            )}
-          </span>
-        );
-      })()}
+      {allLabels && (
+        <span className={styles.labels}>
+          {visibleLabels.map((label: LabelSummary) => (
+            <LabelChip
+              key={label.label_id}
+              name={label.name}
+              color={label.color}
+            />
+          ))}
+          {overflowCount > 0 && (
+            <span className={styles.overflowBadge}>+{overflowCount}</span>
+          )}
+        </span>
+      )}
       {jobSummaries && jobSummaries.length > 0 && (
         <span
           className={styles.jobIndicator}
