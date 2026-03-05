@@ -35,8 +35,8 @@ use metis_server::{
     },
     store::{MemoryStore, Store},
     test_utils::{
-        spawn_test_server_with_state, test_app_config, GitHubMockBuilder, GitRemote, MockJobEngine,
-        TestServer,
+        spawn_test_server_with_state, test_app_config, test_secret_manager, GitHubMockBuilder,
+        GitRemote, MockJobEngine, TestServer,
     },
 };
 use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc};
@@ -606,7 +606,7 @@ impl TestHarnessBuilder {
             Arc::new(ServiceState::default()),
             store.clone(),
             engine.clone(),
-            None,
+            test_secret_manager(),
         );
 
         // Override the policy engine if a custom patch_workflow config was provided.

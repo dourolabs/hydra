@@ -22,24 +22,12 @@ fn authorize(actor: &Actor, target: &Username) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Return 503 if the SecretManager is not configured.
-fn require_secret_manager(
-    state: &AppState,
-) -> Result<&std::sync::Arc<crate::domain::secrets::SecretManager>, ApiError> {
-    state.secret_manager.as_ref().ok_or_else(|| {
-        ApiError::service_unavailable(
-            "secret management is not configured (encryption key missing)",
-        )
-    })
-}
-
 /// GET /v1/users/:username/secrets
 pub async fn list_secrets(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     Path(username): Path<String>,
 ) -> Result<Json<ListSecretsResponse>, ApiError> {
-    require_secret_manager(&state)?;
     let username = resolve_username(&actor, &username)?;
     authorize(&actor, &username)?;
 
@@ -65,7 +53,6 @@ pub async fn set_secret(
     Path((username, name)): Path<(String, String)>,
     Json(payload): Json<SetSecretRequest>,
 ) -> Result<Json<()>, ApiError> {
-    let secret_manager = require_secret_manager(&state)?;
     let username = resolve_username(&actor, &username)?;
     authorize(&actor, &username)?;
 
@@ -78,10 +65,13 @@ pub async fn set_secret(
 
     info!(username = %username, secret_name = %name, "set_secret invoked");
 
-    let encrypted = secret_manager.encrypt(&payload.value).map_err(|err| {
-        tracing::error!(error = %err, "failed to encrypt secret");
-        ApiError::internal("failed to encrypt secret")
-    })?;
+    let encrypted = state
+        .secret_manager
+        .encrypt(&payload.value)
+        .map_err(|err| {
+            tracing::error!(error = %err, "failed to encrypt secret");
+            ApiError::internal("failed to encrypt secret")
+        })?;
 
     state
         .store
@@ -102,7 +92,6 @@ pub async fn delete_secret(
     Extension(actor): Extension<Actor>,
     Path((username, name)): Path<(String, String)>,
 ) -> Result<Json<()>, ApiError> {
-    require_secret_manager(&state)?;
     let username = resolve_username(&actor, &username)?;
     authorize(&actor, &username)?;
 

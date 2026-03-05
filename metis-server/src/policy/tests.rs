@@ -587,6 +587,7 @@ fn policy_config_deserializes_patch_workflow_params_under_policies_section() {
     let yaml_str = r#"
 metis:
   namespace: "default"
+  secret_encryption_key: "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio="
 job:
   default_image: "x"
 database:
@@ -1017,6 +1018,7 @@ fn full_yaml_config_with_policies_deserializes() {
     let yaml_str = r#"
 metis:
   namespace: "default"
+  secret_encryption_key: "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio="
   allowed_orgs: []
 
 job:
@@ -1114,6 +1116,7 @@ fn config_without_policies_deserializes_as_none() {
     let yaml_str = r#"
 metis:
   namespace: "default"
+  secret_encryption_key: "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio="
 
 job:
   default_image: "metis-worker:latest"

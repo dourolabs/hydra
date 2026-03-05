@@ -21,7 +21,7 @@ pub struct AppState {
     pub(crate) store: Arc<StoreWithEvents>,
     pub job_engine: Arc<dyn JobEngine>,
     pub(crate) policy_engine: Arc<crate::policy::PolicyEngine>,
-    pub secret_manager: Option<Arc<SecretManager>>,
+    pub secret_manager: Arc<SecretManager>,
 }
 
 impl AppState {
@@ -31,7 +31,7 @@ impl AppState {
         service_state: Arc<ServiceState>,
         store: Arc<dyn Store>,
         job_engine: Arc<dyn JobEngine>,
-        secret_manager: Option<Arc<SecretManager>>,
+        secret_manager: Arc<SecretManager>,
     ) -> Self {
         let event_bus = Arc::new(EventBus::new());
         let policy_engine = Self::build_policy_engine(config.policies.as_ref());

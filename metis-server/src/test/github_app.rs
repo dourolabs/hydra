@@ -1,7 +1,10 @@
 use crate::{
     app::{AppState, ServiceState},
     store::MemoryStore,
-    test_utils::{MockJobEngine, spawn_test_server_with_state, test_app_config, test_client},
+    test_utils::{
+        MockJobEngine, spawn_test_server_with_state, test_app_config, test_client,
+        test_secret_manager,
+    },
 };
 use metis_common::github::GithubAppClientIdResponse;
 use std::sync::Arc;
@@ -18,7 +21,7 @@ async fn github_app_client_id_returns_configured_value() -> anyhow::Result<()> {
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        None,
+        test_secret_manager(),
     );
 
     let server = spawn_test_server_with_state(state, store).await?;

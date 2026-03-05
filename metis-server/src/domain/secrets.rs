@@ -19,9 +19,6 @@ pub const ALLOWED_SECRET_NAMES: &[&str] = &[
     SECRET_GITHUB_REFRESH_TOKEN,
 ];
 
-/// Environment variable name for the encryption key (32-byte base64-encoded).
-pub const ENV_SECRET_ENCRYPTION_KEY: &str = "METIS_SECRET_ENCRYPTION_KEY";
-
 const NONCE_SIZE: usize = 12;
 
 /// Manages encryption and decryption of user secrets using AES-256-GCM.

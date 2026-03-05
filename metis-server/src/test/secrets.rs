@@ -25,7 +25,7 @@ fn test_state_with_secrets() -> TestStateHandles {
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        Some(test_secret_manager()),
+        test_secret_manager(),
     );
     TestStateHandles { state, store }
 }
@@ -191,25 +191,6 @@ async fn bad_request_for_invalid_secret_name() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn service_unavailable_without_secret_manager() -> anyhow::Result<()> {
-    // Use default test state (no secret manager)
-    let handles = crate::test::test_state_handles();
-    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
-
-    let response = client
-        .get(format!(
-            "{}/v1/users/{TEST_USERNAME}/secrets",
-            server.base_url()
-        ))
-        .send()
-        .await?;
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-
-    Ok(())
-}
-
-#[tokio::test]
 async fn unauthorized_without_auth() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
@@ -282,7 +263,7 @@ fn test_state_with_secrets_and_config() -> TestStateHandles {
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        Some(test_secret_manager()),
+        test_secret_manager(),
     );
     TestStateHandles { state, store }
 }
@@ -372,7 +353,7 @@ async fn resolve_secrets_no_user_secret_no_config_not_set() {
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        Some(test_secret_manager()),
+        test_secret_manager(),
     );
     let username = Username::from("dave");
 
