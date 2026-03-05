@@ -1518,6 +1518,13 @@ async fn update_issue(
     if labels_requested {
         let object_id = MetisId::from(issue_id.clone());
         apply_label_changes(client, &object_id, &add_labels, &remove_labels).await?;
+
+        // Re-fetch the issue to get fresh label data after changes.
+        let refreshed = client
+            .get_issue(&issue_id, false)
+            .await
+            .with_context(|| format!("failed to re-fetch issue '{issue_id}' after label update"))?;
+        return Ok(refreshed);
     }
 
     Ok(result)
