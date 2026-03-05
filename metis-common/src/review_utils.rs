@@ -143,6 +143,7 @@ mod tests {
             make_api_patch(commit_range),
             None,
             timestamp,
+            Vec::new(),
         )
     }
 

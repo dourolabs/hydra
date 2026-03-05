@@ -682,6 +682,7 @@ async fn update_patch_inner(
         updated_patch,
         None,
         Utc::now(),
+        Vec::new(),
     ))
 }
 
@@ -1478,8 +1479,15 @@ mod tests {
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-1"), 0);
-        let patch_record =
-            PatchVersionRecord::new(patch_id("p-1"), 0, Utc::now(), patch, None, Utc::now());
+        let patch_record = PatchVersionRecord::new(
+            patch_id("p-1"),
+            0,
+            Utc::now(),
+            patch,
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1572,8 +1580,15 @@ mod tests {
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-2"), 0);
-        let patch_record =
-            PatchVersionRecord::new(patch_id("p-2"), 0, Utc::now(), patch, None, Utc::now());
+        let patch_record = PatchVersionRecord::new(
+            patch_id("p-2"),
+            0,
+            Utc::now(),
+            patch,
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
@@ -1745,6 +1760,7 @@ mod tests {
             patch,
             None,
             Utc::now(),
+            Vec::new(),
         );
         let server = MockServer::start();
         let client = metis_client(&server);
@@ -1834,8 +1850,15 @@ mod tests {
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let new_patch_id = patch_id("p-link");
         let patch_response = UpsertPatchResponse::new(new_patch_id.clone(), 0);
-        let patch_record =
-            PatchVersionRecord::new(new_patch_id.clone(), 0, Utc::now(), patch, None, Utc::now());
+        let patch_record = PatchVersionRecord::new(
+            new_patch_id.clone(),
+            0,
+            Utc::now(),
+            patch,
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
         let server = MockServer::start();
         let client = metis_client(&server);
         mock_get_job(&server, job_record);
@@ -1964,6 +1987,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let server = MockServer::start();
         let client = metis_client(&server);
@@ -2030,6 +2054,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let server = MockServer::start();
         let client = metis_client(&server);
@@ -2093,6 +2118,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let server = MockServer::start();
         let client = metis_client(&server);
@@ -2189,6 +2215,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let expected_request = UpsertPatchRequest::new(Patch::new(
             "Updated title".to_string(),
@@ -2287,6 +2314,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let versions_response = ListPatchVersionsResponse::new(vec![patch_record.clone()]);
 
@@ -2378,6 +2406,7 @@ mod tests {
             ),
             None,
             now - chrono::Duration::hours(3),
+            Vec::new(),
         );
         let version2 = PatchVersionRecord::new(
             merge_patch_id.clone(),
@@ -2386,6 +2415,7 @@ mod tests {
             patch_v2.clone(),
             None,
             now - chrono::Duration::hours(1),
+            Vec::new(),
         );
 
         let current_record = PatchVersionRecord::new(
@@ -2395,6 +2425,7 @@ mod tests {
             patch_v2,
             None,
             now - chrono::Duration::hours(1),
+            Vec::new(),
         );
 
         let versions_response = ListPatchVersionsResponse::new(vec![version1, version2]);

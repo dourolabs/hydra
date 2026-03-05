@@ -14,7 +14,7 @@ use axum::{
     http::{HeaderMap, header::CONTENT_DISPOSITION, request::Parts},
 };
 use metis_common::{
-    PatchId,
+    MetisId, PatchId,
     api::v1::{self, ApiError},
 };
 use reqwest::header::{
@@ -119,6 +119,15 @@ pub async fn get_patch(
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
+    let object_id = MetisId::from(patch_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(patch_id = %patch_id, error = %err, "failed to fetch labels for patch");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     info!(patch_id = %patch_id, "get_patch completed");
     let response = v1::patches::PatchVersionRecord::new(
         patch_id,
@@ -127,6 +136,7 @@ pub async fn get_patch(
         patch.item.into(),
         patch.actor,
         patch.creation_time,
+        labels,
     );
     Ok(Json(response))
 }
@@ -151,6 +161,7 @@ pub async fn list_patch_versions(
                 version.item.into(),
                 version.actor,
                 version.creation_time,
+                Vec::new(),
             )
         })
         .collect();
@@ -194,6 +205,7 @@ pub async fn get_patch_version(
         entry.item.into(),
         entry.actor,
         entry.creation_time,
+        Vec::new(),
     );
     info!(patch_id = %patch_id, version, "get_patch_version completed");
     Ok(Json(response))
@@ -210,9 +222,24 @@ pub async fn list_patches(
         .await
         .map_err(|err| map_patch_error(err, None))?;
 
+    // Batch-fetch labels for all patches in a single query
+    let object_ids: Vec<MetisId> = patches
+        .iter()
+        .map(|(id, _)| MetisId::from(id.clone()))
+        .collect();
+    let labels_map = state
+        .get_labels_for_objects(&object_ids)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to batch-fetch labels for patches");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     let records: Vec<v1::patches::PatchSummaryRecord> = patches
         .into_iter()
         .map(|(id, versioned)| {
+            let object_id = MetisId::from(id.clone());
+            let labels = labels_map.get(&object_id).cloned().unwrap_or_default();
             let full_record = v1::patches::PatchVersionRecord::new(
                 id,
                 versioned.version,
@@ -220,6 +247,7 @@ pub async fn list_patches(
                 versioned.item.into(),
                 versioned.actor,
                 versioned.creation_time,
+                labels,
             );
             v1::patches::PatchSummaryRecord::from(&full_record)
         })
@@ -561,6 +589,7 @@ pub async fn delete_patch(
         patch.item.into(),
         patch.actor,
         patch.creation_time,
+        Vec::new(),
     );
     Ok(Json(response))
 }

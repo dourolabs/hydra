@@ -10,7 +10,7 @@ use axum::{
     http::request::Parts,
 };
 use metis_common::{
-    DocumentId,
+    DocumentId, MetisId,
     api::v1::{self, ApiError},
 };
 use tracing::{error, info};
@@ -113,6 +113,15 @@ pub async fn get_document(
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
+    let object_id = MetisId::from(document_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(document_id = %document_id, error = %err, "failed to fetch labels for document");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     let response = v1::documents::DocumentVersionRecord::new(
         document_id.clone(),
         document.version,
@@ -120,6 +129,7 @@ pub async fn get_document(
         document.item.into(),
         document.actor,
         document.creation_time,
+        labels,
     );
     info!(document_id = %document_id, "get_document completed");
     Ok(Json(response))
@@ -135,9 +145,24 @@ pub async fn list_documents(
         .await
         .map_err(|err| map_document_error(err, None))?;
 
+    // Batch-fetch labels for all documents in a single query
+    let object_ids: Vec<MetisId> = documents
+        .iter()
+        .map(|(id, _)| MetisId::from(id.clone()))
+        .collect();
+    let labels_map = state
+        .get_labels_for_objects(&object_ids)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to batch-fetch labels for documents");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     let records = documents
         .into_iter()
         .map(|(id, versioned)| {
+            let object_id = MetisId::from(id.clone());
+            let labels = labels_map.get(&object_id).cloned().unwrap_or_default();
             let full_record = v1::documents::DocumentVersionRecord::new(
                 id,
                 versioned.version,
@@ -145,6 +170,7 @@ pub async fn list_documents(
                 versioned.item.into(),
                 versioned.actor,
                 versioned.creation_time,
+                labels,
             );
             v1::documents::DocumentSummaryRecord::from(&full_record)
         })
@@ -178,6 +204,7 @@ pub async fn list_document_versions(
                 version.item.into(),
                 version.actor,
                 version.creation_time,
+                Vec::new(),
             )
         })
         .collect();
@@ -220,6 +247,7 @@ pub async fn get_document_version(
         entry.item.into(),
         entry.actor,
         entry.creation_time,
+        Vec::new(),
     );
     info!(document_id = %document_id, version, "get_document_version completed");
     Ok(Json(response))
@@ -294,6 +322,7 @@ pub async fn delete_document(
         document.item.into(),
         document.actor,
         document.creation_time,
+        Vec::new(),
     );
     Ok(Json(response))
 }
