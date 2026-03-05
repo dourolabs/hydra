@@ -27,11 +27,14 @@ pub async fn list_agents(
     State(state): State<AppState>,
 ) -> Result<Json<ListAgentsResponse>, ApiError> {
     info!("list_agents invoked");
-    let agents = state.list_agents_from_db().await.map_err(map_agent_error)?;
+    let agents = state.list_agents().await.map_err(map_agent_error)?;
 
     let mut records = Vec::with_capacity(agents.len());
     for agent in agents {
-        let prompt = resolve_prompt(&state, &agent.prompt_path).await;
+        let prompt = state
+            .resolve_agent_prompt(&agent.prompt_path)
+            .await
+            .unwrap_or_default();
         records.push(agent_to_record(agent, prompt));
     }
 
@@ -46,11 +49,14 @@ pub async fn get_agent(
 ) -> Result<Json<AgentResponse>, ApiError> {
     info!(agent = %agent_name, "get_agent invoked");
     let agent = state
-        .get_agent_from_db(&agent_name)
+        .get_agent(&agent_name)
         .await
         .map_err(map_agent_error)?;
 
-    let prompt = resolve_prompt(&state, &agent.prompt_path).await;
+    let prompt = state
+        .resolve_agent_prompt(&agent.prompt_path)
+        .await
+        .unwrap_or_default();
 
     info!(agent = %agent_name, "get_agent completed");
     Ok(Json(AgentResponse::new(agent_to_record(agent, prompt))))
@@ -103,7 +109,10 @@ pub async fn update_agent(
     let resolved_prompt = if prompt_text.is_some() {
         prompt_text.unwrap_or_default()
     } else {
-        resolve_prompt(&state, &updated.prompt_path).await
+        state
+            .resolve_agent_prompt(&updated.prompt_path)
+            .await
+            .unwrap_or_default()
     };
 
     info!(agent = %agent_name, "update_agent completed");
@@ -169,28 +178,11 @@ fn agent_to_record(agent: Agent, prompt: String) -> AgentRecord {
     AgentRecord::new(
         agent.name,
         prompt,
+        agent.prompt_path,
         agent.max_tries as u32,
         agent.max_simultaneous as u32,
+        agent.is_assignment_agent,
     )
-    .with_prompt_path(agent.prompt_path)
-    .with_is_assignment_agent(agent.is_assignment_agent)
-}
-
-async fn resolve_prompt(state: &AppState, prompt_path: &str) -> String {
-    if prompt_path.is_empty() {
-        return String::new();
-    }
-    let query =
-        SearchDocumentsQuery::new(None, Some(prompt_path.to_string()), Some(true), None, None);
-
-    match state.list_documents(&query).await {
-        Ok(docs) => docs
-            .into_iter()
-            .next()
-            .map(|(_, v)| v.item.body_markdown)
-            .unwrap_or_default(),
-        Err(_) => String::new(),
-    }
 }
 
 async fn write_prompt(

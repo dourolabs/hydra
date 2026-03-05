@@ -67,8 +67,6 @@ async fn register_agent(harness: &harness::TestHarness, name: &str) {
         .add_document(doc, &ActorRef::test())
         .await
         .unwrap();
-
-    harness.state().refresh_agents_from_db().await.unwrap();
 }
 
 /// step_spawner with no agents configured returns empty vec.

@@ -11,19 +11,16 @@ use metis_common::agents::{
     AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest,
 };
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
     let config = test_app_config();
     let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
-    let agents = Arc::new(RwLock::new(Vec::new()));
     let state = AppState::new(
         Arc::new(config),
         None,
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        agents.clone(),
     );
 
     for name in agent_names {
@@ -46,13 +43,7 @@ async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
         store.add_document(doc, &ActorRef::test()).await.unwrap();
     }
 
-    state.refresh_agents_from_db().await.unwrap();
-
-    TestStateHandles {
-        state,
-        store,
-        agents,
-    }
+    TestStateHandles { state, store }
 }
 
 fn agent_request(name: &str) -> UpsertAgentRequest {
@@ -124,7 +115,7 @@ async fn create_agent_adds_to_state() -> anyhow::Result<()> {
     let body: AgentResponse = response.json().await?;
     assert_eq!(body.agent.name, "gamma");
 
-    let agents = state.state.list_agents_from_db().await.unwrap();
+    let agents = state.state.list_agents().await.unwrap();
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0].name, "gamma");
     Ok(())
@@ -149,7 +140,7 @@ async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
     assert_eq!(body.agent.max_tries, 7);
     assert_eq!(body.agent.max_simultaneous, 11);
 
-    let agents = state.state.list_agents_from_db().await.unwrap();
+    let agents = state.state.list_agents().await.unwrap();
     assert_eq!(agents[0].max_tries, 7);
     assert_eq!(agents[0].max_simultaneous, 11);
     Ok(())
@@ -170,7 +161,7 @@ async fn delete_agent_removes_queue() -> anyhow::Result<()> {
     let body: DeleteAgentResponse = response.json().await?;
     assert_eq!(body.agent.name, "alpha");
 
-    let agents = state.state.list_agents_from_db().await.unwrap();
+    let agents = state.state.list_agents().await.unwrap();
     assert!(agents.is_empty());
     Ok(())
 }

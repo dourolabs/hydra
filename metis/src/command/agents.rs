@@ -203,8 +203,8 @@ mod tests {
     async fn list_agents_fetches_agents_and_prints_jsonl() -> Result<()> {
         let server = MockServer::start();
         let list_agents_response = ListAgentsResponse::new(vec![
-            AgentRecord::new("alpha", "", 3, u32::MAX),
-            AgentRecord::new("beta", "", 3, u32::MAX),
+            AgentRecord::new("alpha", "", "", 3, u32::MAX, false),
+            AgentRecord::new("beta", "", "", 3, u32::MAX, false),
         ]);
 
         let mock = server.mock(|when, then| {
@@ -229,7 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_agents_prints_pretty_format() -> Result<()> {
-        let agents = vec![AgentRecord::new("alpha", "prompt", 2, 5)];
+        let agents = vec![AgentRecord::new("alpha", "prompt", "", 2, 5, false)];
         let mut output = Vec::new();
 
         render_agent_records(ResolvedOutputFormat::Pretty, &agents, &mut output)?;
@@ -254,7 +254,8 @@ mod tests {
             max_tries: 2,
             max_simultaneous: 4,
         };
-        let response = AgentResponse::new(AgentRecord::new("writer", "draft this", 2, 4));
+        let response =
+            AgentResponse::new(AgentRecord::new("writer", "draft this", "", 2, 4, false));
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "writer",
@@ -282,8 +283,9 @@ mod tests {
         let server = MockServer::start();
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        let existing = AgentResponse::new(AgentRecord::new("writer", "draft", 3, u32::MAX));
-        let updated = AgentResponse::new(AgentRecord::new("writer", "revised", 3, 10));
+        let existing =
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, false));
+        let updated = AgentResponse::new(AgentRecord::new("writer", "revised", "", 3, 10, false));
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
@@ -323,7 +325,7 @@ mod tests {
         let server = MockServer::start();
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        let deleted = AgentRecord::new("writer", "", 3, u32::MAX);
+        let deleted = AgentRecord::new("writer", "", "", 3, u32::MAX, false);
         let mock = server.mock(|when, then| {
             when.method(DELETE).path("/v1/agents/writer");
             then.status(200)

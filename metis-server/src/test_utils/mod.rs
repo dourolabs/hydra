@@ -1,9 +1,7 @@
 use crate::{
     app::{AppState, Repository, ServiceState},
-    background::AgentQueue,
     config::{
-        AgentQueueConfig, AppConfig, BackgroundSection, BuildCacheSection,
-        DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES, DatabaseSection, GithubAppSection,
+        AppConfig, BackgroundSection, BuildCacheSection, DatabaseSection, GithubAppSection,
         JobSection, KubernetesSection, MetisSection, SchedulerSection, WorkerSchedulerConfig,
     },
     domain::actors::{Actor, ActorRef},
@@ -19,7 +17,7 @@ use std::{
     sync::OnceLock,
     time::{Duration, Instant},
 };
-use tokio::{sync::RwLock, task::JoinHandle, time::sleep};
+use tokio::{task::JoinHandle, time::sleep};
 
 pub mod git_remote;
 pub mod github_mock;
@@ -39,7 +37,6 @@ pub use store::FailingStore;
 pub struct TestStateHandles {
     pub state: AppState,
     pub store: Arc<dyn Store>,
-    pub agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
 }
 
 pub struct TestServer {
@@ -81,21 +78,6 @@ pub fn test_app_config() -> AppConfig {
             oauth_base_url: "https://github.com".to_string(),
         },
         background: BackgroundSection {
-            agent_queues: vec![
-                AgentQueueConfig {
-                    name: "swe".to_string(),
-                    prompt: "prompt".to_string(),
-                    max_tries: DEFAULT_AGENT_MAX_TRIES,
-                    max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
-                },
-                AgentQueueConfig {
-                    name: "assignment".to_string(),
-                    prompt: "Assign unowned issues".to_string(),
-                    max_tries: DEFAULT_AGENT_MAX_TRIES,
-                    max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
-                },
-            ],
-            assignment_agent: "assignment".to_string(),
             scheduler: test_scheduler_section(),
             ..BackgroundSection::default()
         },
@@ -141,21 +123,15 @@ pub fn test_state_with_store_and_engine(
     store: Arc<dyn Store>,
     job_engine: Arc<dyn JobEngine>,
 ) -> TestStateHandles {
-    let agents = Arc::new(RwLock::new(Vec::new()));
     let state = AppState::new(
         Arc::new(test_app_config()),
         None,
         Arc::new(ServiceState::default()),
         store.clone(),
         job_engine,
-        agents.clone(),
     );
 
-    TestStateHandles {
-        state,
-        store,
-        agents,
-    }
+    TestStateHandles { state, store }
 }
 
 pub fn test_state_with_store(store: Arc<dyn Store>) -> TestStateHandles {
@@ -164,21 +140,15 @@ pub fn test_state_with_store(store: Arc<dyn Store>) -> TestStateHandles {
 
 pub fn test_state_with_github_app(github_app: octocrab::Octocrab) -> TestStateHandles {
     let store = Arc::new(MemoryStore::new());
-    let agents = Arc::new(RwLock::new(Vec::new()));
     let state = AppState::new(
         Arc::new(test_app_config()),
         Some(github_app),
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        agents.clone(),
     );
 
-    TestStateHandles {
-        state,
-        store,
-        agents,
-    }
+    TestStateHandles { state, store }
 }
 
 pub async fn add_repository(

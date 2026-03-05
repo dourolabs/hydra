@@ -348,10 +348,6 @@ impl GithubAppSection {
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct BackgroundSection {
     #[serde(default)]
-    pub agent_queues: Vec<AgentQueueConfig>,
-    #[serde(default)]
-    pub assignment_agent: String,
-    #[serde(default)]
     pub github_poller: GithubPollerConfig,
     #[serde(default)]
     pub scheduler: SchedulerSection,
@@ -359,21 +355,8 @@ pub struct BackgroundSection {
 
 impl BackgroundSection {
     fn validate(&self) -> Result<()> {
-        // Agent configuration now lives in the database.
-        // The config fields (agent_queues, assignment_agent) are kept for
-        // backward compatibility but no longer validated at startup.
         Ok(())
     }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct AgentQueueConfig {
-    pub name: String,
-    pub prompt: String,
-    #[serde(default = "default_agent_max_tries")]
-    pub max_tries: u32,
-    #[serde(default = "default_agent_max_simultaneous")]
-    pub max_simultaneous: u32,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -484,14 +467,6 @@ fn default_github_api_base_url() -> String {
 
 fn default_github_oauth_base_url() -> String {
     "https://github.com".to_string()
-}
-
-const fn default_agent_max_tries() -> u32 {
-    DEFAULT_AGENT_MAX_TRIES
-}
-
-const fn default_agent_max_simultaneous() -> u32 {
-    DEFAULT_AGENT_MAX_SIMULTANEOUS
 }
 
 const fn default_github_poll_interval_secs() -> u64 {
@@ -696,12 +671,6 @@ github_app:
   api_base_url: "https://api.github.com"
   oauth_base_url: "https://github.com"
   private_key: "private-key"
-
-background:
-  assignment_agent: "agent-a"
-  agent_queues:
-    - name: "agent-a"
-      prompt: "prompt"
 "#,
         )?;
 
@@ -735,12 +704,6 @@ github_app:
   api_base_url: "https://api.github.com"
   oauth_base_url: "https://github.com"
   private_key: "private-key"
-
-background:
-  assignment_agent: "agent-a"
-  agent_queues:
-    - name: "agent-a"
-      prompt: "prompt"
 "#,
         )?;
 
@@ -749,42 +712,6 @@ background:
             &error,
             "metis.allowed_orgs must not contain empty values"
         ));
-
-        Ok(())
-    }
-
-    #[test]
-    fn config_accepts_missing_assignment_agent() -> anyhow::Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.yaml");
-        fs::write(
-            &path,
-            r#"
-job:
-  default_image: "metis-worker:latest"
-  cpu_limit: "500m"
-  memory_limit: "1Gi"
-  cpu_request: "500m"
-  memory_request: "1Gi"
-
-github_app:
-  app_id: 1
-  client_id: "client-id"
-  client_secret: "client-secret"
-  api_base_url: "https://api.github.com"
-  oauth_base_url: "https://github.com"
-  private_key: "private-key"
-
-background:
-  agent_queues:
-    - name: "agent-a"
-      prompt: "prompt"
-"#,
-        )?;
-
-        // Agent configuration now lives in the database, so missing
-        // assignment_agent in the config file is acceptable.
-        AppConfig::load(&path).expect("config should load successfully");
 
         Ok(())
     }

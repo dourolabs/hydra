@@ -1,7 +1,7 @@
 use crate::{
     app::AppState,
     background::{
-        Spawner,
+        AgentQueue, Spawner,
         scheduler::{ScheduledWorker, WorkerOutcome},
     },
     domain::actors::ActorRef,
@@ -29,25 +29,31 @@ impl ScheduledWorker for RunSpawnersWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
 
-        // Refresh agent cache from database each cycle so config changes take effect.
-        if let Err(err) = self.state.refresh_agents_from_db().await {
-            warn!(
-                worker = WORKER_NAME,
-                error = %err,
-                "failed to refresh agents from database"
-            );
-        }
+        let agents = match self.state.list_agents().await {
+            Ok(agents) => agents,
+            Err(err) => {
+                warn!(
+                    worker = WORKER_NAME,
+                    error = %err,
+                    "failed to load agents from database"
+                );
+                return WorkerOutcome::TransientError {
+                    reason: err.to_string(),
+                };
+            }
+        };
 
-        let agents = self.state.agent_queues().await;
         if agents.is_empty() {
             info!(worker = WORKER_NAME, "no agents configured; worker idle");
             return WorkerOutcome::Idle;
         }
 
+        let queues: Vec<AgentQueue> = agents.into_iter().map(AgentQueue::new).collect();
+
         let mut processed = 0usize;
         let mut failure_reason: Option<String> = None;
 
-        for agent in agents {
+        for agent in &queues {
             match agent.spawn(&self.state).await {
                 Ok(tasks) => {
                     if tasks.is_empty() {
@@ -175,7 +181,6 @@ mod tests {
         };
         handles.store.add_document(doc, &ActorRef::test()).await?;
 
-        handles.state.refresh_agents_from_db().await?;
         Ok(())
     }
 

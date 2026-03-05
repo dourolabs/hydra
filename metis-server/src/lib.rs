@@ -36,7 +36,6 @@ use metis_common::constants::{
 use octocrab::Octocrab;
 use serde_json::json;
 use std::{env, path::PathBuf, sync::Arc};
-use tokio::sync::RwLock;
 use tracing::info;
 
 pub async fn run_with_state(
@@ -320,21 +319,13 @@ pub async fn run() -> anyhow::Result<()> {
         image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
     };
 
-    let agents = Arc::new(RwLock::new(Vec::new()));
-
     let state = AppState::new(
         Arc::new(app_config),
         github_app,
         Arc::new(service_state),
         store,
         Arc::new(job_engine),
-        agents,
     );
-
-    // Load agents from database. If DB is empty, server starts with no agents.
-    if let Err(err) = state.refresh_agents_from_db().await {
-        info!(error = %err, "no agents loaded from database (DB may be empty)");
-    }
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 
