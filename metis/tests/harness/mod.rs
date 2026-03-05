@@ -528,20 +528,39 @@ impl TestHarnessBuilder {
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let engine = Arc::new(MockJobEngine::new());
 
-        // Pre-populate agent queues from builder config.
-        let initial_agents: Vec<Arc<AgentQueue>> = self
-            .agent_configs
-            .iter()
-            .map(|(name, prompt)| {
-                Arc::new(AgentQueue::from_config(&AgentQueueConfig {
-                    name: name.clone(),
-                    prompt: prompt.clone(),
-                    max_tries: 3,
-                    max_simultaneous: 10,
-                }))
-            })
-            .collect();
-        let agents = Arc::new(RwLock::new(initial_agents));
+        // Pre-populate agent queues from builder config by adding to DB store.
+        use metis_server::domain::{agents::Agent, documents::Document};
+        for (name, prompt) in &self.agent_configs {
+            let is_assignment = self
+                .assignment_agent
+                .as_ref()
+                .map(|a| a == name)
+                .unwrap_or(false);
+            let agent = Agent::new(
+                name.clone(),
+                format!("/agents/{name}/prompt.md"),
+                3,
+                10,
+                is_assignment,
+            );
+            store
+                .add_agent(agent)
+                .await
+                .with_context(|| format!("failed to add agent '{name}' to store"))?;
+
+            let doc = Document {
+                title: format!("{name} prompt"),
+                body_markdown: prompt.clone(),
+                path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
+                created_by: None,
+                deleted: false,
+            };
+            store
+                .add_document(doc, &ActorRef::test())
+                .await
+                .with_context(|| format!("failed to add prompt for agent '{name}'"))?;
+        }
+        let agents = Arc::new(RwLock::new(Vec::new()));
 
         // Create git remotes and register repositories in the store.
         let mut remotes = HashMap::new();
@@ -591,12 +610,8 @@ impl TestHarnessBuilder {
             None => (None, None),
         };
 
-        // Build AppState, optionally overriding the assignment agent.
-        let mut server_config = test_app_config();
-        if let Some(ref agent_name) = self.assignment_agent {
-            server_config.background.assignment_agent = agent_name.clone();
-        }
-        let server_config = Arc::new(server_config);
+        // Build AppState.
+        let server_config = Arc::new(test_app_config());
         let mut state = AppState::new(
             server_config,
             octocrab_client,
@@ -637,6 +652,14 @@ impl TestHarnessBuilder {
                 .build(&policy_config)
                 .map_err(|e| anyhow::anyhow!("failed to build policy engine: {e}"))?;
             state = state.with_policy_engine(engine);
+        }
+
+        // Load agent records from the store into the in-memory cache.
+        if !self.agent_configs.is_empty() {
+            state
+                .refresh_agents_from_db()
+                .await
+                .context("failed to refresh agents from DB after seeding")?;
         }
 
         // Collect user credentials. We need to create actors and users in the

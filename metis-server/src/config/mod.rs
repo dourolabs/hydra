@@ -359,27 +359,9 @@ pub struct BackgroundSection {
 
 impl BackgroundSection {
     fn validate(&self) -> Result<()> {
-        self.ensure_queue_is_configured(
-            &self.assignment_agent,
-            "background.assignment_agent must be set to a configured agent queue",
-            "background.assignment_agent must match one of background.agent_queues",
-        )?;
-        Ok(())
-    }
-
-    fn ensure_queue_is_configured(
-        &self,
-        queue_name: &str,
-        missing_msg: &'static str,
-        mismatch_msg: &'static str,
-    ) -> Result<()> {
-        let queue_name = non_empty(queue_name).context(missing_msg)?;
-        ensure!(
-            self.agent_queues
-                .iter()
-                .any(|queue| queue.name == queue_name),
-            mismatch_msg
-        );
+        // Agent configuration now lives in the database.
+        // The config fields (agent_queues, assignment_agent) are kept for
+        // backward compatibility but no longer validated at startup.
         Ok(())
     }
 }
@@ -772,7 +754,7 @@ background:
     }
 
     #[test]
-    fn config_requires_assignment_agent() -> anyhow::Result<()> {
+    fn config_accepts_missing_assignment_agent() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let path = temp_dir.path().join("config.yaml");
         fs::write(
@@ -800,50 +782,9 @@ background:
 "#,
         )?;
 
-        let error = AppConfig::load(&path).expect_err("expected missing assignment_agent");
-        assert!(error_chain_contains(
-            &error,
-            "background.assignment_agent must be set to a configured agent queue"
-        ));
-
-        Ok(())
-    }
-
-    #[test]
-    fn config_rejects_unknown_assignment_agent() -> anyhow::Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.yaml");
-        fs::write(
-            &path,
-            r#"
-job:
-  default_image: "metis-worker:latest"
-  cpu_limit: "500m"
-  memory_limit: "1Gi"
-  cpu_request: "500m"
-  memory_request: "1Gi"
-
-github_app:
-  app_id: 1
-  client_id: "client-id"
-  client_secret: "client-secret"
-  api_base_url: "https://api.github.com"
-  oauth_base_url: "https://github.com"
-  private_key: "private-key"
-
-background:
-  assignment_agent: "agent-b"
-  agent_queues:
-    - name: "agent-a"
-      prompt: "prompt"
-"#,
-        )?;
-
-        let error = AppConfig::load(&path).expect_err("expected unknown assignment_agent");
-        assert!(error_chain_contains(
-            &error,
-            "background.assignment_agent must match one of background.agent_queues"
-        ));
+        // Agent configuration now lives in the database, so missing
+        // assignment_agent in the config file is acceptable.
+        AppConfig::load(&path).expect("config should load successfully");
 
         Ok(())
     }

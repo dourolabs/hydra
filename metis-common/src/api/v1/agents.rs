@@ -42,6 +42,16 @@ impl AgentRecord {
             is_assignment_agent: false,
         }
     }
+
+    pub fn with_prompt_path(mut self, prompt_path: impl Into<String>) -> Self {
+        self.prompt_path = prompt_path.into();
+        self
+    }
+
+    pub fn with_is_assignment_agent(mut self, is_assignment_agent: bool) -> Self {
+        self.is_assignment_agent = is_assignment_agent;
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

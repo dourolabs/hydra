@@ -17,7 +17,7 @@ pub mod test_utils;
 mod test;
 
 use crate::app::{AppState, ServiceState};
-use crate::background::{AgentQueue, start_background_scheduler};
+use crate::background::start_background_scheduler;
 use crate::config::{AppConfig, GithubAppSection, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
 use crate::store::{
@@ -320,7 +320,7 @@ pub async fn run() -> anyhow::Result<()> {
         image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
     };
 
-    let agents = build_agents(&app_config);
+    let agents = Arc::new(RwLock::new(Vec::new()));
 
     let state = AppState::new(
         Arc::new(app_config),
@@ -330,6 +330,11 @@ pub async fn run() -> anyhow::Result<()> {
         Arc::new(job_engine),
         agents,
     );
+
+    // Load agents from database. If DB is empty, server starts with no agents.
+    if let Err(err) = state.refresh_agents_from_db().await {
+        info!(error = %err, "no agents loaded from database (DB may be empty)");
+    }
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 
@@ -345,17 +350,6 @@ pub fn config_path() -> PathBuf {
     std::env::var(ENV_METIS_CONFIG)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("config.yaml"))
-}
-
-fn build_agents(config: &AppConfig) -> Arc<RwLock<Vec<Arc<AgentQueue>>>> {
-    Arc::new(RwLock::new(
-        config
-            .background
-            .agent_queues
-            .iter()
-            .map(|queue| Arc::new(AgentQueue::from_config(queue)))
-            .collect(),
-    ))
 }
 
 fn build_github_app_client(config: &GithubAppSection) -> anyhow::Result<Option<Octocrab>> {

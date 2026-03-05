@@ -28,6 +28,16 @@ impl RunSpawnersWorker {
 impl ScheduledWorker for RunSpawnersWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
+
+        // Refresh agent cache from database each cycle so config changes take effect.
+        if let Err(err) = self.state.refresh_agents_from_db().await {
+            warn!(
+                worker = WORKER_NAME,
+                error = %err,
+                "failed to refresh agents from database"
+            );
+        }
+
         let agents = self.state.agent_queues().await;
         if agents.is_empty() {
             info!(worker = WORKER_NAME, "no agents configured; worker idle");
@@ -133,22 +143,40 @@ mod tests {
     use super::*;
     use crate::{
         app::Repository,
-        background::AgentQueue,
-        config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
+        config::{DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
+        domain::agents::Agent,
+        domain::documents::Document,
         domain::issues::{Issue, IssueStatus, IssueType, JobSettings},
         domain::users::Username,
         test::{add_repository, test_state_handles},
     };
     use metis_common::RepoName;
-    use std::{str::FromStr, sync::Arc};
+    use std::str::FromStr;
 
-    fn agent_queue_config(name: &str) -> AgentQueueConfig {
-        AgentQueueConfig {
-            name: name.to_string(),
-            prompt: format!("prompt for {name}"),
-            max_tries: DEFAULT_AGENT_MAX_TRIES,
-            max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
-        }
+    async fn register_agent(
+        handles: &crate::test_utils::TestStateHandles,
+        name: &str,
+    ) -> anyhow::Result<()> {
+        let agent = Agent::new(
+            name.to_string(),
+            format!("/agents/{name}/prompt.md"),
+            DEFAULT_AGENT_MAX_TRIES as i32,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS as i32,
+            false,
+        );
+        handles.store.add_agent(agent).await?;
+
+        let doc = Document {
+            title: format!("{name} prompt"),
+            body_markdown: format!("prompt for {name}"),
+            path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        handles.store.add_document(doc, &ActorRef::test()).await?;
+
+        handles.state.refresh_agents_from_db().await?;
+        Ok(())
     }
 
     fn issue_for_agent(agent: &str, repo_name: &RepoName) -> Issue {
@@ -194,12 +222,7 @@ mod tests {
         let agent_name = "static";
         let repo_name = RepoName::from_str("dourolabs/metis")?;
 
-        {
-            let mut agents = handles.agents.write().await;
-            *agents = vec![Arc::new(AgentQueue::from_config(&agent_queue_config(
-                agent_name,
-            )))];
-        }
+        register_agent(&handles, agent_name).await?;
 
         add_repository(&handles.state, repo_name.clone(), repository(&repo_name)).await?;
         handles
@@ -231,12 +254,8 @@ mod tests {
         let agent_name = "failing";
         let repo_name = RepoName::from_str("missing/repo")?;
 
-        {
-            let mut agents = handles.agents.write().await;
-            *agents = vec![Arc::new(AgentQueue::from_config(&agent_queue_config(
-                agent_name,
-            )))];
-        }
+        register_agent(&handles, agent_name).await?;
+
         handles
             .store
             .add_issue(issue_for_agent(agent_name, &repo_name), &ActorRef::test())

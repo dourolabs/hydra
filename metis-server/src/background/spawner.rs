@@ -42,9 +42,10 @@ struct SpawnAttempt {
 
 pub struct AgentQueue {
     pub name: String,
-    pub prompt: String,
+    pub prompt_path: String,
     pub max_tries: u32,
     pub max_simultaneous: u32,
+    pub is_assignment_agent: bool,
     spawn_attempts: RwLock<HashMap<IssueId, SpawnAttempt>>,
 }
 
@@ -52,19 +53,22 @@ impl AgentQueue {
     pub fn from_config(config: &AgentQueueConfig) -> Self {
         Self {
             name: config.name.clone(),
-            prompt: config.prompt.clone(),
+            prompt_path: String::new(),
             max_tries: config.max_tries,
             max_simultaneous: config.max_simultaneous,
+            is_assignment_agent: false,
             spawn_attempts: RwLock::new(HashMap::new()),
         }
     }
 
-    pub fn as_config(&self) -> AgentQueueConfig {
-        AgentQueueConfig {
-            name: self.name.clone(),
-            prompt: self.prompt.clone(),
-            max_tries: self.max_tries,
-            max_simultaneous: self.max_simultaneous,
+    pub fn from_record(agent: &crate::domain::agents::Agent) -> Self {
+        Self {
+            name: agent.name.clone(),
+            prompt_path: agent.prompt_path.clone(),
+            max_tries: agent.max_tries as u32,
+            max_simultaneous: agent.max_simultaneous as u32,
+            is_assignment_agent: agent.is_assignment_agent,
+            spawn_attempts: RwLock::new(HashMap::new()),
         }
     }
 
@@ -107,7 +111,14 @@ impl AgentQueue {
             _ => BundleSpec::None,
         };
 
-        let prompt = self.prompt.trim_end().to_string();
+        let prompt = fetch_prompt_from_document_store(state, &self.prompt_path)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to fetch prompt for agent '{}' at path '{}'",
+                    self.name, self.prompt_path
+                )
+            })?;
 
         let image = job_settings
             .image
@@ -204,8 +215,7 @@ impl Spawner for AgentQueue {
 
         let mut remaining_capacity = max_simultaneous - active_tasks;
 
-        let assignment_agent = state.config.background.assignment_agent.trim().to_string();
-        let is_assignment_agent = !assignment_agent.is_empty() && self.name == assignment_agent;
+        let is_assignment_agent = self.is_assignment_agent;
 
         let issues = state
             .list_issues()
@@ -375,6 +385,32 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
     Ok(false)
 }
 
+async fn fetch_prompt_from_document_store(
+    state: &AppState,
+    prompt_path: &str,
+) -> anyhow::Result<String> {
+    use metis_common::api::v1::documents::SearchDocumentsQuery;
+
+    if prompt_path.is_empty() {
+        anyhow::bail!("prompt_path is empty");
+    }
+
+    let query =
+        SearchDocumentsQuery::new(None, Some(prompt_path.to_string()), Some(true), None, None);
+
+    let documents = state
+        .list_documents(&query)
+        .await
+        .context("failed to query document store for agent prompt")?;
+
+    let (_, versioned) = documents
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no document found at path '{prompt_path}'"))?;
+
+    Ok(versioned.item.body_markdown.trim_end().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,11 +433,30 @@ mod tests {
     fn queue(agent_name: &str) -> AgentQueue {
         AgentQueue {
             name: agent_name.to_string(),
-            prompt: "Fix the issue".to_string(),
+            prompt_path: format!("/agents/{agent_name}/prompt.md"),
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            is_assignment_agent: false,
             spawn_attempts: RwLock::new(HashMap::new()),
         }
+    }
+
+    async fn seed_agent_prompt(
+        handles: &TestStateHandles,
+        agent_name: &str,
+        prompt: &str,
+    ) -> anyhow::Result<()> {
+        use crate::domain::documents::Document;
+        let path = format!("/agents/{agent_name}/prompt.md");
+        let doc = Document {
+            title: format!("{agent_name} prompt"),
+            body_markdown: prompt.to_string(),
+            path: Some(path.parse().unwrap()),
+            created_by: None,
+            deleted: false,
+        };
+        handles.store.add_document(doc, &ActorRef::test()).await?;
+        Ok(())
     }
 
     fn repository() -> (RepoName, Repository) {
@@ -427,6 +482,8 @@ mod tests {
     async fn state_with_repository() -> anyhow::Result<(TestStateHandles, RepoName)> {
         let (repo_name, repository) = repository();
         let handles = test_state_with_repo_handles(repo_name.clone(), repository).await?;
+        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
+        seed_agent_prompt(&handles, "agent-b", "Fix the issue").await?;
         Ok((handles, repo_name))
     }
 
@@ -592,7 +649,7 @@ mod tests {
                 ..
             } = task;
 
-            assert_eq!(prompt, "Fix the issue".to_string());
+            assert_eq!(prompt, "Fix the issue");
             assert_eq!(
                 context,
                 BundleSpec::ServiceRepository {
@@ -754,6 +811,7 @@ mod tests {
     #[tokio::test]
     async fn assignment_agent_spawns_for_unassigned_issue() -> anyhow::Result<()> {
         let handles = test_state_handles();
+        seed_agent_prompt(&handles, "assignment", "Assign unowned issues").await?;
         let (issue_id, _) = handles
             .store
             .add_issue(
@@ -762,8 +820,9 @@ mod tests {
             )
             .await?;
 
-        let queue = queue("assignment");
-        let tasks = queue.spawn(&handles.state).await?;
+        let mut q = queue("assignment");
+        q.is_assignment_agent = true;
+        let tasks = q.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].context, BundleSpec::None);
         assert_eq!(
@@ -1431,9 +1490,31 @@ mod tests {
         let queue = AgentQueue::from_config(&config);
 
         assert_eq!(queue.name, "agent-config");
-        assert_eq!(queue.prompt, "Handle issues");
+        assert_eq!(queue.prompt_path, "");
         assert_eq!(queue.max_tries, DEFAULT_AGENT_MAX_TRIES);
         assert_eq!(queue.max_simultaneous, DEFAULT_AGENT_MAX_SIMULTANEOUS);
+        assert!(!queue.is_assignment_agent);
+    }
+
+    #[test]
+    fn builds_from_record() {
+        use crate::domain::agents::Agent;
+
+        let agent = Agent::new(
+            "test-agent".to_string(),
+            "/agents/test-agent/prompt.md".to_string(),
+            5,
+            10,
+            true,
+        );
+
+        let queue = AgentQueue::from_record(&agent);
+
+        assert_eq!(queue.name, "test-agent");
+        assert_eq!(queue.prompt_path, "/agents/test-agent/prompt.md");
+        assert_eq!(queue.max_tries, 5);
+        assert_eq!(queue.max_simultaneous, 10);
+        assert!(queue.is_assignment_agent);
     }
 
     #[tokio::test]
@@ -1491,6 +1572,7 @@ mod tests {
             .unwrap_or_else(|| "main".into());
         let default_image = "agent-image".to_string();
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
+        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
         let (issue_id, _) = handles
             .store
             .add_issue(
@@ -1557,6 +1639,7 @@ mod tests {
     async fn spawner_passes_secrets_from_job_settings() -> anyhow::Result<()> {
         let (repo_name, repository) = repository();
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
+        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
         let secrets = vec!["db-secret".to_string(), "api-key".to_string()];
         handles
             .store
@@ -1603,6 +1686,7 @@ mod tests {
     async fn spawner_handles_none_secrets() -> anyhow::Result<()> {
         let (repo_name, repository) = repository();
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
+        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
         handles
             .store
             .add_issue(
