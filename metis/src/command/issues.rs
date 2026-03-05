@@ -17,7 +17,7 @@ use clap::Subcommand;
 use metis_common::{
     activity_log_for_issue_versions, activity_log_for_job_versions,
     activity_log_for_patch_versions,
-    api::v1::labels::{SearchLabelsQuery, UpsertLabelRequest},
+    api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
     constants::ENV_METIS_ISSUE_ID,
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
@@ -1765,9 +1765,7 @@ async fn resolve_or_create_label(
     {
         return Ok(label.label_id.clone());
     }
-    let request: UpsertLabelRequest =
-        serde_json::from_value(serde_json::json!({ "label": { "name": name.trim() } }))
-            .context("failed to build create label request")?;
+    let request = UpsertLabelRequest::new(Label::new(name.trim().to_string(), None));
     let response = client
         .create_label(&request)
         .await
@@ -4628,5 +4626,334 @@ mod tests {
         assert!(rendered.contains("Reviewers:"));
         assert!(rendered.contains("- alex: changes requested @ 2024-05-01T11:50:00Z"));
         assert!(rendered.contains("- sam: approved @ 2024-05-01T12:00:00Z"));
+    }
+
+    // ---- Label helper tests ----
+
+    use crate::test_utils::ids::label_id;
+    use metis_common::api::v1::labels::{
+        LabelRecord, LabelSummary, ListLabelsResponse, UpsertLabelResponse,
+    };
+    use metis_common::rgb::Rgb;
+
+    fn sample_label_record(id: &str, name: &str, color: &str) -> LabelRecord {
+        LabelRecord::new(
+            label_id(id),
+            name.to_string(),
+            color.parse::<Rgb>().unwrap(),
+            Utc::now(),
+            Utc::now(),
+        )
+    }
+
+    #[tokio::test]
+    async fn resolve_label_names_to_ids_happy_path() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let labels_response = ListLabelsResponse::new(vec![
+            sample_label_record("l-aaaa", "frontend", "#e74c3c"),
+            sample_label_record("l-bbbb", "urgent", "#3498db"),
+        ]);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/labels");
+            then.status(200).json_body_obj(&labels_response);
+        });
+
+        let ids =
+            resolve_label_names_to_ids(&client, &["frontend".to_string(), "urgent".to_string()])
+                .await
+                .unwrap();
+
+        list_mock.assert();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], label_id("l-aaaa"));
+        assert_eq!(ids[1], label_id("l-bbbb"));
+    }
+
+    #[tokio::test]
+    async fn resolve_label_names_to_ids_case_insensitive() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let labels_response =
+            ListLabelsResponse::new(vec![sample_label_record("l-aaaa", "Frontend", "#e74c3c")]);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/labels");
+            then.status(200).json_body_obj(&labels_response);
+        });
+
+        let ids = resolve_label_names_to_ids(&client, &["FRONTEND".to_string()])
+            .await
+            .unwrap();
+
+        list_mock.assert();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], label_id("l-aaaa"));
+    }
+
+    #[tokio::test]
+    async fn resolve_label_names_to_ids_missing_label_errors() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let labels_response =
+            ListLabelsResponse::new(vec![sample_label_record("l-aaaa", "frontend", "#e74c3c")]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/labels");
+            then.status(200).json_body_obj(&labels_response);
+        });
+
+        let result = resolve_label_names_to_ids(&client, &["nonexistent".to_string()]).await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("nonexistent"),
+            "error should mention the missing label name, got: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_label_names_to_ids_empty_input() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+
+        let ids = resolve_label_names_to_ids(&client, &[]).await.unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn resolve_or_create_label_finds_existing() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let existing = sample_label_record("l-aaaa", "frontend", "#e74c3c");
+
+        let id = resolve_or_create_label(&client, "Frontend", &[existing])
+            .await
+            .unwrap();
+        assert_eq!(id, label_id("l-aaaa"));
+    }
+
+    #[tokio::test]
+    async fn resolve_or_create_label_creates_when_not_found() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let new_label_id = label_id("l-cccc");
+        let create_response = UpsertLabelResponse::new(new_label_id.clone());
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/labels");
+            then.status(200).json_body_obj(&create_response);
+        });
+
+        let id = resolve_or_create_label(&client, "new-label", &[])
+            .await
+            .unwrap();
+
+        create_mock.assert();
+        assert_eq!(id, label_id("l-cccc"));
+    }
+
+    #[tokio::test]
+    async fn apply_label_changes_adds_and_removes() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let existing_labels = vec![
+            sample_label_record("l-aaaa", "frontend", "#e74c3c"),
+            sample_label_record("l-bbbb", "urgent", "#3498db"),
+        ];
+        let labels_response = ListLabelsResponse::new(existing_labels);
+
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/labels");
+            then.status(200).json_body_obj(&labels_response);
+        });
+
+        let object_id: MetisId = issue_id("i-target").into();
+
+        // Mock the add association endpoint for "frontend"
+        let add_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path_matches(httpmock::Regex::new(r"/v1/labels/.*/objects/.*").unwrap());
+            then.status(200);
+        });
+
+        // Mock the remove association endpoint for "urgent"
+        let remove_mock = server.mock(|when, then| {
+            when.method(DELETE)
+                .path_matches(httpmock::Regex::new(r"/v1/labels/.*/objects/.*").unwrap());
+            then.status(200);
+        });
+
+        apply_label_changes(
+            &client,
+            &object_id,
+            &["frontend".to_string()],
+            &["urgent".to_string()],
+        )
+        .await
+        .unwrap();
+
+        list_mock.assert();
+        add_mock.assert();
+        remove_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn apply_label_changes_noop_when_empty() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let object_id: MetisId = issue_id("i-target").into();
+
+        // No mocks needed — the function should return immediately
+        apply_label_changes(&client, &object_id, &[], &[])
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn apply_label_changes_remove_missing_label_errors() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let labels_response =
+            ListLabelsResponse::new(vec![sample_label_record("l-aaaa", "frontend", "#e74c3c")]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/labels");
+            then.status(200).json_body_obj(&labels_response);
+        });
+
+        let object_id: MetisId = issue_id("i-target").into();
+        let result =
+            apply_label_changes(&client, &object_id, &[], &["nonexistent".to_string()]).await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("nonexistent"),
+            "error should mention the missing label name, got: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_issue_details_pretty_shows_labels() {
+        let issue_record = IssueVersionRecord::new(
+            issue_id("i-labeled"),
+            0,
+            Utc::now(),
+            Issue::new(
+                IssueType::Task,
+                "Labeled issue".to_string(),
+                "desc".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+                false,
+            ),
+            None,
+            Utc::now(),
+            vec![
+                LabelSummary::new(
+                    label_id("l-aaaa"),
+                    "frontend".to_string(),
+                    "#e74c3c".parse::<Rgb>().unwrap(),
+                ),
+                LabelSummary::new(
+                    label_id("l-bbbb"),
+                    "urgent".to_string(),
+                    "#3498db".parse::<Rgb>().unwrap(),
+                ),
+            ],
+        );
+
+        let issue_with_patches = IssueWithPatches {
+            issue: issue_record,
+            patches: vec![],
+        };
+
+        let mut output = Vec::new();
+        write_issue_details_pretty(&issue_with_patches, "", false, &mut output).unwrap();
+        let rendered = strip_ansi_codes(&String::from_utf8(output).unwrap());
+
+        assert!(
+            rendered.contains("frontend (#e74c3c)"),
+            "should show label name and color, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("urgent (#3498db)"),
+            "should show second label, got: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_issue_details_pretty_shows_no_labels() {
+        let issue_record = IssueVersionRecord::new(
+            issue_id("i-nolabel"),
+            0,
+            Utc::now(),
+            Issue::new(
+                IssueType::Task,
+                "No labels".to_string(),
+                "desc".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+                false,
+            ),
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
+
+        let issue_with_patches = IssueWithPatches {
+            issue: issue_record,
+            patches: vec![],
+        };
+
+        let mut output = Vec::new();
+        write_issue_details_pretty(&issue_with_patches, "", false, &mut output).unwrap();
+        let rendered = strip_ansi_codes(&String::from_utf8(output).unwrap());
+
+        assert!(
+            rendered.contains("Labels: none"),
+            "should show 'Labels: none' when no labels, got: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_issues_passes_label_ids() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let lid = label_id("l-aaaa");
+        let issues_response = ListIssuesResponse::new(vec![]);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/issues")
+                .query_param("labels", lid.to_string());
+            then.status(200).json_body_obj(&issues_response);
+        });
+
+        let issues = fetch_issues(
+            &client,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            vec![lid.clone()],
+            false,
+        )
+        .await
+        .unwrap();
+
+        list_mock.assert();
+        assert!(issues.is_empty());
     }
 }

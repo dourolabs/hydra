@@ -1,6 +1,6 @@
 #[cfg(test)]
 pub mod ids {
-    use metis_common::{IssueId, MetisIdError, PatchId, TaskId};
+    use metis_common::{IssueId, LabelId, MetisIdError, PatchId, TaskId};
     use std::iter;
     use std::str::FromStr;
 
@@ -14,6 +14,10 @@ pub mod ids {
 
     pub fn patch_id(label: &str) -> PatchId {
         parse_or_build(label, "p-")
+    }
+
+    pub fn label_id(label: &str) -> LabelId {
+        parse_or_build(label, "l-")
     }
 
     fn parse_or_build<T>(label: &str, prefix: &str) -> T
