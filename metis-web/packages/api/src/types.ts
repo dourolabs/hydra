@@ -100,6 +100,7 @@ export type { ResyncEventData } from "./generated/ResyncEventData";
 export type { Review } from "./generated/Review";
 export type { ReviewRequestConfig } from "./generated/ReviewRequestConfig";
 export type { ReviewSummary } from "./generated/ReviewSummary";
+export type { Rgb } from "./generated/Rgb";
 export type { SearchDocumentsQuery } from "./generated/SearchDocumentsQuery";
 export type { SearchIssuesQuery } from "./generated/SearchIssuesQuery";
 export type { SearchJobsQuery } from "./generated/SearchJobsQuery";
