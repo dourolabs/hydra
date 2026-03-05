@@ -166,8 +166,8 @@ mod tests {
         let agent = Agent::new(
             name.to_string(),
             format!("/agents/{name}/prompt.md"),
-            DEFAULT_AGENT_MAX_TRIES as i32,
-            DEFAULT_AGENT_MAX_SIMULTANEOUS as i32,
+            DEFAULT_AGENT_MAX_TRIES,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
         );
         handles.store.add_agent(agent).await?;

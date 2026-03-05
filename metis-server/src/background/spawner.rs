@@ -34,7 +34,7 @@ pub trait Spawner: Send + Sync {
 #[derive(Clone, Debug)]
 struct SpawnAttempt {
     status: IssueStatus,
-    attempts: u32,
+    attempts: i32,
     children_snapshot: HashMap<IssueId, VersionNumber>,
     had_unread_messages: bool,
 }
@@ -126,7 +126,7 @@ impl AgentQueue {
         status: IssueStatus,
         children_snapshot: HashMap<IssueId, VersionNumber>,
         had_unread_messages: bool,
-        max_tries: u32,
+        max_tries: i32,
     ) -> bool {
         let mut attempts = self.spawn_attempts.write().await;
         let entry = attempts.entry(issue_id.clone()).or_insert(SpawnAttempt {
@@ -159,11 +159,12 @@ impl AgentQueue {
         true
     }
 
-    fn max_tries_for_issue(&self, issue: &Issue) -> u32 {
+    fn max_tries_for_issue(&self, issue: &Issue) -> i32 {
         issue
             .job_settings
             .max_retries
-            .unwrap_or(self.agent.max_tries as u32)
+            .map(|v| v as i32)
+            .unwrap_or(self.agent.max_tries)
     }
 }
 
@@ -401,8 +402,8 @@ mod tests {
         AgentQueue::new(Agent::new(
             agent_name.to_string(),
             format!("/agents/{agent_name}/prompt.md"),
-            DEFAULT_AGENT_MAX_TRIES as i32,
-            DEFAULT_AGENT_MAX_SIMULTANEOUS as i32,
+            DEFAULT_AGENT_MAX_TRIES,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
         ))
     }
@@ -791,8 +792,8 @@ mod tests {
             AgentQueue::new(Agent::new(
                 "assignment".to_string(),
                 "/agents/assignment/prompt.md".to_string(),
-                DEFAULT_AGENT_MAX_TRIES as i32,
-                DEFAULT_AGENT_MAX_SIMULTANEOUS as i32,
+                DEFAULT_AGENT_MAX_TRIES,
+                DEFAULT_AGENT_MAX_SIMULTANEOUS,
                 true,
             ))
         };

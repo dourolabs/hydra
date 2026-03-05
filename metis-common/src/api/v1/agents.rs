@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-fn default_max_tries() -> u32 {
+fn default_max_tries() -> i32 {
     3
 }
 
-fn default_max_simultaneous() -> u32 {
-    u32::MAX
+fn default_max_simultaneous() -> i32 {
+    i32::MAX
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,9 +19,9 @@ pub struct AgentRecord {
     #[serde(default)]
     pub prompt_path: String,
     #[serde(default = "default_max_tries")]
-    pub max_tries: u32,
+    pub max_tries: i32,
     #[serde(default = "default_max_simultaneous")]
-    pub max_simultaneous: u32,
+    pub max_simultaneous: i32,
     #[serde(default)]
     pub is_assignment_agent: bool,
 }
@@ -31,8 +31,8 @@ impl AgentRecord {
         name: impl Into<String>,
         prompt: impl Into<String>,
         prompt_path: impl Into<String>,
-        max_tries: u32,
-        max_simultaneous: u32,
+        max_tries: i32,
+        max_simultaneous: i32,
         is_assignment_agent: bool,
     ) -> Self {
         Self {
@@ -56,9 +56,9 @@ pub struct UpsertAgentRequest {
     #[serde(default)]
     pub prompt_path: String,
     #[serde(default = "default_max_tries")]
-    pub max_tries: u32,
+    pub max_tries: i32,
     #[serde(default = "default_max_simultaneous")]
-    pub max_simultaneous: u32,
+    pub max_simultaneous: i32,
     #[serde(default)]
     pub is_assignment_agent: bool,
 }
@@ -67,8 +67,8 @@ impl UpsertAgentRequest {
     pub fn new(
         name: impl Into<String>,
         prompt: impl Into<String>,
-        max_tries: u32,
-        max_simultaneous: u32,
+        max_tries: i32,
+        max_simultaneous: i32,
     ) -> Self {
         Self {
             name: name.into(),

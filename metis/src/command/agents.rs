@@ -41,15 +41,15 @@ pub struct CreateAgentArgs {
 
     /// Maximum retries for this agent.
     #[arg(long = "max-tries", value_name = "MAX_TRIES", default_value_t = 3)]
-    pub max_tries: u32,
+    pub max_tries: i32,
 
     /// Maximum simultaneous tasks for this agent.
     #[arg(
         long = "max-simultaneous",
         value_name = "MAX_SIMULTANEOUS",
-        default_value_t = u32::MAX
+        default_value_t = i32::MAX
     )]
-    pub max_simultaneous: u32,
+    pub max_simultaneous: i32,
 
     /// Mark this agent as the assignment agent (at most one allowed).
     #[arg(long = "is-assignment-agent")]
@@ -68,11 +68,11 @@ pub struct UpdateAgentArgs {
 
     /// Updated max retries for the agent.
     #[arg(long = "max-tries", value_name = "MAX_TRIES")]
-    pub max_tries: Option<u32>,
+    pub max_tries: Option<i32>,
 
     /// Updated max simultaneous tasks for the agent.
     #[arg(long = "max-simultaneous", value_name = "MAX_SIMULTANEOUS")]
-    pub max_simultaneous: Option<u32>,
+    pub max_simultaneous: Option<i32>,
 
     /// Mark this agent as the assignment agent (at most one allowed).
     #[arg(long = "is-assignment-agent")]
@@ -236,8 +236,8 @@ mod tests {
     async fn list_agents_fetches_agents_and_prints_jsonl() -> Result<()> {
         let server = MockServer::start();
         let list_agents_response = ListAgentsResponse::new(vec![
-            AgentRecord::new("alpha", "", "", 3, u32::MAX, false),
-            AgentRecord::new("beta", "", "", 3, u32::MAX, false),
+            AgentRecord::new("alpha", "", "", 3, i32::MAX, false),
+            AgentRecord::new("beta", "", "", 3, i32::MAX, false),
         ]);
 
         let mock = server.mock(|when, then| {
@@ -294,7 +294,7 @@ mod tests {
             "do software engineering",
             "/agents/swe/prompt.md",
             3,
-            u32::MAX,
+            i32::MAX,
             false,
         ));
         let mock = server.mock(|when, then| {
@@ -362,7 +362,7 @@ mod tests {
             name: "pm".to_string(),
             prompt_file: prompt_file.path().to_str().unwrap().to_string(),
             max_tries: 3,
-            max_simultaneous: u32::MAX,
+            max_simultaneous: i32::MAX,
             is_assignment_agent: true,
         };
         let response = AgentResponse::new(AgentRecord::new(
@@ -370,7 +370,7 @@ mod tests {
             "assign issues",
             "",
             3,
-            u32::MAX,
+            i32::MAX,
             true,
         ));
         let mock = server.mock(|when, then| {
@@ -379,7 +379,7 @@ mod tests {
                 "prompt": "assign issues",
                 "prompt_path": "",
                 "max_tries": 3,
-                "max_simultaneous": 4294967295u64,
+                "max_simultaneous": 2147483647i64,
                 "is_assignment_agent": true
             }));
             then.status(200).json_body_obj(&response);
@@ -400,7 +400,7 @@ mod tests {
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, false));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false));
         let updated = AgentResponse::new(AgentRecord::new("writer", "revised", "", 3, 10, false));
 
         let prompt_file = write_prompt_file("revised");
@@ -444,7 +444,7 @@ mod tests {
         let server = MockServer::start();
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        let deleted = AgentRecord::new("writer", "", "", 3, u32::MAX, false);
+        let deleted = AgentRecord::new("writer", "", "", 3, i32::MAX, false);
         let mock = server.mock(|when, then| {
             when.method(DELETE).path("/v1/agents/writer");
             then.status(200)
