@@ -9,7 +9,10 @@ use tempfile::TempDir;
 /// The temporary directory is automatically cleaned up when the `GitRemote` is
 /// dropped.
 pub struct GitRemote {
+    /// The `file://` URL used as the git remote (enforces fast-forward checks).
     url: String,
+    /// The bare filesystem path, used for `--git-dir` operations.
+    path: String,
     _tempdir: TempDir,
 }
 
@@ -60,7 +63,8 @@ impl GitRemote {
         ])?;
 
         Ok(Self {
-            url: remote_dir_str.to_string(),
+            url: format!("file://{remote_dir_str}"),
+            path: remote_dir_str.to_string(),
             _tempdir: tempdir,
         })
     }
@@ -111,7 +115,7 @@ impl GitRemote {
     pub fn branch_sha(&self, branch: &str) -> anyhow::Result<String> {
         let output = run_git_output(&[
             "--git-dir",
-            &self.url,
+            &self.path,
             "rev-parse",
             &format!("refs/heads/{branch}"),
         ])?;
@@ -122,7 +126,7 @@ impl GitRemote {
     pub fn branch_exists(&self, branch: &str) -> bool {
         run_git_output(&[
             "--git-dir",
-            &self.url,
+            &self.path,
             "rev-parse",
             "--verify",
             &format!("refs/heads/{branch}"),
@@ -169,7 +173,7 @@ impl GitRemote {
     pub fn set_head(&self, branch: &str) -> anyhow::Result<()> {
         run_git(&[
             "--git-dir",
-            &self.url,
+            &self.path,
             "symbolic-ref",
             "HEAD",
             &format!("refs/heads/{branch}"),
@@ -180,7 +184,7 @@ impl GitRemote {
     pub fn diff(&self, base: &str, head: &str) -> anyhow::Result<String> {
         run_git_output(&[
             "--git-dir",
-            &self.url,
+            &self.path,
             "diff",
             &format!("refs/heads/{base}"),
             &format!("refs/heads/{head}"),
@@ -191,7 +195,7 @@ impl GitRemote {
     pub fn read_file(&self, branch: &str, path: &str) -> anyhow::Result<String> {
         run_git_output(&[
             "--git-dir",
-            &self.url,
+            &self.path,
             "show",
             &format!("refs/heads/{branch}:{path}"),
         ])
@@ -201,7 +205,7 @@ impl GitRemote {
     pub fn commit_count(&self, base_sha: &str, head_sha: &str) -> anyhow::Result<usize> {
         let output = run_git_output(&[
             "--git-dir",
-            &self.url,
+            &self.path,
             "rev-list",
             "--count",
             &format!("{base_sha}..{head_sha}"),
@@ -214,7 +218,7 @@ impl GitRemote {
 
     /// Return the full commit message of the given SHA.
     pub fn commit_message(&self, sha: &str) -> anyhow::Result<String> {
-        run_git_output(&["--git-dir", &self.url, "log", "-1", "--format=%B", sha])
+        run_git_output(&["--git-dir", &self.path, "log", "-1", "--format=%B", sha])
     }
 }
 
