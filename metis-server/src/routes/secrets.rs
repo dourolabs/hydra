@@ -1,3 +1,4 @@
+use super::resolve_username;
 use crate::{
     app::AppState,
     domain::{actors::Actor, secrets::ALLOWED_SECRET_NAMES, users::Username},
@@ -12,16 +13,6 @@ use metis_common::api::v1::{
     secrets::{ListSecretsResponse, SetSecretRequest},
 };
 use tracing::info;
-
-/// Resolve the `:username` path parameter: "me" maps to the authenticated
-/// user's username; any other value is returned as-is.
-fn resolve_username(actor: &Actor, raw: &str) -> Result<Username, ApiError> {
-    if raw == "me" {
-        Ok(actor.creator.clone())
-    } else {
-        Ok(Username::from(raw.to_string()))
-    }
-}
 
 /// Return 403 if the authenticated actor is not the requested user.
 fn authorize(actor: &Actor, target: &Username) -> Result<(), ApiError> {

@@ -1,16 +1,19 @@
-use crate::{app::AppState, domain::users::Username, store::StoreError};
+use super::resolve_username;
+use crate::{app::AppState, domain::actors::Actor, store::StoreError};
 use axum::Json;
 use axum::extract::{Path, State};
+use axum::Extension;
 use metis_common::api::v1::{self, ApiError};
 use tracing::info;
 
 pub async fn get_user(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Path(username): Path<String>,
 ) -> Result<Json<v1::users::UserSummary>, ApiError> {
     info!(username = %username, "get_user invoked");
 
-    let username = Username::from(username);
+    let username = resolve_username(&actor, &username)?;
     let user = state.get_user(&username).await.map_err(|err| match err {
         StoreError::UserNotFound(name) => {
             info!(username = %name, "user not found");
