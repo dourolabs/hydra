@@ -1,6 +1,7 @@
 use crate::{
     app::{AppState, ServiceState},
     domain::secrets::SecretManager,
+    domain::users::Username,
     store::MemoryStore,
     test::{
         MockJobEngine, TestStateHandles, spawn_test_server_with_state, test_app_config,
@@ -10,7 +11,7 @@ use crate::{
 use metis_common::api::v1::secrets::ListSecretsResponse;
 use reqwest::StatusCode;
 use serde_json::json;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 fn test_secret_manager() -> Arc<SecretManager> {
     Arc::new(SecretManager::new([42u8; 32]))
@@ -264,4 +265,124 @@ async fn set_overwrites_existing_secret() -> anyhow::Result<()> {
     assert_eq!(body.secrets.len(), 1);
 
     Ok(())
+}
+
+// ---- resolve_secrets_into_env_vars tests ----
+
+fn test_state_with_secrets_and_config() -> TestStateHandles {
+    let mut config = test_app_config();
+    config.metis.openai_api_key = Some("global-openai-key".to_string());
+    config.metis.anthropic_api_key = Some("global-anthropic-key".to_string());
+    // Leave claude_code_oauth_token as None to test the "neither" case
+
+    let store: Arc<dyn crate::store::Store> = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        Some(test_secret_manager()),
+    );
+    TestStateHandles { state, store }
+}
+
+#[tokio::test]
+async fn resolve_secrets_user_secret_takes_priority() {
+    let handles = test_state_with_secrets_and_config();
+    let secret_manager = test_secret_manager();
+    let username = Username::from("alice");
+
+    // Store an encrypted user secret for OPENAI_API_KEY
+    let encrypted = secret_manager.encrypt("user-openai-key").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "OPENAI_API_KEY", &encrypted)
+        .await
+        .unwrap();
+
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars)
+        .await;
+
+    // User secret should take priority over config
+    assert_eq!(env_vars.get("OPENAI_API_KEY").unwrap(), "user-openai-key");
+    // ANTHROPIC_API_KEY should fall back to config
+    assert_eq!(
+        env_vars.get("ANTHROPIC_API_KEY").unwrap(),
+        "global-anthropic-key"
+    );
+}
+
+#[tokio::test]
+async fn resolve_secrets_falls_back_to_config() {
+    let handles = test_state_with_secrets_and_config();
+    let username = Username::from("bob");
+
+    // No user secrets stored — should use config values
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars)
+        .await;
+
+    assert_eq!(env_vars.get("OPENAI_API_KEY").unwrap(), "global-openai-key");
+    assert_eq!(
+        env_vars.get("ANTHROPIC_API_KEY").unwrap(),
+        "global-anthropic-key"
+    );
+    // CLAUDE_CODE_OAUTH_TOKEN has no config value, so it should be absent
+    assert!(!env_vars.contains_key("CLAUDE_CODE_OAUTH_TOKEN"));
+}
+
+#[tokio::test]
+async fn resolve_secrets_decryption_failure_falls_back_to_config() {
+    let handles = test_state_with_secrets_and_config();
+    let username = Username::from("carol");
+
+    // Encrypt with a different key than the one in AppState
+    let wrong_key_manager = Arc::new(SecretManager::new([99u8; 32]));
+    let bad_encrypted = wrong_key_manager.encrypt("wrong-key-secret").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "OPENAI_API_KEY", &bad_encrypted)
+        .await
+        .unwrap();
+
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars)
+        .await;
+
+    // Decryption fails, so it should fall back to the global config value
+    assert_eq!(env_vars.get("OPENAI_API_KEY").unwrap(), "global-openai-key");
+}
+
+#[tokio::test]
+async fn resolve_secrets_no_user_secret_no_config_not_set() {
+    // Config with no API keys set
+    let config = test_app_config();
+    let store: Arc<dyn crate::store::Store> = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        Some(test_secret_manager()),
+    );
+    let username = Username::from("dave");
+
+    let mut env_vars = HashMap::new();
+    state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars)
+        .await;
+
+    // Nothing stored, nothing in config — env_vars should be empty
+    assert!(!env_vars.contains_key("OPENAI_API_KEY"));
+    assert!(!env_vars.contains_key("ANTHROPIC_API_KEY"));
+    assert!(!env_vars.contains_key("CLAUDE_CODE_OAUTH_TOKEN"));
 }
