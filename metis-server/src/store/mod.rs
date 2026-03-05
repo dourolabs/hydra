@@ -425,6 +425,15 @@ pub trait ReadOnlyStore: Send + Sync {
         object_id: &MetisId,
     ) -> Result<Vec<LabelSummary>, StoreError>;
 
+    /// Returns labels for multiple objects in a single batch query.
+    ///
+    /// Returns a map from object ID to its associated labels. Objects with
+    /// no labels are omitted from the result.
+    async fn get_labels_for_objects(
+        &self,
+        object_ids: &[MetisId],
+    ) -> Result<HashMap<MetisId, Vec<LabelSummary>>, StoreError>;
+
     /// Returns all object IDs associated with the given label.
     async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError>;
 }
@@ -708,16 +717,20 @@ pub trait Store: ReadOnlyStore {
 }
 
 /// Infers the object kind string from a MetisId prefix.
-pub(crate) fn object_kind_from_id(id: &MetisId) -> &'static str {
+///
+/// Returns an error if the ID does not match a known object kind.
+pub(crate) fn object_kind_from_id(id: &MetisId) -> Result<&'static str, StoreError> {
     let s: &str = id.as_ref();
     if s.starts_with(IssueId::prefix()) {
-        "issue"
+        Ok("issue")
     } else if s.starts_with(PatchId::prefix()) {
-        "patch"
+        Ok("patch")
     } else if s.starts_with(DocumentId::prefix()) {
-        "document"
+        Ok("document")
     } else {
-        "unknown"
+        Err(StoreError::Internal(format!(
+            "unrecognized object id prefix: {s}"
+        )))
     }
 }
 

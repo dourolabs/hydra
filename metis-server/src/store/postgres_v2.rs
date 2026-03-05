@@ -2788,6 +2788,44 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .collect()
     }
 
+    async fn get_labels_for_objects(
+        &self,
+        object_ids: &[MetisId],
+    ) -> Result<HashMap<MetisId, Vec<LabelSummary>>, StoreError> {
+        if object_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let ids: Vec<&str> = object_ids.iter().map(|id| id.as_ref()).collect();
+        let sql = format!(
+            "SELECT la.object_id, l.id, l.name, l.color \
+             FROM {TABLE_LABELS} l \
+             INNER JOIN {TABLE_LABEL_ASSOCIATIONS} la ON l.id = la.label_id \
+             WHERE la.object_id = ANY($1) AND l.deleted = false \
+             ORDER BY l.name"
+        );
+        let rows = sqlx::query_as::<_, (String, String, String, String)>(&sql)
+            .bind(&ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut result: HashMap<MetisId, Vec<LabelSummary>> = HashMap::new();
+        for (obj_id_str, label_id_str, name, color) in rows {
+            let obj_id = obj_id_str.parse::<MetisId>().map_err(|err| {
+                StoreError::Internal(format!("invalid object id stored in database: {err}"))
+            })?;
+            let label_id = label_id_str.parse::<LabelId>().map_err(|err| {
+                StoreError::Internal(format!("invalid label id stored in database: {err}"))
+            })?;
+            result
+                .entry(obj_id)
+                .or_default()
+                .push(LabelSummary::new(label_id, name, color));
+        }
+        Ok(result)
+    }
+
     async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
         let sql = format!("SELECT object_id FROM {TABLE_LABEL_ASSOCIATIONS} WHERE label_id = $1");
         let rows = sqlx::query_scalar::<_, String>(&sql)
@@ -3456,7 +3494,7 @@ impl Store for PostgresStoreV2 {
         label_id: &LabelId,
         object_id: &MetisId,
     ) -> Result<(), StoreError> {
-        let object_kind = super::object_kind_from_id(object_id);
+        let object_kind = super::object_kind_from_id(object_id)?;
         let sql = format!(
             "INSERT INTO {TABLE_LABEL_ASSOCIATIONS} (label_id, object_id, object_kind) \
              VALUES ($1, $2, $3) \

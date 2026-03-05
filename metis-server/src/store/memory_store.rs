@@ -1147,6 +1147,20 @@ impl ReadOnlyStore for MemoryStore {
         Ok(result)
     }
 
+    async fn get_labels_for_objects(
+        &self,
+        object_ids: &[MetisId],
+    ) -> Result<HashMap<MetisId, Vec<LabelSummary>>, StoreError> {
+        let mut result: HashMap<MetisId, Vec<LabelSummary>> = HashMap::new();
+        for object_id in object_ids {
+            let labels = self.get_labels_for_object(object_id).await?;
+            if !labels.is_empty() {
+                result.insert(object_id.clone(), labels);
+            }
+        }
+        Ok(result)
+    }
+
     async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
         match self.label_objects.get(label_id) {
             Some(ids) => Ok(ids.iter().cloned().collect()),

@@ -155,6 +155,13 @@ impl AppState {
         self.store.get_labels_for_object(object_id).await
     }
 
+    pub async fn get_labels_for_objects(
+        &self,
+        object_ids: &[MetisId],
+    ) -> Result<std::collections::HashMap<MetisId, Vec<LabelSummary>>, StoreError> {
+        self.store.get_labels_for_objects(object_ids).await
+    }
+
     /// Resolve a mix of label IDs and label names into a deduplicated set of LabelIds.
     /// Label names that don't exist are created automatically.
     pub async fn resolve_label_ids(
@@ -339,5 +346,231 @@ mod tests {
         let color3 = default_color_for_name("feature");
         // Just verify it's a valid palette color
         assert!(DEFAULT_COLORS.contains(&color3.as_ref()));
+    }
+
+    #[tokio::test]
+    async fn add_and_get_label_association() {
+        let state = test_state();
+        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let object_id: MetisId = "i-testissue".parse().unwrap();
+
+        state
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+
+        let labels = state.get_labels_for_object(&object_id).await.unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].label_id, label_id);
+        assert_eq!(labels[0].name, "bug");
+    }
+
+    #[tokio::test]
+    async fn add_label_association_is_idempotent() {
+        let state = test_state();
+        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let object_id: MetisId = "i-testissue".parse().unwrap();
+
+        state
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+        state
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+
+        let labels = state.get_labels_for_object(&object_id).await.unwrap();
+        assert_eq!(labels.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn remove_label_association() {
+        let state = test_state();
+        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let object_id: MetisId = "i-testissue".parse().unwrap();
+
+        state
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+        state
+            .remove_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+
+        let labels = state.get_labels_for_object(&object_id).await.unwrap();
+        assert!(labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn remove_nonexistent_label_association_is_noop() {
+        let state = test_state();
+        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let object_id: MetisId = "i-testissue".parse().unwrap();
+
+        // Removing a non-existent association should not error
+        state
+            .remove_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_labels_for_object_excludes_deleted_labels() {
+        let state = test_state();
+        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let object_id: MetisId = "i-testissue".parse().unwrap();
+
+        state
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+        state.delete_label(&label_id).await.unwrap();
+
+        let labels = state.get_labels_for_object(&object_id).await.unwrap();
+        assert!(labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_labels_for_objects_batch() {
+        let state = test_state();
+        let label_a = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_b = state
+            .create_label("feature".to_string(), None)
+            .await
+            .unwrap();
+
+        let obj1: MetisId = "i-issueone".parse().unwrap();
+        let obj2: MetisId = "i-issuetwo".parse().unwrap();
+        let obj3: MetisId = "i-issuethree".parse().unwrap();
+
+        state.add_label_association(&label_a, &obj1).await.unwrap();
+        state.add_label_association(&label_b, &obj1).await.unwrap();
+        state.add_label_association(&label_a, &obj2).await.unwrap();
+        // obj3 has no labels
+
+        let result = state
+            .get_labels_for_objects(&[obj1.clone(), obj2.clone(), obj3.clone()])
+            .await
+            .unwrap();
+
+        assert_eq!(result.get(&obj1).map(Vec::len), Some(2));
+        assert_eq!(result.get(&obj2).map(Vec::len), Some(1));
+        assert!(!result.contains_key(&obj3));
+    }
+
+    #[tokio::test]
+    async fn resolve_label_ids_creates_missing_labels() {
+        let state = test_state();
+        let existing_id = state.create_label("bug".to_string(), None).await.unwrap();
+
+        let resolved = state
+            .resolve_label_ids(
+                Some(vec![existing_id.clone()]),
+                Some(vec!["feature".to_string(), "docs".to_string()]),
+            )
+            .await
+            .unwrap();
+
+        // Should have 3 labels: the existing one + 2 newly created
+        assert_eq!(resolved.len(), 3);
+        assert!(resolved.contains(&existing_id));
+
+        // The new labels should now exist
+        let feature = state.store.get_label_by_name("feature").await.unwrap();
+        assert!(feature.is_some());
+        let docs = state.store.get_label_by_name("docs").await.unwrap();
+        assert!(docs.is_some());
+    }
+
+    #[tokio::test]
+    async fn resolve_label_ids_deduplicates_names() {
+        let state = test_state();
+
+        let resolved = state
+            .resolve_label_ids(None, Some(vec!["bug".to_string(), "Bug".to_string()]))
+            .await
+            .unwrap();
+
+        // "Bug" normalizes to "bug" and is deduplicated (contains check)
+        assert_eq!(resolved.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn resolve_label_ids_skips_empty_names() {
+        let state = test_state();
+
+        let resolved = state
+            .resolve_label_ids(None, Some(vec!["  ".to_string(), "".to_string()]))
+            .await
+            .unwrap();
+
+        assert!(resolved.is_empty());
+    }
+
+    #[tokio::test]
+    async fn upsert_issue_with_label_ids_syncs_labels() {
+        use crate::domain::actors::ActorRef;
+        use crate::domain::issues::IssueStatus;
+        use metis_common::api::v1 as api;
+
+        let state = test_state();
+        let label_a = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_b = state
+            .create_label("feature".to_string(), None)
+            .await
+            .unwrap();
+
+        let issue = crate::app::test_helpers::issue_with_status("test", IssueStatus::Open, vec![]);
+        let mut request = api::issues::UpsertIssueRequest::new(issue.into(), None);
+        request.label_ids = Some(vec![label_a.clone(), label_b.clone()]);
+
+        let (issue_id, _) = state
+            .upsert_issue(None, request, ActorRef::test())
+            .await
+            .unwrap();
+
+        let object_id = MetisId::from(issue_id.clone());
+        let labels = state.get_labels_for_object(&object_id).await.unwrap();
+        assert_eq!(labels.len(), 2);
+
+        // Update to only keep label_a
+        let updated_issue =
+            crate::app::test_helpers::issue_with_status("test updated", IssueStatus::Open, vec![]);
+        let mut update_request = api::issues::UpsertIssueRequest::new(updated_issue.into(), None);
+        update_request.label_ids = Some(vec![label_a.clone()]);
+
+        state
+            .upsert_issue(Some(issue_id.clone()), update_request, ActorRef::test())
+            .await
+            .unwrap();
+
+        let labels = state.get_labels_for_object(&object_id).await.unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].label_id, label_a);
+    }
+
+    #[tokio::test]
+    async fn upsert_issue_with_label_names_creates_and_assigns() {
+        use crate::domain::actors::ActorRef;
+        use crate::domain::issues::IssueStatus;
+        use metis_common::api::v1 as api;
+
+        let state = test_state();
+
+        let issue = crate::app::test_helpers::issue_with_status("test", IssueStatus::Open, vec![]);
+        let mut request = api::issues::UpsertIssueRequest::new(issue.into(), None);
+        request.label_names = Some(vec!["new-label".to_string()]);
+
+        let (issue_id, _) = state
+            .upsert_issue(None, request, ActorRef::test())
+            .await
+            .unwrap();
+
+        let object_id = MetisId::from(issue_id);
+        let labels = state.get_labels_for_object(&object_id).await.unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].name, "new-label");
     }
 }
