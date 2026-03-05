@@ -30,12 +30,12 @@ function getBoxClass(child: ChildStatus): string {
 }
 
 /** Row of small colored squares — one per child issue, color-coded by status. */
-function StatusBoxes({ progress }: { progress: IssueProgress }) {
-  if (progress.children.length === 0) return null;
+function StatusBoxes({ children }: { children: ChildStatus[] }) {
+  if (children.length === 0) return null;
 
   return (
     <span className={styles.statusBoxes}>
-      {progress.children.map((child) => (
+      {children.map((child) => (
         <span key={child.id} className={`${styles.statusBox} ${getBoxClass(child)}`} />
       ))}
     </span>
@@ -175,7 +175,7 @@ export function IssueFilterSidebar({
         <span className={styles.itemLeft}>
           <span className={styles.itemLabel}>{label}</span>
           <span className={styles.itemStats}>
-            <StatusBoxes progress={p} />
+            <StatusBoxes children={p.children} />
             {p.closed}/{p.total}
           </span>
         </span>
@@ -214,7 +214,7 @@ export function IssueFilterSidebar({
             {lp.name}
           </span>
           <span className={styles.itemStats}>
-            <StatusBoxes progress={{ children: lp.children } as IssueProgress} />
+            <StatusBoxes children={lp.children} />
             {lp.closed}/{lp.total}
           </span>
         </span>
