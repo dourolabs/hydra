@@ -82,6 +82,12 @@ pub struct UpsertLabelRequest {
     pub label: Label,
 }
 
+impl UpsertLabelRequest {
+    pub fn new(label: Label) -> Self {
+        Self { label }
+    }
+}
+
 /// Response body after creating or updating a label.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

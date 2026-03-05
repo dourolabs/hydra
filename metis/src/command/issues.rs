@@ -17,6 +17,7 @@ use clap::Subcommand;
 use metis_common::{
     activity_log_for_issue_versions, activity_log_for_job_versions,
     activity_log_for_patch_versions,
+    api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
     constants::ENV_METIS_ISSUE_ID,
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
@@ -28,8 +29,8 @@ use metis_common::{
     patches::{PatchVersionRecord, Review},
     users::Username,
     whoami::ActorIdentity,
-    ActivityLogEntry, ActivityObjectKind, PatchId, RelativeVersionNumber, RepoName, TaskId,
-    Versioned,
+    ActivityLogEntry, ActivityObjectKind, LabelId, MetisId, PatchId, RelativeVersionNumber,
+    RepoName, TaskId, Versioned,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -71,6 +72,10 @@ pub enum IssueCommands {
             conflicts_with = "id"
         )]
         graph_filters: Vec<IssueGraphFilter>,
+
+        /// Filter by label names (comma-separated).
+        #[arg(long = "labels", value_name = "LABEL_NAME", value_delimiter = ',')]
+        labels: Vec<String>,
 
         /// Include deleted issues in the listing.
         #[arg(long = "include-deleted")]
@@ -145,6 +150,10 @@ pub enum IssueCommands {
         /// Kubernetes secrets to use for job settings (comma-separated).
         #[arg(long, value_name = "SECRETS", value_delimiter = ',')]
         secrets: Vec<String>,
+
+        /// Comma-separated label names to assign (creates labels if they don't exist).
+        #[arg(long = "labels", value_name = "LABEL_NAME", value_delimiter = ',')]
+        labels: Vec<String>,
     },
     /// Update an existing issue.
     Update {
@@ -257,6 +266,18 @@ pub enum IssueCommands {
         /// Remove all job settings from the issue.
         #[arg(long)]
         clear_job_settings: bool,
+
+        /// Comma-separated label names to add (creates labels if they don't exist).
+        #[arg(long = "add-labels", value_name = "LABEL_NAME", value_delimiter = ',')]
+        add_labels: Vec<String>,
+
+        /// Comma-separated label names to remove.
+        #[arg(
+            long = "remove-labels",
+            value_name = "LABEL_NAME",
+            value_delimiter = ','
+        )]
+        remove_labels: Vec<String>,
     },
     /// Inspect or update an issue's todo list.
     Todo {
@@ -359,8 +380,10 @@ pub async fn run(
             assignee,
             query,
             graph_filters,
+            labels,
             include_deleted,
         } => {
+            let label_ids = resolve_label_names_to_ids(client, &labels).await?;
             let issues = fetch_issues(
                 client,
                 id,
@@ -369,6 +392,7 @@ pub async fn run(
                 assignee,
                 query,
                 graph_filters,
+                label_ids,
                 include_deleted,
             )
             .await?;
@@ -392,6 +416,7 @@ pub async fn run(
             branch,
             max_retries,
             secrets,
+            labels,
         } => {
             let creator = resolve_creator_username(client).await?;
             create_issue(
@@ -413,6 +438,7 @@ pub async fn run(
                 max_retries,
                 secrets,
                 current_issue_id,
+                labels,
             )
             .await
             .and_then(|issue| write_issue_records(context.output_format, &[issue]))
@@ -440,6 +466,8 @@ pub async fn run(
             secrets,
             clear_secrets,
             clear_job_settings,
+            add_labels,
+            remove_labels,
         } => update_issue(
             client,
             id,
@@ -464,6 +492,8 @@ pub async fn run(
             secrets,
             clear_secrets,
             clear_job_settings,
+            add_labels,
+            remove_labels,
         )
         .await
         .and_then(|issue| write_issue_records(context.output_format, &[issue])),
@@ -718,6 +748,7 @@ async fn fetch_child_issues(
 }
 
 fn issue_version_from_summary(summary: IssueSummaryRecord) -> IssueVersionRecord {
+    let labels = summary.issue.labels.clone();
     IssueVersionRecord::new(
         summary.issue_id,
         summary.version,
@@ -738,7 +769,7 @@ fn issue_version_from_summary(summary: IssueSummaryRecord) -> IssueVersionRecord
         ),
         summary.actor,
         summary.creation_time,
-        Vec::new(),
+        labels,
     )
 }
 
@@ -988,6 +1019,7 @@ async fn fetch_issues(
     assignee: Option<String>,
     query: Option<String>,
     graph_filters: Vec<IssueGraphFilter>,
+    label_ids: Vec<LabelId>,
     include_deleted: bool,
 ) -> Result<Vec<IssueSummaryRecord>> {
     if let Some(issue_id) = id {
@@ -1040,15 +1072,17 @@ async fn fetch_issues(
     });
 
     let include_deleted_opt = if include_deleted { Some(true) } else { None };
+    let mut search_query = SearchIssuesQuery::new(
+        issue_type,
+        status,
+        trimmed_assignee.clone(),
+        trimmed_query,
+        graph_filters,
+        include_deleted_opt,
+    );
+    search_query.label_ids = label_ids;
     let issues = client
-        .list_issues(&SearchIssuesQuery::new(
-            issue_type,
-            status,
-            trimmed_assignee.clone(),
-            trimmed_query,
-            graph_filters,
-            include_deleted_opt,
-        ))
+        .list_issues(&search_query)
         .await
         .context("failed to list issues")?
         .issues;
@@ -1224,6 +1258,7 @@ async fn create_issue(
     max_retries: Option<u32>,
     secrets: Vec<String>,
     current_issue_id: Option<IssueId>,
+    labels: Vec<String>,
 ) -> Result<IssueVersionRecord> {
     let description = description.trim();
     if description.is_empty() {
@@ -1276,7 +1311,15 @@ async fn create_issue(
         patches,
         false,
     );
-    let request = UpsertIssueRequest::new(issue.clone(), None);
+    let mut request = UpsertIssueRequest::new(issue.clone(), None);
+    let label_names: Vec<String> = labels
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !label_names.is_empty() {
+        request.label_names = Some(label_names);
+    }
 
     let response = client
         .create_issue(&request)
@@ -1318,6 +1361,8 @@ async fn update_issue(
     secrets: Vec<String>,
     clear_secrets: bool,
     clear_job_settings: bool,
+    add_labels: Vec<String>,
+    remove_labels: Vec<String>,
 ) -> Result<IssueVersionRecord> {
     let issue_id = id;
 
@@ -1376,6 +1421,8 @@ async fn update_issue(
         || !secrets.is_empty()
         || clear_secrets;
 
+    let labels_requested = !add_labels.is_empty() || !remove_labels.is_empty();
+
     let no_changes = issue_type.is_none()
         && title.is_none()
         && status.is_none()
@@ -1384,7 +1431,8 @@ async fn update_issue(
         && dependencies_update.is_none()
         && patches_update.is_none()
         && progress_update.is_none()
-        && !job_settings_requested;
+        && !job_settings_requested
+        && !labels_requested;
     if no_changes {
         bail!("At least one field must be provided to update.");
     }
@@ -1412,38 +1460,67 @@ async fn update_issue(
         Some(current.issue.job_settings.clone())
     };
 
-    let updated_issue = Issue::new(
-        issue_type.unwrap_or(current.issue.issue_type),
-        title.unwrap_or(current.issue.title),
-        description.unwrap_or(current.issue.description),
-        current.issue.creator,
-        progress_update.unwrap_or(current.issue.progress),
-        status.unwrap_or(current.issue.status),
-        assignee.unwrap_or(current.issue.assignee),
-        job_settings,
-        current.issue.todo_list,
-        dependencies_update.unwrap_or(current.issue.dependencies),
-        patches_update.unwrap_or(current.issue.patches),
-        current.issue.deleted,
-    );
+    let issue_fields_changed = issue_type.is_some()
+        || title.is_some()
+        || status.is_some()
+        || assignee.is_some()
+        || description.is_some()
+        || dependencies_update.is_some()
+        || patches_update.is_some()
+        || progress_update.is_some()
+        || job_settings_changed;
 
-    let response = client
-        .update_issue(
-            &issue_id,
-            &UpsertIssueRequest::new(updated_issue.clone(), None),
+    let result = if issue_fields_changed {
+        let updated_issue = Issue::new(
+            issue_type.unwrap_or(current.issue.issue_type),
+            title.unwrap_or(current.issue.title),
+            description.unwrap_or(current.issue.description),
+            current.issue.creator,
+            progress_update.unwrap_or(current.issue.progress),
+            status.unwrap_or(current.issue.status),
+            assignee.unwrap_or(current.issue.assignee),
+            job_settings,
+            current.issue.todo_list,
+            dependencies_update.unwrap_or(current.issue.dependencies),
+            patches_update.unwrap_or(current.issue.patches),
+            current.issue.deleted,
+        );
+
+        let response = client
+            .update_issue(
+                &issue_id,
+                &UpsertIssueRequest::new(updated_issue.clone(), None),
+            )
+            .await
+            .with_context(|| format!("failed to update issue '{issue_id}'"))?;
+
+        IssueVersionRecord::new(
+            response.issue_id,
+            response.version,
+            Utc::now(),
+            updated_issue,
+            None,
+            Utc::now(),
+            Vec::new(),
         )
-        .await
-        .with_context(|| format!("failed to update issue '{issue_id}'"))?;
+    } else {
+        IssueVersionRecord::new(
+            issue_id.clone(),
+            current.version,
+            current.timestamp,
+            current.issue,
+            current.actor,
+            current.creation_time,
+            current.labels.clone(),
+        )
+    };
 
-    Ok(IssueVersionRecord::new(
-        response.issue_id,
-        response.version,
-        Utc::now(),
-        updated_issue,
-        None,
-        Utc::now(),
-        Vec::new(),
-    ))
+    if labels_requested {
+        let object_id = MetisId::from(issue_id.clone());
+        apply_label_changes(client, &object_id, &add_labels, &remove_labels).await?;
+    }
+
+    Ok(result)
 }
 
 async fn resolve_creator_username(client: &dyn MetisClientInterface) -> Result<Username> {
@@ -1644,6 +1721,105 @@ fn write_issue_summary_records(
     Ok(())
 }
 
+/// Resolve a list of label names to their IDs by querying the server.
+/// Returns an error if any label name cannot be found.
+async fn resolve_label_names_to_ids(
+    client: &dyn MetisClientInterface,
+    names: &[String],
+) -> Result<Vec<LabelId>> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let response = client
+        .list_labels(&SearchLabelsQuery::default())
+        .await
+        .context("failed to list labels")?;
+
+    let mut ids = Vec::with_capacity(names.len());
+    for name in names {
+        let trimmed = name.trim().to_lowercase();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let label = response
+            .labels
+            .iter()
+            .find(|l| l.name.to_lowercase() == trimmed)
+            .ok_or_else(|| anyhow!("label '{}' not found", name.trim()))?;
+        ids.push(label.label_id.clone());
+    }
+    Ok(ids)
+}
+
+/// Resolve a label name to its ID, creating it if it doesn't exist.
+async fn resolve_or_create_label(
+    client: &dyn MetisClientInterface,
+    name: &str,
+    all_labels: &[metis_common::api::v1::labels::LabelRecord],
+) -> Result<LabelId> {
+    let normalized = name.trim().to_lowercase();
+    if let Some(label) = all_labels
+        .iter()
+        .find(|l| l.name.to_lowercase() == normalized)
+    {
+        return Ok(label.label_id.clone());
+    }
+    let request = UpsertLabelRequest::new(Label::new(name.trim().to_string(), None));
+    let response = client
+        .create_label(&request)
+        .await
+        .with_context(|| format!("failed to create label '{}'", name.trim()))?;
+    Ok(response.label_id)
+}
+
+/// Add and remove label associations for an object.
+async fn apply_label_changes(
+    client: &dyn MetisClientInterface,
+    object_id: &MetisId,
+    add_labels: &[String],
+    remove_labels: &[String],
+) -> Result<()> {
+    if add_labels.is_empty() && remove_labels.is_empty() {
+        return Ok(());
+    }
+
+    let all_labels = client
+        .list_labels(&SearchLabelsQuery::default())
+        .await
+        .context("failed to list labels")?
+        .labels;
+
+    for name in add_labels {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let label_id = resolve_or_create_label(client, trimmed, &all_labels).await?;
+        client
+            .add_label_association(&label_id, object_id)
+            .await
+            .with_context(|| format!("failed to add label '{trimmed}' to object"))?;
+    }
+
+    for name in remove_labels {
+        let trimmed = name.trim().to_lowercase();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let label = all_labels
+            .iter()
+            .find(|l| l.name.to_lowercase() == trimmed)
+            .ok_or_else(|| anyhow!("label '{}' not found", name.trim()))?;
+        client
+            .remove_label_association(&label.label_id, object_id)
+            .await
+            .with_context(|| format!("failed to remove label '{}' from object", name.trim()))?;
+    }
+
+    Ok(())
+}
+
 fn parse_issue_graph_filter(raw: &str) -> Result<IssueGraphFilter, String> {
     raw.parse()
 }
@@ -1756,6 +1932,17 @@ fn write_issue_details_pretty(
 
     if show_todo_list {
         write_todo_list(indent, todo_list, writer)?;
+    }
+
+    if issue_record.labels.is_empty() {
+        writeln!(writer, "{indent}Labels: none")?;
+    } else {
+        let label_strs: Vec<String> = issue_record
+            .labels
+            .iter()
+            .map(|l| format!("{} ({})", l.name, l.color))
+            .collect();
+        writeln!(writer, "{indent}Labels: {}", label_strs.join(", "))?;
     }
 
     if dependencies.is_empty() {
@@ -2145,6 +2332,7 @@ mod tests {
             None,
             Some("bug".into()),
             Vec::new(),
+            Vec::new(),
             false,
         )
         .await
@@ -2203,6 +2391,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            Vec::new(),
             false,
         )
         .await
@@ -2256,6 +2445,7 @@ mod tests {
             Some("OWNER-A".into()),
             None,
             Vec::new(),
+            Vec::new(),
             false,
         )
         .await
@@ -2296,6 +2486,7 @@ mod tests {
             None,
             None,
             filters.clone(),
+            Vec::new(),
             false,
         )
         .await
@@ -2654,6 +2845,7 @@ mod tests {
             None,
             Vec::new(),
             None,
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -2717,6 +2909,7 @@ mod tests {
             Some(4),
             Vec::new(),
             None,
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -2807,6 +3000,7 @@ mod tests {
             None,
             Vec::new(),
             Some(current_issue_id),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -2905,6 +3099,7 @@ mod tests {
             None,
             Vec::new(),
             Some(current_issue_id),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -2966,6 +3161,7 @@ mod tests {
             None,
             vec!["my-api-secret".into(), "my-db-secret".into()],
             None,
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -3053,6 +3249,7 @@ mod tests {
             None,
             Vec::new(),
             Some(current_issue_id),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -3086,6 +3283,7 @@ mod tests {
             None,
             Vec::new(),
             None,
+            Vec::new(),
         )
         .await
         .is_err());
@@ -3114,6 +3312,7 @@ mod tests {
             None,
             Vec::new(),
             None,
+            Vec::new(),
         )
         .await
         .is_err());
@@ -3263,6 +3462,8 @@ mod tests {
             Vec::new(),
             false,
             false,
+            Vec::new(),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -3357,6 +3558,8 @@ mod tests {
             Vec::new(),
             false,
             false,
+            Vec::new(),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -3455,6 +3658,8 @@ mod tests {
             Vec::new(),
             false,
             true,
+            Vec::new(),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -3548,6 +3753,8 @@ mod tests {
             vec!["new-secret".into()],
             false,
             false,
+            Vec::new(),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -3641,6 +3848,8 @@ mod tests {
             Vec::new(),
             true,
             false,
+            Vec::new(),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -4417,5 +4626,334 @@ mod tests {
         assert!(rendered.contains("Reviewers:"));
         assert!(rendered.contains("- alex: changes requested @ 2024-05-01T11:50:00Z"));
         assert!(rendered.contains("- sam: approved @ 2024-05-01T12:00:00Z"));
+    }
+
+    // ---- Label helper tests ----
+
+    use crate::test_utils::ids::label_id;
+    use metis_common::api::v1::labels::{
+        LabelRecord, LabelSummary, ListLabelsResponse, UpsertLabelResponse,
+    };
+    use metis_common::rgb::Rgb;
+
+    fn sample_label_record(id: &str, name: &str, color: &str) -> LabelRecord {
+        LabelRecord::new(
+            label_id(id),
+            name.to_string(),
+            color.parse::<Rgb>().unwrap(),
+            Utc::now(),
+            Utc::now(),
+        )
+    }
+
+    #[tokio::test]
+    async fn resolve_label_names_to_ids_happy_path() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let labels_response = ListLabelsResponse::new(vec![
+            sample_label_record("l-aaaa", "frontend", "#e74c3c"),
+            sample_label_record("l-bbbb", "urgent", "#3498db"),
+        ]);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/labels");
+            then.status(200).json_body_obj(&labels_response);
+        });
+
+        let ids =
+            resolve_label_names_to_ids(&client, &["frontend".to_string(), "urgent".to_string()])
+                .await
+                .unwrap();
+
+        list_mock.assert();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], label_id("l-aaaa"));
+        assert_eq!(ids[1], label_id("l-bbbb"));
+    }
+
+    #[tokio::test]
+    async fn resolve_label_names_to_ids_case_insensitive() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let labels_response =
+            ListLabelsResponse::new(vec![sample_label_record("l-aaaa", "Frontend", "#e74c3c")]);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/labels");
+            then.status(200).json_body_obj(&labels_response);
+        });
+
+        let ids = resolve_label_names_to_ids(&client, &["FRONTEND".to_string()])
+            .await
+            .unwrap();
+
+        list_mock.assert();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], label_id("l-aaaa"));
+    }
+
+    #[tokio::test]
+    async fn resolve_label_names_to_ids_missing_label_errors() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let labels_response =
+            ListLabelsResponse::new(vec![sample_label_record("l-aaaa", "frontend", "#e74c3c")]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/labels");
+            then.status(200).json_body_obj(&labels_response);
+        });
+
+        let result = resolve_label_names_to_ids(&client, &["nonexistent".to_string()]).await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("nonexistent"),
+            "error should mention the missing label name, got: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_label_names_to_ids_empty_input() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+
+        let ids = resolve_label_names_to_ids(&client, &[]).await.unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn resolve_or_create_label_finds_existing() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let existing = sample_label_record("l-aaaa", "frontend", "#e74c3c");
+
+        let id = resolve_or_create_label(&client, "Frontend", &[existing])
+            .await
+            .unwrap();
+        assert_eq!(id, label_id("l-aaaa"));
+    }
+
+    #[tokio::test]
+    async fn resolve_or_create_label_creates_when_not_found() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let new_label_id = label_id("l-cccc");
+        let create_response = UpsertLabelResponse::new(new_label_id.clone());
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/labels");
+            then.status(200).json_body_obj(&create_response);
+        });
+
+        let id = resolve_or_create_label(&client, "new-label", &[])
+            .await
+            .unwrap();
+
+        create_mock.assert();
+        assert_eq!(id, label_id("l-cccc"));
+    }
+
+    #[tokio::test]
+    async fn apply_label_changes_adds_and_removes() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let existing_labels = vec![
+            sample_label_record("l-aaaa", "frontend", "#e74c3c"),
+            sample_label_record("l-bbbb", "urgent", "#3498db"),
+        ];
+        let labels_response = ListLabelsResponse::new(existing_labels);
+
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/labels");
+            then.status(200).json_body_obj(&labels_response);
+        });
+
+        let object_id: MetisId = issue_id("i-target").into();
+
+        // Mock the add association endpoint for "frontend"
+        let add_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path_matches(httpmock::Regex::new(r"/v1/labels/.*/objects/.*").unwrap());
+            then.status(200);
+        });
+
+        // Mock the remove association endpoint for "urgent"
+        let remove_mock = server.mock(|when, then| {
+            when.method(DELETE)
+                .path_matches(httpmock::Regex::new(r"/v1/labels/.*/objects/.*").unwrap());
+            then.status(200);
+        });
+
+        apply_label_changes(
+            &client,
+            &object_id,
+            &["frontend".to_string()],
+            &["urgent".to_string()],
+        )
+        .await
+        .unwrap();
+
+        list_mock.assert();
+        add_mock.assert();
+        remove_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn apply_label_changes_noop_when_empty() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let object_id: MetisId = issue_id("i-target").into();
+
+        // No mocks needed — the function should return immediately
+        apply_label_changes(&client, &object_id, &[], &[])
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn apply_label_changes_remove_missing_label_errors() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let labels_response =
+            ListLabelsResponse::new(vec![sample_label_record("l-aaaa", "frontend", "#e74c3c")]);
+        server.mock(|when, then| {
+            when.method(GET).path("/v1/labels");
+            then.status(200).json_body_obj(&labels_response);
+        });
+
+        let object_id: MetisId = issue_id("i-target").into();
+        let result =
+            apply_label_changes(&client, &object_id, &[], &["nonexistent".to_string()]).await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("nonexistent"),
+            "error should mention the missing label name, got: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_issue_details_pretty_shows_labels() {
+        let issue_record = IssueVersionRecord::new(
+            issue_id("i-labeled"),
+            0,
+            Utc::now(),
+            Issue::new(
+                IssueType::Task,
+                "Labeled issue".to_string(),
+                "desc".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+                false,
+            ),
+            None,
+            Utc::now(),
+            vec![
+                LabelSummary::new(
+                    label_id("l-aaaa"),
+                    "frontend".to_string(),
+                    "#e74c3c".parse::<Rgb>().unwrap(),
+                ),
+                LabelSummary::new(
+                    label_id("l-bbbb"),
+                    "urgent".to_string(),
+                    "#3498db".parse::<Rgb>().unwrap(),
+                ),
+            ],
+        );
+
+        let issue_with_patches = IssueWithPatches {
+            issue: issue_record,
+            patches: vec![],
+        };
+
+        let mut output = Vec::new();
+        write_issue_details_pretty(&issue_with_patches, "", false, &mut output).unwrap();
+        let rendered = strip_ansi_codes(&String::from_utf8(output).unwrap());
+
+        assert!(
+            rendered.contains("frontend (#e74c3c)"),
+            "should show label name and color, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("urgent (#3498db)"),
+            "should show second label, got: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_issue_details_pretty_shows_no_labels() {
+        let issue_record = IssueVersionRecord::new(
+            issue_id("i-nolabel"),
+            0,
+            Utc::now(),
+            Issue::new(
+                IssueType::Task,
+                "No labels".to_string(),
+                "desc".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+                false,
+            ),
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
+
+        let issue_with_patches = IssueWithPatches {
+            issue: issue_record,
+            patches: vec![],
+        };
+
+        let mut output = Vec::new();
+        write_issue_details_pretty(&issue_with_patches, "", false, &mut output).unwrap();
+        let rendered = strip_ansi_codes(&String::from_utf8(output).unwrap());
+
+        assert!(
+            rendered.contains("Labels: none"),
+            "should show 'Labels: none' when no labels, got: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_issues_passes_label_ids() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let lid = label_id("l-aaaa");
+        let issues_response = ListIssuesResponse::new(vec![]);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/issues")
+                .query_param("labels", lid.to_string());
+            then.status(200).json_body_obj(&issues_response);
+        });
+
+        let issues = fetch_issues(
+            &client,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            vec![lid.clone()],
+            false,
+        )
+        .await
+        .unwrap();
+
+        list_mock.assert();
+        assert!(issues.is_empty());
     }
 }
