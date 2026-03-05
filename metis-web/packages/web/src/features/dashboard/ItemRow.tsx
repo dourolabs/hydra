@@ -4,6 +4,7 @@ import { Avatar, JobStatusIndicator } from "@metis/ui";
 import type { JobSummaryRecord, LabelSummary } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { useAuth } from "../auth/useAuth";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
@@ -67,9 +68,12 @@ interface ItemRowProps {
   filterRootId?: string | null;
 }
 
+const MOBILE_MAX_LABELS = 2;
+
 export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const isMobile = useMediaQuery("(max-width: 768px)");
   const Icon = TYPE_ICONS[item.kind];
 
   const handleClick = useCallback(() => {
@@ -180,17 +184,25 @@ export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
           </span>
         )}
       </span>
-      {item.kind === "issue" && item.data.labels && item.data.labels.length > 0 && (
-        <span className={styles.labels}>
-          {item.data.labels.map((label: LabelSummary) => (
-            <LabelChip
-              key={label.label_id}
-              name={label.name}
-              color={label.color}
-            />
-          ))}
-        </span>
-      )}
+      {item.kind === "issue" && item.data.labels && item.data.labels.length > 0 && (() => {
+        const allLabels = item.data.labels;
+        const visibleLabels = isMobile ? allLabels.slice(0, MOBILE_MAX_LABELS) : allLabels;
+        const overflowCount = isMobile ? allLabels.length - MOBILE_MAX_LABELS : 0;
+        return (
+          <span className={styles.labels}>
+            {visibleLabels.map((label: LabelSummary) => (
+              <LabelChip
+                key={label.label_id}
+                name={label.name}
+                color={label.color}
+              />
+            ))}
+            {overflowCount > 0 && (
+              <span className={styles.overflowBadge}>+{overflowCount}</span>
+            )}
+          </span>
+        );
+      })()}
       {jobSummaries && jobSummaries.length > 0 && (
         <span
           className={styles.jobIndicator}

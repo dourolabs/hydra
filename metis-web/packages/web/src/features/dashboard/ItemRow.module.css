@@ -124,6 +124,18 @@
   overflow: hidden;
 }
 
+.overflowBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+}
+
 .jobIndicator {
   display: inline-flex;
   align-items: center;
