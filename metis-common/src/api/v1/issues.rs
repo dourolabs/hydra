@@ -577,6 +577,7 @@ impl IssueVersionRecord {
         issue: Issue,
         actor: Option<ActorRef>,
         creation_time: DateTime<Utc>,
+        labels: Vec<LabelSummary>,
     ) -> Self {
         Self {
             issue_id,
@@ -585,13 +586,8 @@ impl IssueVersionRecord {
             issue,
             actor,
             creation_time,
-            labels: Vec::new(),
+            labels,
         }
-    }
-
-    pub fn with_labels(mut self, labels: Vec<LabelSummary>) -> Self {
-        self.labels = labels;
-        self
     }
 }
 
@@ -810,13 +806,6 @@ impl From<&Issue> for IssueSummary {
     }
 }
 
-impl IssueSummary {
-    pub fn with_labels(mut self, labels: Vec<LabelSummary>) -> Self {
-        self.labels = labels;
-        self
-    }
-}
-
 /// Summary-level version record for issue list responses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -840,7 +829,10 @@ impl IssueSummaryRecord {
         issue: IssueSummary,
         actor: Option<ActorRef>,
         creation_time: DateTime<Utc>,
+        labels: Vec<LabelSummary>,
     ) -> Self {
+        let mut issue = issue;
+        issue.labels = labels;
         Self {
             issue_id,
             version,
@@ -854,7 +846,8 @@ impl IssueSummaryRecord {
 
 impl From<&IssueVersionRecord> for IssueSummaryRecord {
     fn from(record: &IssueVersionRecord) -> Self {
-        let summary = IssueSummary::from(&record.issue).with_labels(record.labels.clone());
+        let mut summary = IssueSummary::from(&record.issue);
+        summary.labels = record.labels.clone();
         IssueSummaryRecord {
             issue_id: record.issue_id.clone(),
             version: record.version,
@@ -1085,7 +1078,8 @@ mod tests {
             actor_id: ActorId::Username(Username::from("alice")),
         };
         let ts = chrono::Utc::now();
-        let record = IssueVersionRecord::new(issue_id, 1, ts, issue, Some(actor.clone()), ts);
+        let record =
+            IssueVersionRecord::new(issue_id, 1, ts, issue, Some(actor.clone()), ts, Vec::new());
 
         let value = serde_json::to_value(&record).expect("should serialize");
         let expected_actor = json!({"Authenticated": {"actor_id": {"Username": "alice"}}});
@@ -1111,7 +1105,7 @@ mod tests {
         };
 
         let ts = chrono::Utc::now();
-        let record = IssueVersionRecord::new(issue_id, 1, ts, issue, None, ts);
+        let record = IssueVersionRecord::new(issue_id, 1, ts, issue, None, ts, Vec::new());
 
         let value = serde_json::to_value(&record).expect("should serialize");
         assert!(
@@ -1220,7 +1214,8 @@ mod tests {
     fn issue_summary_record_from_version_record() {
         let issue = make_test_issue("multi\nline\ndesc");
         let ts = chrono::Utc::now();
-        let record = IssueVersionRecord::new(issue_id("i-test"), 3, ts, issue, None, ts);
+        let record =
+            IssueVersionRecord::new(issue_id("i-test"), 3, ts, issue, None, ts, Vec::new());
         let summary_record = IssueSummaryRecord::from(&record);
         assert_eq!(summary_record.issue_id, issue_id("i-test"));
         assert_eq!(summary_record.version, 3);

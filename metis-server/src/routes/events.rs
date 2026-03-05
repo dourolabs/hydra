@@ -400,6 +400,7 @@ async fn serialize_entity(
                 summary,
                 Some(payload.actor().clone()),
                 creation_time,
+                Vec::new(),
             );
             serde_json::to_value(record).ok()?
         }

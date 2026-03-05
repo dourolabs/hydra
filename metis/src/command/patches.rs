@@ -1284,6 +1284,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         )
     }
 

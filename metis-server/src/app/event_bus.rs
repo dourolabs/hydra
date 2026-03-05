@@ -1222,6 +1222,13 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_labels_for_object(object_id).await
     }
 
+    async fn get_labels_for_objects(
+        &self,
+        object_ids: &[MetisId],
+    ) -> Result<HashMap<MetisId, Vec<LabelSummary>>, StoreError> {
+        self.inner.get_labels_for_objects(object_ids).await
+    }
+
     async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
         self.inner.get_objects_for_label(label_id).await
     }

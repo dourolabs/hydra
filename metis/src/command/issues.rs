@@ -738,6 +738,7 @@ fn issue_version_from_summary(summary: IssueSummaryRecord) -> IssueVersionRecord
         ),
         summary.actor,
         summary.creation_time,
+        Vec::new(),
     )
 }
 
@@ -1289,6 +1290,7 @@ async fn create_issue(
         issue,
         None,
         Utc::now(),
+        Vec::new(),
     ))
 }
 
@@ -1440,6 +1442,7 @@ async fn update_issue(
         updated_issue,
         None,
         Utc::now(),
+        Vec::new(),
     ))
 }
 
@@ -2094,6 +2097,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         )
     }
 
@@ -2122,6 +2126,7 @@ mod tests {
                 ),
                 None,
                 Utc::now(),
+                Vec::new(),
             ))]);
         let list_mock = server.mock(|when, then| {
             when.method(GET)
@@ -2182,6 +2187,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let get_mock = server.mock(|when, then| {
             when.method(GET)
@@ -2233,6 +2239,7 @@ mod tests {
                 ),
                 None,
                 Utc::now(),
+                Vec::new(),
             ))]);
         let list_mock = server.mock(|when, then| {
             when.method(GET)
@@ -2447,6 +2454,7 @@ mod tests {
             root_issue.issue.clone(),
             None,
             version_timestamp,
+            Vec::new(),
         )]);
         let parent_versions = ListIssueVersionsResponse::new(vec![IssueVersionRecord::new(
             parent_id.clone(),
@@ -2455,6 +2463,7 @@ mod tests {
             parent_issue.issue.clone(),
             None,
             version_timestamp,
+            Vec::new(),
         )]);
         let child_versions = ListIssueVersionsResponse::new(vec![IssueVersionRecord::new(
             child_issue.issue_id.clone(),
@@ -2463,6 +2472,7 @@ mod tests {
             child_issue.issue.clone(),
             None,
             version_timestamp,
+            Vec::new(),
         )]);
         let root_patch_versions = ListPatchVersionsResponse::new(vec![PatchVersionRecord::new(
             root_patch_id.clone(),
@@ -2746,6 +2756,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let current_issue_mock = server.mock(|when, then| {
             when.method(GET)
@@ -2837,6 +2848,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let current_issue_mock = server.mock(|when, then| {
             when.method(GET)
@@ -2990,6 +3002,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let current_issue_mock = server.mock(|when, then| {
             when.method(GET)
@@ -3288,6 +3301,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let update_request = UpsertIssueRequest::new(
             Issue::new(
@@ -3382,6 +3396,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let update_request = UpsertIssueRequest::new(
             Issue::new(
@@ -3475,6 +3490,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let mut expected_settings = JobSettings::default();
         expected_settings.secrets = Some(vec!["new-secret".into()]);
@@ -3569,6 +3585,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let update_request = UpsertIssueRequest::new(
             Issue::new(
@@ -3660,6 +3677,7 @@ mod tests {
                 ),
                 None,
                 Utc::now(),
+                Vec::new(),
             ),
             IssueVersionRecord::new(
                 issue_id("i-2"),
@@ -3681,6 +3699,7 @@ mod tests {
                 ),
                 None,
                 Utc::now(),
+                Vec::new(),
             ),
         ];
 
@@ -3735,6 +3754,7 @@ mod tests {
                 ),
                 None,
                 Utc::now(),
+                Vec::new(),
             ));
         });
 
@@ -3925,6 +3945,7 @@ mod tests {
                     ),
                     None,
                     Utc::now(),
+                    Vec::new(),
                 ),
                 patches: vec![main_patch_record],
             },
@@ -3949,6 +3970,7 @@ mod tests {
                     ),
                     None,
                     Utc::now(),
+                    Vec::new(),
                 ),
                 patches: Vec::new(),
             }],
@@ -4097,6 +4119,7 @@ mod tests {
                     issue_versions[1].item.clone(),
                     None,
                     Utc::now(),
+                    Vec::new(),
                 ),
                 patches: Vec::new(),
             },
@@ -4141,6 +4164,7 @@ mod tests {
                     ),
                     None,
                     Utc::now(),
+                    Vec::new(),
                 ),
                 patches: Vec::new(),
             },
@@ -4165,6 +4189,7 @@ mod tests {
                     ),
                     None,
                     Utc::now(),
+                    Vec::new(),
                 ),
                 patches: Vec::new(),
             }],
@@ -4189,6 +4214,7 @@ mod tests {
                     ),
                     None,
                     Utc::now(),
+                    Vec::new(),
                 ),
                 patches: Vec::new(),
             }],
@@ -4233,6 +4259,7 @@ mod tests {
                     ),
                     None,
                     Utc::now(),
+                    Vec::new(),
                 ),
                 patches: Vec::new(),
             },
@@ -4257,6 +4284,7 @@ mod tests {
                     ),
                     None,
                     Utc::now(),
+                    Vec::new(),
                 ),
                 patches: Vec::new(),
             }],
@@ -4281,6 +4309,7 @@ mod tests {
                     ),
                     None,
                     Utc::now(),
+                    Vec::new(),
                 ),
                 patches: Vec::new(),
             }],
@@ -4344,6 +4373,7 @@ mod tests {
                     ),
                     None,
                     Utc::now(),
+                    Vec::new(),
                 ),
                 patches: vec![PatchVersionRecord::new(
                     main_patch_id,

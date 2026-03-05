@@ -142,7 +142,10 @@ pub async fn get_issue(
     let labels = state
         .get_labels_for_object(&object_id)
         .await
-        .unwrap_or_default();
+        .map_err(|err| {
+            error!(issue_id = %issue_id, error = %err, "failed to fetch labels for issue");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
 
     info!(issue_id = %issue_id, "get_issue completed");
     let response = api_issues::IssueVersionRecord::new(
@@ -152,8 +155,8 @@ pub async fn get_issue(
         issue.item.into(),
         issue.actor,
         issue.creation_time,
-    )
-    .with_labels(labels);
+        labels,
+    );
     Ok(Json(response))
 }
 
@@ -177,6 +180,7 @@ pub async fn list_issue_versions(
                 version.item.into(),
                 version.actor,
                 version.creation_time,
+                Vec::new(),
             )
         })
         .collect();
@@ -220,6 +224,7 @@ pub async fn get_issue_version(
         entry.item.into(),
         entry.actor,
         entry.creation_time,
+        Vec::new(),
     );
     info!(issue_id = %issue_id, version, "get_issue_version completed");
     Ok(Json(response))
@@ -265,22 +270,36 @@ pub async fn list_issues(
         )
     };
 
+    // Apply graph filter first to reduce the set before batch label lookup
+    let issues: Vec<_> = if let Some(ref allowed) = graph_matches {
+        issues
+            .into_iter()
+            .filter(|(id, _)| allowed.contains(id))
+            .collect()
+    } else {
+        issues
+    };
+
+    // Batch-fetch labels for all issues in a single query
+    let object_ids: Vec<MetisId> = issues
+        .iter()
+        .map(|(id, _)| MetisId::from(id.clone()))
+        .collect();
+    let labels_map = state
+        .get_labels_for_objects(&object_ids)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to batch-fetch labels for issues");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     // Build label filter set for post-filtering
     let label_filter: std::collections::HashSet<_> = query.label_ids.iter().cloned().collect();
 
     let mut filtered: Vec<api_issues::IssueSummaryRecord> = Vec::new();
     for (id, versioned) in issues {
-        if let Some(ref allowed) = graph_matches {
-            if !allowed.contains(&id) {
-                continue;
-            }
-        }
-
         let object_id = MetisId::from(id.clone());
-        let labels = state
-            .get_labels_for_object(&object_id)
-            .await
-            .unwrap_or_default();
+        let labels = labels_map.get(&object_id).cloned().unwrap_or_default();
 
         // If label_ids filter is specified, only include issues that have all specified labels
         if !label_filter.is_empty() {
@@ -292,7 +311,7 @@ pub async fn list_issues(
         }
 
         let api_issue: api_issues::Issue = versioned.item.into();
-        let summary = api_issues::IssueSummary::from(&api_issue).with_labels(labels);
+        let summary = api_issues::IssueSummary::from(&api_issue);
         filtered.push(api_issues::IssueSummaryRecord::new(
             id,
             versioned.version,
@@ -300,6 +319,7 @@ pub async fn list_issues(
             summary,
             versioned.actor,
             versioned.creation_time,
+            labels,
         ));
     }
 
@@ -539,6 +559,7 @@ pub async fn delete_issue(
         issue.item.into(),
         issue.actor,
         issue.creation_time,
+        Vec::new(),
     );
     Ok(Json(response))
 }

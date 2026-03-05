@@ -261,6 +261,13 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn get_labels_for_objects(
+        &self,
+        _object_ids: &[MetisId],
+    ) -> Result<HashMap<MetisId, Vec<LabelSummary>>, StoreError> {
+        fail()
+    }
+
     async fn get_objects_for_label(&self, _label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
         fail()
     }
