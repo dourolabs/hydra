@@ -1274,6 +1274,7 @@ mod tests {
             document,
             None,
             Utc::now(),
+            Vec::new(),
         );
         let mut output = Vec::new();
         render_document_records(ResolvedOutputFormat::Pretty, &[record], false, &mut output)
@@ -1306,6 +1307,7 @@ mod tests {
             document,
             None,
             Utc::now(),
+            Vec::new(),
         );
         let mut output = Vec::new();
         render_document_records(ResolvedOutputFormat::Pretty, &[record], true, &mut output)

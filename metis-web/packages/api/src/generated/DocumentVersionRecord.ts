@@ -2,6 +2,7 @@
 import type { ActorRef } from "./ActorRef";
 import type { Document } from "./Document";
 import type { DocumentId } from "./DocumentId";
+import type { LabelSummary } from "./LabelSummary";
 
 export type DocumentVersionRecord = {
   document_id: DocumentId;
@@ -10,4 +11,5 @@ export type DocumentVersionRecord = {
   document: Document;
   actor?: ActorRef | null;
   creation_time: string;
+  labels?: Array<LabelSummary>;
 };

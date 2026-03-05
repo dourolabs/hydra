@@ -1,4 +1,4 @@
-use super::users::Username;
+use super::{labels::LabelSummary, users::Username};
 use crate::{PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use git2::Oid;
@@ -293,6 +293,8 @@ pub struct PatchVersionRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
     pub creation_time: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<LabelSummary>,
 }
 
 impl PatchVersionRecord {
@@ -303,6 +305,7 @@ impl PatchVersionRecord {
         patch: Patch,
         actor: Option<ActorRef>,
         creation_time: DateTime<Utc>,
+        labels: Vec<LabelSummary>,
     ) -> Self {
         Self {
             patch_id,
@@ -311,6 +314,7 @@ impl PatchVersionRecord {
             patch,
             actor,
             creation_time,
+            labels,
         }
     }
 }
@@ -503,6 +507,8 @@ pub struct PatchSummary {
     pub base_branch: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<LabelSummary>,
 }
 
 impl From<&Patch> for PatchSummary {
@@ -519,6 +525,7 @@ impl From<&Patch> for PatchSummary {
             branch_name: patch.branch_name.clone(),
             base_branch: patch.base_branch.clone(),
             deleted: patch.deleted,
+            labels: Vec::new(),
         }
     }
 }
@@ -538,13 +545,38 @@ pub struct PatchSummaryRecord {
     pub creation_time: DateTime<Utc>,
 }
 
+impl PatchSummaryRecord {
+    pub fn new(
+        patch_id: PatchId,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        patch: PatchSummary,
+        actor: Option<ActorRef>,
+        creation_time: DateTime<Utc>,
+        labels: Vec<LabelSummary>,
+    ) -> Self {
+        let mut patch = patch;
+        patch.labels = labels;
+        Self {
+            patch_id,
+            version,
+            timestamp,
+            patch,
+            actor,
+            creation_time,
+        }
+    }
+}
+
 impl From<&PatchVersionRecord> for PatchSummaryRecord {
     fn from(record: &PatchVersionRecord) -> Self {
+        let mut patch = PatchSummary::from(&record.patch);
+        patch.labels = record.labels.clone();
         PatchSummaryRecord {
             patch_id: record.patch_id.clone(),
             version: record.version,
             timestamp: record.timestamp,
-            patch: PatchSummary::from(&record.patch),
+            patch,
             actor: record.actor.clone(),
             creation_time: record.creation_time,
         }
@@ -785,7 +817,7 @@ mod tests {
         let patch = make_test_patch();
         let patch_id: PatchId = crate::PatchId::new();
         let ts = chrono::Utc::now();
-        let record = PatchVersionRecord::new(patch_id.clone(), 5, ts, patch, None, ts);
+        let record = PatchVersionRecord::new(patch_id.clone(), 5, ts, patch, None, ts, Vec::new());
         let summary_record = PatchSummaryRecord::from(&record);
         assert_eq!(summary_record.patch_id, patch_id);
         assert_eq!(summary_record.version, 5);

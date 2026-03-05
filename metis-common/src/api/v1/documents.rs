@@ -1,3 +1,4 @@
+use super::labels::LabelSummary;
 use crate::{DocumentId, DocumentPath, TaskId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -49,6 +50,8 @@ pub struct DocumentVersionRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
     pub creation_time: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<LabelSummary>,
 }
 
 impl DocumentVersionRecord {
@@ -59,6 +62,7 @@ impl DocumentVersionRecord {
         document: Document,
         actor: Option<ActorRef>,
         creation_time: DateTime<Utc>,
+        labels: Vec<LabelSummary>,
     ) -> Self {
         Self {
             document_id,
@@ -67,6 +71,7 @@ impl DocumentVersionRecord {
             document,
             actor,
             creation_time,
+            labels,
         }
     }
 }
@@ -167,6 +172,8 @@ pub struct DocumentSummary {
     pub created_by: Option<TaskId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<LabelSummary>,
 }
 
 impl From<&Document> for DocumentSummary {
@@ -176,6 +183,7 @@ impl From<&Document> for DocumentSummary {
             path: doc.path.clone(),
             created_by: doc.created_by.clone(),
             deleted: doc.deleted,
+            labels: Vec::new(),
         }
     }
 }
@@ -195,13 +203,38 @@ pub struct DocumentSummaryRecord {
     pub creation_time: DateTime<Utc>,
 }
 
+impl DocumentSummaryRecord {
+    pub fn new(
+        document_id: DocumentId,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        document: DocumentSummary,
+        actor: Option<ActorRef>,
+        creation_time: DateTime<Utc>,
+        labels: Vec<LabelSummary>,
+    ) -> Self {
+        let mut document = document;
+        document.labels = labels;
+        Self {
+            document_id,
+            version,
+            timestamp,
+            document,
+            actor,
+            creation_time,
+        }
+    }
+}
+
 impl From<&DocumentVersionRecord> for DocumentSummaryRecord {
     fn from(record: &DocumentVersionRecord) -> Self {
+        let mut document = DocumentSummary::from(&record.document);
+        document.labels = record.labels.clone();
         DocumentSummaryRecord {
             document_id: record.document_id.clone(),
             version: record.version,
             timestamp: record.timestamp,
-            document: DocumentSummary::from(&record.document),
+            document,
             actor: record.actor.clone(),
             creation_time: record.creation_time,
         }
@@ -359,7 +392,7 @@ mod tests {
             Document::new("Title".to_string(), "body".to_string(), None, None, false).unwrap();
         let doc_id = DocumentId::new();
         let ts = chrono::Utc::now();
-        let record = DocumentVersionRecord::new(doc_id.clone(), 2, ts, doc, None, ts);
+        let record = DocumentVersionRecord::new(doc_id.clone(), 2, ts, doc, None, ts, Vec::new());
         let summary_record = DocumentSummaryRecord::from(&record);
         assert_eq!(summary_record.document_id, doc_id);
         assert_eq!(summary_record.version, 2);

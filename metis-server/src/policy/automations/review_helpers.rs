@@ -37,6 +37,7 @@ pub fn find_last_commit_range_change_timestamp(
                 v.item.clone().into(),
                 v.actor.clone(),
                 v.creation_time,
+                Vec::new(),
             )
         })
         .collect();

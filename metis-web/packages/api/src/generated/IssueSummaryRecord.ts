@@ -2,6 +2,7 @@
 import type { ActorRef } from "./ActorRef";
 import type { IssueId } from "./IssueId";
 import type { IssueSummary } from "./IssueSummary";
+
 /**
  * Summary-level version record for issue list responses.
  */

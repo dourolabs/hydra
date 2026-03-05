@@ -429,6 +429,7 @@ async fn serialize_entity(
                 api_patch,
                 Some(payload.actor().clone()),
                 creation_time,
+                Vec::new(),
             );
             let summary_record =
                 metis_common::api::v1::patches::PatchSummaryRecord::from(&full_record);
@@ -472,6 +473,7 @@ async fn serialize_entity(
                 api_doc,
                 Some(payload.actor().clone()),
                 creation_time,
+                Vec::new(),
             );
             let summary_record = DocumentSummaryRecord::from(&full_record);
             serde_json::to_value(summary_record).ok()?

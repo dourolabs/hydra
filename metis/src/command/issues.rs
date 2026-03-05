@@ -2598,6 +2598,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let parent_patch_record = PatchVersionRecord::new(
             parent_patch_id.clone(),
@@ -2621,6 +2622,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let child_patch_record = PatchVersionRecord::new(
             child_patch_id.clone(),
@@ -2644,6 +2646,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let version_timestamp = Utc.with_ymd_and_hms(2024, 2, 1, 12, 0, 0).unwrap();
         let root_versions = ListIssueVersionsResponse::new(vec![IssueVersionRecord::new(
@@ -2680,6 +2683,7 @@ mod tests {
             root_patch_record.patch.clone(),
             None,
             version_timestamp,
+            Vec::new(),
         )]);
         let parent_patch_versions = ListPatchVersionsResponse::new(vec![PatchVersionRecord::new(
             parent_patch_id.clone(),
@@ -2688,6 +2692,7 @@ mod tests {
             parent_patch_record.patch.clone(),
             None,
             version_timestamp,
+            Vec::new(),
         )]);
         let child_patch_versions = ListPatchVersionsResponse::new(vec![PatchVersionRecord::new(
             child_patch_id.clone(),
@@ -2696,6 +2701,7 @@ mod tests {
             child_patch_record.patch.clone(),
             None,
             version_timestamp,
+            Vec::new(),
         )]);
         let root_patch_mock = server.mock(|when, then| {
             when.method(GET)
@@ -4139,6 +4145,7 @@ mod tests {
             ),
             None,
             Utc::now(),
+            Vec::new(),
         );
         let description = IssueDescription {
             issue: IssueWithPatches {
@@ -4614,6 +4621,7 @@ mod tests {
                     ),
                     None,
                     Utc::now(),
+                    Vec::new(),
                 )],
             },
             parents: vec![],
