@@ -78,7 +78,7 @@ export function DashboardPage() {
       return allWorkItems.filter(
         (item) =>
           item.kind === "issue" &&
-          item.data.labels?.some((l: { label_id: string }) => l.label_id === labelId),
+          item.data.issue.labels?.some((l: { label_id: string }) => l.label_id === labelId),
       );
     }
     if (filterRootId !== "inbox") return allWorkItems;

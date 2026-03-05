@@ -62,7 +62,7 @@ function computeLabelProgress(
 ): LabelProgress[] {
   return labels.map((label) => {
     const labelIssues = allIssues.filter((issue) =>
-      issue.labels?.some((l: { label_id: string }) => l.label_id === label.label_id),
+      issue.issue.labels?.some((l: { label_id: string }) => l.label_id === label.label_id),
     );
 
     let closed = 0;
