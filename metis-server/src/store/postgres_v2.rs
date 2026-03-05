@@ -106,6 +106,7 @@ const TABLE_NOTIFICATIONS: &str = "metis.notifications";
 const TABLE_AGENTS: &str = "metis.agents";
 const TABLE_LABELS: &str = "metis.labels";
 const TABLE_LABEL_ASSOCIATIONS: &str = "metis.label_associations";
+const TABLE_USER_SECRETS: &str = "metis.user_secrets";
 
 /// PostgresStoreV2 uses the v2 tables with proper column definitions.
 #[derive(Clone)]
@@ -2931,6 +2932,39 @@ impl ReadOnlyStore for PostgresStoreV2 {
             })
             .collect()
     }
+
+    // ---- User secrets (read-only) ----
+
+    async fn get_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let sql = format!(
+            "SELECT encrypted_value FROM {TABLE_USER_SECRETS} \
+             WHERE username = $1 AND secret_name = $2"
+        );
+        let row = sqlx::query_scalar::<_, Vec<u8>>(&sql)
+            .bind(username.as_ref())
+            .bind(secret_name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(row)
+    }
+
+    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError> {
+        let sql = format!(
+            "SELECT secret_name FROM {TABLE_USER_SECRETS} \
+             WHERE username = $1 ORDER BY secret_name"
+        );
+        let rows = sqlx::query_scalar::<_, String>(&sql)
+            .bind(username.as_ref())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(rows)
+    }
 }
 
 #[async_trait]
@@ -3758,6 +3792,47 @@ impl Store for PostgresStoreV2 {
         sqlx::query(&sql)
             .bind(label_id.as_ref())
             .bind(object_id.as_ref())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    // ---- User secret mutations ----
+
+    async fn set_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+        encrypted_value: &[u8],
+    ) -> Result<(), StoreError> {
+        let sql = format!(
+            "INSERT INTO {TABLE_USER_SECRETS} (username, secret_name, encrypted_value, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $4) \
+             ON CONFLICT (username, secret_name) \
+             DO UPDATE SET encrypted_value = $3, updated_at = $4"
+        );
+        sqlx::query(&sql)
+            .bind(username.as_ref())
+            .bind(secret_name)
+            .bind(encrypted_value)
+            .bind(Utc::now())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
+    }
+
+    async fn delete_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<(), StoreError> {
+        let sql =
+            format!("DELETE FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2");
+        sqlx::query(&sql)
+            .bind(username.as_ref())
+            .bind(secret_name)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;

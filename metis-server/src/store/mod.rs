@@ -454,6 +454,18 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Returns all object IDs associated with the given label.
     async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError>;
+
+    // ---- User secrets (read-only) ----
+
+    /// Gets the encrypted value of a user secret.
+    async fn get_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Lists the secret names configured for a user.
+    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError>;
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.
@@ -753,6 +765,23 @@ pub trait Store: ReadOnlyStore {
         &self,
         label_id: &LabelId,
         object_id: &MetisId,
+    ) -> Result<(), StoreError>;
+
+    // ---- User secret mutations ----
+
+    /// Sets (upserts) an encrypted secret for a user.
+    async fn set_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+        encrypted_value: &[u8],
+    ) -> Result<(), StoreError>;
+
+    /// Deletes a user secret. No-ops if the secret does not exist.
+    async fn delete_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
     ) -> Result<(), StoreError>;
 }
 

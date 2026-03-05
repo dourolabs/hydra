@@ -31,7 +31,8 @@ use axum::{
 };
 use jsonwebtoken::EncodingKey;
 use metis_common::constants::{
-    ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_CONFIG, ENV_OPENAI_API_KEY,
+    ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_CONFIG,
+    ENV_METIS_SECRET_ENCRYPTION_KEY, ENV_OPENAI_API_KEY,
 };
 use octocrab::Octocrab;
 use serde_json::json;
@@ -275,6 +276,22 @@ pub async fn run() -> anyhow::Result<()> {
         .ok()
         .or_else(|| app_config.metis.claude_code_oauth_token.clone())
         .filter(|value| !value.trim().is_empty());
+
+    // Load optional secret encryption key
+    match env::var(ENV_METIS_SECRET_ENCRYPTION_KEY) {
+        Ok(ref key) if !key.trim().is_empty() => {
+            // Validate the key is well-formed at startup
+            domain::secrets::SecretManager::from_base64(key)
+                .context("invalid METIS_SECRET_ENCRYPTION_KEY")?;
+            info!("secret encryption key loaded");
+        }
+        _ => {
+            tracing::warn!(
+                "{ENV_METIS_SECRET_ENCRYPTION_KEY} is not set; \
+                 user secret storage will not be available"
+            );
+        }
+    }
 
     // Build Kubernetes client
     let kube_client = build_kube_client(&app_config.kubernetes).await?;

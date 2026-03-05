@@ -73,6 +73,8 @@ pub struct MemoryStore {
     object_labels: DashMap<MetisId, HashSet<LabelId>>,
     /// Maps label IDs to associated object IDs
     label_objects: DashMap<LabelId, HashSet<MetisId>>,
+    /// Maps (username, secret_name) to encrypted secret values
+    user_secrets: DashMap<(String, String), Vec<u8>>,
 }
 
 impl MemoryStore {
@@ -97,6 +99,7 @@ impl MemoryStore {
             labels: DashMap::new(),
             object_labels: DashMap::new(),
             label_objects: DashMap::new(),
+            user_secrets: DashMap::new(),
         }
     }
 
@@ -1209,6 +1212,29 @@ impl ReadOnlyStore for MemoryStore {
             None => Ok(Vec::new()),
         }
     }
+
+    // ---- User secrets (read-only) ----
+
+    async fn get_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let key = (username.as_ref().to_string(), secret_name.to_string());
+        Ok(self.user_secrets.get(&key).map(|v| v.value().clone()))
+    }
+
+    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError> {
+        let username_str = username.as_ref().to_string();
+        let mut names: Vec<String> = self
+            .user_secrets
+            .iter()
+            .filter(|entry| entry.key().0 == username_str)
+            .map(|entry| entry.key().1.clone())
+            .collect();
+        names.sort();
+        Ok(names)
+    }
 }
 
 #[async_trait]
@@ -1828,6 +1854,29 @@ impl Store for MemoryStore {
         if let Some(mut object_ids) = self.label_objects.get_mut(label_id) {
             object_ids.remove(object_id);
         }
+        Ok(())
+    }
+
+    // ---- User secret mutations ----
+
+    async fn set_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+        encrypted_value: &[u8],
+    ) -> Result<(), StoreError> {
+        let key = (username.as_ref().to_string(), secret_name.to_string());
+        self.user_secrets.insert(key, encrypted_value.to_vec());
+        Ok(())
+    }
+
+    async fn delete_user_secret(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<(), StoreError> {
+        let key = (username.as_ref().to_string(), secret_name.to_string());
+        self.user_secrets.remove(&key);
         Ok(())
     }
 }
@@ -5961,5 +6010,153 @@ mod tests {
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.prompt_path, "new/path");
         assert!(!fetched.deleted);
+    }
+
+    // ---- User secrets tests ----
+
+    #[tokio::test]
+    async fn set_and_get_user_secret() {
+        let store = MemoryStore::new();
+        let username = Username::from("alice");
+        let value = b"encrypted-data-here";
+
+        store
+            .set_user_secret(&username, "openai_api_key", value)
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_user_secret(&username, "openai_api_key")
+            .await
+            .unwrap();
+        assert_eq!(fetched.unwrap(), value);
+    }
+
+    #[tokio::test]
+    async fn get_nonexistent_user_secret_returns_none() {
+        let store = MemoryStore::new();
+        let username = Username::from("alice");
+
+        let result = store
+            .get_user_secret(&username, "openai_api_key")
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_user_secret_upserts() {
+        let store = MemoryStore::new();
+        let username = Username::from("alice");
+
+        store
+            .set_user_secret(&username, "openai_api_key", b"value1")
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&username, "openai_api_key", b"value2")
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_user_secret(&username, "openai_api_key")
+            .await
+            .unwrap();
+        assert_eq!(fetched.unwrap(), b"value2");
+    }
+
+    #[tokio::test]
+    async fn delete_user_secret() {
+        let store = MemoryStore::new();
+        let username = Username::from("alice");
+
+        store
+            .set_user_secret(&username, "openai_api_key", b"value")
+            .await
+            .unwrap();
+        store
+            .delete_user_secret(&username, "openai_api_key")
+            .await
+            .unwrap();
+
+        let result = store
+            .get_user_secret(&username, "openai_api_key")
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_user_secret_is_noop() {
+        let store = MemoryStore::new();
+        let username = Username::from("alice");
+
+        // Should not error
+        store
+            .delete_user_secret(&username, "openai_api_key")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_user_secret_names_returns_sorted() {
+        let store = MemoryStore::new();
+        let username = Username::from("alice");
+
+        store
+            .set_user_secret(&username, "anthropic_api_key", b"val")
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&username, "openai_api_key", b"val")
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&username, "github_token", b"val")
+            .await
+            .unwrap();
+
+        let names = store.list_user_secret_names(&username).await.unwrap();
+        assert_eq!(
+            names,
+            vec!["anthropic_api_key", "github_token", "openai_api_key"]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_user_secret_names_empty_for_unknown_user() {
+        let store = MemoryStore::new();
+        let username = Username::from("bob");
+
+        let names = store.list_user_secret_names(&username).await.unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[tokio::test]
+    async fn user_secrets_are_isolated_per_user() {
+        let store = MemoryStore::new();
+        let alice = Username::from("alice");
+        let bob = Username::from("bob");
+
+        store
+            .set_user_secret(&alice, "openai_api_key", b"alice-key")
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&bob, "openai_api_key", b"bob-key")
+            .await
+            .unwrap();
+
+        let alice_val = store
+            .get_user_secret(&alice, "openai_api_key")
+            .await
+            .unwrap();
+        let bob_val = store.get_user_secret(&bob, "openai_api_key").await.unwrap();
+
+        assert_eq!(alice_val.unwrap(), b"alice-key");
+        assert_eq!(bob_val.unwrap(), b"bob-key");
+
+        let alice_names = store.list_user_secret_names(&alice).await.unwrap();
+        assert_eq!(alice_names, vec!["openai_api_key"]);
     }
 }
