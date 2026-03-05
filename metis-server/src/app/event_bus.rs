@@ -976,7 +976,7 @@ impl StoreWithEvents {
         self.inner
             .add_label_association(label_id, object_id)
             .await?;
-        self.emit_issue_updated_if_issue(object_id).await;
+        self.emit_entity_updated_on_label_change(object_id).await;
         Ok(())
     }
 
@@ -988,24 +988,46 @@ impl StoreWithEvents {
         self.inner
             .remove_label_association(label_id, object_id)
             .await?;
-        self.emit_issue_updated_if_issue(object_id).await;
+        self.emit_entity_updated_on_label_change(object_id).await;
         Ok(())
     }
 
-    /// If `object_id` refers to an issue, re-fetch it and emit an `IssueUpdated` event.
-    async fn emit_issue_updated_if_issue(&self, object_id: &MetisId) {
+    /// Re-fetch the entity identified by `object_id` and emit an appropriate
+    /// updated event so SSE subscribers see the label change.
+    async fn emit_entity_updated_on_label_change(&self, object_id: &MetisId) {
+        let label_actor = ActorRef::System {
+            worker_name: "label-association".into(),
+            on_behalf_of: None,
+        };
         if let Some(issue_id) = object_id.as_issue_id() {
             if let Ok(versioned) = self.inner.get_issue(&issue_id, false).await {
                 let payload = Arc::new(MutationPayload::Issue {
                     old: Some(versioned.item.clone()),
                     new: versioned.item,
-                    actor: ActorRef::System {
-                        worker_name: "label-association".into(),
-                        on_behalf_of: None,
-                    },
+                    actor: label_actor,
                 });
                 self.event_bus
                     .emit_issue_updated(issue_id, versioned.version, payload);
+            }
+        } else if let Some(patch_id) = object_id.as_patch_id() {
+            if let Ok(versioned) = self.inner.get_patch(&patch_id, false).await {
+                let payload = Arc::new(MutationPayload::Patch {
+                    old: Some(versioned.item.clone()),
+                    new: versioned.item,
+                    actor: label_actor,
+                });
+                self.event_bus
+                    .emit_patch_updated(patch_id, versioned.version, payload);
+            }
+        } else if let Some(doc_id) = object_id.as_document_id() {
+            if let Ok(versioned) = self.inner.get_document(&doc_id, false).await {
+                let payload = Arc::new(MutationPayload::Document {
+                    old: Some(versioned.item.clone()),
+                    new: versioned.item,
+                    actor: label_actor,
+                });
+                self.event_bus
+                    .emit_document_updated(doc_id, versioned.version, payload);
             }
         }
     }
@@ -2036,7 +2058,108 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn non_issue_label_association_does_not_emit_event() {
+    async fn add_label_association_emits_patch_updated() {
+        use crate::domain::patches::{Patch, PatchStatus};
+        use crate::domain::users::Username;
+
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let patch = Patch::new(
+            "Test patch".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Username::from("creator"),
+            Vec::new(),
+            "test/repo".parse().unwrap(),
+            None,
+            None,
+            None,
+            None,
+        );
+        let (patch_id, _) = store
+            .add_patch_with_actor(patch, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap(); // consume PatchCreated
+
+        let label =
+            crate::domain::labels::Label::new("urgent".to_string(), "#e74c3c".parse().unwrap());
+        let label_id = inner.add_label(label).await.unwrap();
+
+        let object_id = MetisId::from(patch_id.clone());
+        store
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+
+        let event = rx.recv().await.expect("should receive PatchUpdated");
+        match &event {
+            ServerEvent::PatchUpdated {
+                patch_id: id,
+                version,
+                ..
+            } => {
+                assert_eq!(*id, patch_id);
+                assert_eq!(*version, 1);
+            }
+            other => panic!("expected PatchUpdated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_label_association_emits_document_updated() {
+        use crate::domain::documents::Document;
+
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let doc = Document {
+            title: "Test doc".to_string(),
+            body_markdown: "content".to_string(),
+            path: None,
+            created_by: None,
+            deleted: false,
+        };
+        let (doc_id, _) = store
+            .add_document_with_actor(doc, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap(); // consume DocumentCreated
+
+        let label =
+            crate::domain::labels::Label::new("docs".to_string(), "#3498db".parse().unwrap());
+        let label_id = inner.add_label(label).await.unwrap();
+
+        let object_id = MetisId::from(doc_id.clone());
+        store
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+
+        let event = rx.recv().await.expect("should receive DocumentUpdated");
+        match &event {
+            ServerEvent::DocumentUpdated {
+                document_id: id,
+                version,
+                ..
+            } => {
+                assert_eq!(*id, doc_id);
+                assert_eq!(*version, 1);
+            }
+            other => panic!("expected DocumentUpdated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn label_association_on_unknown_entity_does_not_emit_event() {
         let bus = Arc::new(EventBus::new());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
@@ -2046,14 +2169,14 @@ mod tests {
             crate::domain::labels::Label::new("tag".to_string(), "#000000".parse().unwrap());
         let label_id = inner.add_label(label).await.unwrap();
 
-        // Use a patch-like id that is not an issue
+        // Use a patch-like id for a patch that doesn't exist in the store
         let object_id: MetisId = "p-fakepatch".parse().unwrap();
         store
             .add_label_association(&label_id, &object_id)
             .await
             .unwrap();
 
-        // No event should be emitted; try_recv should fail
+        // No event should be emitted because the patch doesn't exist
         assert!(rx.try_recv().is_err());
     }
 }

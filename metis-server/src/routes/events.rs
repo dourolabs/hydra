@@ -411,10 +411,10 @@ async fn serialize_entity(
         }
         MutationPayload::Patch { new, .. } => {
             let api_patch: metis_common::api::v1::patches::Patch = new.clone().into();
+            let patch_id: PatchId = entity_id.parse().ok()?;
             let creation_time = if version == 1 {
                 timestamp
             } else {
-                let patch_id: PatchId = entity_id.parse().ok()?;
                 state
                     .get_patch(&patch_id, true)
                     .await
@@ -422,14 +422,18 @@ async fn serialize_entity(
                     .map(|v| v.creation_time)
                     .unwrap_or(timestamp)
             };
+            let labels = state
+                .get_labels_for_object(&metis_common::MetisId::from(patch_id.clone()))
+                .await
+                .unwrap_or_default();
             let full_record = PatchVersionRecord::new(
-                entity_id.parse().ok()?,
+                patch_id,
                 version,
                 timestamp,
                 api_patch,
                 Some(payload.actor().clone()),
                 creation_time,
-                Vec::new(),
+                labels,
             );
             let summary_record =
                 metis_common::api::v1::patches::PatchSummaryRecord::from(&full_record);
@@ -455,10 +459,10 @@ async fn serialize_entity(
         }
         MutationPayload::Document { new, .. } => {
             let api_doc: metis_common::api::v1::documents::Document = new.clone().into();
+            let doc_id: DocumentId = entity_id.parse().ok()?;
             let creation_time = if version == 1 {
                 timestamp
             } else {
-                let doc_id: DocumentId = entity_id.parse().ok()?;
                 state
                     .get_document(&doc_id, true)
                     .await
@@ -466,14 +470,18 @@ async fn serialize_entity(
                     .map(|v| v.creation_time)
                     .unwrap_or(timestamp)
             };
+            let labels = state
+                .get_labels_for_object(&metis_common::MetisId::from(doc_id.clone()))
+                .await
+                .unwrap_or_default();
             let full_record = DocumentVersionRecord::new(
-                entity_id.parse().ok()?,
+                doc_id,
                 version,
                 timestamp,
                 api_doc,
                 Some(payload.actor().clone()),
                 creation_time,
-                Vec::new(),
+                labels,
             );
             let summary_record = DocumentSummaryRecord::from(&full_record);
             serde_json::to_value(summary_record).ok()?
@@ -1419,5 +1427,125 @@ mod tests {
             .expect("labels should be an array");
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].get("name").unwrap().as_str().unwrap(), "bug");
+    }
+
+    #[tokio::test]
+    async fn serialize_entity_includes_labels_for_patch() {
+        use crate::domain::patches::{Patch, PatchStatus};
+
+        let store = Arc::new(MemoryStore::new());
+        let handles = test_state_with_store(store.clone());
+        let state = handles.state;
+
+        let patch = Patch::new(
+            "Test patch".to_string(),
+            "description".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Username::from("creator"),
+            Vec::new(),
+            "test/repo".parse().unwrap(),
+            None,
+            None,
+            None,
+            None,
+        );
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let label =
+            crate::domain::labels::Label::new("urgent".to_string(), "#e74c3c".parse().unwrap());
+        let label_id = store.add_label(label).await.unwrap();
+        let object_id = metis_common::MetisId::from(patch_id.clone());
+        store
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Patch {
+            old: Some(patch.clone()),
+            new: patch,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::PatchUpdated {
+            seq: 2,
+            patch_id: patch_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let (_, data) = server_event_to_sse(&event, &state).await;
+
+        let entity = data.entity.expect("entity should be present");
+        let patch_obj = entity.get("patch").expect("should contain patch field");
+        let labels = patch_obj
+            .get("labels")
+            .expect("should contain labels field")
+            .as_array()
+            .expect("labels should be an array");
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].get("name").unwrap().as_str().unwrap(), "urgent");
+    }
+
+    #[tokio::test]
+    async fn serialize_entity_includes_labels_for_document() {
+        use crate::domain::documents::Document;
+
+        let store = Arc::new(MemoryStore::new());
+        let handles = test_state_with_store(store.clone());
+        let state = handles.state;
+
+        let doc = Document {
+            title: "Test doc".to_string(),
+            body_markdown: "content".to_string(),
+            path: None,
+            created_by: None,
+            deleted: false,
+        };
+        let (doc_id, _) = store
+            .add_document(doc.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let label =
+            crate::domain::labels::Label::new("docs".to_string(), "#3498db".parse().unwrap());
+        let label_id = store.add_label(label).await.unwrap();
+        let object_id = metis_common::MetisId::from(doc_id.clone());
+        store
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Document {
+            old: Some(doc.clone()),
+            new: doc,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::DocumentUpdated {
+            seq: 2,
+            document_id: doc_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let (_, data) = server_event_to_sse(&event, &state).await;
+
+        let entity = data.entity.expect("entity should be present");
+        let doc_obj = entity
+            .get("document")
+            .expect("should contain document field");
+        let labels = doc_obj
+            .get("labels")
+            .expect("should contain labels field")
+            .as_array()
+            .expect("labels should be an array");
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].get("name").unwrap().as_str().unwrap(), "docs");
     }
 }
