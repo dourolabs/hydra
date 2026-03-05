@@ -12,6 +12,7 @@ import { IssueUpdateModal } from "./IssueUpdateModal";
 import { JobList } from "../jobs/JobList";
 import { PatchList } from "../patches/PatchList";
 import { IssueSettings } from "./IssueSettings";
+import { IssueLabelEditor } from "./IssueLabelEditor";
 import styles from "./IssueDetail.module.css";
 
 function BlockingIssueLink({ issueId }: { issueId: string }) {
@@ -132,6 +133,12 @@ export function IssueDetail({ record }: IssueDetailProps) {
           </span>
         </div>
       </div>
+
+      {/* Labels */}
+      <IssueLabelEditor
+        issueId={record.issue_id}
+        labels={record.labels ?? []}
+      />
 
       {/* Description */}
       <div className={styles.description}>
