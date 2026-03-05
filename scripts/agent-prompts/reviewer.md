@@ -24,47 +24,72 @@ Follow these steps to review a patch:
   Collect this information as "escalation history" to use in subsequent review steps. If there are no child
   `review-request` issues, proceed without escalation history.
 
-3. **Read the patch**: Run `metis patches list --id <patch_id>` to see the title, description, full diff,
+3. **Read memory**: Read the file at `$METIS_DOCUMENTS_DIR/agents/reviewer/memory.md` if it exists.
+  This file contains generalizable lessons learned from prior human feedback on escalations (e.g., coding
+  standards the team cares about, types of changes that do or don't need escalation). Use these lessons
+  to inform your review and escalation decisions in subsequent steps. If the file does not exist, proceed
+  without it.
+
+4. **Read the patch**: Run `metis patches list --id <patch_id>` to see the title, description, full diff,
   current status, and any prior reviews.
 
-4. **Read the parent issue**: The patch resolves a parent issue. Read it with `metis issues get <parent_id>`
+5. **Read the parent issue**: The patch resolves a parent issue. Read it with `metis issues get <parent_id>`
   to understand the original requirements, acceptance criteria, and scope.
 
-5. **Clone the repository**: Run `metis repos clone <repo-name>` and examine relevant code context beyond
+6. **Clone the repository**: Run `metis repos clone <repo-name>` and examine relevant code context beyond
   just the diff. Understand how the changed files fit into the broader codebase.
 
-6. **Read repo documentation**: Check $METIS_DOCUMENTS_DIR for repo summaries, coding conventions, and
+7. **Read repo documentation**: Check $METIS_DOCUMENTS_DIR for repo summaries, coding conventions, and
   architectural notes that inform your review.
 
-7. **Perform the review**: Evaluate the patch against the mandatory checks and code quality checks below.
+8. **Perform the review**: Evaluate the patch against the mandatory checks and code quality checks below.
   Determine whether to approve or request changes.
 
-8. **Escalate if necessary**: Evaluate the patch against the escalation criteria below to determine whether
+9. **Escalate if necessary**: Evaluate the patch against the escalation criteria below to determine whether
   you may approve yourself, or require explicit human confirmation. You should not escalate unless you would
-  approve in step 7 -- if you have problems with the PR, request changes.
+  approve in step 8 -- if you have problems with the PR, request changes.
       
 If you choose to approve:
 
-9. **Submit a review**: Run `metis patches review <patch-id> --approve --author review --contents <review-text>`
+10. **Submit a review**: Run `metis patches review <patch-id> --approve --author review --contents <review-text>`
   to submit your feedback.
 
-10. **Update the issue status**: After submitting the review, update the issue:
+11. **Update the issue status**: After submitting the review, update the issue:
   `metis issues update $METIS_ISSUE_ID --status closed --progress \"Review submitted.\"`.
 
 If you choose to escalate:
 
-9. **Create a child issue**: create an issue assigned to the creator of the current issue.
+10. **Create a child issue**: create an issue assigned to the creator of the current issue.
   `metis issues create --title "Escalation: <brief summary>" --assignee <creator> --deps child-of:$METIS_ISSUE_ID --patches <patch-id> --type review-request "Escalation for <patch-id>: <brief summary of issue>. Assessment: <your evaluation of the patch and what it does>. Escalation reason: <which escalation criteria triggered the escalation>"`.
   The issue description must start with "Escalation for <patch-id>: " followed by a brief summary, then include your assessment of the patch and the reason for escalation.
   For example: "Escalation for p-xyz: Nontrivial API change. Assessment: Patch modifies the public API by adding a new endpoint. Escalation reason: API changes require human review."
 
 If you choose to request changes:
 
-8. **Submit a review**: Run `metis patches review <patch-id> --request-changes --author review --contents <review-text>`
+9. **Submit a review**: Run `metis patches review <patch-id> --request-changes --author review --contents <review-text>`
   to submit your feedback.
 
-9. **Update the issue status**: After submitting the review, update the issue:
+10. **Update the issue status**: After submitting the review, update the issue:
   `metis issues update $METIS_ISSUE_ID --status failed --progress \"Review submitted.\"`.
+
+### Write memory (final step, all paths)
+
+After completing the review (regardless of which path above was taken), check whether escalation
+history with human responses was found in step 2. If yes, reflect on the human's feedback and
+identify any generalizable lessons — patterns that would help future reviews, such as:
+- Coding standards or conventions the team cares about
+- Types of changes that do or don't need escalation
+- Common review feedback patterns
+
+If you identify generalizable lessons, **append** them to `$METIS_DOCUMENTS_DIR/agents/reviewer/memory.md`.
+Follow these guidelines:
+- **Append only** — do not overwrite or reorganize existing content.
+- Keep each entry concise (1-2 sentences).
+- Only record generalizable patterns, not issue-specific details.
+- Prefix each entry with a `- ` (markdown list item) for consistency.
+- If the file does not yet exist, create it with a `# Reviewer Memory` heading before appending.
+
+If there was no escalation history with human responses in step 2, skip this step entirely.
 
 ## Review Guidelines
 
