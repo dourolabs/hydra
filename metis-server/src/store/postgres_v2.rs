@@ -1498,6 +1498,27 @@ impl ReadOnlyStore for PostgresStoreV2 {
             predicates.push("deleted = false".to_string());
         }
 
+        // Filter by label IDs (AND semantics: issue must have ALL specified labels)
+        if !query.label_ids.is_empty() {
+            let label_count = query.label_ids.len();
+            let placeholders: Vec<String> = query
+                .label_ids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+                .collect();
+            predicates.push(format!(
+                "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la \
+                 WHERE la.label_id IN ({}) \
+                 GROUP BY la.object_id \
+                 HAVING COUNT(DISTINCT la.label_id) = {label_count})",
+                placeholders.join(", ")
+            ));
+            for label_id in &query.label_ids {
+                bindings.push(label_id.to_string());
+            }
+        }
+
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
             sql.push_str(&predicates.join(" AND "));
@@ -5142,5 +5163,98 @@ mod tests {
             store.count_unread_notifications(&recipient).await.unwrap(),
             1
         );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn label_association_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Create two labels
+        let label1 = Label::new("bug".to_string(), "#e74c3c".to_string());
+        let label1_id = store.add_label(label1).await.unwrap();
+
+        let label2 = Label::new("feature".to_string(), "#3498db".to_string());
+        let label2_id = store.add_label(label2).await.unwrap();
+
+        // Create an issue to associate labels with
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let object_id = MetisId::from(issue_id.clone());
+
+        // Associate both labels with the issue
+        store
+            .add_label_association(&label1_id, &object_id)
+            .await
+            .unwrap();
+        store
+            .add_label_association(&label2_id, &object_id)
+            .await
+            .unwrap();
+
+        // get_labels_for_object returns both labels
+        let labels = store.get_labels_for_object(&object_id).await.unwrap();
+        assert_eq!(labels.len(), 2);
+        let label_names: Vec<&str> = labels.iter().map(|l| l.name.as_str()).collect();
+        assert!(label_names.contains(&"bug"));
+        assert!(label_names.contains(&"feature"));
+
+        // get_labels_for_objects (batch) returns labels keyed by object
+        let batch = store
+            .get_labels_for_objects(&[object_id.clone()])
+            .await
+            .unwrap();
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[&object_id].len(), 2);
+
+        // get_objects_for_label returns the issue for each label
+        let objects1 = store.get_objects_for_label(&label1_id).await.unwrap();
+        assert_eq!(objects1.len(), 1);
+        assert_eq!(objects1[0], object_id);
+
+        let objects2 = store.get_objects_for_label(&label2_id).await.unwrap();
+        assert_eq!(objects2.len(), 1);
+        assert_eq!(objects2[0], object_id);
+
+        // Idempotent add — adding the same association again is a no-op
+        store
+            .add_label_association(&label1_id, &object_id)
+            .await
+            .unwrap();
+        let labels_after_dup = store.get_labels_for_object(&object_id).await.unwrap();
+        assert_eq!(labels_after_dup.len(), 2);
+
+        // Remove one association
+        store
+            .remove_label_association(&label1_id, &object_id)
+            .await
+            .unwrap();
+        let labels_after_remove = store.get_labels_for_object(&object_id).await.unwrap();
+        assert_eq!(labels_after_remove.len(), 1);
+        assert_eq!(labels_after_remove[0].name, "feature");
+
+        // Idempotent remove — removing a non-existent association is a no-op
+        store
+            .remove_label_association(&label1_id, &object_id)
+            .await
+            .unwrap();
+
+        // Deleted labels are excluded from results
+        store.delete_label(&label2_id).await.unwrap();
+        let labels_after_delete = store.get_labels_for_object(&object_id).await.unwrap();
+        assert!(labels_after_delete.is_empty());
+
+        // Batch query also excludes deleted labels
+        let batch_after_delete = store
+            .get_labels_for_objects(&[object_id.clone()])
+            .await
+            .unwrap();
+        let empty_or_missing = batch_after_delete
+            .get(&object_id)
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+        assert!(empty_or_missing);
     }
 }

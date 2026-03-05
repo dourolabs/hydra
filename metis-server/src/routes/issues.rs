@@ -252,7 +252,7 @@ pub async fn list_issues(
         "list_issues invoked"
     );
 
-    // Pass the query to the store for filtering (except graph filters and label filters)
+    // Pass the query to the store for filtering (except graph filters)
     let issues = state
         .list_issues_with_query(&query)
         .await
@@ -293,22 +293,10 @@ pub async fn list_issues(
             ApiError::internal(anyhow!("failed to fetch labels: {err}"))
         })?;
 
-    // Build label filter set for post-filtering
-    let label_filter: std::collections::HashSet<_> = query.label_ids.iter().cloned().collect();
-
     let mut filtered: Vec<api_issues::IssueSummaryRecord> = Vec::new();
     for (id, versioned) in issues {
         let object_id = MetisId::from(id.clone());
         let labels = labels_map.get(&object_id).cloned().unwrap_or_default();
-
-        // If label_ids filter is specified, only include issues that have all specified labels
-        if !label_filter.is_empty() {
-            let issue_label_ids: std::collections::HashSet<_> =
-                labels.iter().map(|l| l.label_id.clone()).collect();
-            if !label_filter.is_subset(&issue_label_ids) {
-                continue;
-            }
-        }
 
         let api_issue: api_issues::Issue = versioned.item.into();
         let summary = api_issues::IssueSummary::from(&api_issue);
