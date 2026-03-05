@@ -158,8 +158,8 @@ fn normalize_and_build_agent(
     let agent = Agent::new(
         name,
         prompt_path,
-        payload.max_tries as i32,
-        payload.max_simultaneous as i32,
+        payload.max_tries,
+        payload.max_simultaneous,
         payload.is_assignment_agent,
     );
 
@@ -179,8 +179,8 @@ fn agent_to_record(agent: Agent, prompt: String) -> AgentRecord {
         agent.name,
         prompt,
         agent.prompt_path,
-        agent.max_tries as u32,
-        agent.max_simultaneous as u32,
+        agent.max_tries,
+        agent.max_simultaneous,
         agent.is_assignment_agent,
     )
 }

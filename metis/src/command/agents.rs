@@ -35,15 +35,15 @@ pub struct CreateAgentArgs {
 
     /// Maximum retries for this agent.
     #[arg(long = "max-tries", value_name = "MAX_TRIES", default_value_t = 3)]
-    pub max_tries: u32,
+    pub max_tries: i32,
 
     /// Maximum simultaneous tasks for this agent.
     #[arg(
         long = "max-simultaneous",
         value_name = "MAX_SIMULTANEOUS",
-        default_value_t = u32::MAX
+        default_value_t = i32::MAX
     )]
-    pub max_simultaneous: u32,
+    pub max_simultaneous: i32,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -58,11 +58,11 @@ pub struct UpdateAgentArgs {
 
     /// Updated max retries for the agent.
     #[arg(long = "max-tries", value_name = "MAX_TRIES")]
-    pub max_tries: Option<u32>,
+    pub max_tries: Option<i32>,
 
     /// Updated max simultaneous tasks for the agent.
     #[arg(long = "max-simultaneous", value_name = "MAX_SIMULTANEOUS")]
-    pub max_simultaneous: Option<u32>,
+    pub max_simultaneous: Option<i32>,
 }
 
 pub async fn run(
@@ -161,8 +161,8 @@ async fn delete_agent(client: &dyn MetisClientInterface, name: &str) -> Result<A
 fn build_upsert_request(
     name: &str,
     prompt: &str,
-    max_tries: u32,
-    max_simultaneous: u32,
+    max_tries: i32,
+    max_simultaneous: i32,
 ) -> Result<UpsertAgentRequest> {
     let request = UpsertAgentRequest::new(
         normalize_non_empty(name, "agent name")?,
@@ -203,8 +203,8 @@ mod tests {
     async fn list_agents_fetches_agents_and_prints_jsonl() -> Result<()> {
         let server = MockServer::start();
         let list_agents_response = ListAgentsResponse::new(vec![
-            AgentRecord::new("alpha", "", "", 3, u32::MAX, false),
-            AgentRecord::new("beta", "", "", 3, u32::MAX, false),
+            AgentRecord::new("alpha", "", "", 3, i32::MAX, false),
+            AgentRecord::new("beta", "", "", 3, i32::MAX, false),
         ]);
 
         let mock = server.mock(|when, then| {
@@ -284,7 +284,7 @@ mod tests {
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let existing =
-            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, false));
+            AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, i32::MAX, false));
         let updated = AgentResponse::new(AgentRecord::new("writer", "revised", "", 3, 10, false));
 
         let get_mock = server.mock(|when, then| {
@@ -325,7 +325,7 @@ mod tests {
         let server = MockServer::start();
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        let deleted = AgentRecord::new("writer", "", "", 3, u32::MAX, false);
+        let deleted = AgentRecord::new("writer", "", "", 3, i32::MAX, false);
         let mock = server.mock(|when, then| {
             when.method(DELETE).path("/v1/agents/writer");
             then.status(200)
