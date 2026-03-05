@@ -1,7 +1,9 @@
 use crate::domain::labels::Label;
 use crate::store::{ReadOnlyStore, StoreError};
 use metis_common::api::v1::labels::{LabelSummary, SearchLabelsQuery};
+use metis_common::issues::IssueId;
 use metis_common::{LabelId, MetisId, Rgb};
+use std::collections::HashSet;
 use thiserror::Error;
 
 use super::AppState;
@@ -193,6 +195,37 @@ impl AppState {
         }
 
         Ok(resolved)
+    }
+
+    /// Recursively add a label to all transitive children of the given issue.
+    pub async fn cascade_label_to_children(
+        &self,
+        label_id: &LabelId,
+        issue_id: &IssueId,
+    ) -> Result<(), StoreError> {
+        let mut visited = HashSet::new();
+        self.cascade_label_recursive(label_id, issue_id, &mut visited)
+            .await
+    }
+
+    async fn cascade_label_recursive(
+        &self,
+        label_id: &LabelId,
+        issue_id: &IssueId,
+        visited: &mut HashSet<IssueId>,
+    ) -> Result<(), StoreError> {
+        if !visited.insert(issue_id.clone()) {
+            return Ok(());
+        }
+        let children = self.store.get_issue_children(issue_id).await?;
+        for child_id in children {
+            let object_id = MetisId::from(child_id.clone());
+            self.store
+                .add_label_association(label_id, &object_id)
+                .await?;
+            Box::pin(self.cascade_label_recursive(label_id, &child_id, visited)).await?;
+        }
+        Ok(())
     }
 }
 
@@ -572,5 +605,331 @@ mod tests {
         let labels = state.get_labels_for_object(&object_id).await.unwrap();
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].name, "new-label");
+    }
+
+    #[tokio::test]
+    async fn cascade_label_to_single_level_children() {
+        use crate::domain::actors::ActorRef;
+        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use metis_common::api::v1 as api;
+
+        let state = test_state();
+
+        // Create parent issue
+        let parent =
+            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let (parent_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Create child issue
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child = crate::app::test_helpers::issue_with_status(
+            "child",
+            IssueStatus::Open,
+            vec![child_dep],
+        );
+        let (child_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Create a label and assign to parent
+        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let parent_obj = MetisId::from(parent_id.clone());
+        state
+            .add_label_association(&label_id, &parent_obj)
+            .await
+            .unwrap();
+
+        // Cascade to children
+        state
+            .cascade_label_to_children(&label_id, &parent_id)
+            .await
+            .unwrap();
+
+        // Child should now have the label
+        let child_obj = MetisId::from(child_id);
+        let child_labels = state.get_labels_for_object(&child_obj).await.unwrap();
+        assert_eq!(child_labels.len(), 1);
+        assert_eq!(child_labels[0].label_id, label_id);
+    }
+
+    #[tokio::test]
+    async fn cascade_label_to_multi_level_children() {
+        use crate::domain::actors::ActorRef;
+        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use metis_common::api::v1 as api;
+
+        let state = test_state();
+
+        // Create grandparent → parent → child chain
+        let grandparent =
+            crate::app::test_helpers::issue_with_status("grandparent", IssueStatus::Open, vec![]);
+        let (grandparent_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(grandparent.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
+        let parent = crate::app::test_helpers::issue_with_status(
+            "parent",
+            IssueStatus::Open,
+            vec![parent_dep],
+        );
+        let (parent_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child = crate::app::test_helpers::issue_with_status(
+            "child",
+            IssueStatus::Open,
+            vec![child_dep],
+        );
+        let (child_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Create a label and cascade from grandparent
+        let label_id = state
+            .create_label("priority".to_string(), None)
+            .await
+            .unwrap();
+        let gp_obj = MetisId::from(grandparent_id.clone());
+        state
+            .add_label_association(&label_id, &gp_obj)
+            .await
+            .unwrap();
+
+        state
+            .cascade_label_to_children(&label_id, &grandparent_id)
+            .await
+            .unwrap();
+
+        // Both parent and child should have the label
+        let parent_obj = MetisId::from(parent_id);
+        let parent_labels = state.get_labels_for_object(&parent_obj).await.unwrap();
+        assert_eq!(parent_labels.len(), 1);
+        assert_eq!(parent_labels[0].label_id, label_id);
+
+        let child_obj = MetisId::from(child_id);
+        let child_labels = state.get_labels_for_object(&child_obj).await.unwrap();
+        assert_eq!(child_labels.len(), 1);
+        assert_eq!(child_labels[0].label_id, label_id);
+    }
+
+    #[tokio::test]
+    async fn cascade_label_with_no_children_is_noop() {
+        use crate::domain::actors::ActorRef;
+        use crate::domain::issues::IssueStatus;
+        use metis_common::api::v1 as api;
+
+        let state = test_state();
+
+        let issue = crate::app::test_helpers::issue_with_status("solo", IssueStatus::Open, vec![]);
+        let (issue_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(issue.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let obj = MetisId::from(issue_id.clone());
+        state.add_label_association(&label_id, &obj).await.unwrap();
+
+        // Should succeed without error
+        state
+            .cascade_label_to_children(&label_id, &issue_id)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn child_issue_inherits_parent_labels_on_creation() {
+        use crate::domain::actors::ActorRef;
+        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use metis_common::api::v1 as api;
+
+        let state = test_state();
+
+        // Create parent and assign labels
+        let parent =
+            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let (parent_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let label_a = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_b = state
+            .create_label("priority".to_string(), None)
+            .await
+            .unwrap();
+        let parent_obj = MetisId::from(parent_id.clone());
+        state
+            .add_label_association(&label_a, &parent_obj)
+            .await
+            .unwrap();
+        state
+            .add_label_association(&label_b, &parent_obj)
+            .await
+            .unwrap();
+
+        // Create child with child-of dependency — should inherit both labels
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child = crate::app::test_helpers::issue_with_status(
+            "child",
+            IssueStatus::Open,
+            vec![child_dep],
+        );
+        let (child_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let child_obj = MetisId::from(child_id);
+        let child_labels = state.get_labels_for_object(&child_obj).await.unwrap();
+        assert_eq!(child_labels.len(), 2);
+
+        let label_ids: HashSet<LabelId> = child_labels.iter().map(|l| l.label_id.clone()).collect();
+        assert!(label_ids.contains(&label_a));
+        assert!(label_ids.contains(&label_b));
+    }
+
+    #[tokio::test]
+    async fn child_issue_no_inheritance_when_parent_has_no_labels() {
+        use crate::domain::actors::ActorRef;
+        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use metis_common::api::v1 as api;
+
+        let state = test_state();
+
+        // Create parent with no labels
+        let parent =
+            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let (parent_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Create child
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child = crate::app::test_helpers::issue_with_status(
+            "child",
+            IssueStatus::Open,
+            vec![child_dep],
+        );
+        let (child_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let child_obj = MetisId::from(child_id);
+        let child_labels = state.get_labels_for_object(&child_obj).await.unwrap();
+        assert!(child_labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn child_issue_inherits_and_merges_with_explicit_labels() {
+        use crate::domain::actors::ActorRef;
+        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use metis_common::api::v1 as api;
+
+        let state = test_state();
+
+        // Create parent and assign a label
+        let parent =
+            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let (parent_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let inherited_label = state
+            .create_label("inherited".to_string(), None)
+            .await
+            .unwrap();
+        let parent_obj = MetisId::from(parent_id.clone());
+        state
+            .add_label_association(&inherited_label, &parent_obj)
+            .await
+            .unwrap();
+
+        // Create a separate label that will be explicitly assigned to the child
+        let explicit_label = state
+            .create_label("explicit".to_string(), None)
+            .await
+            .unwrap();
+
+        // Create child with child-of dependency AND explicit label
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child = crate::app::test_helpers::issue_with_status(
+            "child",
+            IssueStatus::Open,
+            vec![child_dep],
+        );
+        let mut request = api::issues::UpsertIssueRequest::new(child.into(), None);
+        request.label_ids = Some(vec![explicit_label.clone()]);
+
+        let (child_id, _) = state
+            .upsert_issue(None, request, ActorRef::test())
+            .await
+            .unwrap();
+
+        let child_obj = MetisId::from(child_id);
+        let child_labels = state.get_labels_for_object(&child_obj).await.unwrap();
+        // Should have both: the explicit label and the inherited label
+        assert_eq!(child_labels.len(), 2);
+
+        let label_ids: HashSet<LabelId> = child_labels.iter().map(|l| l.label_id.clone()).collect();
+        assert!(label_ids.contains(&inherited_label));
+        assert!(label_ids.contains(&explicit_label));
     }
 }

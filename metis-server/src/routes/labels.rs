@@ -11,8 +11,16 @@ use metis_common::{
             UpsertLabelResponse,
         },
     },
+    issues::IssueId,
 };
+use serde::Deserialize;
 use tracing::{error, info};
+
+#[derive(Debug, Deserialize, Default)]
+pub struct CascadeQuery {
+    #[serde(default)]
+    pub cascade: Option<bool>,
+}
 
 /// POST /v1/labels — create a new label.
 pub async fn create_label(
@@ -133,15 +141,20 @@ pub async fn delete_label(
 }
 
 /// PUT /v1/labels/:label_id/objects/:object_id — associate a label with an object.
+/// When cascade=true and object_id is an issue, the label is also added to all
+/// transitive children of that issue.
 pub async fn add_label_association(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     Path((label_id, object_id)): Path<(LabelId, MetisId)>,
+    Query(query): Query<CascadeQuery>,
 ) -> Result<Json<()>, ApiError> {
+    let cascade = query.cascade.unwrap_or(false);
     info!(
         actor = %actor.name(),
         label_id = %label_id,
         object_id = %object_id,
+        cascade = cascade,
         "add_label_association invoked"
     );
 
@@ -150,10 +163,21 @@ pub async fn add_label_association(
         .await
         .map_err(map_store_error)?;
 
+    if cascade {
+        let issue_id = IssueId::try_from(object_id.clone()).map_err(|_| {
+            ApiError::bad_request("cascade=true is only supported for issue objects")
+        })?;
+        state
+            .cascade_label_to_children(&label_id, &issue_id)
+            .await
+            .map_err(map_store_error)?;
+    }
+
     info!(
         actor = %actor.name(),
         label_id = %label_id,
         object_id = %object_id,
+        cascade = cascade,
         "add_label_association completed"
     );
 

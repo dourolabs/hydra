@@ -145,6 +145,8 @@ impl AppState {
             ..
         } = request;
         let issue: Issue = issue.into();
+        let is_create = issue_id.is_none();
+        let dependencies = issue.dependencies.clone();
 
         let store = self.store.as_ref();
 
@@ -290,6 +292,44 @@ impl AppState {
                         source,
                         issue_id: Some(issue_id.clone()),
                     })?;
+            }
+        }
+
+        // Inherit labels from parent issues when creating a child issue
+        if is_create {
+            let parent_ids: Vec<IssueId> = dependencies
+                .iter()
+                .filter(|d| d.dependency_type == IssueDependencyType::ChildOf)
+                .map(|d| d.issue_id.clone())
+                .collect();
+
+            if !parent_ids.is_empty() {
+                let parent_metis_ids: Vec<metis_common::MetisId> = parent_ids
+                    .iter()
+                    .map(|id| metis_common::MetisId::from(id.clone()))
+                    .collect();
+                let parent_labels = self
+                    .get_labels_for_objects(&parent_metis_ids)
+                    .await
+                    .map_err(|source| UpsertIssueError::Store {
+                        source,
+                        issue_id: Some(issue_id.clone()),
+                    })?;
+
+                let child_object_id = metis_common::MetisId::from(issue_id.clone());
+                let mut inherited = HashSet::new();
+                for labels in parent_labels.values() {
+                    for label in labels {
+                        if inherited.insert(label.label_id.clone()) {
+                            self.add_label_association(&label.label_id, &child_object_id)
+                                .await
+                                .map_err(|source| UpsertIssueError::Store {
+                                    source,
+                                    issue_id: Some(issue_id.clone()),
+                                })?;
+                        }
+                    }
+                }
             }
         }
 
