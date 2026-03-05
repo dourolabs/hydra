@@ -1,4 +1,12 @@
-use crate::{app::AppState, config::GithubAppSection, domain::users::Username, store::StoreError};
+use crate::{
+    app::AppState,
+    config::GithubAppSection,
+    domain::{
+        secrets::{SECRET_GITHUB_REFRESH_TOKEN, SECRET_GITHUB_TOKEN},
+        users::Username,
+    },
+    store::StoreError,
+};
 pub use metis_common::{ActorId, ActorRef, parse_actor_name};
 use metis_common::{IssueId, TaskId, api::v1::ApiError, github::GithubTokenResponse};
 use reqwest::{
@@ -8,7 +16,7 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt::Write;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 /// Placeholder value used when backfilling NULL creator columns during migration.
@@ -157,6 +165,10 @@ impl Actor {
 
 /// Resolve a GitHub token for the given `username`, refreshing it if expired.
 ///
+/// Tokens are read from encrypted `user_secrets` first, falling back to the
+/// (deprecated) plaintext columns in `users_v2`. Refreshed tokens are always
+/// written back to `user_secrets`.
+///
 /// The `actor_id` is only used to record which actor triggered a token refresh
 /// in the audit trail — it is not required for fetching the token itself.
 pub async fn get_github_token_for_user(
@@ -177,11 +189,32 @@ pub async fn get_github_token_for_user(
         }
     })?;
 
-    let mut github_token = user.github_token.clone();
+    // Read tokens from user_secrets (encrypted), falling back to users_v2 (plaintext).
+    let mut github_token =
+        resolve_secret_or_fallback(state, username, SECRET_GITHUB_TOKEN, &user.github_token).await;
+    let github_refresh_token = resolve_secret_or_fallback(
+        state,
+        username,
+        SECRET_GITHUB_REFRESH_TOKEN,
+        &user.github_refresh_token,
+    )
+    .await;
+
     if !github_token_is_valid(&state.config.github_app, &github_token).await? {
         let refreshed =
-            refresh_github_token(&state.config.github_app, &user.github_refresh_token).await?;
-        let updated = state
+            refresh_github_token(&state.config.github_app, &github_refresh_token).await?;
+
+        // Write refreshed tokens to user_secrets (encrypted).
+        store_github_token_secrets(
+            state,
+            username,
+            &refreshed.access_token,
+            &refreshed.refresh_token,
+        )
+        .await;
+
+        // Also update users_v2 for backward compatibility during migration.
+        state
             .set_user_github_token(
                 username,
                 refreshed.access_token.clone(),
@@ -205,11 +238,97 @@ pub async fn get_github_token_for_user(
                 }
             })?;
 
-        github_token = updated.github_token;
+        github_token = refreshed.access_token;
     }
 
     info!(username = %username, "get_github_token_for_user completed");
     Ok(GithubTokenResponse { github_token })
+}
+
+/// Try to read a secret from user_secrets (encrypted). If unavailable, fall back
+/// to the plaintext value from users_v2.
+async fn resolve_secret_or_fallback(
+    state: &AppState,
+    username: &Username,
+    secret_name: &str,
+    fallback: &str,
+) -> String {
+    let Some(secret_manager) = &state.secret_manager else {
+        return fallback.to_string();
+    };
+
+    match state.store().get_user_secret(username, secret_name).await {
+        Ok(Some(encrypted)) => match secret_manager.decrypt(&encrypted) {
+            Ok(value) if !value.is_empty() => value,
+            Ok(_) => fallback.to_string(),
+            Err(err) => {
+                warn!(
+                    username = %username,
+                    secret = secret_name,
+                    error = %err,
+                    "failed to decrypt user secret, falling back to users_v2"
+                );
+                fallback.to_string()
+            }
+        },
+        Ok(None) => fallback.to_string(),
+        Err(err) => {
+            warn!(
+                username = %username,
+                secret = secret_name,
+                error = %err,
+                "failed to look up user secret, falling back to users_v2"
+            );
+            fallback.to_string()
+        }
+    }
+}
+
+/// Encrypt and store GitHub tokens in user_secrets. Logs warnings on failure
+/// but does not propagate errors — the caller can still proceed with the
+/// plaintext fallback in users_v2.
+pub(crate) async fn store_github_token_secrets(
+    state: &AppState,
+    username: &Username,
+    access_token: &str,
+    refresh_token: &str,
+) {
+    let Some(secret_manager) = &state.secret_manager else {
+        return;
+    };
+
+    for (secret_name, value) in [
+        (SECRET_GITHUB_TOKEN, access_token),
+        (SECRET_GITHUB_REFRESH_TOKEN, refresh_token),
+    ] {
+        if value.is_empty() {
+            continue;
+        }
+        match secret_manager.encrypt(value) {
+            Ok(encrypted) => {
+                if let Err(err) = state
+                    .store
+                    .set_user_secret(username, secret_name, &encrypted)
+                    .await
+                {
+                    warn!(
+                        username = %username,
+                        secret = secret_name,
+                        error = %err,
+                        "failed to store github token in user_secrets"
+                    );
+                }
+            }
+            Err(err) => {
+                warn!(
+                    username = %username,
+                    secret = secret_name,
+                    error = %err,
+                    "failed to encrypt github token for user_secrets"
+                );
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

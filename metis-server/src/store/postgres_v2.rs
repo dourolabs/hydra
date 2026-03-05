@@ -905,8 +905,8 @@ impl PostgresStoreV2 {
         User::new(
             Username::from(row.username.clone()),
             row.github_user_id as u64,
-            row.github_token.clone(),
-            row.github_refresh_token.clone(),
+            row.github_token.clone().unwrap_or_default(),
+            row.github_refresh_token.clone().unwrap_or_default(),
             row.deleted,
         )
     }
@@ -1156,8 +1156,8 @@ struct UserRow {
     version_number: i64,
     username: String,
     github_user_id: i64,
-    github_token: String,
-    github_refresh_token: String,
+    github_token: Option<String>,
+    github_refresh_token: Option<String>,
     deleted: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
