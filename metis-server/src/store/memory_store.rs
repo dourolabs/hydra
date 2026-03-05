@@ -455,6 +455,19 @@ impl ReadOnlyStore for MemoryStore {
                 ) {
                     return None;
                 }
+                // Filter by label IDs (AND semantics: issue must have ALL specified labels)
+                if !query.label_ids.is_empty() {
+                    let object_id = MetisId::from(issue_id.clone());
+                    let has_all_labels =
+                        if let Some(issue_labels) = self.object_labels.get(&object_id) {
+                            query.label_ids.iter().all(|lid| issue_labels.contains(lid))
+                        } else {
+                            false
+                        };
+                    if !has_all_labels {
+                        return None;
+                    }
+                }
                 latest.creation_time = entry.value()[0].timestamp;
                 Some((issue_id.clone(), latest))
             })
