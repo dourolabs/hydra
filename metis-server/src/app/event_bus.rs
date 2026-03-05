@@ -18,9 +18,9 @@ use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, LabelId, MessageId, NotificationId, PatchId, RepoName, TaskId, VersionNumber,
-    Versioned,
-    api::v1::labels::SearchLabelsQuery,
+    DocumentId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
+    VersionNumber, Versioned,
+    api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -950,6 +950,26 @@ impl StoreWithEvents {
     pub async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError> {
         self.inner.delete_label(id).await
     }
+
+    // ---- Label association mutations ----
+
+    pub async fn add_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<(), StoreError> {
+        self.inner.add_label_association(label_id, object_id).await
+    }
+
+    pub async fn remove_label_association(
+        &self,
+        label_id: &LabelId,
+        object_id: &MetisId,
+    ) -> Result<(), StoreError> {
+        self.inner
+            .remove_label_association(label_id, object_id)
+            .await
+    }
 }
 
 #[async_trait]
@@ -1191,6 +1211,26 @@ impl ReadOnlyStore for StoreWithEvents {
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
         self.inner.get_label_by_name(name).await
+    }
+
+    // ---- Label association (read-only) ----
+
+    async fn get_labels_for_object(
+        &self,
+        object_id: &MetisId,
+    ) -> Result<Vec<LabelSummary>, StoreError> {
+        self.inner.get_labels_for_object(object_id).await
+    }
+
+    async fn get_labels_for_objects(
+        &self,
+        object_ids: &[MetisId],
+    ) -> Result<HashMap<MetisId, Vec<LabelSummary>>, StoreError> {
+        self.inner.get_labels_for_objects(object_ids).await
+    }
+
+    async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
+        self.inner.get_objects_for_label(label_id).await
     }
 }
 

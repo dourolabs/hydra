@@ -1,6 +1,7 @@
+use super::labels::LabelSummary;
 use super::users::Username;
 pub use crate::IssueId;
-use crate::{PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
+use crate::{LabelId, PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
@@ -564,6 +565,8 @@ pub struct IssueVersionRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
     pub creation_time: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<LabelSummary>,
 }
 
 impl IssueVersionRecord {
@@ -574,6 +577,7 @@ impl IssueVersionRecord {
         issue: Issue,
         actor: Option<ActorRef>,
         creation_time: DateTime<Utc>,
+        labels: Vec<LabelSummary>,
     ) -> Self {
         Self {
             issue_id,
@@ -582,6 +586,7 @@ impl IssueVersionRecord {
             issue,
             actor,
             creation_time,
+            labels,
         }
     }
 }
@@ -594,11 +599,23 @@ pub struct UpsertIssueRequest {
     pub issue: Issue,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_id: Option<TaskId>,
+    /// Label IDs to associate with this issue (replaces existing labels).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_ids: Option<Vec<LabelId>>,
+    /// Label names to associate with this issue (resolved to label IDs).
+    /// Labels that do not exist are created automatically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_names: Option<Vec<String>>,
 }
 
 impl UpsertIssueRequest {
     pub fn new(issue: Issue, job_id: Option<TaskId>) -> Self {
-        Self { issue, job_id }
+        Self {
+            issue,
+            job_id,
+            label_ids: None,
+            label_names: None,
+        }
     }
 }
 
@@ -615,6 +632,31 @@ impl UpsertIssueResponse {
     pub fn new(issue_id: IssueId, version: VersionNumber) -> Self {
         Self { issue_id, version }
     }
+}
+
+fn serialize_label_ids<S>(ids: &[LabelId], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let s = ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    serializer.serialize_str(&s)
+}
+
+fn deserialize_label_ids<'de, D>(deserializer: D) -> Result<Vec<LabelId>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    s.split(',')
+        .map(|part| part.trim().parse().map_err(de::Error::custom))
+        .collect()
 }
 
 fn serialize_graph_filters<S>(
@@ -668,6 +710,15 @@ pub struct SearchIssuesQuery {
     pub graph_filters: Vec<IssueGraphFilter>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
+    /// Filter issues by label IDs (comma-separated in query string).
+    #[serde(
+        default,
+        rename = "labels",
+        serialize_with = "serialize_label_ids",
+        deserialize_with = "deserialize_label_ids"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub label_ids: Vec<LabelId>,
 }
 
 impl SearchIssuesQuery {
@@ -686,6 +737,7 @@ impl SearchIssuesQuery {
             q,
             graph_filters,
             include_deleted,
+            label_ids: Vec::new(),
         }
     }
 }
@@ -720,6 +772,8 @@ pub struct IssueSummary {
     pub todo_list: Vec<TodoItem>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<LabelSummary>,
 }
 
 impl From<&Issue> for IssueSummary {
@@ -747,6 +801,7 @@ impl From<&Issue> for IssueSummary {
             patches: issue.patches.clone(),
             todo_list: issue.todo_list.clone(),
             deleted: issue.deleted,
+            labels: Vec::new(),
         }
     }
 }
@@ -774,7 +829,10 @@ impl IssueSummaryRecord {
         issue: IssueSummary,
         actor: Option<ActorRef>,
         creation_time: DateTime<Utc>,
+        labels: Vec<LabelSummary>,
     ) -> Self {
+        let mut issue = issue;
+        issue.labels = labels;
         Self {
             issue_id,
             version,
@@ -788,11 +846,13 @@ impl IssueSummaryRecord {
 
 impl From<&IssueVersionRecord> for IssueSummaryRecord {
     fn from(record: &IssueVersionRecord) -> Self {
+        let mut summary = IssueSummary::from(&record.issue);
+        summary.labels = record.labels.clone();
         IssueSummaryRecord {
             issue_id: record.issue_id.clone(),
             version: record.version,
             timestamp: record.timestamp,
-            issue: IssueSummary::from(&record.issue),
+            issue: summary,
             actor: record.actor.clone(),
             creation_time: record.creation_time,
         }
@@ -886,6 +946,7 @@ mod tests {
             q: Some("test query".to_string()),
             graph_filters: vec![],
             include_deleted: None,
+            label_ids: vec![],
         };
 
         let params = serialize_query_params(&query)
@@ -908,6 +969,7 @@ mod tests {
             q: None,
             graph_filters: vec![filter1, filter2],
             include_deleted: None,
+            label_ids: vec![],
         };
 
         let params = serialize_query_params(&query)
@@ -927,10 +989,11 @@ mod tests {
             .into_iter()
             .collect::<HashMap<_, _>>();
         assert_eq!(params.get("graph").map(String::as_str), Some(""));
+        assert_eq!(params.get("labels").map(String::as_str), Some(""));
         assert_eq!(
             params.len(),
-            1,
-            "only the graph filter key should exist when no filters are provided"
+            2,
+            "only the graph and labels keys should exist when no filters are provided"
         );
     }
 
@@ -1015,7 +1078,8 @@ mod tests {
             actor_id: ActorId::Username(Username::from("alice")),
         };
         let ts = chrono::Utc::now();
-        let record = IssueVersionRecord::new(issue_id, 1, ts, issue, Some(actor.clone()), ts);
+        let record =
+            IssueVersionRecord::new(issue_id, 1, ts, issue, Some(actor.clone()), ts, Vec::new());
 
         let value = serde_json::to_value(&record).expect("should serialize");
         let expected_actor = json!({"Authenticated": {"actor_id": {"Username": "alice"}}});
@@ -1041,7 +1105,7 @@ mod tests {
         };
 
         let ts = chrono::Utc::now();
-        let record = IssueVersionRecord::new(issue_id, 1, ts, issue, None, ts);
+        let record = IssueVersionRecord::new(issue_id, 1, ts, issue, None, ts, Vec::new());
 
         let value = serde_json::to_value(&record).expect("should serialize");
         assert!(
@@ -1150,7 +1214,8 @@ mod tests {
     fn issue_summary_record_from_version_record() {
         let issue = make_test_issue("multi\nline\ndesc");
         let ts = chrono::Utc::now();
-        let record = IssueVersionRecord::new(issue_id("i-test"), 3, ts, issue, None, ts);
+        let record =
+            IssueVersionRecord::new(issue_id("i-test"), 3, ts, issue, None, ts, Vec::new());
         let summary_record = IssueSummaryRecord::from(&record);
         assert_eq!(summary_record.issue_id, issue_id("i-test"));
         assert_eq!(summary_record.version, 3);

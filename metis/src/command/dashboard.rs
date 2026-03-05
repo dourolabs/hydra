@@ -6583,6 +6583,7 @@ mod tests {
             ),
             None,
             now,
+            Vec::new(),
         );
 
         let record = issue_version_to_record(version_record).expect("should produce a record");
@@ -6615,6 +6616,7 @@ mod tests {
             )),
             None,
             now,
+            Vec::new(),
         );
 
         let record = issue_to_record(summary_record).expect("should produce a record");

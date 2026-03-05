@@ -11,7 +11,7 @@ use axum::{
     http::request::Parts,
 };
 use metis_common::{
-    IssueId,
+    IssueId, MetisId,
     api::v1::{ApiError, issues as api_issues},
 };
 use serde::Deserialize;
@@ -138,6 +138,15 @@ pub async fn get_issue(
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
+    let object_id = MetisId::from(issue_id.clone());
+    let labels = state
+        .get_labels_for_object(&object_id)
+        .await
+        .map_err(|err| {
+            error!(issue_id = %issue_id, error = %err, "failed to fetch labels for issue");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
     info!(issue_id = %issue_id, "get_issue completed");
     let response = api_issues::IssueVersionRecord::new(
         issue_id,
@@ -146,6 +155,7 @@ pub async fn get_issue(
         issue.item.into(),
         issue.actor,
         issue.creation_time,
+        labels,
     );
     Ok(Json(response))
 }
@@ -170,6 +180,7 @@ pub async fn list_issue_versions(
                 version.item.into(),
                 version.actor,
                 version.creation_time,
+                Vec::new(),
             )
         })
         .collect();
@@ -213,6 +224,7 @@ pub async fn get_issue_version(
         entry.item.into(),
         entry.actor,
         entry.creation_time,
+        Vec::new(),
     );
     info!(issue_id = %issue_id, version, "get_issue_version completed");
     Ok(Json(response))
@@ -236,6 +248,7 @@ pub async fn list_issues(
         query = ?query.q,
         graph_filters = ?graph_filters,
         include_deleted = ?query.include_deleted,
+        label_ids = ?query.label_ids,
         "list_issues invoked"
     );
 
@@ -257,26 +270,46 @@ pub async fn list_issues(
         )
     };
 
-    let filtered: Vec<api_issues::IssueSummaryRecord> = issues
-        .into_iter()
-        .filter(|(id, _)| {
-            graph_matches
-                .as_ref()
-                .is_none_or(|allowed| allowed.contains(id))
-        })
-        .map(|(id, versioned)| {
-            let api_issue: api_issues::Issue = versioned.item.into();
-            let summary = api_issues::IssueSummary::from(&api_issue);
-            api_issues::IssueSummaryRecord::new(
-                id,
-                versioned.version,
-                versioned.timestamp,
-                summary,
-                versioned.actor,
-                versioned.creation_time,
-            )
-        })
+    // Apply graph filter first to reduce the set before batch label lookup
+    let issues: Vec<_> = if let Some(ref allowed) = graph_matches {
+        issues
+            .into_iter()
+            .filter(|(id, _)| allowed.contains(id))
+            .collect()
+    } else {
+        issues
+    };
+
+    // Batch-fetch labels for all issues in a single query
+    let object_ids: Vec<MetisId> = issues
+        .iter()
+        .map(|(id, _)| MetisId::from(id.clone()))
         .collect();
+    let labels_map = state
+        .get_labels_for_objects(&object_ids)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to batch-fetch labels for issues");
+            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+        })?;
+
+    let mut filtered: Vec<api_issues::IssueSummaryRecord> = Vec::new();
+    for (id, versioned) in issues {
+        let object_id = MetisId::from(id.clone());
+        let labels = labels_map.get(&object_id).cloned().unwrap_or_default();
+
+        let api_issue: api_issues::Issue = versioned.item.into();
+        let summary = api_issues::IssueSummary::from(&api_issue);
+        filtered.push(api_issues::IssueSummaryRecord::new(
+            id,
+            versioned.version,
+            versioned.timestamp,
+            summary,
+            versioned.actor,
+            versioned.creation_time,
+            labels,
+        ));
+    }
 
     let response = api_issues::ListIssuesResponse::new(filtered);
     info!(
@@ -514,6 +547,7 @@ pub async fn delete_issue(
         issue.item.into(),
         issue.actor,
         issue.creation_time,
+        Vec::new(),
     );
     Ok(Json(response))
 }
