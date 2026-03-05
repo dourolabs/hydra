@@ -33,8 +33,8 @@ test.describe("Issue Detail", () => {
 
   test("displays tabbed sections", async ({ authenticatedPage: page }) => {
     await page.goto("/issues/i-seed00001");
-    // IssueDetail has tabs: Children, Jobs, Patches, Todo, Activity, Settings
-    await expect(page.getByRole("tab", { name: "Children" })).toBeVisible();
+    // IssueDetail has tabs: Related Issues, Jobs, Patches, Todo, Activity, Settings
+    await expect(page.getByRole("tab", { name: "Related Issues" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Jobs" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Patches" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Todo" })).toBeVisible();
