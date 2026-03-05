@@ -18,10 +18,7 @@ use kube::{
     Api, Client,
     api::{DeleteParams, ListParams, LogParams, PostParams},
 };
-use metis_common::constants::{
-    ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ID, ENV_METIS_SERVER_URL,
-    ENV_METIS_TOKEN, ENV_OPENAI_API_KEY,
-};
+use metis_common::constants::{ENV_METIS_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN};
 use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
@@ -30,9 +27,6 @@ use crate::domain::actors::Actor;
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
-    pub openai_api_key: String,
-    pub anthropic_api_key: Option<String>,
-    pub claude_code_oauth_token: Option<String>,
     pub server_hostname: String,
     pub client: Client,
     pub image_pull_secrets: Vec<String>,
@@ -41,9 +35,6 @@ pub struct KubernetesJobEngine {
 fn merge_env_vars(
     job_uuid: &TaskId,
     env_vars: &HashMap<String, String>,
-    openai_api_key: &str,
-    anthropic_api_key: Option<&str>,
-    claude_code_oauth_token: Option<&str>,
     server_hostname: &str,
     auth_token: &str,
 ) -> Vec<EnvVar> {
@@ -52,19 +43,6 @@ fn merge_env_vars(
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
 
-    merged_vars.insert(ENV_OPENAI_API_KEY.to_string(), openai_api_key.to_string());
-    if let Some(anthropic_api_key) = anthropic_api_key {
-        merged_vars.insert(
-            ENV_ANTHROPIC_API_KEY.to_string(),
-            anthropic_api_key.to_string(),
-        );
-    }
-    if let Some(claude_code_oauth_token) = claude_code_oauth_token {
-        merged_vars.insert(
-            ENV_CLAUDE_CODE_OAUTH_TOKEN.to_string(),
-            claude_code_oauth_token.to_string(),
-        );
-    }
     merged_vars.insert(ENV_METIS_ID.to_string(), job_uuid.to_string());
     merged_vars.insert(ENV_METIS_TOKEN.to_string(), auth_token.to_string());
 
@@ -148,15 +126,7 @@ impl KubernetesJobEngine {
         env_vars: &HashMap<String, String>,
         auth_token: &str,
     ) -> Vec<EnvVar> {
-        merge_env_vars(
-            job_uuid,
-            env_vars,
-            &self.openai_api_key,
-            self.anthropic_api_key.as_deref(),
-            self.claude_code_oauth_token.as_deref(),
-            &self.server_hostname,
-            auth_token,
-        )
+        merge_env_vars(job_uuid, env_vars, &self.server_hostname, auth_token)
     }
 
     fn job_status(job: &Job) -> JobStatus {
@@ -867,22 +837,22 @@ mod tests {
     #[test]
     fn merge_env_vars_combines_task_and_system_values() {
         let job_id: TaskId = "t-abcd".parse().unwrap();
-        let mut task_env = HashMap::from([("CUSTOM".to_string(), "1".to_string())]);
+        let mut task_env = HashMap::from([
+            ("CUSTOM".to_string(), "1".to_string()),
+            ("OPENAI_API_KEY".to_string(), "openai-key".to_string()),
+            ("ANTHROPIC_API_KEY".to_string(), "anthropic-key".to_string()),
+            (
+                "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+                "claude-token".to_string(),
+            ),
+        ]);
         task_env.insert(ENV_METIS_ID.to_string(), "override-me".to_string());
         task_env.insert(
             ENV_METIS_SERVER_URL.to_string(),
             "http://example.com".to_string(),
         );
 
-        let merged = merge_env_vars(
-            &job_id,
-            &task_env,
-            "openai-key",
-            Some("anthropic-key"),
-            Some("claude-token"),
-            "metis.example.com",
-            "auth-token",
-        );
+        let merged = merge_env_vars(&job_id, &task_env, "metis.example.com", "auth-token");
 
         let merged_map: HashMap<_, _> = merged
             .into_iter()
@@ -891,15 +861,15 @@ mod tests {
 
         assert_eq!(merged_map.get("CUSTOM"), Some(&"1".to_string()));
         assert_eq!(
-            merged_map.get(ENV_OPENAI_API_KEY),
+            merged_map.get("OPENAI_API_KEY"),
             Some(&"openai-key".to_string())
         );
         assert_eq!(
-            merged_map.get(ENV_ANTHROPIC_API_KEY),
+            merged_map.get("ANTHROPIC_API_KEY"),
             Some(&"anthropic-key".to_string())
         );
         assert_eq!(
-            merged_map.get(ENV_CLAUDE_CODE_OAUTH_TOKEN),
+            merged_map.get("CLAUDE_CODE_OAUTH_TOKEN"),
             Some(&"claude-token".to_string())
         );
         assert_eq!(merged_map.get(ENV_METIS_ID), Some(&job_id.to_string()));
@@ -916,15 +886,7 @@ mod tests {
     #[test]
     fn merge_env_vars_skips_empty_server_hostname() {
         let job_id: TaskId = "t-abcd".parse().unwrap();
-        let merged = merge_env_vars(
-            &job_id,
-            &HashMap::new(),
-            "openai-key",
-            None,
-            None,
-            "   ",
-            "auth-token",
-        );
+        let merged = merge_env_vars(&job_id, &HashMap::new(), "   ", "auth-token");
 
         let merged_map: HashMap<_, _> = merged
             .into_iter()
