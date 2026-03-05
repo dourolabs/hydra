@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Initialize a metis server with the default set of agent prompts.
-# Uploads prompt files from scripts/agent-prompts/ to the document store.
-# Idempotent: creates documents on first run, updates only changed ones on subsequent runs.
+# Initialize a metis server with the default set of agents.
+# Creates agents in the database and uploads their prompts to the document store
+# via CLI commands. Idempotent: creates on first run, updates on subsequent runs.
 #
 # Usage:
 #   ./scripts/init-agents.sh
@@ -14,12 +14,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROMPTS_DIR="${SCRIPT_DIR}/agent-prompts"
-SYNC_DIR="$(mktemp -d)"
-trap 'rm -rf "$SYNC_DIR"' EXIT
 
 AGENTS=("swe" "pm" "reviewer" "merger")
 
-# Validate that all prompt files exist before syncing
+# Validate that all prompt files exist before creating agents
 for agent in "${AGENTS[@]}"; do
   if [[ ! -f "${PROMPTS_DIR}/${agent}.md" ]]; then
     echo "ERROR: Missing prompt file: ${PROMPTS_DIR}/${agent}.md" >&2
@@ -27,12 +25,23 @@ for agent in "${AGENTS[@]}"; do
   fi
 done
 
-# Sync existing agent documents, copy in the latest prompts, and push
-metis documents sync "$SYNC_DIR" --path-prefix /agents
+# Create or update each agent via the CLI
 for agent in "${AGENTS[@]}"; do
-  mkdir -p "${SYNC_DIR}/agents/${agent}"
-  cp "${PROMPTS_DIR}/${agent}.md" "${SYNC_DIR}/agents/${agent}/prompt.md"
-done
-metis documents push "$SYNC_DIR" --path-prefix /agents
+  EXTRA_FLAGS=()
+  if [[ "$agent" == "pm" ]]; then
+    EXTRA_FLAGS+=("--is-assignment-agent")
+  fi
 
-echo "All agent prompts uploaded successfully."
+  if metis agents create "$agent" \
+       --prompt-file "${PROMPTS_DIR}/${agent}.md" \
+       "${EXTRA_FLAGS[@]}" 2>/dev/null; then
+    echo "Created agent: ${agent}"
+  else
+    metis agents update "$agent" \
+      --prompt-file "${PROMPTS_DIR}/${agent}.md" \
+      "${EXTRA_FLAGS[@]}"
+    echo "Updated agent: ${agent}"
+  fi
+done
+
+echo "All agents initialized successfully."

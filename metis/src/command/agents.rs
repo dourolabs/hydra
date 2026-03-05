@@ -11,6 +11,12 @@ use std::io;
 pub enum AgentsCommand {
     /// List configured agents.
     List,
+    /// Get details of an agent including its prompt text.
+    Get {
+        /// Agent name.
+        #[arg(value_name = "NAME")]
+        name: String,
+    },
     /// Create a new agent.
     Create(CreateAgentArgs),
     /// Update an existing agent.
@@ -29,9 +35,9 @@ pub struct CreateAgentArgs {
     #[arg(value_name = "NAME")]
     pub name: String,
 
-    /// Prompt the agent will execute.
-    #[arg(value_name = "PROMPT")]
-    pub prompt: String,
+    /// Path to a local file containing the agent prompt.
+    #[arg(long = "prompt-file", value_name = "PATH")]
+    pub prompt_file: String,
 
     /// Maximum retries for this agent.
     #[arg(long = "max-tries", value_name = "MAX_TRIES", default_value_t = 3)]
@@ -44,6 +50,10 @@ pub struct CreateAgentArgs {
         default_value_t = u32::MAX
     )]
     pub max_simultaneous: u32,
+
+    /// Mark this agent as the assignment agent (at most one allowed).
+    #[arg(long = "is-assignment-agent")]
+    pub is_assignment_agent: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -52,9 +62,9 @@ pub struct UpdateAgentArgs {
     #[arg(value_name = "NAME")]
     pub name: String,
 
-    /// Updated prompt for the agent.
-    #[arg(long = "prompt", value_name = "PROMPT")]
-    pub prompt: Option<String>,
+    /// Path to a local file containing the updated agent prompt.
+    #[arg(long = "prompt-file", value_name = "PATH")]
+    pub prompt_file: Option<String>,
 
     /// Updated max retries for the agent.
     #[arg(long = "max-tries", value_name = "MAX_TRIES")]
@@ -63,6 +73,10 @@ pub struct UpdateAgentArgs {
     /// Updated max simultaneous tasks for the agent.
     #[arg(long = "max-simultaneous", value_name = "MAX_SIMULTANEOUS")]
     pub max_simultaneous: Option<u32>,
+
+    /// Mark this agent as the assignment agent (at most one allowed).
+    #[arg(long = "is-assignment-agent")]
+    pub is_assignment_agent: bool,
 }
 
 pub async fn run(
@@ -75,6 +89,10 @@ pub async fn run(
         AgentsCommand::List => {
             let agents = fetch_agents(client).await?;
             render_agent_records(context.output_format, &agents, &mut stdout)?;
+        }
+        AgentsCommand::Get { name } => {
+            let agent = get_agent(client, &name).await?;
+            render_agent_records(context.output_format, &[agent], &mut stdout)?;
         }
         AgentsCommand::Create(args) => {
             let agent = create_agent(client, args).await?;
@@ -101,16 +119,35 @@ async fn fetch_agents(client: &dyn MetisClientInterface) -> Result<Vec<AgentReco
     Ok(response.agents)
 }
 
+async fn get_agent(client: &dyn MetisClientInterface, name: &str) -> Result<AgentRecord> {
+    let name = normalize_non_empty(name, "agent name")?;
+    let response = client
+        .get_agent(&name)
+        .await
+        .context("failed to get agent")?;
+    Ok(response.agent)
+}
+
+fn read_prompt_file(path: &str) -> Result<String> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read prompt file: {path}"))?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        bail!("prompt file is empty: {path}");
+    }
+    Ok(trimmed.to_string())
+}
+
 async fn create_agent(
     client: &dyn MetisClientInterface,
     args: CreateAgentArgs,
 ) -> Result<AgentRecord> {
-    let request = build_upsert_request(
-        &args.name,
-        &args.prompt,
-        args.max_tries,
-        args.max_simultaneous,
-    )?;
+    let name = normalize_non_empty(&args.name, "agent name")?;
+    let prompt = read_prompt_file(&args.prompt_file)?;
+
+    let mut request = UpsertAgentRequest::new(name, prompt, args.max_tries, args.max_simultaneous);
+    request.is_assignment_agent = args.is_assignment_agent;
+
     let response = client
         .create_agent(&request)
         .await
@@ -132,14 +169,17 @@ async fn update_agent(
     let mut request = UpsertAgentRequest::from(existing);
     request.name = name.clone();
 
-    if let Some(prompt) = args.prompt {
-        request.prompt = normalize_non_empty(&prompt, "prompt")?;
+    if let Some(prompt_file) = &args.prompt_file {
+        request.prompt = read_prompt_file(prompt_file)?;
     }
     if let Some(max_tries) = args.max_tries {
         request.max_tries = max_tries;
     }
     if let Some(max_simultaneous) = args.max_simultaneous {
         request.max_simultaneous = max_simultaneous;
+    }
+    if args.is_assignment_agent {
+        request.is_assignment_agent = true;
     }
 
     let response = client
@@ -156,22 +196,6 @@ async fn delete_agent(client: &dyn MetisClientInterface, name: &str) -> Result<A
         .await
         .context("failed to delete agent")?;
     Ok(response.agent)
-}
-
-fn build_upsert_request(
-    name: &str,
-    prompt: &str,
-    max_tries: u32,
-    max_simultaneous: u32,
-) -> Result<UpsertAgentRequest> {
-    let request = UpsertAgentRequest::new(
-        normalize_non_empty(name, "agent name")?,
-        normalize_non_empty(prompt, "prompt")?,
-        max_tries,
-        max_simultaneous,
-    );
-
-    Ok(request)
 }
 
 fn normalize_non_empty(value: &str, field: &str) -> Result<String> {
@@ -196,8 +220,17 @@ mod tests {
     };
     use reqwest::Client as HttpClient;
     use serde_json::json;
+    use std::io::Write as _;
+    use tempfile::NamedTempFile;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
+
+    fn write_prompt_file(content: &str) -> NamedTempFile {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
 
     #[tokio::test]
     async fn list_agents_fetches_agents_and_prints_jsonl() -> Result<()> {
@@ -229,30 +262,69 @@ mod tests {
 
     #[tokio::test]
     async fn list_agents_prints_pretty_format() -> Result<()> {
-        let agents = vec![AgentRecord::new("alpha", "prompt", "", 2, 5, false)];
+        let agents = vec![AgentRecord::new(
+            "alpha",
+            "prompt",
+            "/agents/alpha/prompt.md",
+            2,
+            5,
+            true,
+        )];
         let mut output = Vec::new();
 
         render_agent_records(ResolvedOutputFormat::Pretty, &agents, &mut output)?;
         let output = String::from_utf8(output)?;
 
         assert!(output.contains("alpha"));
-        assert!(output.contains("prompt"));
+        assert!(output.contains("/agents/alpha/prompt.md"));
         assert!(output.contains("max_tries: 2"));
         assert!(output.contains("max_simultaneous: 5"));
+        assert!(output.contains("is_assignment_agent: true"));
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn create_agent_sends_request() -> Result<()> {
+    async fn get_agent_returns_details() -> Result<()> {
         let server = MockServer::start();
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+        let response = AgentResponse::new(AgentRecord::new(
+            "swe",
+            "do software engineering",
+            "/agents/swe/prompt.md",
+            3,
+            u32::MAX,
+            false,
+        ));
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/swe");
+            then.status(200).json_body_obj(&response);
+        });
+
+        let agent = get_agent(&client, "swe").await?;
+        mock.assert();
+
+        assert_eq!(agent.name, "swe");
+        assert_eq!(agent.prompt, "do software engineering");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_agent_sends_request_with_prompt_file() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+
+        let prompt_file = write_prompt_file("draft this");
+
         let args = CreateAgentArgs {
             name: "writer".to_string(),
-            prompt: "draft this".to_string(),
+            prompt_file: prompt_file.path().to_str().unwrap().to_string(),
             max_tries: 2,
             max_simultaneous: 4,
+            is_assignment_agent: false,
         };
         let response =
             AgentResponse::new(AgentRecord::new("writer", "draft this", "", 2, 4, false));
@@ -279,6 +351,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_agent_with_assignment_flag() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+
+        let prompt_file = write_prompt_file("assign issues");
+
+        let args = CreateAgentArgs {
+            name: "pm".to_string(),
+            prompt_file: prompt_file.path().to_str().unwrap().to_string(),
+            max_tries: 3,
+            max_simultaneous: u32::MAX,
+            is_assignment_agent: true,
+        };
+        let response = AgentResponse::new(AgentRecord::new(
+            "pm",
+            "assign issues",
+            "",
+            3,
+            u32::MAX,
+            true,
+        ));
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/agents").json_body(json!({
+                "name": "pm",
+                "prompt": "assign issues",
+                "prompt_path": "",
+                "max_tries": 3,
+                "max_simultaneous": 4294967295u64,
+                "is_assignment_agent": true
+            }));
+            then.status(200).json_body_obj(&response);
+        });
+
+        let agent = create_agent(&client, args).await?;
+        mock.assert();
+
+        assert_eq!(agent.name, "pm");
+        assert!(agent.is_assignment_agent);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn update_agent_merges_missing_fields_from_existing() -> Result<()> {
         let server = MockServer::start();
         let client =
@@ -286,6 +402,8 @@ mod tests {
         let existing =
             AgentResponse::new(AgentRecord::new("writer", "draft", "", 3, u32::MAX, false));
         let updated = AgentResponse::new(AgentRecord::new("writer", "revised", "", 3, 10, false));
+
+        let prompt_file = write_prompt_file("revised");
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
@@ -305,9 +423,10 @@ mod tests {
 
         let args = UpdateAgentArgs {
             name: " writer ".to_string(),
-            prompt: Some("revised".to_string()),
+            prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
             max_tries: None,
             max_simultaneous: Some(10),
+            is_assignment_agent: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -340,8 +459,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn normalize_agent_name_rejects_empty() {
-        let error = build_upsert_request("", "prompt", 1, 1).unwrap_err();
-        assert!(error.to_string().contains("agent name must not be empty"));
+    async fn read_prompt_file_rejects_empty() {
+        let f = write_prompt_file("   ");
+        let err = read_prompt_file(f.path().to_str().unwrap()).unwrap_err();
+        assert!(err.to_string().contains("prompt file is empty"));
+    }
+
+    #[tokio::test]
+    async fn read_prompt_file_rejects_missing() {
+        let err = read_prompt_file("/nonexistent/path.md").unwrap_err();
+        assert!(err.to_string().contains("failed to read prompt file"));
     }
 }
