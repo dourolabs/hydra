@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Modal, Button, Input, Textarea, Select } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
@@ -54,6 +54,7 @@ export function IssueCreateModal({
   const [assignee, setAssignee, clearAssigneeDraft] = useFormDraft("metis:draft:issue-create-modal:assignee", "");
   const [repoName, setRepoName, clearRepoNameDraft] = useFormDraft("metis:draft:issue-create-modal:repoName", "");
   const [labelNames, setLabelNames, clearLabelNamesDraft] = useFormDraft<string[]>("metis:draft:issue-create-modal:labelNames", []);
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
 
   const resetForm = useCallback(() => {
     setTitle("");
@@ -141,6 +142,7 @@ export function IssueCreateModal({
   const handleClose = useCallback(() => {
     if (!mutation.isPending) {
       resetForm();
+      setShowMoreOptions(false);
       onClose();
     }
   }, [mutation.isPending, resetForm, onClose]);
@@ -173,32 +175,43 @@ export function IssueCreateModal({
             className={styles.descriptionTextarea}
           />
         </div>
-        <div className={styles.fields}>
-          <Select
-            label="Type"
-            options={issueTypeOptions}
-            value={issueType}
-            onChange={(e) => setIssueType(e.target.value as IssueType)}
-          />
-          <Select
-            label="Assignee"
-            options={assigneeOptions}
-            value={assignee}
-            onChange={(e) => setAssignee(e.target.value)}
-          />
-          <Select
-            label="Repository"
-            options={buildRepoOptions(repos)}
-            value={repoName}
-            onChange={(e) => setRepoName(e.target.value)}
-          />
-        </div>
+        {showMoreOptions && (
+          <div className={styles.fields}>
+            <Select
+              label="Type"
+              options={issueTypeOptions}
+              value={issueType}
+              onChange={(e) => setIssueType(e.target.value as IssueType)}
+            />
+            <Select
+              label="Assignee"
+              options={assigneeOptions}
+              value={assignee}
+              onChange={(e) => setAssignee(e.target.value)}
+            />
+            <Select
+              label="Repository"
+              options={buildRepoOptions(repos)}
+              value={repoName}
+              onChange={(e) => setRepoName(e.target.value)}
+            />
+          </div>
+        )}
         <LabelPicker selectedNames={labelNames} onChange={setLabelNames} />
         <div className={styles.footer}>
-          <span className={styles.hint}>
-            {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to
-            submit
-          </span>
+          <div className={styles.footerLeft}>
+            <button
+              type="button"
+              className={styles.toggleOptions}
+              onClick={() => setShowMoreOptions(!showMoreOptions)}
+            >
+              {showMoreOptions ? "Hide options" : "More options"}
+            </button>
+            <span className={styles.hint}>
+              {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to
+              submit
+            </span>
+          </div>
           <div className={styles.footerActions}>
             <Button variant="secondary" size="md" onClick={handleClose}>
               Cancel
