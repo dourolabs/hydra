@@ -220,9 +220,82 @@ impl AppState {
         Ok(SetJobStatusResponse::new(job_id, status.as_status()))
     }
 
+    /// Resolves per-user secrets with global fallback, injecting them into `env_vars`.
+    ///
+    /// For each API key (OPENAI_API_KEY, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN):
+    /// 1. Check user_secrets for the task creator (requires SecretManager)
+    /// 2. Fall back to the server environment variable
+    /// 3. Fall back to the config file value
+    async fn resolve_secrets_into_env_vars(
+        &self,
+        creator: &Username,
+        env_vars: &mut HashMap<String, String>,
+    ) {
+        use metis_common::constants::{
+            ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
+        };
+
+        let secret_entries: [(&str, Option<&str>); 3] = [
+            (
+                ENV_OPENAI_API_KEY,
+                self.config.metis.openai_api_key.as_deref(),
+            ),
+            (
+                ENV_ANTHROPIC_API_KEY,
+                self.config.metis.anthropic_api_key.as_deref(),
+            ),
+            (
+                ENV_CLAUDE_CODE_OAUTH_TOKEN,
+                self.config.metis.claude_code_oauth_token.as_deref(),
+            ),
+        ];
+
+        for (secret_name, config_fallback) in secret_entries {
+            // 1. Try user-specific secret (if SecretManager is available)
+            if let Some(secret_manager) = &self.secret_manager {
+                match self.store.get_user_secret(creator, secret_name).await {
+                    Ok(Some(encrypted)) => match secret_manager.decrypt(&encrypted) {
+                        Ok(value) if !value.trim().is_empty() => {
+                            env_vars.insert(secret_name.to_string(), value);
+                            continue;
+                        }
+                        Ok(_) => {}
+                        Err(err) => {
+                            warn!(
+                                username = %creator,
+                                secret = secret_name,
+                                error = %err,
+                                "failed to decrypt user secret, falling back to global config"
+                            );
+                        }
+                    },
+                    Ok(None) => {}
+                    Err(err) => {
+                        warn!(
+                            username = %creator,
+                            secret = secret_name,
+                            error = %err,
+                            "failed to look up user secret, falling back to global config"
+                        );
+                    }
+                }
+            }
+
+            // 2. Fall back to server env var, then config file value
+            let global_value = std::env::var(secret_name)
+                .ok()
+                .or_else(|| config_fallback.map(str::to_string))
+                .filter(|v| !v.trim().is_empty());
+
+            if let Some(value) = global_value {
+                env_vars.insert(secret_name.to_string(), value);
+            }
+        }
+    }
+
     pub async fn start_pending_task(&self, task_id: TaskId, actor: ActorRef) {
         let job_config = self.config.job.clone();
-        let (resolved, cpu_limit, memory_limit) = {
+        let (mut resolved, cpu_limit, memory_limit, creator) = {
             let store = self.store.as_ref();
             match store.get_task(&task_id, false).await {
                 Ok(task) => match self.resolve_task(&task.item).await {
@@ -230,6 +303,7 @@ impl AppState {
                         resolved,
                         task.item.cpu_limit.clone(),
                         task.item.memory_limit.clone(),
+                        task.item.creator.clone(),
                     ),
                     Err(err) => {
                         warn!(
@@ -250,6 +324,10 @@ impl AppState {
                 }
             }
         };
+
+        // Resolve per-user secrets with global fallback and inject into env_vars.
+        self.resolve_secrets_into_env_vars(&creator, &mut resolved.env_vars)
+            .await;
 
         let cpu_limit = cpu_limit.unwrap_or_else(|| job_config.cpu_limit.clone());
         let memory_limit = memory_limit.unwrap_or_else(|| job_config.memory_limit.clone());

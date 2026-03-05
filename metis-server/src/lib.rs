@@ -31,9 +31,7 @@ use axum::{
     routing::{get, post, put},
 };
 use jsonwebtoken::EncodingKey;
-use metis_common::constants::{
-    ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_CONFIG, ENV_OPENAI_API_KEY,
-};
+use metis_common::constants::ENV_METIS_CONFIG;
 use octocrab::Octocrab;
 use serde_json::json;
 use std::{env, path::PathBuf, sync::Arc};
@@ -257,25 +255,6 @@ pub async fn run() -> anyhow::Result<()> {
     let service_state = ServiceState::default();
     let github_app = build_github_app_client(&app_config.github_app)?;
 
-    // Resolve OpenAI API key
-    let openai_api_key = env::var(ENV_OPENAI_API_KEY)
-        .ok()
-        .or_else(|| app_config.metis.openai_api_key.clone())
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "{ENV_OPENAI_API_KEY} is not set. Provide it via the environment or config.yaml."
-            )
-        })?;
-    let anthropic_api_key = env::var(ENV_ANTHROPIC_API_KEY)
-        .ok()
-        .or_else(|| app_config.metis.anthropic_api_key.clone())
-        .filter(|value| !value.trim().is_empty());
-    let claude_code_oauth_token = env::var(ENV_CLAUDE_CODE_OAUTH_TOKEN)
-        .ok()
-        .or_else(|| app_config.metis.claude_code_oauth_token.clone())
-        .filter(|value| !value.trim().is_empty());
-
     // Build Kubernetes client
     let kube_client = build_kube_client(&app_config.kubernetes).await?;
 
@@ -312,9 +291,6 @@ pub async fn run() -> anyhow::Result<()> {
     // Create job engine
     let job_engine = KubernetesJobEngine {
         namespace: app_config.metis.namespace.clone(),
-        openai_api_key,
-        anthropic_api_key,
-        claude_code_oauth_token: claude_code_oauth_token.clone(),
         server_hostname: app_config.metis.server_hostname.clone(),
         client: kube_client,
         image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
