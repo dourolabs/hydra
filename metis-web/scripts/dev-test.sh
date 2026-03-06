@@ -11,16 +11,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-MOCK_PID=""
-BFF_PID=""
-VITE_PID=""
-
 cleanup() {
   echo ""
   echo "Shutting down dev stack..."
-  [ -n "$VITE_PID" ] && kill "$VITE_PID" 2>/dev/null || true
-  [ -n "$BFF_PID" ] && kill "$BFF_PID" 2>/dev/null || true
-  [ -n "$MOCK_PID" ] && kill "$MOCK_PID" 2>/dev/null || true
+  # Kill all processes in our process group (includes all background children
+  # and their descendants). This prevents orphaned Node.js/Vite/tsx processes.
+  kill 0 2>/dev/null || true
   wait 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
@@ -62,13 +58,11 @@ wait_for_url() {
 # Start mock server (port 8080)
 echo "Starting mock server..."
 pnpm --filter @metis/mock-server dev &
-MOCK_PID=$!
 wait_for_url "http://localhost:8080/health" "Mock server" 30
 
 # Start BFF (port 4000), pointing at mock server
 echo "Starting BFF server..."
 METIS_SERVER_URL=http://localhost:8080 COOKIE_SECURE=false pnpm --filter @metis/web dev:server &
-BFF_PID=$!
 wait_for_url "http://localhost:4000/health" "BFF server" 30
 
 # Build API and UI packages, then start Vite dev server (port 3000)
@@ -76,7 +70,6 @@ echo "Building API and UI packages..."
 pnpm --filter @metis/api build && pnpm --filter @metis/ui build
 echo "Starting Vite dev server..."
 pnpm --filter @metis/web dev &
-VITE_PID=$!
 wait_for_port 3000 "Vite dev server" 60
 
 echo ""
