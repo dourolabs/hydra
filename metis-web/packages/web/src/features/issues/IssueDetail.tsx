@@ -10,6 +10,7 @@ import { IssueActivity } from "./IssueActivity";
 import { IssueUpdateModal } from "./IssueUpdateModal";
 import { JobList } from "../jobs/JobList";
 import { PatchList } from "../patches/PatchList";
+import { PatchPreview } from "./PatchPreview";
 import { IssueSettings } from "./IssueSettings";
 import { IssueLabelEditor } from "./IssueLabelEditor";
 import styles from "./IssueDetail.module.css";
@@ -118,6 +119,14 @@ export function IssueDetail({ record }: IssueDetailProps) {
           <p className={styles.empty}>No description.</p>
         )}
       </div>
+
+      {/* Patch Preview */}
+      {(issue.patches ?? []).length > 0 && (
+        <PatchPreview
+          patchIds={issue.patches ?? []}
+          issueId={record.issue_id}
+        />
+      )}
 
       {/* Progress */}
       {issue.progress && (
