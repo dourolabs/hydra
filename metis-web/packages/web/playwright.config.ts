@@ -17,6 +17,14 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "Mobile Chrome",
+      testDir: "./e2e/tests/mobile",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 375, height: 812 },
+      },
+    },
   ],
   webServer: [
     {
