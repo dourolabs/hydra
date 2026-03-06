@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Badge, Spinner, Tabs } from "@metis/ui";
+import { Badge, Button, Spinner, Tabs } from "@metis/ui";
 import { normalizeJobStatus } from "../utils/statusMapping";
 import { getRuntime } from "../utils/time";
 import { useJob } from "../features/jobs/useJob";
 import { JobLogViewer } from "../features/jobs/JobLogViewer";
 import { JobSettings } from "../features/jobs/JobSettings";
+import { KillJobModal } from "../features/jobs/KillJobModal";
 import { ApiError } from "../api/client";
 import { Breadcrumbs } from "../layout/Breadcrumbs";
 import styles from "./JobLogPage.module.css";
@@ -22,6 +23,7 @@ export function JobLogPage() {
   }>();
   const { data: record, isLoading, error } = useJob(jobId ?? "");
   const [activeTab, setActiveTab] = useState("logs");
+  const [killModalOpen, setKillModalOpen] = useState(false);
 
   return (
     <div className={styles.page}>
@@ -60,6 +62,15 @@ export function JobLogPage() {
             <div className={styles.headerTop}>
               <span className={styles.jobId}>{record.job_id}</span>
               <Badge status={normalizeJobStatus(record.task.status)} />
+              {record.task.status === "running" && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => setKillModalOpen(true)}
+                >
+                  Kill Job
+                </Button>
+              )}
             </div>
             <div className={styles.meta}>
               <div className={styles.metaItem}>
@@ -93,6 +104,12 @@ export function JobLogPage() {
             <JobLogViewer jobId={record.job_id} status={record.task.status} />
           )}
           {activeTab === "settings" && <JobSettings task={record.task} />}
+
+          <KillJobModal
+            open={killModalOpen}
+            onClose={() => setKillModalOpen(false)}
+            jobId={record.job_id}
+          />
         </>
       )}
     </div>

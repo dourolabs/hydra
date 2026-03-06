@@ -51,6 +51,10 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@errors:404` — User sees a not-found message for non-existent entities
 - `@errors:server-error` — User sees an error message when the server returns 500
 
+## Jobs
+
+- `@jobs:kill` — User can kill a running job with confirmation
+
 ## Mobile Viewport
 
 - `@mobile:nav` — Navigation works correctly on mobile viewport
