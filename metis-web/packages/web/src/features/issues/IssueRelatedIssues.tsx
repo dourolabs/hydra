@@ -4,6 +4,7 @@ import { ItemRow } from "../dashboard/ItemRow";
 import type { WorkItem } from "../dashboard/useTransitiveWorkItems";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { useIssues } from "./useIssues";
+import { useAllJobs } from "../jobs/useAllJobs";
 import { topologicalSort } from "./topologicalSort";
 import styles from "./IssueRelatedIssues.module.css";
 
@@ -23,6 +24,7 @@ interface IssueRelatedIssuesProps {
 
 export function IssueRelatedIssues({ issueId }: IssueRelatedIssuesProps) {
   const { data: allIssues, isLoading } = useIssues();
+  const { data: jobsByIssue } = useAllJobs();
 
   if (isLoading) {
     return <Spinner size="sm" />;
@@ -62,7 +64,7 @@ export function IssueRelatedIssues({ issueId }: IssueRelatedIssuesProps) {
   return (
     <ul className={styles.list}>
       {allRelated.map((record) => (
-        <ItemRow key={record.issue_id} item={toWorkItem(record)} />
+        <ItemRow key={record.issue_id} item={toWorkItem(record)} jobs={jobsByIssue?.get(record.issue_id)} />
       ))}
     </ul>
   );
