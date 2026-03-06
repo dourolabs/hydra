@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path, process::Stdio};
+use std::{collections::HashMap, path::Path, process::Stdio, time::Instant};
 
 use crate::claude_formatter::StreamFormatter;
 use anyhow::{anyhow, Context, Result};
@@ -239,6 +239,10 @@ impl ClaudeCommands {
             .spawn()
             .context("failed to spawn claude command")?;
 
+        let spawn_time = Instant::now();
+        let pid = child.id().unwrap_or(0);
+        println!("Claude process spawned (PID: {pid})");
+
         #[cfg(unix)]
         let child_pgid = child.id();
 
@@ -276,6 +280,8 @@ impl ClaudeCommands {
                     .await
                     .context("failed to read claude stdout")?;
                 if read == 0 {
+                    let elapsed = spawn_time.elapsed().as_secs_f64();
+                    println!("Claude stdout EOF reached (PID: {pid}, elapsed: {elapsed:.2}s)");
                     break;
                 }
                 for formatted in formatter.handle_line(&line) {
@@ -295,10 +301,15 @@ impl ClaudeCommands {
         });
 
         // Wait for the main claude process to exit.
+        println!("Waiting for claude process to exit (PID: {pid})…");
         let status = child
             .wait()
             .await
             .context("failed waiting for claude command to finish")?;
+        let wait_elapsed = spawn_time.elapsed().as_secs_f64();
+        println!(
+            "Claude process exited (PID: {pid}, status: {status}, elapsed: {wait_elapsed:.2}s)"
+        );
 
         // The main process has exited. Give stdout a grace period to reach EOF
         // (it will if no background processes inherited the pipe).
