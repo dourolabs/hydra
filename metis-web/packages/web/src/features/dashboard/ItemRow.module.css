@@ -210,6 +210,10 @@
   white-space: nowrap;
 }
 
+.timerRunning {
+  color: var(--color-status-in-progress);
+}
+
 @media (max-width: 768px) {
   .row {
     padding: var(--space-2);
