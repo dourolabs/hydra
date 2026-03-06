@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
-import { computeIssueProgress } from "./computeIssueProgress";
+import { computeIssueProgress, computeIsActiveMap } from "./computeIssueProgress";
 
 // ---------------------------------------------------------------------------
 // Test data helpers
@@ -330,6 +330,18 @@ describe("computeIssueProgress", () => {
     expect(result[0].needsAttentionCount).toBe(1);
   });
 
+  it("needsAttentionCount counts in-progress descendants assigned to user", () => {
+    const root = makeNode("root-1", {
+      children: [
+        makeNode("c1", { status: "in-progress", assignee: "alice" }),
+        makeNode("c2", { status: "open", assignee: "alice" }),
+        makeNode("c3", { status: "closed", assignee: "alice" }),
+      ],
+    });
+    const result = computeIssueProgress([root], new Map(), "alice");
+    expect(result[0].needsAttentionCount).toBe(2); // c1 (in-progress) + c2 (open)
+  });
+
   it("needsAttentionCount is independent per root", () => {
     const root1 = makeNode("root-1", {
       status: "open",
@@ -344,6 +356,100 @@ describe("computeIssueProgress", () => {
     const result = computeIssueProgress([root1, root2], new Map(), "alice");
     expect(result[0].needsAttentionCount).toBe(2); // root1 + c1
     expect(result[1].needsAttentionCount).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // children hasActiveTask (recursive) tests
+  // ---------------------------------------------------------------------------
+
+  it("child hasActiveTask is true when child has a direct running job", () => {
+    const root = makeNode("root-1", {
+      children: [makeNode("c1", { status: "open" })],
+    });
+    const jobsByIssue = new Map([["c1", [makeJob({ status: "running" })]]]);
+    const result = computeIssueProgress([root], jobsByIssue);
+    expect(result[0].children[0].hasActiveTask).toBe(true);
+  });
+
+  it("child hasActiveTask is true when grandchild has a running job (recursive)", () => {
+    const grandchild = makeNode("gc1", { status: "open" });
+    const child = makeNode("c1", { status: "open", children: [grandchild] });
+    const root = makeNode("root-1", { children: [child] });
+    const jobsByIssue = new Map([["gc1", [makeJob({ status: "running" })]]]);
+    const result = computeIssueProgress([root], jobsByIssue);
+    expect(result[0].children[0].hasActiveTask).toBe(true);
+  });
+
+  it("child hasActiveTask is false when no descendant has running/pending job", () => {
+    const grandchild = makeNode("gc1", { status: "open" });
+    const child = makeNode("c1", { status: "open", children: [grandchild] });
+    const root = makeNode("root-1", { children: [child] });
+    const jobsByIssue = new Map([["gc1", [makeJob({ status: "complete" })]]]);
+    const result = computeIssueProgress([root], jobsByIssue);
+    expect(result[0].children[0].hasActiveTask).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeIsActiveMap tests
+// ---------------------------------------------------------------------------
+
+describe("computeIsActiveMap", () => {
+  it("returns empty map for empty input", () => {
+    const result = computeIsActiveMap([], new Map());
+    expect(result.size).toBe(0);
+  });
+
+  it("marks issue as active when it has a running job", () => {
+    const issues = [makeIssueRecord({ issue_id: "i-1" })];
+    const jobsByIssue = new Map([["i-1", [makeJob({ status: "running" })]]]);
+    const result = computeIsActiveMap(issues, jobsByIssue);
+    expect(result.get("i-1")).toBe(true);
+  });
+
+  it("marks parent as active when child has running job", () => {
+    const parent = makeIssueRecord({ issue_id: "parent" });
+    const child = {
+      ...makeIssueRecord({ issue_id: "child" }),
+      issue: {
+        ...makeIssueRecord({ issue_id: "child" }).issue,
+        dependencies: [{ type: "child-of" as const, issue_id: "parent" }],
+      },
+    } as typeof parent;
+    const jobsByIssue = new Map([["child", [makeJob({ status: "running" })]]]);
+    const result = computeIsActiveMap([parent, child], jobsByIssue);
+    expect(result.get("parent")).toBe(true);
+    expect(result.get("child")).toBe(true);
+  });
+
+  it("marks grandparent as active when grandchild has running job", () => {
+    const gp = makeIssueRecord({ issue_id: "gp" });
+    const p = {
+      ...makeIssueRecord({ issue_id: "p" }),
+      issue: {
+        ...makeIssueRecord({ issue_id: "p" }).issue,
+        dependencies: [{ type: "child-of" as const, issue_id: "gp" }],
+      },
+    } as typeof gp;
+    const c = {
+      ...makeIssueRecord({ issue_id: "c" }),
+      issue: {
+        ...makeIssueRecord({ issue_id: "c" }).issue,
+        dependencies: [{ type: "child-of" as const, issue_id: "p" }],
+      },
+    } as typeof gp;
+    const jobsByIssue = new Map([["c", [makeJob({ status: "pending" })]]]);
+    const result = computeIsActiveMap([gp, p, c], jobsByIssue);
+    expect(result.get("gp")).toBe(true);
+    expect(result.get("p")).toBe(true);
+    expect(result.get("c")).toBe(true);
+  });
+
+  it("marks issue as inactive when all jobs are complete", () => {
+    const issues = [makeIssueRecord({ issue_id: "i-1" })];
+    const jobsByIssue = new Map([["i-1", [makeJob({ status: "complete" })]]]);
+    const result = computeIsActiveMap(issues, jobsByIssue);
+    expect(result.get("i-1")).toBe(false);
   });
 });
 

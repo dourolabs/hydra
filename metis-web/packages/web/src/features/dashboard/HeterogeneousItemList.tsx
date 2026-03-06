@@ -11,6 +11,7 @@ interface HeterogeneousItemListProps {
   items: WorkItem[];
   jobsByIssue: Map<string, JobSummaryRecord[]>;
   childStatusMap: Map<string, ChildStatus[]>;
+  isActiveMap: Map<string, boolean>;
   isLoading: boolean;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
@@ -39,6 +40,7 @@ export function HeterogeneousItemList({
   items,
   jobsByIssue,
   childStatusMap,
+  isActiveMap,
   isLoading,
   sidebarCollapsed,
   onToggleSidebar,
@@ -144,6 +146,7 @@ export function HeterogeneousItemList({
                       ? childStatusMap.get(item.id)
                       : undefined
                   }
+                  isActive={item.kind === "issue" ? (isActiveMap.get(item.id) ?? false) : false}
                   filterRootId={filterRootId}
                   inboxLabelId={inboxLabelId}
                 />
@@ -191,6 +194,7 @@ export function HeterogeneousItemList({
                       ? childStatusMap.get(item.id)
                       : undefined
                   }
+                  isActive={item.kind === "issue" ? (isActiveMap.get(item.id) ?? false) : false}
                   filterRootId={filterRootId}
                   inboxLabelId={inboxLabelId}
                 />
