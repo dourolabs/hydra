@@ -16,6 +16,7 @@ const TABS = [
   { id: "diff", label: "Diff" },
   { id: "reviews", label: "Reviews" },
   { id: "activity", label: "Activity" },
+  { id: "metadata", label: "Metadata" },
 ];
 
 export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
@@ -24,30 +25,14 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
 
   return (
     <div className={styles.detail}>
-      {/* Header: ID + Status */}
+      {/* Header: Title + Status */}
       <div className={styles.header}>
-        <span className={styles.patchId}>{record.patch_id}</span>
+        <h2 className={styles.title}>{patch.title}</h2>
         <Badge status={patchToBadgeStatus(patch.status)} />
       </div>
 
-      {/* Title */}
-      <h2 className={styles.title}>{patch.title}</h2>
-
-      {/* Metadata */}
+      {/* Metadata row: Branch, Base, Repository, GitHub PR, CI */}
       <div className={styles.meta}>
-        <div className={styles.metaItem}>
-          <span className={styles.metaLabel}>Creator</span>
-          <span className={styles.metaValue}>
-            <Avatar name={patch.creator} size="sm" />
-            {patch.creator}
-          </span>
-        </div>
-        <div className={styles.metaItem}>
-          <span className={styles.metaLabel}>Updated</span>
-          <span className={styles.metaValue}>
-            {formatTimestamp(record.timestamp)}
-          </span>
-        </div>
         {patch.branch_name && (
           <div className={styles.metaItem}>
             <span className={styles.metaLabel}>Branch</span>
@@ -68,16 +53,10 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
             </span>
           </div>
         )}
-      </div>
-
-      {/* GitHub PR Section */}
-      {patch.github && (
-        <Panel
-          header={<span className={styles.sectionTitle}>GitHub Pull Request</span>}
-        >
-          <div className={styles.sectionBody}>
-            <div className={styles.ghRow}>
-              <span className={styles.ghLabel}>PR</span>
+        {patch.github && (
+          <div className={styles.metaItem}>
+            <span className={styles.metaLabel}>GitHub</span>
+            <span className={styles.metaValue}>
               {patch.github.url ? (
                 <a
                   href={patch.github.url}
@@ -89,45 +68,31 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
                   {String(patch.github.number)} ↗
                 </a>
               ) : (
-                <span className={styles.metaValue}>
+                <>
                   {patch.github.owner}/{patch.github.repo}#
                   {String(patch.github.number)}
+                </>
+              )}
+            </span>
+          </div>
+        )}
+        {patch.github?.ci && (
+          <div className={styles.metaItem}>
+            <span className={styles.metaLabel}>CI</span>
+            <span className={styles.metaValue}>
+              <Badge status={ciToBadgeStatus(patch.github.ci.state)} />
+              <span className={styles.ciState}>{patch.github.ci.state}</span>
+              {patch.github.ci.failure && (
+                <span className={styles.ciFailure}>
+                  {patch.github.ci.failure.name}
+                  {patch.github.ci.failure.summary &&
+                    `: ${patch.github.ci.failure.summary}`}
                 </span>
               )}
-            </div>
-            {patch.github.head_ref && (
-              <div className={styles.ghRow}>
-                <span className={styles.ghLabel}>Head</span>
-                <span className={styles.metaValueMono}>
-                  {patch.github.head_ref}
-                </span>
-              </div>
-            )}
-            {patch.github.base_ref && (
-              <div className={styles.ghRow}>
-                <span className={styles.ghLabel}>Base</span>
-                <span className={styles.metaValueMono}>
-                  {patch.github.base_ref}
-                </span>
-              </div>
-            )}
-            {patch.github.ci && (
-              <div className={styles.ghRow}>
-                <span className={styles.ghLabel}>CI</span>
-                <Badge status={ciToBadgeStatus(patch.github.ci.state)} />
-                <span className={styles.ciState}>{patch.github.ci.state}</span>
-                {patch.github.ci.failure && (
-                  <span className={styles.ciFailure}>
-                    {patch.github.ci.failure.name}
-                    {patch.github.ci.failure.summary &&
-                      `: ${patch.github.ci.failure.summary}`}
-                  </span>
-                )}
-              </div>
-            )}
+            </span>
           </div>
-        </Panel>
-      )}
+        )}
+      </div>
 
       {/* Description */}
       {patch.description && (
@@ -156,7 +121,7 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
         </Panel>
       )}
 
-      {/* Tabbed sections: Reviews, Activity */}
+      {/* Tabbed sections: Diff, Reviews, Activity, Metadata */}
       <Panel
         header={
           <Tabs
@@ -175,6 +140,31 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
           )}
           {activeTab === "activity" && (
             <PatchActivity patchId={record.patch_id} />
+          )}
+          {activeTab === "metadata" && (
+            <div className={styles.metadataTab}>
+              <div className={styles.metaItem}>
+                <span className={styles.metaLabel}>Creator</span>
+                <span className={styles.metaValue}>
+                  <Avatar name={patch.creator} size="sm" />
+                  {patch.creator}
+                </span>
+              </div>
+              <div className={styles.metaItem}>
+                <span className={styles.metaLabel}>Updated</span>
+                <span className={styles.metaValue}>
+                  {formatTimestamp(record.timestamp)}
+                </span>
+              </div>
+              <div className={styles.metaItem}>
+                <span className={styles.metaLabel}>Patch ID</span>
+                <span className={styles.metaValueMono}>{record.patch_id}</span>
+              </div>
+              <div className={styles.metaItem}>
+                <span className={styles.metaLabel}>Version</span>
+                <span className={styles.metaValue}>{record.version}</span>
+              </div>
+            </div>
           )}
         </div>
       </Panel>

@@ -8,17 +8,10 @@
 .sectionBody { composes: sectionBody from '../detail.module.css'; }
 .empty { composes: empty from '../detail.module.css'; }
 
-.patchId {
-  color: var(--color-accent);
-  font-size: var(--font-size-xl);
-  font-weight: 700;
-  font-family: var(--font-family-mono);
-}
-
 .title {
   color: var(--color-text-primary);
-  font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-size: var(--font-size-xl);
+  font-weight: 700;
   margin: 0;
 }
 
@@ -120,6 +113,13 @@
 .reviewBody {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+}
+
+/* Metadata tab */
+.metadataTab {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
 }
 
 /* Mobile adjustments */
