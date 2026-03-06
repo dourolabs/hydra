@@ -57,17 +57,19 @@ export interface IssueProgress {
   children: ChildStatus[];
 }
 
-export function countMyIssuesNeedingAttention(
+/**
+ * Count issues needing attention for a badge.
+ * An issue needs attention when it is open/in-progress and matches the filter.
+ */
+export function countNeedsAttentionBadge(
   issues: IssueSummaryRecord[],
-  username: string,
-  isActiveMap: Map<string, boolean>,
+  filter: (issue: IssueSummaryRecord) => boolean,
 ): number {
   return issues.filter((issue) => {
     const status = issue.issue.status;
     return (
-      issue.issue.assignee === username &&
       (status === "open" || status === "in-progress") &&
-      !(isActiveMap.get(issue.issue_id) ?? false)
+      filter(issue)
     );
   }).length;
 }

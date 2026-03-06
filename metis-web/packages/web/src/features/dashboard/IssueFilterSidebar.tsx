@@ -214,20 +214,6 @@ export function IssueFilterSidebar({
         )}
       </li>
       <li
-        className={`${styles.item} ${activeFilter === null ? styles.active : ""}`}
-        onClick={() => handleFilterChange(null)}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            handleFilterChange(null);
-          }
-        }}
-      >
-        <span className={styles.itemLabel}>Everything</span>
-      </li>
-      <li
         className={`${styles.item} ${activeFilter === "my-issues" ? styles.active : ""}`}
         onClick={() => handleFilterChange("my-issues")}
         role="button"
@@ -243,6 +229,20 @@ export function IssueFilterSidebar({
         {myIssuesCount > 0 && (
           <span className={styles.inboxCount}>{myIssuesCount}</span>
         )}
+      </li>
+      <li
+        className={`${styles.item} ${activeFilter === null ? styles.active : ""}`}
+        onClick={() => handleFilterChange(null)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleFilterChange(null);
+          }
+        }}
+      >
+        <span className={styles.itemLabel}>Everything</span>
       </li>
       {activeList.map(renderItem)}
       {completedList.length > 0 && (
