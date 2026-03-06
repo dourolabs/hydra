@@ -119,15 +119,18 @@
 .labels {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
-.labelSwatch {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.labelChip {
+  font-size: var(--font-size-xs);
+  padding: 1px 8px;
+  border-radius: 9999px;
+  white-space: nowrap;
   flex-shrink: 0;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .jobIndicator {
@@ -226,6 +229,10 @@
 @media (max-width: 768px) {
   .row {
     padding: var(--space-2);
+  }
+
+  .labels {
+    display: none;
   }
 
   .title {
