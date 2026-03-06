@@ -116,16 +116,6 @@
   flex-shrink: 0;
 }
 
-.labelChip {
-  font-size: var(--font-size-xs);
-  padding: 1px 8px;
-  border-radius: 9999px;
-  white-space: nowrap;
-  flex-shrink: 0;
-  font-weight: 500;
-  line-height: 1.4;
-}
-
 .assignee {
   display: inline-flex;
   align-items: center;
