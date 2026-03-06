@@ -4,7 +4,7 @@ metis:
 
   # Required: base64-encoded 32-byte encryption key for user secrets.
   # Generate with: openssl rand -base64 32
-  secret_encryption_key: "REPLACE_WITH_BASE64_ENCODED_32_BYTE_KEY"
+  METIS_SECRET_ENCRYPTION_KEY: "REPLACE_WITH_BASE64_ENCODED_32_BYTE_KEY"
 
   # Optional fallback if the OPENAI_API_KEY environment variable is unset.
   OPENAI_API_KEY: ""
