@@ -455,6 +455,12 @@
     "l-seed00003": {
       "name": "infra",
       "color": "#2ecc71"
+    },
+    "l-inbox": {
+      "name": "inbox",
+      "color": "#6b7280",
+      "recurse": false,
+      "hidden": true
     }
   },
   "label_associations": [
@@ -464,6 +470,9 @@
     { "label_id": "l-seed00002", "object_id": "i-seed00003" },
     { "label_id": "l-seed00002", "object_id": "i-seed00004" },
     { "label_id": "l-seed00003", "object_id": "i-seed00006" },
-    { "label_id": "l-seed00001", "object_id": "i-seed00008" }
+    { "label_id": "l-seed00001", "object_id": "i-seed00008" },
+    { "label_id": "l-inbox", "object_id": "i-seed00007" },
+    { "label_id": "l-inbox", "object_id": "i-seed00008" },
+    { "label_id": "l-inbox", "object_id": "i-seed00010" }
   ]
 }

@@ -8,6 +8,8 @@ import { clearAssociations, addAssociation } from "./routes/labels.js";
 interface LabelData {
   name: string;
   color: string;
+  recurse?: boolean;
+  hidden?: boolean;
 }
 
 interface LabelAssociationSeed {
@@ -66,7 +68,13 @@ export function loadSeedData(store: Store): void {
 
   if (seed.labels) {
     for (const [id, label] of Object.entries(seed.labels)) {
-      store.create<LabelData>("labels", id, label, null);
+      const normalized = {
+        name: label.name,
+        color: label.color,
+        recurse: label.recurse ?? true,
+        hidden: label.hidden ?? false,
+      };
+      store.create("labels", id, normalized, null);
     }
   }
 

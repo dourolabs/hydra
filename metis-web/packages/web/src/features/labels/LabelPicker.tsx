@@ -28,6 +28,7 @@ export function LabelPicker({ selectedNames, onChange }: LabelPickerProps) {
 
   const filteredLabels = (labels ?? []).filter(
     (label: LabelRecord) =>
+      !label.hidden &&
       !selectedNames.includes(label.name) &&
       label.name.toLowerCase().includes(inputValue.toLowerCase()),
   );

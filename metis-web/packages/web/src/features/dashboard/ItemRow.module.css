@@ -192,6 +192,29 @@
   display: block;
 }
 
+.archiveButton {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.archiveButton:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-tertiary);
+}
+
+.row:hover .archiveButton {
+  display: inline-flex;
+}
+
 .timestamp {
   flex-shrink: 0;
   font-size: var(--font-size-xs);

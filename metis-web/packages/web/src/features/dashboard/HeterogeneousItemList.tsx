@@ -16,6 +16,7 @@ interface HeterogeneousItemListProps {
   filterRootId: string | null;
   searchValue: string;
   onSearchChange: (value: string) => void;
+  inboxLabelId?: string;
 }
 
 /** Artifacts are patches and documents regardless of terminal status. */
@@ -42,6 +43,7 @@ export function HeterogeneousItemList({
   filterRootId,
   searchValue,
   onSearchChange,
+  inboxLabelId,
 }: HeterogeneousItemListProps) {
   const activeItems = useMemo(
     () => topologicalSortWorkItems(items.filter(isActiveItem)),
@@ -135,6 +137,7 @@ export function HeterogeneousItemList({
                       : undefined
                   }
                   filterRootId={filterRootId}
+                  inboxLabelId={inboxLabelId}
                 />
               ))}
             </ul>
@@ -175,6 +178,7 @@ export function HeterogeneousItemList({
                       : undefined
                   }
                   filterRootId={filterRootId}
+                  inboxLabelId={inboxLabelId}
                 />
               ))}
             </ul>

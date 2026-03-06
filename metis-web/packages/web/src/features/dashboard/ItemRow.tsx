@@ -1,9 +1,11 @@
 import React, { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar, JobStatusIndicator } from "@metis/ui";
 import type { JobSummaryRecord, LabelSummary } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { useAuth } from "../auth/useAuth";
+import { apiClient } from "../../api/client";
 import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
@@ -64,11 +66,21 @@ interface ItemRowProps {
   item: WorkItem;
   jobs?: JobSummaryRecord[];
   filterRootId?: string | null;
+  inboxLabelId?: string;
 }
 
-export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
+export function ItemRow({ item, jobs, filterRootId, inboxLabelId }: ItemRowProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  const archiveMutation = useMutation({
+    mutationFn: (issueId: string) =>
+      apiClient.removeLabelFromObject(inboxLabelId!, issueId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["issues"] });
+    },
+  });
   const Icon = TYPE_ICONS[item.kind];
 
   const handleClick = useCallback(() => {
@@ -151,10 +163,12 @@ export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
   if (item.isTerminal) rowClasses.push(styles.terminal);
   if (isAssignedToMe) rowClasses.push(styles.assignedToMe);
 
-  // Labels (issues only)
+  // Labels (issues only) — filter out hidden labels
   const allLabels = item.kind === "issue" && item.data.issue.labels && item.data.issue.labels.length > 0
-    ? item.data.issue.labels
+    ? item.data.issue.labels.filter((l: LabelSummary) => !l.hidden)
     : null;
+
+  const showArchive = !!inboxLabelId && item.kind === "issue" && !item.isTerminal;
 
   return (
     <li
@@ -240,6 +254,22 @@ export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
         <span className={styles.assignee}>
           <Avatar name={assignee} size="sm" />
         </span>
+      )}
+      {showArchive && (
+        <button
+          type="button"
+          className={styles.archiveButton}
+          title="Archive"
+          onClick={(e) => {
+            e.stopPropagation();
+            archiveMutation.mutate(item.id);
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 4h12v2H2zM3 6v7a1 1 0 001 1h8a1 1 0 001-1V6" />
+            <path d="M6 9h4" />
+          </svg>
+        </button>
       )}
       <span className={styles.timestamp}>
         {formatRelativeTime(item.lastUpdated)}

@@ -7,11 +7,11 @@ test.describe("Dashboard Inbox", () => {
     // Navigate to dashboard with inbox filter
     await page.goto("/?selected=inbox");
 
-    // The Complete section should be visible with terminal issues assigned to dev-user
+    // The Complete section should be visible with terminal issues that have the inbox label
     await expect(page.getByText(/Complete \(\d+\)/)).toBeVisible();
 
     // The dropped issue "Update deployment documentation" (i-seed00010)
-    // is assigned to dev-user and should appear in the Complete section
+    // has inbox label and dev-user is assignee — should appear in Complete section
     await expect(
       page.getByText("Update deployment documentation")
     ).toBeVisible();
@@ -23,7 +23,7 @@ test.describe("Dashboard Inbox", () => {
     await page.goto("/?selected=inbox");
 
     // i-seed00007 "Fix login page 500 error on expired sessions" is closed
-    // and assigned to dev-user — should appear in Complete section
+    // with inbox label and dev-user is creator — should appear in Complete section
     await expect(
       page.getByText("Fix login page 500 error on expired sessions")
     ).toBeVisible();
