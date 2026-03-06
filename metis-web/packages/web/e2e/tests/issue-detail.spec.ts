@@ -7,7 +7,7 @@ test.describe("Issue Detail", () => {
     await page.goto("/issues/i-seed00002");
     // i-seed00002: "Migrate authentication to OAuth2"
     await expect(
-      page.getByText("i-seed00002", { exact: true })
+      page.locator('nav[aria-label="Breadcrumb"]').getByText("i-seed00002")
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Migrate authentication to OAuth2" })
@@ -73,6 +73,8 @@ test.describe("Issue Detail", () => {
     await expect(modal).not.toBeVisible();
 
     // The issue detail page should still be showing
-    await expect(page.getByText("i-seed00005", { exact: true })).toBeVisible();
+    await expect(
+      page.locator('nav[aria-label="Breadcrumb"]').getByText("i-seed00005")
+    ).toBeVisible();
   });
 });

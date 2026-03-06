@@ -32,12 +32,6 @@
   gap: var(--space-2);
 }
 
-.issueId {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  font-family: var(--font-family-mono);
-}
-
 .type {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
