@@ -94,13 +94,6 @@ test.describe("Creating an issue with labels via LabelPicker", () => {
 });
 
 test.describe("Editing labels on issue detail page via IssueLabelEditor", () => {
-  test.beforeEach(async () => {
-    await fetch("http://localhost:8080/v1/dev/reset", {
-      method: "POST",
-      headers: { Authorization: "Bearer dev-token-12345" },
-    });
-  });
-
   test("displays existing labels on issue detail", async ({
     authenticatedPage: page,
   }) => {
