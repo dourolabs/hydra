@@ -71,6 +71,7 @@ interface IssueFilterSidebarProps {
   isActiveMap: Map<string, boolean>;
   username: string;
   inboxCount: number;
+  myIssuesCount: number;
 }
 
 export function IssueFilterSidebar({
@@ -85,6 +86,7 @@ export function IssueFilterSidebar({
   isActiveMap,
   username,
   inboxCount,
+  myIssuesCount,
 }: IssueFilterSidebarProps) {
   /** On mobile, selecting an issue should also close the drawer. */
   const handleFilterChange = (rootId: string | null) => {
@@ -224,6 +226,23 @@ export function IssueFilterSidebar({
         }}
       >
         <span className={styles.itemLabel}>Everything</span>
+      </li>
+      <li
+        className={`${styles.item} ${activeFilter === "my-issues" ? styles.active : ""}`}
+        onClick={() => handleFilterChange("my-issues")}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleFilterChange("my-issues");
+          }
+        }}
+      >
+        <span className={styles.itemLabel}>My Issues</span>
+        {myIssuesCount > 0 && (
+          <span className={styles.inboxCount}>{myIssuesCount}</span>
+        )}
       </li>
       {activeList.map(renderItem)}
       {completedList.length > 0 && (

@@ -73,8 +73,18 @@ export function DashboardPage() {
     return Array.from(set).sort();
   }, [issues]);
 
+  const myIssuesCount = useMemo(() => {
+    if (!issues || !username) return 0;
+    return issues.filter(
+      (issue) =>
+        !TERMINAL_STATUSES.has(issue.issue.status) &&
+        issue.issue.creator === username,
+    ).length;
+  }, [issues, username]);
+
   const isLabelFilter = filterRootId?.startsWith(LABEL_FILTER_PREFIX) ?? false;
-  const hookRootId = filterRootId === "inbox" || isLabelFilter ? null : filterRootId;
+  const isMyIssuesFilter = filterRootId === "my-issues";
+  const hookRootId = filterRootId === "inbox" || isLabelFilter || isMyIssuesFilter ? null : filterRootId;
   const { items: allWorkItems, isLoading: workItemsLoading } =
     useTransitiveWorkItems(hookRootId, issues ?? []);
 
@@ -135,6 +145,13 @@ export function DashboardPage() {
           item.data.issue.labels?.some((l: { label_id: string }) => l.label_id === labelId),
       );
     }
+    if (isMyIssuesFilter) {
+      return allWorkItems.filter(
+        (item) =>
+          item.kind === "issue" &&
+          item.data.issue.creator === username,
+      );
+    }
     if (filterRootId !== "inbox") return allWorkItems;
     if (!inboxLabel) return [];
     return allWorkItems.filter(
@@ -143,7 +160,7 @@ export function DashboardPage() {
         item.data.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) &&
         (item.data.issue.creator === username || item.data.issue.assignee === username),
     );
-  }, [filterRootId, isLabelFilter, allWorkItems, username, inboxLabel]);
+  }, [filterRootId, isLabelFilter, isMyIssuesFilter, allWorkItems, username, inboxLabel]);
 
   useEffect(() => {
     if (!searchParams.has("selected")) {
@@ -202,6 +219,7 @@ export function DashboardPage() {
           isActiveMap={isActiveMap}
           username={username}
           inboxCount={inboxCount}
+          myIssuesCount={myIssuesCount}
         />
         <HeterogeneousItemList
           items={workItems}
