@@ -5,7 +5,6 @@ import type { IssueVersionRecord } from "@metis/api";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import { useIssue } from "./useIssue";
-import { IssueTodoList } from "./IssueTodoList";
 import { IssueRelatedIssues } from "./IssueRelatedIssues";
 import { IssueActivity } from "./IssueActivity";
 import { IssueUpdateModal } from "./IssueUpdateModal";
@@ -40,9 +39,8 @@ const TABS = [
   { id: "related", label: "Related Issues" },
   { id: "jobs", label: "Jobs" },
   { id: "patches", label: "Patches" },
-  { id: "todo", label: "Todo" },
   { id: "activity", label: "Activity" },
-  { id: "settings", label: "Settings" },
+  { id: "metadata", label: "Metadata" },
 ];
 
 export function IssueDetail({ record }: IssueDetailProps) {
@@ -100,40 +98,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
         </div>
       )}
 
-      {/* Metadata */}
-      <div className={styles.meta}>
-        {issue.creator && (
-          <div className={styles.metaItem}>
-            <span className={styles.metaLabel}>Creator</span>
-            <span className={styles.metaValue}>
-              <Avatar name={issue.creator} size="sm" />
-              {issue.creator}
-            </span>
-          </div>
-        )}
-        {issue.assignee && (
-          <div className={styles.metaItem}>
-            <span className={styles.metaLabel}>Assignee</span>
-            <span className={styles.metaValue}>
-              <Avatar name={issue.assignee} size="sm" />
-              {issue.assignee}
-            </span>
-          </div>
-        )}
-        <div className={styles.metaItem}>
-          <span className={styles.metaLabel}>Created</span>
-          <span className={styles.metaValue}>
-            {formatTimestamp(record.creation_time)}
-          </span>
-        </div>
-        <div className={styles.metaItem}>
-          <span className={styles.metaLabel}>Updated</span>
-          <span className={styles.metaValue}>
-            {formatTimestamp(record.timestamp)}
-          </span>
-        </div>
-      </div>
-
       {/* Labels */}
       <IssueLabelEditor
         issueId={record.issue_id}
@@ -158,7 +122,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
         </Panel>
       )}
 
-      {/* Tabbed sections: Related Issues, Jobs, Patches, Todo, Activity, Settings */}
+      {/* Tabbed sections: Related Issues, Jobs, Patches, Activity, Metadata */}
       <Panel
         header={
           <Tabs
@@ -179,14 +143,45 @@ export function IssueDetail({ record }: IssueDetailProps) {
               issueId={record.issue_id}
             />
           )}
-          {activeTab === "todo" && (
-            <IssueTodoList items={issue.todo_list ?? []} />
-          )}
           {activeTab === "activity" && (
             <IssueActivity issueId={record.issue_id} />
           )}
-          {activeTab === "settings" && (
-            <IssueSettings jobSettings={issue.job_settings} />
+          {activeTab === "metadata" && (
+            <>
+              <div className={styles.meta}>
+                {issue.creator && (
+                  <div className={styles.metaItem}>
+                    <span className={styles.metaLabel}>Creator</span>
+                    <span className={styles.metaValue}>
+                      <Avatar name={issue.creator} size="sm" />
+                      {issue.creator}
+                    </span>
+                  </div>
+                )}
+                {issue.assignee && (
+                  <div className={styles.metaItem}>
+                    <span className={styles.metaLabel}>Assignee</span>
+                    <span className={styles.metaValue}>
+                      <Avatar name={issue.assignee} size="sm" />
+                      {issue.assignee}
+                    </span>
+                  </div>
+                )}
+                <div className={styles.metaItem}>
+                  <span className={styles.metaLabel}>Created</span>
+                  <span className={styles.metaValue}>
+                    {formatTimestamp(record.creation_time)}
+                  </span>
+                </div>
+                <div className={styles.metaItem}>
+                  <span className={styles.metaLabel}>Updated</span>
+                  <span className={styles.metaValue}>
+                    {formatTimestamp(record.timestamp)}
+                  </span>
+                </div>
+              </div>
+              <IssueSettings jobSettings={issue.job_settings} />
+            </>
           )}
         </div>
       </Panel>
