@@ -57,6 +57,21 @@ export interface IssueProgress {
   children: ChildStatus[];
 }
 
+export function countMyIssuesNeedingAttention(
+  issues: IssueSummaryRecord[],
+  username: string,
+  isActiveMap: Map<string, boolean>,
+): number {
+  return issues.filter((issue) => {
+    const status = issue.issue.status;
+    return (
+      issue.issue.assignee === username &&
+      (status === "open" || status === "in-progress") &&
+      !(isActiveMap.get(issue.issue_id) ?? false)
+    );
+  }).length;
+}
+
 export function computeIssueProgress(
   roots: IssueTreeNode[],
   jobsByIssue?: Map<string, JobSummaryRecord[]>,

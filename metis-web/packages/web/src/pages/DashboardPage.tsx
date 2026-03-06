@@ -10,7 +10,7 @@ import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemLi
 import {
   useTransitiveWorkItems,
 } from "../features/dashboard/useTransitiveWorkItems";
-import { computeIsActiveMap, type ChildStatus } from "../features/dashboard/computeIssueProgress";
+import { computeIsActiveMap, countMyIssuesNeedingAttention, type ChildStatus } from "../features/dashboard/computeIssueProgress";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
@@ -73,15 +73,6 @@ export function DashboardPage() {
     return Array.from(set).sort();
   }, [issues]);
 
-  const myIssuesCount = useMemo(() => {
-    if (!issues || !username) return 0;
-    return issues.filter(
-      (issue) =>
-        !TERMINAL_STATUSES.has(issue.issue.status) &&
-        issue.issue.creator === username,
-    ).length;
-  }, [issues, username]);
-
   const isLabelFilter = filterRootId?.startsWith(LABEL_FILTER_PREFIX) ?? false;
   const isMyIssuesFilter = filterRootId === "my-issues";
   const hookRootId = filterRootId === "inbox" || isLabelFilter || isMyIssuesFilter ? null : filterRootId;
@@ -102,6 +93,11 @@ export function DashboardPage() {
     if (!issues || !jobsByIssue) return new Map<string, boolean>();
     return computeIsActiveMap(issues, jobsByIssue);
   }, [issues, jobsByIssue]);
+
+  const myIssuesCount = useMemo(() => {
+    if (!issues || !username) return 0;
+    return countMyIssuesNeedingAttention(issues, username, isActiveMap);
+  }, [issues, username, isActiveMap]);
 
   const childStatusMap = useMemo(() => {
     const map = new Map<string, ChildStatus[]>();
@@ -149,7 +145,7 @@ export function DashboardPage() {
       return allWorkItems.filter(
         (item) =>
           item.kind === "issue" &&
-          item.data.issue.creator === username,
+          item.data.issue.assignee === username,
       );
     }
     if (filterRootId !== "inbox") return allWorkItems;
