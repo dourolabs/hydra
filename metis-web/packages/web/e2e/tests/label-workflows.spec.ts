@@ -93,6 +93,86 @@ test.describe("Creating an issue with labels via LabelPicker @labels:create-with
   });
 });
 
+test.describe("Newly created label appears in sidebar @labels:sidebar-create", () => {
+  test("label created during issue creation shows in sidebar @labels:sidebar-create", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/?selected=everything");
+    await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
+
+    // Open the create issue modal
+    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    const modal = page.getByRole("dialog");
+    await expect(modal).toBeVisible();
+
+    // Fill in required fields
+    await modal
+      .getByPlaceholder("Short summary (optional)")
+      .fill("Sidebar label test issue");
+    await modal
+      .getByPlaceholder("Describe the issue...")
+      .fill("Testing that new labels appear in sidebar");
+
+    // Create a new label via the LabelPicker
+    const labelInput = modal.getByPlaceholder("Add labels...");
+    await labelInput.click();
+    await labelInput.fill("sidebar-test-label");
+    const createOption = modal.locator("li").filter({ hasText: /Create/ });
+    await expect(createOption).toBeVisible();
+    await createOption.click();
+
+    // Verify label chip appears in modal
+    await expect(modal.getByText("sidebar-test-label")).toBeVisible();
+
+    // Close dropdown by clicking title field
+    await modal.getByPlaceholder("Short summary (optional)").click();
+
+    // Submit the form
+    await modal.getByRole("button", { name: "Create Issue" }).click();
+    await expect(modal).not.toBeVisible();
+    await expect(page.getByText(/Issue .+ created/)).toBeVisible();
+
+    // Reload to ensure the labels list is refreshed from the server
+    await page.reload();
+    await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
+
+    // Verify the new label appears in the sidebar under Labels section
+    // Use the stats pattern (e.g. "0/1") to target the sidebar label item,
+    // not the LabelChip on the issue row
+    await expect(
+      page.getByRole("button", { name: /^sidebar-test-label \d+\/\d+$/ }),
+    ).toBeVisible();
+  });
+});
+
+test.describe("Filter by label in sidebar shows issue with badge @labels:filter", () => {
+  test("clicking a label in sidebar filters dashboard and shows label chip on issue @labels:filter", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/?selected=everything");
+    await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
+
+    // The seed data has "infra" label on i-seed00006 ("Implement API rate limiting")
+    // Click the "infra" label in the sidebar to filter
+    // Use the accessible name which includes the label name and stats (e.g. "infra 0/1")
+    const sidebarInfra = page.getByRole("button", { name: /^infra \d+\/\d+$/ });
+    await expect(sidebarInfra).toBeVisible();
+    await sidebarInfra.click();
+
+    // URL should update to contain label filter
+    await expect(page).toHaveURL(/selected=label(%3A|:)/);
+
+    // The filtered list should show the issue with the "infra" label
+    const issueRow = page.locator("li[role=button]").filter({
+      hasText: "Implement API rate limiting",
+    });
+    await expect(issueRow).toBeVisible();
+
+    // Verify the issue row has a LabelChip with "infra"
+    await expect(issueRow.getByText("infra")).toBeVisible();
+  });
+});
+
 test.describe("Editing labels on issue detail page via IssueLabelEditor @labels:edit", () => {
   test("displays existing labels on issue detail @labels:display @labels:edit", async ({
     authenticatedPage: page,

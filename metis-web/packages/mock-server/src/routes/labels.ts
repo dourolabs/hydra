@@ -78,6 +78,34 @@ export function addAssociation(labelId: string, objectId: string): void {
   }
 }
 
+/**
+ * Resolve label names to IDs, creating any that don't exist, and associate them
+ * with the given object. Mirrors the real server's label_names handling.
+ */
+export function resolveLabelNames(store: Store, names: string[], objectId: string): void {
+  _store = store;
+  for (const name of names) {
+    // Find existing label by name
+    const items = store.list<LabelData>(COLLECTION);
+    const existing = items.find(({ entry }) => entry.data.name === name);
+    let labelId: string;
+    if (existing) {
+      labelId = existing.id;
+    } else {
+      // Create the label
+      labelId = generateLabelId();
+      const labelData: LabelData = {
+        name,
+        color: defaultColor(name),
+        recurse: true,
+        hidden: false,
+      };
+      store.create<LabelData>(COLLECTION, labelId, labelData, null);
+    }
+    addAssociation(labelId, objectId);
+  }
+}
+
 export function createLabelRoutes(store: Store): Hono {
   _store = store;
   const app = new Hono();
