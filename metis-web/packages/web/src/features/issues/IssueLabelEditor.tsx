@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@metis/ui";
 import type { LabelSummary, LabelRecord } from "@metis/api";
@@ -21,7 +21,7 @@ export function IssueLabelEditor({ issueId, labels }: IssueLabelEditorProps) {
   const { addToast } = useToast();
   const { data: allLabels } = useLabels();
 
-  const visibleLabels = labels.filter((l) => !l.hidden);
+  const visibleLabels = useMemo(() => labels.filter((l) => !l.hidden), [labels]);
 
   const startEditing = useCallback(() => {
     setSelectedNames(visibleLabels.map((l) => l.name));
@@ -30,13 +30,13 @@ export function IssueLabelEditor({ issueId, labels }: IssueLabelEditorProps) {
 
   const saveMutation = useMutation({
     mutationFn: async (names: string[]) => {
-      const currentNames = new Set(labels.map((l) => l.name));
+      const currentNames = new Set(visibleLabels.map((l) => l.name));
       const targetNames = new Set(names);
 
       // Labels to add
       const toAdd = names.filter((n) => !currentNames.has(n));
-      // Labels to remove
-      const toRemove = labels.filter((l) => !targetNames.has(l.name));
+      // Labels to remove (only consider visible labels; hidden labels are never touched)
+      const toRemove = visibleLabels.filter((l) => !targetNames.has(l.name));
 
       // Remove labels
       for (const label of toRemove) {

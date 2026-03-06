@@ -125,6 +125,33 @@ test.describe("Hidden labels are excluded from all user-facing label UI @labels:
     await expect(editorArea.getByText("inbox")).not.toBeVisible();
   });
 
+  test("saving labels in edit mode preserves hidden labels @labels:hidden", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/issues/i-seed00008");
+    await expect(
+      page.getByRole("heading", { name: "Add dark mode support" })
+    ).toBeVisible();
+
+    // Enter edit mode
+    await page.getByRole("button", { name: "Edit labels" }).click();
+
+    // Save without changes
+    await page.getByRole("button", { name: "Save" }).click();
+
+    // After saving, the visible label should still be displayed
+    const labelSection = page.getByTestId("label-editor");
+    await expect(labelSection.getByText("platform-v2")).toBeVisible();
+    // Hidden "inbox" label should still not be visible (but preserved on the issue)
+    await expect(labelSection.getByText("inbox")).not.toBeVisible();
+
+    // Re-enter edit mode to confirm visible labels are still correct
+    await page.getByRole("button", { name: "Edit labels" }).click();
+    const editorArea = page.getByText("Labels", { exact: true }).locator("..").locator("..");
+    await expect(editorArea.getByText("platform-v2")).toBeVisible();
+    await expect(editorArea.getByText("inbox")).not.toBeVisible();
+  });
+
   test("hidden labels do not appear in dashboard issue rows @labels:hidden", async ({
     authenticatedPage: page,
   }) => {
