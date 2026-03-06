@@ -213,6 +213,10 @@ impl AppState {
         label_id: &LabelId,
         issue_id: &IssueId,
     ) -> Result<(), StoreError> {
+        let label = self.store.get_label(label_id).await?;
+        if !label.recurse {
+            return Ok(());
+        }
         let mut visited = HashSet::new();
         self.cascade_label_recursive(label_id, issue_id, &mut visited)
             .await
@@ -1056,6 +1060,125 @@ mod tests {
         let label = state.get_label(&label_id).await.unwrap();
         assert!(!label.recurse);
         assert!(label.hidden);
+    }
+
+    #[tokio::test]
+    async fn cascade_label_skips_non_recursive_label() {
+        use crate::domain::actors::ActorRef;
+        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use metis_common::api::v1 as api;
+
+        let state = test_state();
+
+        // Create parent issue
+        let parent =
+            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let (parent_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Create child issue
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child = crate::app::test_helpers::issue_with_status(
+            "child",
+            IssueStatus::Open,
+            vec![child_dep],
+        );
+        let (child_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Create a non-recursive label and assign to parent
+        let label_id = state
+            .create_label("inbox".to_string(), None, false, true)
+            .await
+            .unwrap();
+        let parent_obj = MetisId::from(parent_id.clone());
+        state
+            .add_label_association(&label_id, &parent_obj)
+            .await
+            .unwrap();
+
+        // Cascade should be a no-op for recurse=false
+        state
+            .cascade_label_to_children(&label_id, &parent_id)
+            .await
+            .unwrap();
+
+        // Child should NOT have the label
+        let child_obj = MetisId::from(child_id);
+        let child_labels = state.get_labels_for_object(&child_obj).await.unwrap();
+        assert!(child_labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn child_issue_does_not_inherit_non_recursive_parent_labels() {
+        use crate::domain::actors::ActorRef;
+        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use metis_common::api::v1 as api;
+
+        let state = test_state();
+
+        // Create parent and assign both recursive and non-recursive labels
+        let parent =
+            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let (parent_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let recursive_label = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
+        let non_recursive_label = state
+            .create_label("inbox".to_string(), None, false, true)
+            .await
+            .unwrap();
+        let parent_obj = MetisId::from(parent_id.clone());
+        state
+            .add_label_association(&recursive_label, &parent_obj)
+            .await
+            .unwrap();
+        state
+            .add_label_association(&non_recursive_label, &parent_obj)
+            .await
+            .unwrap();
+
+        // Create child — should only inherit the recursive label
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        let child = crate::app::test_helpers::issue_with_status(
+            "child",
+            IssueStatus::Open,
+            vec![child_dep],
+        );
+        let (child_id, _) = state
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child.into(), None),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let child_obj = MetisId::from(child_id);
+        let child_labels = state.get_labels_for_object(&child_obj).await.unwrap();
+        assert_eq!(child_labels.len(), 1);
+        assert_eq!(child_labels[0].label_id, recursive_label);
     }
 
     #[tokio::test]
