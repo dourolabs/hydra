@@ -16,8 +16,7 @@ test.describe("Dashboard Child Job Indicator @dashboard:child-job-indicator", ()
 
     // Verify the row's status dot is pulsing (hasRunningJob causes statusDotPulsing class)
     const statusDot = row.locator("span").first();
-    const statusDotClass = await statusDot.getAttribute("class");
-    expect(statusDotClass).toContain("statusDotPulsing");
+    await expect(statusDot).toHaveClass(/statusDotPulsing/);
 
     // Verify StatusBoxes are rendered (child status indicators)
     // StatusBoxes are 7x7px spans inside the rightColumn
