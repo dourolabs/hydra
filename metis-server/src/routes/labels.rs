@@ -184,10 +184,16 @@ pub async fn add_label_association(
         let issue_id = IssueId::try_from(object_id.clone()).map_err(|_| {
             ApiError::bad_request("cascade=true is only supported for issue objects")
         })?;
-        state
-            .cascade_label_to_children(&label_id, &issue_id)
+        let label = state
+            .get_label(&label_id)
             .await
-            .map_err(map_store_error)?;
+            .map_err(|e| map_label_not_found(e, &label_id))?;
+        if label.recurse {
+            state
+                .cascade_label_to_children(&label_id, &issue_id)
+                .await
+                .map_err(map_store_error)?;
+        }
     }
 
     info!(

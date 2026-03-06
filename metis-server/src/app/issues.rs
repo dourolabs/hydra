@@ -320,6 +320,9 @@ impl AppState {
                 let mut inherited = HashSet::new();
                 for labels in parent_labels.values() {
                     for label in labels {
+                        if !label.recurse {
+                            continue;
+                        }
                         if inherited.insert(label.label_id.clone()) {
                             self.add_label_association(&label.label_id, &child_object_id)
                                 .await

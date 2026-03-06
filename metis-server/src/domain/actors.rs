@@ -253,9 +253,7 @@ async fn resolve_secret_or_fallback(
     secret_name: &str,
     fallback: &str,
 ) -> String {
-    let Some(secret_manager) = &state.secret_manager else {
-        return fallback.to_string();
-    };
+    let secret_manager = &state.secret_manager;
 
     match state.store().get_user_secret(username, secret_name).await {
         Ok(Some(encrypted)) => match secret_manager.decrypt(&encrypted) {
@@ -293,9 +291,7 @@ pub(crate) async fn store_github_token_secrets(
     access_token: &str,
     refresh_token: &str,
 ) {
-    let Some(secret_manager) = &state.secret_manager else {
-        return;
-    };
+    let secret_manager = &state.secret_manager;
 
     for (secret_name, value) in [
         (SECRET_GITHUB_TOKEN, access_token),
