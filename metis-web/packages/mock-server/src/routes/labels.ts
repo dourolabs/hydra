@@ -14,6 +14,8 @@ const COLLECTION = "labels";
 interface LabelData {
   name: string;
   color: string;
+  recurse: boolean;
+  hidden: boolean;
 }
 
 interface LabelAssociation {
@@ -56,6 +58,8 @@ export function getLabelsForObject(objectId: string): LabelSummary[] {
         label_id: labelId,
         name: entry.data.name,
         color: entry.data.color,
+        recurse: entry.data.recurse,
+        hidden: entry.data.hidden,
       });
     }
   }
@@ -85,6 +89,8 @@ export function createLabelRoutes(store: Store): Hono {
     const labelData: LabelData = {
       name: body.label.name,
       color: body.label.color ?? defaultColor(body.label.name),
+      recurse: body.label.recurse ?? true,
+      hidden: body.label.hidden ?? false,
     };
     store.create<LabelData>(COLLECTION, id, labelData, null);
     const resp: UpsertLabelResponse = { label_id: id };
@@ -98,6 +104,8 @@ export function createLabelRoutes(store: Store): Hono {
       label_id: id,
       name: entry.data.name,
       color: entry.data.color,
+      recurse: entry.data.recurse,
+      hidden: entry.data.hidden,
       created_at: entry.timestamp,
       updated_at: entry.timestamp,
     }));
@@ -116,6 +124,8 @@ export function createLabelRoutes(store: Store): Hono {
       label_id: id,
       name: entry.data.name,
       color: entry.data.color,
+      recurse: entry.data.recurse,
+      hidden: entry.data.hidden,
       created_at: entry.timestamp,
       updated_at: entry.timestamp,
     };
