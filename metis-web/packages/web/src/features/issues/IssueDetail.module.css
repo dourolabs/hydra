@@ -10,22 +10,12 @@
 
 .progressBody { composes: progressBody from '../detail.module.css'; }
 
-.issueId {
-  color: var(--color-accent);
-  font-size: var(--font-size-xl);
-  font-weight: 700;
-  font-family: var(--font-family-mono);
-}
-
-.type {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.updateStatusBtn {
-  margin-left: auto;
+.headerLeft {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1;
 }
 
 .issueTitle {
@@ -34,6 +24,47 @@
   color: var(--color-text-primary);
   margin: 0;
   line-height: 1.3;
+}
+
+.subtitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.issueId {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family-mono);
+}
+
+.type {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.statusChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  transition: border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.statusChip:hover {
+  border-color: var(--color-text-secondary);
+}
+
+.statusChipIcon {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
 }
 
 .description {

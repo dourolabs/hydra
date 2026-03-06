@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, Button, MarkdownViewer, Panel, Tabs } from "@metis/ui";
+import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
@@ -60,24 +60,26 @@ export function IssueDetail({ record }: IssueDetailProps) {
 
   return (
     <div className={styles.detail}>
-      {/* Header: ID + Status */}
+      {/* Header: Title + Status */}
       <div className={styles.header}>
-        <span className={styles.issueId}>{record.issue_id}</span>
-        <Badge status={issueToBadgeStatus(issue.status)} />
-        <span className={styles.type}>{issue.type}</span>
-        <Button
-          variant="secondary"
-          size="sm"
-          className={styles.updateStatusBtn}
+        <div className={styles.headerLeft}>
+          <h1 className={styles.issueTitle}>
+            {issue.title || record.issue_id}
+          </h1>
+          <div className={styles.subtitle}>
+            <span className={styles.issueId}>{record.issue_id}</span>
+            <span className={styles.type}>{issue.type}</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          className={styles.statusChip}
           onClick={() => setUpdateModalOpen(true)}
         >
-          Update Status
-        </Button>
+          <Badge status={issueToBadgeStatus(issue.status)} />
+          <span className={styles.statusChipIcon}>✎</span>
+        </button>
       </div>
-
-      {issue.title && (
-        <h1 className={styles.issueTitle}>{issue.title}</h1>
-      )}
 
       <IssueUpdateModal
         open={updateModalOpen}
