@@ -12,6 +12,7 @@ import { normalizeIssueStatus, normalizePatchStatus } from "../../utils/statusMa
 import { descriptionSnippet } from "../../utils/text";
 import { formatDuration } from "../../utils/time";
 import { LabelChip } from "../labels/LabelChip";
+import { useSwipeToArchive } from "./useSwipeToArchive";
 import styles from "./ItemRow.module.css";
 
 const STATUS_DOT_CLASSES: Record<string, string> = {
@@ -257,90 +258,77 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
 
   const showArchive = !!inboxLabelId && item.kind === "issue";
 
+  const handleArchiveSwipe = useCallback(() => {
+    archiveMutation.mutate(item.id);
+  }, [archiveMutation, item.id]);
+
+  const { rowRef, onTouchStart, onTouchMove, onTouchEnd } = useSwipeToArchive(handleArchiveSwipe);
+
   return (
-    <li
-      className={rowClasses.join(" ")}
-      onClick={handleClick}
-      onKeyDown={handleKeyDown}
-      role="button"
-      tabIndex={0}
-    >
-      {badgeStatus && (
-        <span
-          className={`${styles.statusDot} ${hasRunningJob ? styles.statusDotPulsing : isAssignedToMe ? styles.statusDotAttention : (STATUS_DOT_CLASSES[badgeStatus] ?? "")}`}
-        />
-      )}
-      {Icon && (
-        <span className={styles.icon}>
-          <Icon />
+    <li className={`${styles.rowWrapper}${showArchive ? ` ${styles.swipeEnabled}` : ""}`} role="button">
+
+      {showArchive && (
+        <span className={styles.swipeReveal} aria-hidden>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 4h12v2H2zM3 6v7a1 1 0 001 1h8a1 1 0 001-1V6" />
+            <path d="M6 9h4" />
+          </svg>
+          Archive
         </span>
       )}
-      <span className={styles.titleGroup}>
-        <span className={styles.title}>
-          {title}
-        </span>
-        {item.kind === "issue" && item.data.issue.progress && (
-          <span className={styles.progressLine}>
-            {item.data.issue.progress}
+      <div
+        ref={showArchive ? rowRef : undefined}
+        className={rowClasses.join(" ")}
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        onTouchStart={showArchive ? onTouchStart : undefined}
+        onTouchMove={showArchive ? onTouchMove : undefined}
+        onTouchEnd={showArchive ? onTouchEnd : undefined}
+        tabIndex={0}
+      >
+        {badgeStatus && (
+          <span
+            className={`${styles.statusDot} ${hasRunningJob ? styles.statusDotPulsing : isAssignedToMe ? styles.statusDotAttention : (STATUS_DOT_CLASSES[badgeStatus] ?? "")}`}
+          />
+        )}
+        {Icon && (
+          <span className={styles.icon}>
+            <Icon />
           </span>
         )}
-      </span>
-      {allLabels && (
-        <span className={styles.labels}>
-          {allLabels.map((label: LabelSummary) => (
-            <LabelChip
-              key={label.label_id}
-              name={label.name}
-              color={label.color}
-            />
-          ))}
+        <span className={styles.titleGroup}>
+          <span className={styles.title}>
+            {title}
+          </span>
+          {item.kind === "issue" && item.data.issue.progress && (
+            <span className={styles.progressLine}>
+              {item.data.issue.progress}
+            </span>
+          )}
         </span>
-      )}
-      {patchBadgeStatus && (
-        <Badge status={patchBadgeStatus} />
-      )}
-      {patchPrUrl && (
-        <a
-          className={styles.prLink}
-          href={patchPrUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-        >
-          #{String(patchPrNumber)}
-          <svg
-            className={styles.externalLinkIcon}
-            width="12"
-            height="12"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        {allLabels && (
+          <span className={styles.labels}>
+            {allLabels.map((label: LabelSummary) => (
+              <LabelChip
+                key={label.label_id}
+                name={label.name}
+                color={label.color}
+              />
+            ))}
+          </span>
+        )}
+        {patchBadgeStatus && (
+          <Badge status={patchBadgeStatus} />
+        )}
+        {patchPrUrl && (
+          <a
+            className={styles.prLink}
+            href={patchPrUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
           >
-            <path d="M6 2H2v12h12v-4" />
-            <path d="M9 1h6v6" />
-            <path d="M15 1L7 9" />
-          </svg>
-        </a>
-      )}
-      {issuePrUrl && (
-        <a
-          className={styles.prLink}
-          href={issuePrUrl}
-          target={issuePrUrl.startsWith("http") ? "_blank" : undefined}
-          rel={issuePrUrl.startsWith("http") ? "noopener noreferrer" : undefined}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!issuePrUrl!.startsWith("http")) {
-              e.preventDefault();
-              navigate(issuePrUrl!);
-            }
-          }}
-        >
-          {issuePrLabel}
-          {issuePrUrl.startsWith("http") && (
+            #{String(patchPrNumber)}
             <svg
               className={styles.externalLinkIcon}
               width="12"
@@ -356,38 +344,72 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
               <path d="M9 1h6v6" />
               <path d="M15 1L7 9" />
             </svg>
-          )}
-        </a>
-      )}
-      {assignee && (
-        <span className={styles.assignee}>
-          <Avatar name={assignee} size="sm" />
-        </span>
-      )}
-      {showArchive && (
-        <button
-          type="button"
-          className={styles.archiveButton}
-          title="Archive"
-          onClick={(e) => {
-            e.stopPropagation();
-            archiveMutation.mutate(item.id);
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M2 4h12v2H2zM3 6v7a1 1 0 001 1h8a1 1 0 001-1V6" />
-            <path d="M6 9h4" />
-          </svg>
-        </button>
-      )}
-      <span className={styles.rightColumn}>
-        <span className={durationClass}>
-          {durationText}
-        </span>
-        {childStatuses && childStatuses.length > 0 && (
-          <StatusBoxes children={childStatuses} />
+          </a>
         )}
-      </span>
+        {issuePrUrl && (
+          <a
+            className={styles.prLink}
+            href={issuePrUrl}
+            target={issuePrUrl.startsWith("http") ? "_blank" : undefined}
+            rel={issuePrUrl.startsWith("http") ? "noopener noreferrer" : undefined}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!issuePrUrl!.startsWith("http")) {
+                e.preventDefault();
+                navigate(issuePrUrl!);
+              }
+            }}
+          >
+            {issuePrLabel}
+            {issuePrUrl.startsWith("http") && (
+              <svg
+                className={styles.externalLinkIcon}
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M6 2H2v12h12v-4" />
+                <path d="M9 1h6v6" />
+                <path d="M15 1L7 9" />
+              </svg>
+            )}
+          </a>
+        )}
+        {assignee && (
+          <span className={styles.assignee}>
+            <Avatar name={assignee} size="sm" />
+          </span>
+        )}
+        {showArchive && (
+          <button
+            type="button"
+            className={styles.archiveButton}
+            title="Archive"
+            onClick={(e) => {
+              e.stopPropagation();
+              archiveMutation.mutate(item.id);
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 4h12v2H2zM3 6v7a1 1 0 001 1h8a1 1 0 001-1V6" />
+              <path d="M6 9h4" />
+            </svg>
+          </button>
+        )}
+        <span className={styles.rightColumn}>
+          <span className={durationClass}>
+            {durationText}
+          </span>
+          {childStatuses && childStatuses.length > 0 && (
+            <StatusBoxes children={childStatuses} />
+          )}
+        </span>
+      </div>
     </li>
   );
 }

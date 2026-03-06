@@ -1,3 +1,27 @@
+.rowWrapper {
+  position: relative;
+  overflow: hidden;
+  list-style: none;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.swipeReveal {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--color-text-tertiary);
+  color: var(--color-bg-primary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  pointer-events: none;
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -6,9 +30,10 @@
   cursor: pointer;
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
-  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
   transition: background var(--transition-fast);
   min-width: 0;
+  position: relative;
 }
 
 .row:hover {
@@ -202,6 +227,10 @@
   }
 
   .assignee {
+    display: none;
+  }
+
+  .swipeEnabled .archiveButton {
     display: none;
   }
 }
