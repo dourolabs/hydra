@@ -28,7 +28,7 @@ test.describe("Issue Detail", () => {
     await page.goto("/issues/i-seed00002");
     const breadcrumb = page.locator('nav[aria-label="Breadcrumb"]');
     await expect(breadcrumb).toBeVisible();
-    await expect(breadcrumb.getByText("Issues")).toBeVisible();
+    await expect(breadcrumb.getByText("Dashboard")).toBeVisible();
   });
 
   test("displays tabbed sections", async ({ authenticatedPage: page }) => {

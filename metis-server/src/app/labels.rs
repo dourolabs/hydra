@@ -62,6 +62,35 @@ pub enum UpdateLabelError {
 }
 
 impl AppState {
+    /// Ensure the 'inbox' label exists with recurse=false and hidden=true.
+    /// Creates it if missing; idempotent on subsequent calls.
+    pub async fn ensure_inbox_label(&self) {
+        use crate::policy::automations::inbox_label::INBOX_LABEL_NAME;
+
+        match self.store.get_label_by_name(INBOX_LABEL_NAME).await {
+            Ok(Some(_)) => {
+                tracing::debug!("inbox label already exists");
+            }
+            Ok(None) => match self
+                .create_label(INBOX_LABEL_NAME.to_string(), None, false, true)
+                .await
+            {
+                Ok(label_id) => {
+                    tracing::info!(%label_id, "created inbox label");
+                }
+                Err(CreateLabelError::AlreadyExists(_)) => {
+                    tracing::debug!("inbox label created concurrently");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to create inbox label");
+                }
+            },
+            Err(e) => {
+                tracing::error!(error = %e, "failed to check for inbox label");
+            }
+        }
+    }
+
     pub async fn create_label(
         &self,
         name: String,

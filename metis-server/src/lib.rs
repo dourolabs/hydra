@@ -325,6 +325,9 @@ pub async fn run() -> anyhow::Result<()> {
     // skipped.
     state.migrate_github_tokens_to_secrets().await;
 
+    // Ensure the 'inbox' label exists (recurse=false, hidden=true).
+    state.ensure_inbox_label().await;
+
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 
     run_with_state(state, listener).await
