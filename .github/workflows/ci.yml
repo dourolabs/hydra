@@ -211,6 +211,9 @@ jobs:
       - name: Install Playwright system dependencies
         run: pnpm --filter @metis/web exec playwright install-deps chromium
 
+      - name: Check scenario coverage
+        run: pnpm --filter @metis/web run check-scenarios
+
       - name: Run E2E tests
         run: pnpm e2e
 
