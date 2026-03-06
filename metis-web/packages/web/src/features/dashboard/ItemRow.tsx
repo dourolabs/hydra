@@ -1,4 +1,4 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar, Badge } from "@metis/ui";
@@ -10,7 +10,7 @@ import { useAuth } from "../auth/useAuth";
 import { apiClient } from "../../api/client";
 import { normalizeIssueStatus, normalizePatchStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
-import { formatRelativeTime } from "../../utils/time";
+import { formatDuration } from "../../utils/time";
 import { LabelChip } from "../labels/LabelChip";
 import styles from "./ItemRow.module.css";
 
@@ -184,6 +184,47 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
   // Job status (issues only) — isActive is tree-computed, fall back to direct job check
   const hasRunningJob = isActive ?? (jobs?.some((j) => j.task.status === "running" || j.task.status === "pending") ?? false);
 
+  // Job duration display
+  const runningJob = useMemo(
+    () => jobs?.find((j) => j.task.status === "running" || j.task.status === "pending"),
+    [jobs],
+  );
+  const lastFinishedJob = useMemo(() => {
+    if (runningJob || !jobs) return undefined;
+    return jobs
+      .filter((j) => j.task.status === "complete" || j.task.status === "failed")
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+  }, [jobs, runningJob]);
+
+  const [elapsed, setElapsed] = useState(() => {
+    if (!runningJob?.task.start_time) return 0;
+    return Date.now() - new Date(runningJob.task.start_time).getTime();
+  });
+
+  useEffect(() => {
+    if (!runningJob?.task.start_time) return;
+    setElapsed(Date.now() - new Date(runningJob.task.start_time).getTime());
+    const id = setInterval(() => {
+      setElapsed(Date.now() - new Date(runningJob.task.start_time!).getTime());
+    }, 1000);
+    return () => clearInterval(id);
+  }, [runningJob]);
+
+  let durationText: string;
+  let durationClass: string;
+  if (runningJob) {
+    durationText = formatDuration(elapsed);
+    durationClass = `${styles.timestamp} ${styles.timerRunning}`;
+  } else if (lastFinishedJob?.task.start_time && lastFinishedJob.task.end_time) {
+    durationText = formatDuration(
+      new Date(lastFinishedJob.task.end_time).getTime() - new Date(lastFinishedJob.task.start_time).getTime(),
+    );
+    durationClass = styles.timestamp;
+  } else {
+    durationText = "\u2014";
+    durationClass = styles.timestamp;
+  }
+
   const rowClasses = [styles.row];
   if (item.isTerminal) rowClasses.push(styles.terminal);
 
@@ -284,8 +325,8 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
         </button>
       )}
       <span className={styles.rightColumn}>
-        <span className={styles.timestamp}>
-          {formatRelativeTime(item.lastUpdated)}
+        <span className={durationClass}>
+          {durationText}
         </span>
         {childStatuses && childStatuses.length > 0 && (
           <StatusBoxes children={childStatuses} />
