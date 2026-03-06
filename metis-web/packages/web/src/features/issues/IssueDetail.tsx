@@ -9,7 +9,7 @@ import { IssueRelatedIssues } from "./IssueRelatedIssues";
 import { IssueActivity } from "./IssueActivity";
 import { IssueUpdateModal } from "./IssueUpdateModal";
 import { JobList } from "../jobs/JobList";
-import { PatchList } from "../patches/PatchList";
+import { PatchPreview } from "./PatchPreview";
 import { IssueSettings } from "./IssueSettings";
 import { IssueLabelEditor } from "./IssueLabelEditor";
 import styles from "./IssueDetail.module.css";
@@ -144,7 +144,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
           )}
           {activeTab === "jobs" && <JobList issueId={record.issue_id} />}
           {activeTab === "patches" && (
-            <PatchList
+            <PatchPreview
               patchIds={issue.patches ?? []}
               issueId={record.issue_id}
             />
