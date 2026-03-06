@@ -255,7 +255,7 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
     ? item.data.issue.labels.filter((l: LabelSummary) => !l.hidden)
     : null;
 
-  const showArchive = !!inboxLabelId && item.kind === "issue" && !item.isTerminal;
+  const showArchive = !!inboxLabelId && item.kind === "issue";
 
   return (
     <li
