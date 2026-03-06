@@ -216,10 +216,7 @@ impl AppState {
         use metis_common::api::v1::users::SearchUsersQuery;
         use tracing::{info, warn};
 
-        let Some(secret_manager) = &self.secret_manager else {
-            info!("skipping github token migration: secret encryption not configured");
-            return;
-        };
+        let secret_manager = &self.secret_manager;
 
         let users = match self.store.list_users(&SearchUsersQuery::default()).await {
             Ok(users) => users,
