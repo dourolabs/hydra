@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
-import { computeIssueProgress, computeIsActiveMap, countMyIssuesNeedingAttention } from "./computeIssueProgress";
+import { computeIssueProgress, computeIsActiveMap, countNeedsAttentionBadge } from "./computeIssueProgress";
 
 // ---------------------------------------------------------------------------
 // Test data helpers
@@ -516,48 +516,46 @@ describe("TERMINAL_STATUSES partitioning", () => {
 });
 
 // ---------------------------------------------------------------------------
-// countMyIssuesNeedingAttention tests
+// countNeedsAttentionBadge tests
 // ---------------------------------------------------------------------------
 
-describe("countMyIssuesNeedingAttention", () => {
+describe("countNeedsAttentionBadge", () => {
+  const assignedToAlice = (issue: IssueSummaryRecord) => issue.issue.assignee === "alice";
+
   it("returns 0 for empty issues list", () => {
-    expect(countMyIssuesNeedingAttention([], "alice", new Map())).toBe(0);
+    expect(countNeedsAttentionBadge([], assignedToAlice)).toBe(0);
   });
 
-  it("counts issues assigned to user with open or in-progress status", () => {
+  it("counts issues matching filter with open or in-progress status", () => {
     const issues = [
       makeIssueRecord({ issue_id: "i-1", status: "open", assignee: "alice" }),
       makeIssueRecord({ issue_id: "i-2", status: "in-progress", assignee: "alice" }),
       makeIssueRecord({ issue_id: "i-3", status: "closed", assignee: "alice" }),
     ];
-    expect(countMyIssuesNeedingAttention(issues, "alice", new Map())).toBe(2);
+    expect(countNeedsAttentionBadge(issues, assignedToAlice)).toBe(2);
   });
 
-  it("does not count issues assigned to other users", () => {
+  it("does not count issues that do not match filter", () => {
     const issues = [
       makeIssueRecord({ issue_id: "i-1", status: "open", assignee: "bob" }),
       makeIssueRecord({ issue_id: "i-2", status: "open", assignee: "alice" }),
     ];
-    expect(countMyIssuesNeedingAttention(issues, "alice", new Map())).toBe(1);
+    expect(countNeedsAttentionBadge(issues, assignedToAlice)).toBe(1);
   });
 
-  it("does not count issues created by user but not assigned", () => {
+  it("does not count issues with null assignee", () => {
     const issues = [
       makeIssueRecord({ issue_id: "i-1", status: "open", assignee: null }),
     ];
-    expect(countMyIssuesNeedingAttention(issues, "testuser", new Map())).toBe(0);
+    expect(countNeedsAttentionBadge(issues, assignedToAlice)).toBe(0);
   });
 
-  it("excludes issues with active jobs (running or pending)", () => {
+  it("counts issues with active jobs (no exclusion for running jobs)", () => {
     const issues = [
       makeIssueRecord({ issue_id: "i-1", status: "open", assignee: "alice" }),
       makeIssueRecord({ issue_id: "i-2", status: "open", assignee: "alice" }),
     ];
-    const isActiveMap = new Map([
-      ["i-1", true],
-      ["i-2", false],
-    ]);
-    expect(countMyIssuesNeedingAttention(issues, "alice", isActiveMap)).toBe(1);
+    expect(countNeedsAttentionBadge(issues, assignedToAlice)).toBe(2);
   });
 
   it("excludes terminal statuses like failed and closed", () => {
@@ -566,6 +564,6 @@ describe("countMyIssuesNeedingAttention", () => {
       makeIssueRecord({ issue_id: "i-2", status: "closed", assignee: "alice" }),
       makeIssueRecord({ issue_id: "i-3", status: "open", assignee: "alice" }),
     ];
-    expect(countMyIssuesNeedingAttention(issues, "alice", new Map())).toBe(1);
+    expect(countNeedsAttentionBadge(issues, assignedToAlice)).toBe(1);
   });
 });

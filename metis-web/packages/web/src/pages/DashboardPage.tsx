@@ -10,7 +10,7 @@ import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemLi
 import {
   useTransitiveWorkItems,
 } from "../features/dashboard/useTransitiveWorkItems";
-import { computeIsActiveMap, countMyIssuesNeedingAttention, type ChildStatus } from "../features/dashboard/computeIssueProgress";
+import { computeIsActiveMap, countNeedsAttentionBadge, type ChildStatus } from "../features/dashboard/computeIssueProgress";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
@@ -96,8 +96,8 @@ export function DashboardPage() {
 
   const myIssuesCount = useMemo(() => {
     if (!issues || !username) return 0;
-    return countMyIssuesNeedingAttention(issues, username, isActiveMap);
-  }, [issues, username, isActiveMap]);
+    return countNeedsAttentionBadge(issues, (issue) => issue.issue.assignee === username);
+  }, [issues, username]);
 
   const childStatusMap = useMemo(() => {
     const map = new Map<string, ChildStatus[]>();
@@ -145,7 +145,7 @@ export function DashboardPage() {
       return allWorkItems.filter(
         (item) =>
           item.kind === "issue" &&
-          item.data.issue.assignee === username,
+          item.data.issue.creator === username,
       );
     }
     if (filterRootId !== "inbox") return allWorkItems;
