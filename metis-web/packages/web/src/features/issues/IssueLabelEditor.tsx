@@ -96,26 +96,21 @@ export function IssueLabelEditor({ issueId, labels }: IssueLabelEditorProps) {
   }
 
   return (
-    <div className={styles.display}>
-      <span className={styles.labelHeader}>
-        <span className={styles.labelTitle}>Labels</span>
-        <Button variant="secondary" size="sm" onClick={startEditing}>
-          Edit
-        </Button>
-      </span>
-      {labels.length > 0 ? (
-        <span className={styles.chips}>
-          {labels.map((label) => (
-            <LabelChip
-              key={label.label_id}
-              name={label.name}
-              color={label.color}
-            />
-          ))}
-        </span>
-      ) : (
-        <span className={styles.noLabels}>No labels</span>
-      )}
+    <div className={styles.display} data-testid="label-editor">
+      {labels.map((label) => (
+        <LabelChip
+          key={label.label_id}
+          name={label.name}
+          color={label.color}
+        />
+      ))}
+      <button
+        className={styles.editTrigger}
+        onClick={startEditing}
+        aria-label="Edit labels"
+      >
+        {labels.length > 0 ? "✎" : "+ Add label"}
+      </button>
     </div>
   );
 }
