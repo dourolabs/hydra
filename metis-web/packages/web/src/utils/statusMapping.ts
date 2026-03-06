@@ -7,59 +7,51 @@ export const TERMINAL_STATUSES: Set<string> = new Set([
   "rejected",
 ]);
 
-const validStatuses: Set<string> = new Set([
-  "open",
-  "in-progress",
-  "closed",
-  "failed",
-  "dropped",
-  "blocked",
-  "rejected",
-]);
-
-/** Map an issue status string to a BadgeStatus. */
-export function issueToBadgeStatus(status: string): BadgeStatus {
-  if (validStatuses.has(status)) return status as BadgeStatus;
-  return "open";
-}
-
-/** Map a job status string to a BadgeStatus. */
-export function jobToBadgeStatus(status: string): BadgeStatus {
-  const mapped: Record<string, BadgeStatus> = {
-    created: "open",
-    pending: "open",
-    running: "in-progress",
-    complete: "closed",
-    failed: "failed",
-  };
-  const s = mapped[status];
-  if (s) return s;
-  if (validStatuses.has(status)) return status as BadgeStatus;
-  return "open";
-}
-
-/** Map a patch status string to a BadgeStatus. */
-export function patchToBadgeStatus(status: string): BadgeStatus {
-  const mapped: Record<string, BadgeStatus> = {
+/** Normalize a PascalCase patch status (e.g. "ChangesRequested") to a BadgeStatus ("changes-requested"). */
+export function normalizePatchStatus(status: string): BadgeStatus {
+  const map: Record<string, BadgeStatus> = {
     Open: "open",
-    Merged: "closed",
-    Closed: "failed",
-    ChangesRequested: "rejected",
+    Merged: "merged",
+    Closed: "closed",
+    ChangesRequested: "changes-requested",
   };
-  const s = mapped[status];
-  return s ?? "open";
+  return map[status] ?? "unknown";
 }
 
-/** Map a GitHub CI state string to a BadgeStatus. */
-export function ciToBadgeStatus(state: string): BadgeStatus {
-  switch (state) {
-    case "Success":
-      return "closed";
-    case "Failed":
-      return "failed";
-    case "Pending":
-      return "in-progress";
-    default:
-      return "open";
-  }
+/** Normalize a PascalCase CI state (e.g. "Success") to a BadgeStatus ("success"). */
+export function normalizeCiState(state: string): BadgeStatus {
+  const map: Record<string, BadgeStatus> = {
+    Success: "success",
+    Failed: "failed",
+    Pending: "pending",
+  };
+  return map[state] ?? "unknown";
+}
+
+/** Normalize a lowercase job status to a BadgeStatus. Job statuses already match 1:1. */
+export function normalizeJobStatus(status: string): BadgeStatus {
+  const valid: Set<string> = new Set([
+    "created",
+    "pending",
+    "running",
+    "complete",
+    "failed",
+  ]);
+  if (valid.has(status)) return status as BadgeStatus;
+  return "unknown";
+}
+
+/** Cast an issue status to BadgeStatus. Issue statuses already match 1:1. */
+export function normalizeIssueStatus(status: string): BadgeStatus {
+  const valid: Set<string> = new Set([
+    "open",
+    "in-progress",
+    "closed",
+    "failed",
+    "dropped",
+    "blocked",
+    "rejected",
+  ]);
+  if (valid.has(status)) return status as BadgeStatus;
+  return "unknown";
 }

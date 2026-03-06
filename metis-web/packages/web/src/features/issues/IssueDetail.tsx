@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Avatar, Badge, MarkdownViewer, Panel, Tabs } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
-import { issueToBadgeStatus } from "../../utils/statusMapping";
+import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import { useIssue } from "./useIssue";
 import { IssueRelatedIssues } from "./IssueRelatedIssues";
@@ -23,7 +23,7 @@ function BlockingIssueLink({ issueId }: { issueId: string }) {
       </Link>
       {record && (
         <>
-          <Badge status={issueToBadgeStatus(record.issue.status)} />
+          <Badge status={normalizeIssueStatus(record.issue.status)} />
           <span className={styles.blockingIssueStatus}>({record.issue.status})</span>
         </>
       )}
@@ -75,7 +75,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
           data-testid="status-chip"
           onClick={() => setUpdateModalOpen(true)}
         >
-          <Badge status={issueToBadgeStatus(issue.status)} />
+          <Badge status={normalizeIssueStatus(issue.status)} />
           <span className={styles.statusChipIcon}>
             <svg viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />

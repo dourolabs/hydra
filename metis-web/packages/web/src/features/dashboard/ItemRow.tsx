@@ -1,14 +1,14 @@
 import React, { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Avatar } from "@metis/ui";
+import { Avatar, Badge } from "@metis/ui";
 import type { JobSummaryRecord, LabelSummary } from "@metis/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { StatusBoxes } from "./StatusBoxes";
 import { useAuth } from "../auth/useAuth";
 import { apiClient } from "../../api/client";
-import { issueToBadgeStatus } from "../../utils/statusMapping";
+import { normalizeIssueStatus, normalizePatchStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
 import { LabelChip } from "../labels/LabelChip";
@@ -154,27 +154,15 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
 
   // Status dot (issues only)
   const badgeStatus = item.kind === "issue"
-    ? issueToBadgeStatus(item.data.issue.status)
+    ? normalizeIssueStatus(item.data.issue.status)
     : undefined;
 
-  // Patch display status
-  let patchDisplayStatus: string | undefined;
-  if (item.kind === "patch") {
-    const { status, review_summary } = item.data.patch;
-    if (status === "Merged") {
-      patchDisplayStatus = "Merged";
-    } else if (status === "ChangesRequested") {
-      patchDisplayStatus = "Changes Requested";
-    } else if (status === "Open" && review_summary.approved) {
-      patchDisplayStatus = "Approved";
-    } else if (status === "Open") {
-      patchDisplayStatus = "Open";
-    } else if (status === "Closed") {
-      patchDisplayStatus = "Closed";
-    } else {
-      patchDisplayStatus = status;
-    }
-  }
+  // Patch badge status
+  const patchBadgeStatus = item.kind === "patch"
+    ? (item.data.patch.status === "Open" && item.data.patch.review_summary.approved
+        ? "approved"
+        : normalizePatchStatus(item.data.patch.status))
+    : undefined;
 
   // Patch GitHub PR link
   let patchPrUrl: string | undefined;
@@ -245,10 +233,8 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
           ))}
         </span>
       )}
-      {patchDisplayStatus && (
-        <span className={`${styles.patchBadge} ${styles[`patchBadge${patchDisplayStatus.replace(/\s+/g, "")}`] ?? ""}`}>
-          {patchDisplayStatus}
-        </span>
+      {patchBadgeStatus && (
+        <Badge status={patchBadgeStatus} />
       )}
       {patchPrUrl && (
         <a

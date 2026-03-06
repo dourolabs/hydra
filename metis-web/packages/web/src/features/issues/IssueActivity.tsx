@@ -2,7 +2,7 @@ import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "react
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@metis/ui";
 import type { IssueVersionRecord } from "@metis/api";
-import { issueToBadgeStatus } from "../../utils/statusMapping";
+import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { apiClient } from "../../api/client";
 import { ActivityTimeline } from "../activity/ActivityTimeline";
 import type { Change } from "../activity/types";
@@ -147,9 +147,9 @@ function IssueChangeEntry({ change }: { change: Change }) {
       <div className={styles.change}>
         <span className={styles.changeLabel}>Status</span>
         <span className={styles.statusTransition}>
-          <Badge status={issueToBadgeStatus(change.before)} />
+          <Badge status={normalizeIssueStatus(change.before)} />
           <span className={styles.arrow}>{"\u2192"}</span>
-          <Badge status={issueToBadgeStatus(change.after)} />
+          <Badge status={normalizeIssueStatus(change.after)} />
         </span>
       </div>
     );

@@ -18,7 +18,7 @@ Three-package monorepo managed with pnpm workspaces:
 
 Always check these modules before writing new helpers:
 
-- **`statusMapping.ts`** — `issueToBadgeStatus()`, `jobToBadgeStatus()`, `patchToBadgeStatus()` for converting entity statuses to `Badge` component variants. Add new status mappers here (e.g., CI state badges).
+- **`statusMapping.ts`** — `normalizeIssueStatus()`, `normalizeJobStatus()`, `normalizePatchStatus()`, `normalizeCiState()` for normalizing API entity statuses to `BadgeStatus` values. Each normalizer converts domain-specific status strings (e.g., PascalCase patch statuses) to kebab-case Badge variants without lossy mapping.
 - **`time.ts`** — `formatDuration()`, `getRuntime()` for time formatting. All time-related formatting should go here.
 - **`text.ts`** — `descriptionSnippet()` for truncating descriptions to preview length.
 - **`actors.ts`** _(planned)_ — Will contain `actorDisplayName()`, `actorAvatarName()` for rendering actor references. Until created, check for inline actor formatting logic and consolidate here.
