@@ -16,6 +16,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@dashboard:view` — User can see the issue list on the dashboard (planned)
 - `@dashboard:inbox` — User can filter dashboard to inbox items
 - `@dashboard:search` — User can search for issues by title
+- `@dashboard:child-job-indicator` — User sees a pulsing status box for a child issue with a running job
 
 ## Navigation
 
