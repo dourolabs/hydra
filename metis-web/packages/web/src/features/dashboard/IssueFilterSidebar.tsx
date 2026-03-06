@@ -4,7 +4,7 @@ import type { IssueTreeNode } from "../issues/useIssues";
 import { useLabels } from "../labels/useLabels";
 import { descriptionSnippet } from "../../utils/text";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
-import { computeIssueProgress, type ChildStatus, type IssueProgress } from "./computeIssueProgress";
+import { computeIssueProgress, computeIsActiveMap, type ChildStatus, type IssueProgress } from "./computeIssueProgress";
 import { StatusBoxes } from "./StatusBoxes";
 import styles from "./IssueFilterSidebar.module.css";
 
@@ -23,7 +23,7 @@ interface LabelProgress {
 function computeLabelProgress(
   labels: LabelRecord[],
   allIssues: IssueSummaryRecord[],
-  jobsByIssue: Map<string, JobSummaryRecord[]>,
+  isActiveMap: Map<string, boolean>,
   username: string,
 ): LabelProgress[] {
   return labels.map((label) => {
@@ -38,16 +38,12 @@ function computeLabelProgress(
       const status = issue.issue.status;
       if (status === "closed") closed++;
 
-      const jobs = jobsByIssue.get(issue.issue_id) ?? [];
-      const hasActiveTask = jobs.some(
-        (j) => j.task.status === "running" || j.task.status === "pending",
-      );
       const assignedToUser = !!(username && issue.issue.assignee === username);
 
       children.push({
         id: issue.issue_id,
         status,
-        hasActiveTask,
+        hasActiveTask: isActiveMap.get(issue.issue_id) ?? false,
         assignedToUser,
       });
     }
@@ -120,10 +116,15 @@ export function IssueFilterSidebar({
 
   const { data: labels } = useLabels();
 
+  const isActiveMap = useMemo(
+    () => computeIsActiveMap(allIssues, jobsByIssue),
+    [allIssues, jobsByIssue],
+  );
+
   const labelProgressList = useMemo(() => {
     if (!labels || labels.length === 0) return [];
-    return computeLabelProgress(labels, allIssues, jobsByIssue, username);
-  }, [labels, allIssues, jobsByIssue, username]);
+    return computeLabelProgress(labels, allIssues, isActiveMap, username);
+  }, [labels, allIssues, isActiveMap, username]);
 
   if (progressList.length === 0 && labelProgressList.length === 0) return null;
 

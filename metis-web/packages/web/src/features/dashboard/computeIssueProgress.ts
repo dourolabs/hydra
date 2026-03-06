@@ -1,6 +1,43 @@
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 
+export function computeIsActiveMap(
+  issues: IssueSummaryRecord[],
+  jobsByIssue: Map<string, JobSummaryRecord[]>,
+): Map<string, boolean> {
+  const childrenMap = new Map<string, string[]>();
+  for (const issue of issues) {
+    for (const dep of issue.issue.dependencies) {
+      if (dep.type === "child-of") {
+        const siblings = childrenMap.get(dep.issue_id) ?? [];
+        siblings.push(issue.issue_id);
+        childrenMap.set(dep.issue_id, siblings);
+      }
+    }
+  }
+
+  const cache = new Map<string, boolean>();
+
+  function isActive(issueId: string): boolean {
+    const cached = cache.get(issueId);
+    if (cached !== undefined) return cached;
+    const jobs = jobsByIssue.get(issueId) ?? [];
+    if (jobs.some((j) => j.task.status === "running" || j.task.status === "pending")) {
+      cache.set(issueId, true);
+      return true;
+    }
+    const children = childrenMap.get(issueId) ?? [];
+    const result = children.some((childId) => isActive(childId));
+    cache.set(issueId, result);
+    return result;
+  }
+
+  for (const issue of issues) {
+    isActive(issue.issue_id);
+  }
+  return cache;
+}
+
 export interface ChildStatus {
   id: string;
   status: string;
@@ -39,7 +76,7 @@ export function computeIssueProgress(
     const status = node.issue.issue.status;
     if (
       username &&
-      status === "open" &&
+      (status === "open" || status === "in-progress") &&
       node.issue.issue.assignee === username
     ) {
       const jobs = jobsByIssue?.get(node.id) ?? [];
@@ -73,10 +110,7 @@ export function computeIssueProgress(
         open++;
       }
 
-      const jobs = jobsByIssue?.get(child.id) ?? [];
-      const hasActiveTask = jobs.some(
-        (j) => j.task.status === "running" || j.task.status === "pending",
-      );
+      const hasActiveTask = hasActiveDescendant(child);
       const assignedToUser = !!(
         username &&
         child.issue.issue.assignee === username

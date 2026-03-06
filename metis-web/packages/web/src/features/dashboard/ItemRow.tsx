@@ -76,11 +76,12 @@ interface ItemRowProps {
   item: WorkItem;
   jobs?: JobSummaryRecord[];
   childStatuses?: ChildStatus[];
+  isActive?: boolean;
   filterRootId?: string | null;
   inboxLabelId?: string;
 }
 
-export function ItemRow({ item, jobs, childStatuses, filterRootId, inboxLabelId }: ItemRowProps) {
+export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inboxLabelId }: ItemRowProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -200,8 +201,8 @@ export function ItemRow({ item, jobs, childStatuses, filterRootId, inboxLabelId 
   const isAssignedToMe =
     item.kind === "issue" && !item.isTerminal && !!assignee && assignee === currentUsername;
 
-  // Job status (issues only)
-  const hasRunningJob = jobs?.some((j) => j.task.status === "running" || j.task.status === "pending") ?? false;
+  // Job status (issues only) — isActive is tree-computed, fall back to direct job check
+  const hasRunningJob = isActive ?? (jobs?.some((j) => j.task.status === "running" || j.task.status === "pending") ?? false);
 
   const rowClasses = [styles.row];
   if (item.isTerminal) rowClasses.push(styles.terminal);

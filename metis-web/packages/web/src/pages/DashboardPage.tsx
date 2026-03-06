@@ -10,7 +10,7 @@ import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemLi
 import {
   useTransitiveWorkItems,
 } from "../features/dashboard/useTransitiveWorkItems";
-import type { ChildStatus } from "../features/dashboard/computeIssueProgress";
+import { computeIsActiveMap, type ChildStatus } from "../features/dashboard/computeIssueProgress";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
@@ -88,6 +88,11 @@ export function DashboardPage() {
     ).length;
   }, [issues, username, inboxLabel]);
 
+  const isActiveMap = useMemo(() => {
+    if (!issues || !jobsByIssue) return new Map<string, boolean>();
+    return computeIsActiveMap(issues, jobsByIssue);
+  }, [issues, jobsByIssue]);
+
   const childStatusMap = useMemo(() => {
     const map = new Map<string, ChildStatus[]>();
     if (!issues) return map;
@@ -107,14 +112,10 @@ export function DashboardPage() {
       for (const childId of childIds) {
         const child = issueById.get(childId);
         if (!child) continue;
-        const jobs = jobsByIssue?.get(childId) ?? [];
-        const hasActiveTask = jobs.some(
-          (j) => j.task.status === "running" || j.task.status === "pending",
-        );
         statuses.push({
           id: childId,
           status: child.issue.status,
-          hasActiveTask,
+          hasActiveTask: isActiveMap.get(childId) ?? false,
           assignedToUser: !!(username && child.issue.assignee === username),
         });
       }
@@ -123,7 +124,7 @@ export function DashboardPage() {
       }
     }
     return map;
-  }, [issues, jobsByIssue, username]);
+  }, [issues, isActiveMap, username]);
 
   const workItems = useMemo(() => {
     if (isLabelFilter) {
@@ -205,6 +206,7 @@ export function DashboardPage() {
           items={workItems}
           jobsByIssue={jobsByIssue ?? new Map()}
           childStatusMap={childStatusMap}
+          isActiveMap={isActiveMap}
           isLoading={workItemsLoading}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={handleToggleSidebar}
