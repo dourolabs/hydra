@@ -16,7 +16,7 @@ import type {
   TodoListResponse,
   TodoItem,
 } from "@metis/api";
-import { getLabelsForObject } from "./labels.js";
+import { getLabelsForObject, resolveLabelNames } from "./labels.js";
 
 const COLLECTION = "issues";
 const SSE_PREFIX = "issue";
@@ -82,6 +82,12 @@ export function createIssueRoutes(store: Store): Hono {
       patches: body.issue.patches ?? [],
     };
     const entry = store.create<Issue>(COLLECTION, id, issue, SSE_PREFIX);
+
+    // Resolve label_names: create missing labels and associate them with the issue
+    if (body.label_names && body.label_names.length > 0) {
+      resolveLabelNames(store, body.label_names, id);
+    }
+
     const resp: UpsertIssueResponse = {
       issue_id: id,
       version: BigInt(entry.version),

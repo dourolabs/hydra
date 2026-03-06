@@ -35,6 +35,8 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@labels:display` — Labels are displayed on dashboard item rows and issue detail
 - `@labels:create-with` — User can create an issue with existing and new labels
 - `@labels:edit` — User can add and remove labels on an existing issue
+- `@labels:sidebar-create` — Newly created label appears in the sidebar after issue creation
+- `@labels:filter` — Clicking a label in the sidebar filters dashboard and shows issue with label badge
 
 ## Patches
 
