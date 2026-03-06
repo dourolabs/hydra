@@ -1,7 +1,7 @@
 import { test, expect } from "../fixtures/auth";
 
-test.describe("Dashboard Search", () => {
-  test("search input retains focus and page does not flash while results load", async ({
+test.describe("Dashboard Search @dashboard:search", () => {
+  test("search input retains focus and page does not flash while results load @dashboard:search", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/?selected=inbox");

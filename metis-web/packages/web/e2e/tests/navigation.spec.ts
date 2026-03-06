@@ -1,7 +1,7 @@
 import { test, expect } from "../fixtures/auth";
 
-test.describe("Navigation", () => {
-  test("sidebar links navigate to correct pages", async ({
+test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button", () => {
+  test("sidebar links navigate to correct pages @nav:sidebar", async ({
     authenticatedPage: page,
   }) => {
     // Navigate to Documents via sidebar
@@ -17,7 +17,7 @@ test.describe("Navigation", () => {
     await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/\?selected=inbox$/);
   });
 
-  test("deep link to issue detail works", async ({
+  test("deep link to issue detail works @nav:deep-link", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/issues/i-seed00001");
@@ -29,7 +29,7 @@ test.describe("Navigation", () => {
     ).toBeVisible();
   });
 
-  test("deep link to patch detail works", async ({
+  test("deep link to patch detail works @nav:deep-link", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/patches/p-seed00001");
@@ -43,7 +43,7 @@ test.describe("Navigation", () => {
     ).toBeVisible();
   });
 
-  test("browser back button works", async ({ authenticatedPage: page }) => {
+  test("browser back button works @nav:back-button", async ({ authenticatedPage: page }) => {
     // Navigate to dashboard
     await page.goto("/");
     await expect(page).toHaveURL(/\/\?selected=inbox$/);

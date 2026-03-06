@@ -1,7 +1,7 @@
 import { test, expect } from "../fixtures/auth";
 
-test.describe("Dashboard Inbox", () => {
-  test("shows dropped issues in Complete section", async ({
+test.describe("Dashboard Inbox @dashboard:inbox", () => {
+  test("shows dropped issues in Complete section @dashboard:inbox", async ({
     authenticatedPage: page,
   }) => {
     // Navigate to dashboard with inbox filter
@@ -17,7 +17,7 @@ test.describe("Dashboard Inbox", () => {
     ).toBeVisible();
   });
 
-  test("shows closed issues in Complete section", async ({
+  test("shows closed issues in Complete section @dashboard:inbox", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/?selected=inbox");
