@@ -1,12 +1,11 @@
 import React, { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Avatar, JobStatusIndicator } from "@metis/ui";
+import { Avatar } from "@metis/ui";
 import type { JobSummaryRecord, LabelSummary } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { useAuth } from "../auth/useAuth";
 import { apiClient } from "../../api/client";
-import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
@@ -190,7 +189,6 @@ export function ItemRow({ item, jobs, filterRootId, inboxLabelId }: ItemRowProps
     item.kind === "issue" && !item.isTerminal && !!assignee && assignee === currentUsername;
 
   // Job status (issues only)
-  const jobSummaries = item.kind === "issue" && jobs ? jobs.map(toJobSummary) : undefined;
   const hasRunningJob = jobs?.some((j) => j.task.status === "running" || j.task.status === "pending") ?? false;
 
   const rowClasses = [styles.row];
@@ -242,15 +240,6 @@ export function ItemRow({ item, jobs, filterRootId, inboxLabelId }: ItemRowProps
               title={label.name}
             />
           ))}
-        </span>
-      )}
-      {jobSummaries && jobSummaries.length > 0 && (
-        <span
-          className={styles.jobIndicator}
-          onClick={(e) => e.stopPropagation()}
-          role="presentation"
-        >
-          <JobStatusIndicator jobs={jobSummaries} />
         </span>
       )}
       {patchDisplayStatus && (
