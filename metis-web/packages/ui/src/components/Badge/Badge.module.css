@@ -6,7 +6,6 @@
   font-size: var(--font-size-xs);
   font-weight: 600;
   font-family: var(--font-family-mono);
-  text-transform: lowercase;
   white-space: nowrap;
   max-width: 100%;
   overflow: hidden;

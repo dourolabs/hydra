@@ -24,22 +24,22 @@ export interface BadgeProps {
 }
 
 const statusLabels: Record<BadgeStatus, string> = {
-  open: "open",
-  "in-progress": "in-progress",
-  closed: "closed",
-  failed: "failed",
-  dropped: "dropped",
-  blocked: "blocked",
-  rejected: "rejected",
-  merged: "merged",
-  "changes-requested": "changes-requested",
-  approved: "approved",
-  created: "created",
-  pending: "pending",
-  running: "running",
-  complete: "complete",
-  success: "success",
-  unknown: "unknown",
+  open: "Open",
+  "in-progress": "In Progress",
+  closed: "Closed",
+  failed: "Failed",
+  dropped: "Dropped",
+  blocked: "Blocked",
+  rejected: "Rejected",
+  merged: "Merged",
+  "changes-requested": "Changes Requested",
+  approved: "Approved",
+  created: "Created",
+  pending: "Pending",
+  running: "Running",
+  complete: "Complete",
+  success: "Success",
+  unknown: "Unknown",
 };
 
 export function Badge({ status, className }: BadgeProps) {
