@@ -105,22 +105,6 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
         </Panel>
       )}
 
-      {/* Linked Issues */}
-      {referringIssueId && (
-        <Panel
-          header={<span className={styles.sectionTitle}>Linked Issues</span>}
-        >
-          <div className={styles.sectionBody}>
-            <Link
-              to={`/issues/${referringIssueId}`}
-              className={styles.issueLink}
-            >
-              {referringIssueId}
-            </Link>
-          </div>
-        </Panel>
-      )}
-
       {/* Tabbed sections: Diff, Reviews, Activity, Metadata */}
       <Panel
         header={
@@ -164,6 +148,19 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
                 <span className={styles.metaLabel}>Version</span>
                 <span className={styles.metaValue}>{record.version}</span>
               </div>
+              {referringIssueId && (
+                <div className={styles.metaItem}>
+                  <span className={styles.metaLabel}>Linked Issue</span>
+                  <span className={styles.metaValue}>
+                    <Link
+                      to={`/issues/${referringIssueId}`}
+                      className={styles.issueLink}
+                    >
+                      {referringIssueId}
+                    </Link>
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>
