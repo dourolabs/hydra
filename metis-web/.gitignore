@@ -1,8 +1,0 @@
-node_modules/
-dist/
-server-dist/
-.turbo/
-*.tsbuildinfo
-.vite/
-.eslintcache
-coverage/

@@ -1,7 +1,0 @@
-.page { composes: page from './page.module.css'; }
-
-.placeholder {
-  color: var(--color-text-secondary);
-  padding: var(--space-4);
-  margin: 0;
-}

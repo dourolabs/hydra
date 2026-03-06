@@ -1,5 +1,0 @@
-packages:
-  - "packages/api"
-  - "packages/mock-server"
-  - "packages/ui"
-  - "packages/web"
