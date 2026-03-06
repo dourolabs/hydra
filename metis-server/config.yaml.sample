@@ -148,7 +148,11 @@ background:
 #     - "cascade_issue_status"         # Drop children/dependents when an issue enters a terminal state
 #     - "kill_tasks_on_issue_failure"  # Kill running tasks when their issue fails/drops
 #     - "close_merge_request_issues"   # Close merge-request tracking issues when a patch is merged/closed
+#     - "sync_review_request_issues"   # Sync review request issue status with patch review state
 #     - "patch_workflow"               # Create MergeRequest/ReviewRequest issues when a patch is created or reopened
+#     - "github_pr_sync"              # Sync GitHub PR state with patch status
+#     - "notification_generation"      # Generate notifications for relevant events
+#     - "inbox_label"                  # Apply inbox label to new issues for inbox functionality
 #
 #   ## Parameterized automation examples:
 #   # automations:
