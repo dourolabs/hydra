@@ -21,10 +21,12 @@ export function IssueLabelEditor({ issueId, labels }: IssueLabelEditorProps) {
   const { addToast } = useToast();
   const { data: allLabels } = useLabels();
 
+  const visibleLabels = labels.filter((l) => !l.hidden);
+
   const startEditing = useCallback(() => {
-    setSelectedNames(labels.map((l) => l.name));
+    setSelectedNames(visibleLabels.map((l) => l.name));
     setEditing(true);
-  }, [labels]);
+  }, [visibleLabels]);
 
   const saveMutation = useMutation({
     mutationFn: async (names: string[]) => {
@@ -97,7 +99,7 @@ export function IssueLabelEditor({ issueId, labels }: IssueLabelEditorProps) {
 
   return (
     <div className={styles.display} data-testid="label-editor">
-      {labels.map((label) => (
+      {visibleLabels.map((label) => (
         <LabelChip
           key={label.label_id}
           name={label.name}
@@ -109,7 +111,7 @@ export function IssueLabelEditor({ issueId, labels }: IssueLabelEditorProps) {
         onClick={startEditing}
         aria-label="Edit labels"
       >
-        {labels.length > 0 ? "✎" : "+ Add label"}
+        {visibleLabels.length > 0 ? "✎" : "+ Add label"}
       </button>
     </div>
   );
