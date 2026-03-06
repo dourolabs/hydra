@@ -30,7 +30,9 @@ function extractScenarios(content: string): Map<string, string> {
 // 2. Scan test files for tag annotations
 function collectTestTags(testsDir: string): Set<string> {
   const tags = new Set<string>();
-  const files = readdirSync(testsDir).filter((f) => f.endsWith(".spec.ts"));
+  const files = readdirSync(testsDir, { recursive: true })
+    .map((f) => String(f))
+    .filter((f) => f.endsWith(".spec.ts"));
   for (const file of files) {
     const content = readFileSync(join(testsDir, file), "utf-8");
     for (const match of content.matchAll(/@[\w:.-]+/g)) {
