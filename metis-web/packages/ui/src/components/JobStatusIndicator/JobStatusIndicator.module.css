@@ -28,7 +28,7 @@
 }
 
 .complete {
-  background-color: var(--color-status-closed);
+  background-color: var(--color-status-approved);
 }
 
 .failed {

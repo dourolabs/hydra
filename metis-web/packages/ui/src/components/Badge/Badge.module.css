@@ -48,8 +48,8 @@
 }
 
 .merged {
-  background-color: var(--color-status-merged-bg);
-  color: var(--color-status-merged);
+  background-color: var(--color-status-approved-bg);
+  color: var(--color-status-approved);
 }
 
 .changes_requested {
@@ -58,8 +58,8 @@
 }
 
 .approved {
-  background-color: var(--color-status-closed-bg);
-  color: var(--color-status-closed);
+  background-color: var(--color-status-approved-bg);
+  color: var(--color-status-approved);
 }
 
 .created {
@@ -78,13 +78,13 @@
 }
 
 .complete {
-  background-color: var(--color-status-closed-bg);
-  color: var(--color-status-closed);
+  background-color: var(--color-status-approved-bg);
+  color: var(--color-status-approved);
 }
 
 .success {
-  background-color: var(--color-status-closed-bg);
-  color: var(--color-status-closed);
+  background-color: var(--color-status-approved-bg);
+  color: var(--color-status-approved);
 }
 
 .unknown {

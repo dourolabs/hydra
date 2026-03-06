@@ -32,8 +32,8 @@
 }
 
 .addition {
-  background-color: rgba(0, 204, 102, 0.12);
-  color: var(--color-status-closed);
+  background-color: var(--color-status-approved-bg);
+  color: var(--color-status-approved);
 }
 
 .deletion {
