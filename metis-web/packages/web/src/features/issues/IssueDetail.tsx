@@ -65,7 +65,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
             {issue.title || record.issue_id}
           </h1>
           <div className={styles.subtitle}>
-            <span className={styles.issueId}>{record.issue_id}</span>
             <span className={styles.type}>{issue.type}</span>
           </div>
         </div>
