@@ -5912,11 +5912,13 @@ mod tests {
         assert_eq!(value, b"encrypted-bob-key");
 
         // GET — non-existent secret returns None
-        assert!(store
-            .get_user_secret(&alice, "nonexistent")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .get_user_secret(&alice, "nonexistent")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         // LIST — verify alice's secret names
         let names = store.list_user_secret_names(&alice).await.unwrap();
@@ -5939,17 +5941,16 @@ mod tests {
         assert_eq!(value, b"encrypted-alice-key-v2");
 
         // DELETE — remove alice's api-key
-        store
-            .delete_user_secret(&alice, "api-key")
-            .await
-            .unwrap();
+        store.delete_user_secret(&alice, "api-key").await.unwrap();
 
         // GET after delete — returns None
-        assert!(store
-            .get_user_secret(&alice, "api-key")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .get_user_secret(&alice, "api-key")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         // LIST after delete — alice should only have db-password
         let names = store.list_user_secret_names(&alice).await.unwrap();
@@ -5968,13 +5969,16 @@ mod tests {
             .delete_user_secret(&alice, "db-password")
             .await
             .unwrap();
-        store
-            .delete_user_secret(&bob, "api-key")
-            .await
-            .unwrap();
+        store.delete_user_secret(&bob, "api-key").await.unwrap();
 
         // LIST after full delete — both users should be empty
-        assert!(store.list_user_secret_names(&alice).await.unwrap().is_empty());
+        assert!(
+            store
+                .list_user_secret_names(&alice)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert!(store.list_user_secret_names(&bob).await.unwrap().is_empty());
 
         // DELETE non-existent — should not error
