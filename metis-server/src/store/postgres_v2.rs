@@ -5863,4 +5863,124 @@ mod tests {
         assert!(!fetched.is_assignment_agent);
         assert!(!fetched.deleted);
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn secret_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let alice = Username::from("alice");
+        let bob = Username::from("bob");
+
+        // SET — store secrets for alice
+        store
+            .set_user_secret(&alice, "api-key", b"encrypted-alice-key")
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&alice, "db-password", b"encrypted-alice-db")
+            .await
+            .unwrap();
+
+        // SET — store a secret for bob
+        store
+            .set_user_secret(&bob, "api-key", b"encrypted-bob-key")
+            .await
+            .unwrap();
+
+        // GET — verify alice's secrets round-trip correctly
+        let value = store
+            .get_user_secret(&alice, "api-key")
+            .await
+            .unwrap()
+            .expect("expected alice api-key to exist");
+        assert_eq!(value, b"encrypted-alice-key");
+
+        let value = store
+            .get_user_secret(&alice, "db-password")
+            .await
+            .unwrap()
+            .expect("expected alice db-password to exist");
+        assert_eq!(value, b"encrypted-alice-db");
+
+        // GET — verify bob's secret is isolated from alice's
+        let value = store
+            .get_user_secret(&bob, "api-key")
+            .await
+            .unwrap()
+            .expect("expected bob api-key to exist");
+        assert_eq!(value, b"encrypted-bob-key");
+
+        // GET — non-existent secret returns None
+        assert!(store
+            .get_user_secret(&alice, "nonexistent")
+            .await
+            .unwrap()
+            .is_none());
+
+        // LIST — verify alice's secret names
+        let names = store.list_user_secret_names(&alice).await.unwrap();
+        assert_eq!(names, vec!["api-key", "db-password"]);
+
+        // LIST — verify bob's secret names
+        let names = store.list_user_secret_names(&bob).await.unwrap();
+        assert_eq!(names, vec!["api-key"]);
+
+        // UPSERT — overwrite alice's api-key
+        store
+            .set_user_secret(&alice, "api-key", b"encrypted-alice-key-v2")
+            .await
+            .unwrap();
+        let value = store
+            .get_user_secret(&alice, "api-key")
+            .await
+            .unwrap()
+            .expect("expected alice api-key to exist after upsert");
+        assert_eq!(value, b"encrypted-alice-key-v2");
+
+        // DELETE — remove alice's api-key
+        store
+            .delete_user_secret(&alice, "api-key")
+            .await
+            .unwrap();
+
+        // GET after delete — returns None
+        assert!(store
+            .get_user_secret(&alice, "api-key")
+            .await
+            .unwrap()
+            .is_none());
+
+        // LIST after delete — alice should only have db-password
+        let names = store.list_user_secret_names(&alice).await.unwrap();
+        assert_eq!(names, vec!["db-password"]);
+
+        // Bob's secret should be unaffected
+        let value = store
+            .get_user_secret(&bob, "api-key")
+            .await
+            .unwrap()
+            .expect("bob api-key should still exist");
+        assert_eq!(value, b"encrypted-bob-key");
+
+        // DELETE — remove remaining secrets
+        store
+            .delete_user_secret(&alice, "db-password")
+            .await
+            .unwrap();
+        store
+            .delete_user_secret(&bob, "api-key")
+            .await
+            .unwrap();
+
+        // LIST after full delete — both users should be empty
+        assert!(store.list_user_secret_names(&alice).await.unwrap().is_empty());
+        assert!(store.list_user_secret_names(&bob).await.unwrap().is_empty());
+
+        // DELETE non-existent — should not error
+        store
+            .delete_user_secret(&alice, "nonexistent")
+            .await
+            .unwrap();
+    }
 }
