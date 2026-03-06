@@ -4657,6 +4657,8 @@ mod tests {
             label_id(id),
             name.to_string(),
             color.parse::<Rgb>().unwrap(),
+            true,
+            false,
             Utc::now(),
             Utc::now(),
         )
@@ -4889,11 +4891,15 @@ mod tests {
                     label_id("l-aaaa"),
                     "frontend".to_string(),
                     "#e74c3c".parse::<Rgb>().unwrap(),
+                    true,
+                    false,
                 ),
                 LabelSummary::new(
                     label_id("l-bbbb"),
                     "urgent".to_string(),
                     "#3498db".parse::<Rgb>().unwrap(),
+                    true,
+                    false,
                 ),
             ],
         );

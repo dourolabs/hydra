@@ -4,4 +4,4 @@ import type { Rgb } from "./Rgb";
 /**
  * The input representation of a label (name + optional color).
  */
-export type Label = { name: string; color?: Rgb | null };
+export type Label = { name: string; color?: Rgb | null; recurse?: boolean | null; hidden?: boolean | null };

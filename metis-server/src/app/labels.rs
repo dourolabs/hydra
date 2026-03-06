@@ -66,6 +66,8 @@ impl AppState {
         &self,
         name: String,
         color: Option<Rgb>,
+        recurse: bool,
+        hidden: bool,
     ) -> Result<LabelId, CreateLabelError> {
         let name = name.trim().to_lowercase();
         if name.is_empty() {
@@ -73,7 +75,7 @@ impl AppState {
         }
 
         let color = color.unwrap_or_else(|| default_color_for_name(&name));
-        let label = Label::new(name, color);
+        let label = Label::new(name, color, recurse, hidden);
 
         let label_id = self.store.add_label(label).await.map_err(|e| match e {
             StoreError::LabelAlreadyExists(name) => CreateLabelError::AlreadyExists(name),
@@ -88,6 +90,8 @@ impl AppState {
         label_id: &LabelId,
         name: String,
         color: Option<Rgb>,
+        recurse: Option<bool>,
+        hidden: Option<bool>,
     ) -> Result<(), UpdateLabelError> {
         let existing = self.store.get_label(label_id).await.map_err(|e| match e {
             StoreError::LabelNotFound(id) => UpdateLabelError::NotFound(id),
@@ -103,6 +107,12 @@ impl AppState {
         let mut updated = existing;
         updated.name = name;
         updated.color = color;
+        if let Some(recurse) = recurse {
+            updated.recurse = recurse;
+        }
+        if let Some(hidden) = hidden {
+            updated.hidden = hidden;
+        }
         updated.updated_at = chrono::Utc::now();
 
         self.store
@@ -186,7 +196,7 @@ impl AppState {
                         }
                     }
                     Ok(None) => {
-                        let id = self.create_label(name, None).await?;
+                        let id = self.create_label(name, None, true, false).await?;
                         resolved.push(id);
                     }
                     Err(e) => return Err(CreateLabelError::Store { source: e }),
@@ -238,7 +248,12 @@ mod tests {
     async fn create_label_normalizes_name() {
         let state = test_state();
         let label_id = state
-            .create_label("  My Label  ".to_string(), Some("#e74c3c".parse().unwrap()))
+            .create_label(
+                "  My Label  ".to_string(),
+                Some("#e74c3c".parse().unwrap()),
+                true,
+                false,
+            )
             .await
             .unwrap();
 
@@ -250,7 +265,7 @@ mod tests {
     async fn create_label_rejects_empty_name() {
         let state = test_state();
         let err = state
-            .create_label("   ".to_string(), None)
+            .create_label("   ".to_string(), None, true, false)
             .await
             .unwrap_err();
         assert!(matches!(err, CreateLabelError::EmptyName));
@@ -259,7 +274,10 @@ mod tests {
     #[tokio::test]
     async fn create_label_assigns_default_color() {
         let state = test_state();
-        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
 
         let label = state.get_label(&label_id).await.unwrap();
         // Color should be one of the DEFAULT_COLORS palette entries
@@ -275,7 +293,7 @@ mod tests {
         let state = test_state();
         let color: Rgb = "#abcdef".parse().unwrap();
         let label_id = state
-            .create_label("bug".to_string(), Some(color.clone()))
+            .create_label("bug".to_string(), Some(color.clone()), true, false)
             .await
             .unwrap();
 
@@ -286,10 +304,13 @@ mod tests {
     #[tokio::test]
     async fn create_label_rejects_duplicate_normalized_name() {
         let state = test_state();
-        state.create_label("Bug".to_string(), None).await.unwrap();
+        state
+            .create_label("Bug".to_string(), None, true, false)
+            .await
+            .unwrap();
 
         let err = state
-            .create_label("  bug  ".to_string(), None)
+            .create_label("  bug  ".to_string(), None, true, false)
             .await
             .unwrap_err();
         assert!(matches!(err, CreateLabelError::AlreadyExists(_)));
@@ -300,12 +321,12 @@ mod tests {
         let state = test_state();
         let color: Rgb = "#e74c3c".parse().unwrap();
         let label_id = state
-            .create_label("bug".to_string(), Some(color.clone()))
+            .create_label("bug".to_string(), Some(color.clone()), true, false)
             .await
             .unwrap();
 
         state
-            .update_label(&label_id, "defect".to_string(), None)
+            .update_label(&label_id, "defect".to_string(), None, None, None)
             .await
             .unwrap();
 
@@ -317,10 +338,13 @@ mod tests {
     #[tokio::test]
     async fn update_label_rejects_empty_name() {
         let state = test_state();
-        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
 
         let err = state
-            .update_label(&label_id, "  ".to_string(), None)
+            .update_label(&label_id, "  ".to_string(), None, None, None)
             .await
             .unwrap_err();
         assert!(matches!(err, UpdateLabelError::EmptyName));
@@ -329,14 +353,17 @@ mod tests {
     #[tokio::test]
     async fn update_label_rejects_name_collision() {
         let state = test_state();
-        state.create_label("bug".to_string(), None).await.unwrap();
+        state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
         let feature_id = state
-            .create_label("feature".to_string(), None)
+            .create_label("feature".to_string(), None, true, false)
             .await
             .unwrap();
 
         let err = state
-            .update_label(&feature_id, "Bug".to_string(), None)
+            .update_label(&feature_id, "Bug".to_string(), None, None, None)
             .await
             .unwrap_err();
         assert!(matches!(err, UpdateLabelError::AlreadyExists(_)));
@@ -345,7 +372,10 @@ mod tests {
     #[tokio::test]
     async fn delete_label_excludes_from_get_and_list() {
         let state = test_state();
-        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
 
         state.delete_label(&label_id).await.unwrap();
 
@@ -384,7 +414,10 @@ mod tests {
     #[tokio::test]
     async fn add_and_get_label_association() {
         let state = test_state();
-        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
         let object_id: MetisId = "i-testissue".parse().unwrap();
 
         state
@@ -401,7 +434,10 @@ mod tests {
     #[tokio::test]
     async fn add_label_association_is_idempotent() {
         let state = test_state();
-        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
         let object_id: MetisId = "i-testissue".parse().unwrap();
 
         state
@@ -420,7 +456,10 @@ mod tests {
     #[tokio::test]
     async fn remove_label_association() {
         let state = test_state();
-        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
         let object_id: MetisId = "i-testissue".parse().unwrap();
 
         state
@@ -439,7 +478,10 @@ mod tests {
     #[tokio::test]
     async fn remove_nonexistent_label_association_is_noop() {
         let state = test_state();
-        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
         let object_id: MetisId = "i-testissue".parse().unwrap();
 
         // Removing a non-existent association should not error
@@ -452,7 +494,10 @@ mod tests {
     #[tokio::test]
     async fn get_labels_for_object_excludes_deleted_labels() {
         let state = test_state();
-        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
         let object_id: MetisId = "i-testissue".parse().unwrap();
 
         state
@@ -468,9 +513,12 @@ mod tests {
     #[tokio::test]
     async fn get_labels_for_objects_batch() {
         let state = test_state();
-        let label_a = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_a = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
         let label_b = state
-            .create_label("feature".to_string(), None)
+            .create_label("feature".to_string(), None, true, false)
             .await
             .unwrap();
 
@@ -496,7 +544,10 @@ mod tests {
     #[tokio::test]
     async fn resolve_label_ids_creates_missing_labels() {
         let state = test_state();
-        let existing_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let existing_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
 
         let resolved = state
             .resolve_label_ids(
@@ -549,9 +600,12 @@ mod tests {
         use metis_common::api::v1 as api;
 
         let state = test_state();
-        let label_a = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_a = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
         let label_b = state
-            .create_label("feature".to_string(), None)
+            .create_label("feature".to_string(), None, true, false)
             .await
             .unwrap();
 
@@ -644,7 +698,10 @@ mod tests {
             .unwrap();
 
         // Create a label and assign to parent
-        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
         let parent_obj = MetisId::from(parent_id.clone());
         state
             .add_label_association(&label_id, &parent_obj)
@@ -716,7 +773,7 @@ mod tests {
 
         // Create a label and cascade from grandparent
         let label_id = state
-            .create_label("priority".to_string(), None)
+            .create_label("priority".to_string(), None, true, false)
             .await
             .unwrap();
         let gp_obj = MetisId::from(grandparent_id.clone());
@@ -760,7 +817,10 @@ mod tests {
             .await
             .unwrap();
 
-        let label_id = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
         let obj = MetisId::from(issue_id.clone());
         state.add_label_association(&label_id, &obj).await.unwrap();
 
@@ -791,9 +851,12 @@ mod tests {
             .await
             .unwrap();
 
-        let label_a = state.create_label("bug".to_string(), None).await.unwrap();
+        let label_a = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
         let label_b = state
-            .create_label("priority".to_string(), None)
+            .create_label("priority".to_string(), None, true, false)
             .await
             .unwrap();
         let parent_obj = MetisId::from(parent_id.clone());
@@ -893,7 +956,7 @@ mod tests {
             .unwrap();
 
         let inherited_label = state
-            .create_label("inherited".to_string(), None)
+            .create_label("inherited".to_string(), None, true, false)
             .await
             .unwrap();
         let parent_obj = MetisId::from(parent_id.clone());
@@ -904,7 +967,7 @@ mod tests {
 
         // Create a separate label that will be explicitly assigned to the child
         let explicit_label = state
-            .create_label("explicit".to_string(), None)
+            .create_label("explicit".to_string(), None, true, false)
             .await
             .unwrap();
 
@@ -931,5 +994,87 @@ mod tests {
         let label_ids: HashSet<LabelId> = child_labels.iter().map(|l| l.label_id.clone()).collect();
         assert!(label_ids.contains(&inherited_label));
         assert!(label_ids.contains(&explicit_label));
+    }
+
+    #[tokio::test]
+    async fn create_label_uses_default_flags() {
+        let state = test_state();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
+
+        let label = state.get_label(&label_id).await.unwrap();
+        assert!(label.recurse);
+        assert!(!label.hidden);
+    }
+
+    #[tokio::test]
+    async fn create_label_with_explicit_flags() {
+        let state = test_state();
+        let label_id = state
+            .create_label("inbox".to_string(), None, false, true)
+            .await
+            .unwrap();
+
+        let label = state.get_label(&label_id).await.unwrap();
+        assert!(!label.recurse);
+        assert!(label.hidden);
+    }
+
+    #[tokio::test]
+    async fn update_label_changes_flags() {
+        let state = test_state();
+        let label_id = state
+            .create_label("bug".to_string(), None, true, false)
+            .await
+            .unwrap();
+
+        state
+            .update_label(&label_id, "bug".to_string(), None, Some(false), Some(true))
+            .await
+            .unwrap();
+
+        let label = state.get_label(&label_id).await.unwrap();
+        assert!(!label.recurse);
+        assert!(label.hidden);
+    }
+
+    #[tokio::test]
+    async fn update_label_preserves_flags_when_none() {
+        let state = test_state();
+        let label_id = state
+            .create_label("inbox".to_string(), None, false, true)
+            .await
+            .unwrap();
+
+        state
+            .update_label(&label_id, "inbox".to_string(), None, None, None)
+            .await
+            .unwrap();
+
+        let label = state.get_label(&label_id).await.unwrap();
+        assert!(!label.recurse);
+        assert!(label.hidden);
+    }
+
+    #[tokio::test]
+    async fn get_labels_for_object_includes_flags() {
+        let state = test_state();
+        let label_id = state
+            .create_label("inbox".to_string(), None, false, true)
+            .await
+            .unwrap();
+        let object_id: MetisId = "i-testissue".parse().unwrap();
+
+        state
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+
+        let labels = state.get_labels_for_object(&object_id).await.unwrap();
+        assert_eq!(labels.len(), 1);
+        assert!(!labels[0].recurse);
+        assert!(labels[0].hidden);
     }
 }
