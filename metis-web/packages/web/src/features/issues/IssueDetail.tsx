@@ -72,6 +72,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
         <button
           type="button"
           className={styles.statusChip}
+          data-testid="status-chip"
           onClick={() => setUpdateModalOpen(true)}
         >
           <Badge status={issueToBadgeStatus(issue.status)} />

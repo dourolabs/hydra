@@ -54,7 +54,7 @@ test.describe("Issue Detail", () => {
     await page.goto("/issues/i-seed00005");
 
     // Click the status chip to open the update modal
-    const statusChip = page.locator("button").filter({ hasText: "✎" });
+    const statusChip = page.getByTestId("status-chip");
     await expect(statusChip).toBeVisible();
     await statusChip.click();
 
