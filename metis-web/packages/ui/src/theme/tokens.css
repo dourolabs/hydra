@@ -24,7 +24,6 @@
   --color-status-dropped: #8b3030;
   --color-status-blocked: #e07850;
   --color-status-rejected: #ff8800;
-  --color-status-merged: #00cc66;
   --color-status-unknown: #a0a0a0;
 
   /* Status background colors (translucent) */
@@ -36,7 +35,6 @@
   --color-status-dropped-bg: color-mix(in srgb, var(--color-status-dropped) 12%, transparent);
   --color-status-blocked-bg: color-mix(in srgb, var(--color-status-blocked) 12%, transparent);
   --color-status-rejected-bg: color-mix(in srgb, var(--color-status-rejected) 12%, transparent);
-  --color-status-merged-bg: color-mix(in srgb, var(--color-status-merged) 12%, transparent);
   --color-status-unknown-bg: color-mix(in srgb, var(--color-status-unknown) 12%, transparent);
   --color-status-neutral-bg: color-mix(in srgb, var(--color-text-secondary) 12%, transparent);
 
