@@ -11,39 +11,41 @@
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+  border: 1px solid;
+  background: transparent;
 }
 
 .open {
-  background-color: rgba(74, 158, 255, 0.15);
+  border-color: var(--color-status-open);
   color: var(--color-status-open);
 }
 
 .in_progress {
-  background-color: rgba(240, 192, 64, 0.15);
+  border-color: var(--color-status-in-progress);
   color: var(--color-status-in-progress);
 }
 
 .closed {
-  background-color: rgba(0, 204, 102, 0.15);
+  border-color: var(--color-status-closed);
   color: var(--color-status-closed);
 }
 
 .failed {
-  background-color: rgba(255, 68, 68, 0.15);
+  border-color: var(--color-status-failed);
   color: var(--color-status-failed);
 }
 
 .dropped {
-  background-color: rgba(139, 48, 48, 0.15);
+  border-color: var(--color-status-dropped);
   color: var(--color-status-dropped);
 }
 
 .blocked {
-  background-color: rgba(204, 102, 255, 0.15);
+  border-color: var(--color-status-blocked);
   color: var(--color-status-blocked);
 }
 
 .rejected {
-  background-color: rgba(255, 136, 0, 0.15);
+  border-color: var(--color-status-rejected);
   color: var(--color-status-rejected);
 }
