@@ -7,12 +7,16 @@ function getBoxClass(child: ChildStatus): string {
   if (child.status === "closed") return styles.statusBoxClosed;
   if (child.status === "in-progress") return styles.statusBoxInProgress;
   if (child.status === "failed") return styles.statusBoxFailed;
+  if (child.status === "dropped") return styles.statusBoxDropped;
+  if (child.status === "rejected") return styles.statusBoxRejected;
   return styles.statusBoxOpen;
 }
 
 function sortKey(child: ChildStatus): number {
   if (child.status === "closed") return 0;
-  if (child.status === "failed" || child.status === "dropped" || child.status === "rejected") return 1;
+  if (child.status === "failed") return 1;
+  if (child.status === "dropped") return 1.1;
+  if (child.status === "rejected") return 1.2;
   if (child.assignedToUser && (child.status === "open" || child.status === "in-progress")) return 2;
   if (child.hasActiveTask) return 3;
   if (child.status === "in-progress") return 4;
