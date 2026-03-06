@@ -1,10 +1,7 @@
-import { useMemo, useState } from "react";
-import type { IssueSummaryRecord, JobSummaryRecord, LabelRecord } from "@metis/api";
-import type { IssueTreeNode } from "../issues/useIssues";
+import { useMemo } from "react";
+import type { IssueSummaryRecord, LabelRecord } from "@metis/api";
 import { useLabels } from "../labels/useLabels";
-import { descriptionSnippet } from "../../utils/text";
-import { TERMINAL_STATUSES } from "../../utils/statusMapping";
-import { computeIssueProgress, type ChildStatus, type IssueProgress } from "./computeIssueProgress";
+import type { ChildStatus } from "./computeIssueProgress";
 import { StatusBoxes } from "./StatusBoxes";
 import styles from "./IssueFilterSidebar.module.css";
 
@@ -60,14 +57,12 @@ function computeLabelProgress(
 }
 
 interface IssueFilterSidebarProps {
-  roots: IssueTreeNode[];
   allIssues: IssueSummaryRecord[];
   activeFilter: string | null;
   onFilterChange: (rootId: string | null) => void;
   collapsed: boolean;
   drawerOpen: boolean;
   onDrawerClose: () => void;
-  jobsByIssue: Map<string, JobSummaryRecord[]>;
   isActiveMap: Map<string, boolean>;
   username: string;
   inboxCount: number;
@@ -75,14 +70,12 @@ interface IssueFilterSidebarProps {
 }
 
 export function IssueFilterSidebar({
-  roots,
   allIssues,
   activeFilter,
   onFilterChange,
   collapsed,
   drawerOpen,
   onDrawerClose,
-  jobsByIssue,
   isActiveMap,
   username,
   inboxCount,
@@ -94,30 +87,6 @@ export function IssueFilterSidebar({
     onDrawerClose();
   };
 
-  const progressList = useMemo(() => {
-    const list = computeIssueProgress(roots, jobsByIssue, username);
-    return list.sort((a, b) => {
-      const aInactive = TERMINAL_STATUSES.has(a.rootIssue.issue.status) ? 1 : 0;
-      const bInactive = TERMINAL_STATUSES.has(b.rootIssue.issue.status) ? 1 : 0;
-      if (aInactive !== bInactive) return aInactive - bInactive;
-      return (
-        new Date(b.rootIssue.creation_time).getTime() -
-        new Date(a.rootIssue.creation_time).getTime()
-      );
-    });
-  }, [roots, jobsByIssue, username]);
-
-  const activeList = useMemo(
-    () => progressList.filter((p) => !TERMINAL_STATUSES.has(p.rootIssue.issue.status)),
-    [progressList],
-  );
-  const completedList = useMemo(
-    () => progressList.filter((p) => TERMINAL_STATUSES.has(p.rootIssue.issue.status)),
-    [progressList],
-  );
-
-  const [completedExpanded, setCompletedExpanded] = useState(false);
-
   const { data: labels } = useLabels();
 
   const labelProgressList = useMemo(() => {
@@ -125,40 +94,7 @@ export function IssueFilterSidebar({
     return computeLabelProgress(labels, allIssues, isActiveMap, username);
   }, [labels, allIssues, isActiveMap, username]);
 
-  if (progressList.length === 0 && labelProgressList.length === 0) return null;
-
-  const renderItem = (p: IssueProgress) => {
-    const label = p.rootIssue.issue.title || descriptionSnippet(p.rootIssue.issue.description, 80);
-    const isActive = activeFilter === p.rootId;
-    return (
-      <li
-        key={p.rootId}
-        className={`${styles.item} ${isActive ? styles.active : ""}`}
-        onClick={() => handleFilterChange(p.rootId)}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            handleFilterChange(p.rootId);
-          }
-        }}
-      >
-        <span className={styles.itemLeft}>
-          <span className={styles.itemLabel}>{label}</span>
-          <span className={styles.itemStats}>
-            <StatusBoxes children={p.children} />
-            {p.closed}/{p.total}
-          </span>
-        </span>
-        {p.needsAttentionCount > 0 && (
-          <span className={styles.needsAttentionChip}>
-            {p.needsAttentionCount}
-          </span>
-        )}
-      </li>
-    );
-  };
+  if (labelProgressList.length === 0) return null;
 
   const renderLabelItem = (lp: LabelProgress) => {
     const filterId = `${LABEL_FILTER_PREFIX}${lp.labelId}`;
@@ -244,28 +180,6 @@ export function IssueFilterSidebar({
       >
         <span className={styles.itemLabel}>Everything</span>
       </li>
-      {activeList.map(renderItem)}
-      {completedList.length > 0 && (
-        <>
-          <li
-            className={styles.completedToggle}
-            onClick={() => setCompletedExpanded((v) => !v)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                setCompletedExpanded((v) => !v);
-              }
-            }}
-          >
-            <span className={styles.completedToggleLabel}>
-              {completedExpanded ? "\u25BC" : "\u25B6"} Completed ({completedList.length})
-            </span>
-          </li>
-          {completedExpanded && completedList.map(renderItem)}
-        </>
-      )}
       {labelProgressList.length > 0 && (
         <>
           <li className={styles.labelSectionHeader}>Labels</li>
