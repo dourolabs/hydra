@@ -34,10 +34,12 @@ test.describe("Navigation", () => {
   }) => {
     await page.goto("/patches/p-seed00001");
     await expect(
-      page.getByText("p-seed00001", { exact: true })
+      page.getByRole("heading", { name: "Add OAuth2 provider integration" })
     ).toBeVisible();
+    // patch_id is now in the Metadata tab
+    await page.getByRole("tab", { name: "Metadata" }).click();
     await expect(
-      page.getByText("Add OAuth2 provider integration")
+      page.getByText("p-seed00001", { exact: true })
     ).toBeVisible();
   });
 
