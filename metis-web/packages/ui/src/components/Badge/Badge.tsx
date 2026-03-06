@@ -7,7 +7,16 @@ export type BadgeStatus =
   | "failed"
   | "dropped"
   | "blocked"
-  | "rejected";
+  | "rejected"
+  | "merged"
+  | "changes-requested"
+  | "approved"
+  | "created"
+  | "pending"
+  | "running"
+  | "complete"
+  | "success"
+  | "unknown";
 
 export interface BadgeProps {
   status: BadgeStatus;
@@ -22,6 +31,15 @@ const statusLabels: Record<BadgeStatus, string> = {
   dropped: "dropped",
   blocked: "blocked",
   rejected: "rejected",
+  merged: "merged",
+  "changes-requested": "changes-requested",
+  approved: "approved",
+  created: "created",
+  pending: "pending",
+  running: "running",
+  complete: "complete",
+  success: "success",
+  unknown: "unknown",
 };
 
 export function Badge({ status, className }: BadgeProps) {
