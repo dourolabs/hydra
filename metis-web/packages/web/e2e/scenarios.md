@@ -53,7 +53,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 ## Mobile Viewport
 
-- `@mobile:nav` — Navigation works correctly on mobile viewport (planned)
-- `@mobile:dashboard` — Dashboard is usable on mobile viewport (planned)
-- `@mobile:issue-detail` — Issue detail page is usable on mobile viewport (planned)
+- `@mobile:nav` — Navigation works correctly on mobile viewport
+- `@mobile:dashboard` — Dashboard is usable on mobile viewport
+- `@mobile:issue-detail` — Issue detail page is usable on mobile viewport
 - `@mobile:login` — Login page is usable on mobile viewport (planned)
