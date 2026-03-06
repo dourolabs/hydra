@@ -205,25 +205,59 @@ pub async fn run(
         }
     };
 
+    // Timeout durations for post-agent cleanup steps.
+    const GIT_PUSH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+    const DOC_PUSH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+    const CACHE_UPLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+    const STATUS_SUBMIT_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+
     if base_commit.is_some() {
-        if let Err(err) = finalize_task_run(&repo_path, &job, github_token.as_deref()) {
-            errors.push(err.context("failed to finalize task output branches"));
+        let repo_path_clone = repo_path.clone();
+        let job_clone = job.clone();
+        let github_token_clone = github_token.clone();
+        match tokio::time::timeout(
+            GIT_PUSH_TIMEOUT,
+            tokio::task::spawn_blocking(move || {
+                finalize_task_run(&repo_path_clone, &job_clone, github_token_clone.as_deref())
+            }),
+        )
+        .await
+        {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(err))) => {
+                errors.push(err.context("failed to finalize task output branches"));
+            }
+            Ok(Err(err)) => {
+                errors.push(anyhow!("finalize_task_run panicked: {err}"));
+            }
+            Err(_) => {
+                log_status("Warning: finalize_task_run timed out, continuing".to_string());
+            }
         }
     }
 
     // Push document changes back to the server (best-effort).
     if execution_env.contains_key(ENV_METIS_DOCUMENTS_DIR) {
-        if let Err(err) = push_documents(
-            client,
-            PushArgs {
-                directory: Some(documents_path.clone()),
-                dry_run: false,
-                path_prefix: None,
-            },
+        match tokio::time::timeout(
+            DOC_PUSH_TIMEOUT,
+            push_documents(
+                client,
+                PushArgs {
+                    directory: Some(documents_path.clone()),
+                    dry_run: false,
+                    path_prefix: None,
+                },
+            ),
         )
         .await
         {
-            log_status(format!("Warning: document push failed, continuing: {err}"));
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                log_status(format!("Warning: document push failed, continuing: {err}"));
+            }
+            Err(_) => {
+                log_status("Warning: document push timed out, continuing".to_string());
+            }
         }
     }
 
@@ -232,80 +266,92 @@ pub async fn run(
             (build_cache.as_ref(), service_repo_name.as_ref())
         {
             let cache_upload_start = Instant::now();
-            match build_cache_client(build_cache) {
-                Ok(client) => match resolve_head_oid(&repo_path) {
-                    Ok(Some(head_oid)) => {
-                        let git_sha = head_oid.to_string();
-                        if downloaded_cache_sha.as_deref() == Some(git_sha.as_str()) {
-                            let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                            log_status(format!(
-                                "Build cache upload skipped (cache entry already up-to-date) in {elapsed:.2}s."
-                            ));
-                        } else {
-                            const MAX_ATTEMPTS: u32 = 3;
-                            let mut last_error = None;
-                            for attempt in 1..=MAX_ATTEMPTS {
+            match tokio::time::timeout(CACHE_UPLOAD_TIMEOUT, async {
+                match build_cache_client(build_cache) {
+                    Ok(client) => match resolve_head_oid(&repo_path) {
+                        Ok(Some(head_oid)) => {
+                            let git_sha = head_oid.to_string();
+                            if downloaded_cache_sha.as_deref() == Some(git_sha.as_str()) {
+                                let elapsed = cache_upload_start.elapsed().as_secs_f64();
                                 log_status(format!(
-                                    "Uploading build cache (attempt {attempt}/{MAX_ATTEMPTS})..."
+                                    "Build cache upload skipped (cache entry already up-to-date) in {elapsed:.2}s."
                                 ));
-                                match client
-                                    .build_and_upload_cache(
-                                        &repo_path,
-                                        worker_home_dir.as_deref(),
-                                        service_repo_name.clone(),
-                                        &git_sha,
-                                    )
-                                    .await
-                                {
-                                    Ok((key, timings)) => {
-                                        let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                                        log_status(format!(
-                                            "Build cache create/upload completed in {elapsed:.2}s (uploaded entry '{}').",
-                                            key.object_key()
-                                        ));
-                                        log_upload_cache_timings(&timings);
-                                        last_error = None;
-                                        break;
-                                    }
-                                    Err(err) => {
-                                        last_error = Some(err);
-                                        if attempt < MAX_ATTEMPTS {
-                                            let delay_secs = 2u64.pow(attempt);
+                            } else {
+                                const MAX_ATTEMPTS: u32 = 3;
+                                let mut last_error = None;
+                                for attempt in 1..=MAX_ATTEMPTS {
+                                    log_status(format!(
+                                        "Uploading build cache (attempt {attempt}/{MAX_ATTEMPTS})..."
+                                    ));
+                                    match client
+                                        .build_and_upload_cache(
+                                            &repo_path,
+                                            worker_home_dir.as_deref(),
+                                            service_repo_name.clone(),
+                                            &git_sha,
+                                        )
+                                        .await
+                                    {
+                                        Ok((key, timings)) => {
+                                            let elapsed = cache_upload_start.elapsed().as_secs_f64();
                                             log_status(format!(
-                                                "Build cache upload attempt {attempt} failed, retrying in {delay_secs}s..."
+                                                "Build cache create/upload completed in {elapsed:.2}s (uploaded entry '{}').",
+                                                key.object_key()
                                             ));
-                                            tokio::time::sleep(Duration::from_secs(delay_secs))
-                                                .await;
+                                            log_upload_cache_timings(&timings);
+                                            last_error = None;
+                                            break;
+                                        }
+                                        Err(err) => {
+                                            last_error = Some(err);
+                                            if attempt < MAX_ATTEMPTS {
+                                                let delay_secs = 2u64.pow(attempt);
+                                                log_status(format!(
+                                                    "Build cache upload attempt {attempt} failed, retrying in {delay_secs}s..."
+                                                ));
+                                                tokio::time::sleep(Duration::from_secs(delay_secs))
+                                                    .await;
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            if let Some(err) = last_error {
-                                let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                                log_status(format!(
-                                    "Build cache create/upload completed in {elapsed:.2}s (skipped after {MAX_ATTEMPTS} attempts: {err})."
-                                ));
+                                if let Some(err) = last_error {
+                                    let elapsed = cache_upload_start.elapsed().as_secs_f64();
+                                    log_status(format!(
+                                        "Build cache create/upload completed in {elapsed:.2}s (skipped after {MAX_ATTEMPTS} attempts: {err})."
+                                    ));
+                                }
                             }
                         }
-                    }
-                    Ok(None) => {
-                        let elapsed = cache_upload_start.elapsed().as_secs_f64();
-                        log_status(format!(
-                            "Build cache create/upload completed in {elapsed:.2}s (skipped: HEAD is unavailable)."
-                        ))
-                    }
+                        Ok(None) => {
+                            let elapsed = cache_upload_start.elapsed().as_secs_f64();
+                            log_status(format!(
+                                "Build cache create/upload completed in {elapsed:.2}s (skipped: HEAD is unavailable)."
+                            ))
+                        }
+                        Err(err) => {
+                            let elapsed = cache_upload_start.elapsed().as_secs_f64();
+                            log_status(format!(
+                                "Build cache create/upload completed in {elapsed:.2}s (skipped: failed to resolve HEAD: {err})."
+                            ))
+                        }
+                    },
                     Err(err) => {
                         let elapsed = cache_upload_start.elapsed().as_secs_f64();
                         log_status(format!(
-                            "Build cache create/upload completed in {elapsed:.2}s (skipped: failed to resolve HEAD: {err})."
+                            "Build cache create/upload completed in {elapsed:.2}s (skipped: {err})."
                         ))
                     }
-                },
-                Err(err) => {
+                }
+            })
+            .await
+            {
+                Ok(()) => {}
+                Err(_) => {
                     let elapsed = cache_upload_start.elapsed().as_secs_f64();
                     log_status(format!(
-                        "Build cache create/upload completed in {elapsed:.2}s (skipped: {err})."
-                    ))
+                        "Warning: build cache upload timed out after {elapsed:.2}s, continuing"
+                    ));
                 }
             }
         }
@@ -324,8 +370,19 @@ pub async fn run(
         }
     };
 
-    if let Err(err) = submit_job_status(client, &job, status_update).await {
-        errors.push(err);
+    match tokio::time::timeout(
+        STATUS_SUBMIT_TIMEOUT,
+        submit_job_status(client, &job, status_update),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            errors.push(err);
+        }
+        Err(_) => {
+            errors.push(anyhow!("submit_job_status timed out"));
+        }
     }
 
     if let Some(err) = errors.into_iter().next() {
