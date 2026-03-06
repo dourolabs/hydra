@@ -174,6 +174,9 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_automation("notification_generation", |params| {
         Ok(Box::new(NotificationAutomation::new(params)?))
     });
+    registry.register_automation("inbox_label", |params| {
+        Ok(Box::new(InboxLabelAutomation::new(params)?))
+    });
 
     registry
 }
