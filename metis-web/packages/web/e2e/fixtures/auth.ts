@@ -7,6 +7,8 @@ type AuthFixtures = {
 
 export const test = base.extend<AuthFixtures>({
   authenticatedPage: async ({ page }, use) => {
+    // Reset mock server state to ensure clean seed data
+    await fetch("http://localhost:8080/v1/dev/reset", { method: "POST" });
     await page.goto("/login");
     await page.waitForSelector('[data-testid="token-input"]');
     await page.fill('[data-testid="token-input"]', "dev-token-12345");
