@@ -8,8 +8,8 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 - `@auth:login` — User can log in with a valid API token
 - `@auth:redirect` — Unauthenticated user is redirected to login
-- `@auth:logout` — User can log out and is redirected to login (planned)
-- `@auth:invalid-token` — User sees error when logging in with invalid token (planned)
+- `@auth:logout` — User can log out and is redirected to login
+- `@auth:invalid-token` — User sees error when logging in with invalid token
 
 ## Dashboard
 
@@ -27,7 +27,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 - `@issues:view-detail` — User can view an issue's description, metadata, and progress
 - `@issues:update-status` — User can change an issue's status
-- `@issues:create` — User can create a new issue (planned)
+- `@issues:create` — User can create a new issue
 - `@issues:navigate-tabs` — User can navigate between Related Issues, Jobs, Patches, Activity, and Metadata tabs
 
 ## Labels
@@ -38,18 +38,18 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 ## Patches
 
-- `@patches:view-detail` — User can view a patch's details and metadata (planned)
-- `@patches:navigate` — User can navigate to a patch from an issue (planned)
+- `@patches:view-detail` — User can view a patch's details and metadata
+- `@patches:navigate` — User can navigate to a patch from an issue
 
 ## Documents
 
-- `@documents:list` — User can view the documents list (planned)
-- `@documents:view-detail` — User can view a document's content (planned)
+- `@documents:list` — User can view the documents list
+- `@documents:view-detail` — User can view a document's content
 
 ## Error Handling
 
 - `@errors:404` — User sees a not-found message for non-existent entities
-- `@errors:server-error` — User sees an error message when the server returns 500 (planned)
+- `@errors:server-error` — User sees an error message when the server returns 500
 
 ## Mobile Viewport
 
