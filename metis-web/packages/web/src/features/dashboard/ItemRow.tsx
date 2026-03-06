@@ -11,16 +11,8 @@ import { apiClient } from "../../api/client";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
+import { LabelChip } from "../labels/LabelChip";
 import styles from "./ItemRow.module.css";
-
-function getLabelTextColor(hexColor: string): string {
-  const hex = hexColor.replace("#", "");
-  const r = parseInt(hex.substring(0, 2), 16);
-  const g = parseInt(hex.substring(2, 4), 16);
-  const b = parseInt(hex.substring(4, 6), 16);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance > 0.5 ? "#000000" : "#ffffff";
-}
 
 const STATUS_DOT_CLASSES: Record<string, string> = {
   open: styles.statusDotOpen,
@@ -245,16 +237,11 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
       {allLabels && (
         <span className={styles.labels}>
           {allLabels.map((label: LabelSummary) => (
-            <span
+            <LabelChip
               key={label.label_id}
-              className={styles.labelChip}
-              style={{
-                backgroundColor: label.color,
-                color: getLabelTextColor(label.color),
-              }}
-            >
-              {label.name}
-            </span>
+              name={label.name}
+              color={label.color}
+            />
           ))}
         </span>
       )}
