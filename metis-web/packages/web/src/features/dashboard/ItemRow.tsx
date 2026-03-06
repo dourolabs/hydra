@@ -242,7 +242,7 @@ export function ItemRow({ item, jobs, filterRootId, inboxLabelId }: ItemRowProps
           ))}
         </span>
       )}
-{patchDisplayStatus && (
+      {patchDisplayStatus && (
         <span className={`${styles.patchBadge} ${styles[`patchBadge${patchDisplayStatus.replace(/\s+/g, "")}`] ?? ""}`}>
           {patchDisplayStatus}
         </span>
