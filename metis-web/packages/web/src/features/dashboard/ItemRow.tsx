@@ -202,7 +202,6 @@ export function ItemRow({ item, jobs, filterRootId, inboxLabelId }: ItemRowProps
 
   const rowClasses = [styles.row];
   if (item.isTerminal) rowClasses.push(styles.terminal);
-  if (isAssignedToMe) rowClasses.push(styles.assignedToMe);
 
   // Labels (issues only) — filter out hidden labels
   const allLabels = item.kind === "issue" && item.data.issue.labels && item.data.issue.labels.length > 0
