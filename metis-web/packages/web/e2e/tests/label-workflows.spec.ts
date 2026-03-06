@@ -113,7 +113,7 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor", () => 
 
     // i-seed00002 has labels "platform-v2" and "auth"
     // Scope to the label editor section to avoid matching labels inside ItemRow chips
-    const labelSection = page.getByText("Labels", { exact: true }).locator("..").locator("..");
+    const labelSection = page.getByTestId("label-editor");
     await expect(labelSection.getByText("platform-v2")).toBeVisible();
     await expect(labelSection.getByText("auth", { exact: true })).toBeVisible();
   });
@@ -129,7 +129,7 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor", () => 
     ).toBeVisible();
 
     // Enter edit mode
-    await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByRole("button", { name: "Edit labels" }).click();
 
     // Verify existing labels are shown as editable chips
     // Use the label picker area to scope selectors
@@ -160,7 +160,7 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor", () => 
 
     // Verify updated labels
     // Scope to the label editor section to avoid matching labels inside ItemRow chips
-    const labelSectionAfterSave = page.getByText("Labels", { exact: true }).locator("..").locator("..");
+    const labelSectionAfterSave = page.getByTestId("label-editor");
     await expect(labelSectionAfterSave.getByText("platform-v2")).toBeVisible();
     await expect(labelSectionAfterSave.getByText("infra")).toBeVisible();
     await expect(
