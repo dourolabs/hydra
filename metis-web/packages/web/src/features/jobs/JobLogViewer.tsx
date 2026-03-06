@@ -28,6 +28,9 @@ export function JobLogViewer({ jobId, status }: JobLogViewerProps) {
   const [streamConnected, setStreamConnected] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // Follow output toggle state (only relevant when streaming)
+  const [followOutput, setFollowOutput] = useState(true);
+
   const cleanup = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
@@ -89,6 +92,14 @@ export function JobLogViewer({ jobId, status }: JobLogViewerProps) {
     };
   }, [isStreaming, openLogStream, cleanup]);
 
+  const handleAutoScrollChange = useCallback((isAutoScrolling: boolean) => {
+    setFollowOutput(isAutoScrolling);
+  }, []);
+
+  const handleFollowToggle = useCallback(() => {
+    setFollowOutput((prev) => !prev);
+  }, []);
+
   // Parse snapshot text into lines
   const snapshotLines = snapshotText ? snapshotText.split("\n") : [];
 
@@ -120,9 +131,23 @@ export function JobLogViewer({ jobId, status }: JobLogViewerProps) {
         <div className={styles.streamingIndicator}>
           <span className={styles.dot} />
           {streamConnected ? "Streaming logs\u2026" : "Connecting\u2026"}
+          <label className={styles.followToggle}>
+            <input
+              type="checkbox"
+              checked={followOutput}
+              onChange={handleFollowToggle}
+              className={styles.followCheckbox}
+            />
+            Follow output
+          </label>
         </div>
       )}
-      <LogViewer lines={lines} autoScroll={isStreaming} className={styles.logViewer} />
+      <LogViewer
+        lines={lines}
+        autoScroll={isStreaming && followOutput}
+        className={styles.logViewer}
+        onAutoScrollChange={handleAutoScrollChange}
+      />
     </div>
   );
 }
