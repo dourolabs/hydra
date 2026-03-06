@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "e2e": "playwright test",
+    "check-scenarios": "tsx e2e/check-coverage.ts",
     "visual-audit": "playwright test --config=playwright-visual-audit.config.ts"
   },
   "dependencies": {
