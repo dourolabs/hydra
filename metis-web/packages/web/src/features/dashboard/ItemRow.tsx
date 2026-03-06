@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar, Badge } from "@metis/ui";
-import type { JobSummaryRecord, LabelSummary } from "@metis/api";
+import type { JobSummaryRecord, LabelSummary, PatchSummaryRecord } from "@metis/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { StatusBoxes } from "./StatusBoxes";
@@ -71,9 +71,10 @@ interface ItemRowProps {
   isActive?: boolean;
   filterRootId?: string | null;
   inboxLabelId?: string;
+  patchMap?: Map<string, PatchSummaryRecord>;
 }
 
-export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inboxLabelId }: ItemRowProps) {
+export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inboxLabelId, patchMap }: ItemRowProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -171,6 +172,27 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
     const gh = item.data.patch.github;
     patchPrUrl = gh.url ?? `https://github.com/${gh.owner}/${gh.repo}/pull/${gh.number}`;
     patchPrNumber = gh.number;
+  }
+
+  // Issue PR/patch link for review-request and merge-request issues
+  let issuePrUrl: string | undefined;
+  let issuePrLabel: string | undefined;
+  if (
+    item.kind === "issue" &&
+    (item.data.issue.type === "review-request" || item.data.issue.type === "merge-request") &&
+    item.data.issue.patches.length > 0 &&
+    patchMap
+  ) {
+    const firstPatchId = item.data.issue.patches[0];
+    const patchRecord = patchMap.get(firstPatchId);
+    if (patchRecord?.patch.github) {
+      const gh = patchRecord.patch.github;
+      issuePrUrl = gh.url ?? `https://github.com/${gh.owner}/${gh.repo}/pull/${gh.number}`;
+      issuePrLabel = `${gh.owner}/${gh.repo}#${gh.number}`;
+    } else if (firstPatchId) {
+      issuePrUrl = `/patches/${firstPatchId}`;
+      issuePrLabel = firstPatchId;
+    }
   }
 
   // Assignee (issues only)
@@ -301,6 +323,40 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
             <path d="M9 1h6v6" />
             <path d="M15 1L7 9" />
           </svg>
+        </a>
+      )}
+      {issuePrUrl && (
+        <a
+          className={styles.prLink}
+          href={issuePrUrl}
+          target={issuePrUrl.startsWith("http") ? "_blank" : undefined}
+          rel={issuePrUrl.startsWith("http") ? "noopener noreferrer" : undefined}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!issuePrUrl!.startsWith("http")) {
+              e.preventDefault();
+              navigate(issuePrUrl!);
+            }
+          }}
+        >
+          {issuePrLabel}
+          {issuePrUrl.startsWith("http") && (
+            <svg
+              className={styles.externalLinkIcon}
+              width="12"
+              height="12"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M6 2H2v12h12v-4" />
+              <path d="M9 1h6v6" />
+              <path d="M15 1L7 9" />
+            </svg>
+          )}
         </a>
       )}
       {assignee && (
