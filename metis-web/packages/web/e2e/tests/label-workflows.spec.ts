@@ -1,7 +1,7 @@
 import { test, expect } from "../fixtures/auth";
 
-test.describe("Label display on dashboard item rows", () => {
-  test("shows label chips on issues with labels", async ({
+test.describe("Label display on dashboard item rows @labels:display", () => {
+  test("shows label chips on issues with labels @labels:display", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/?selected=everything");
@@ -15,7 +15,7 @@ test.describe("Label display on dashboard item rows", () => {
     await expect(rows.filter({ hasText: "infra" }).first()).toBeVisible();
   });
 
-  test("label chips appear within their respective issue rows", async ({
+  test("label chips appear within their respective issue rows @labels:display", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/?selected=everything");
@@ -35,8 +35,8 @@ test.describe("Label display on dashboard item rows", () => {
   });
 });
 
-test.describe("Creating an issue with labels via LabelPicker", () => {
-  test("creates an issue with an existing and a new label", async ({
+test.describe("Creating an issue with labels via LabelPicker @labels:create-with", () => {
+  test("creates an issue with an existing and a new label @labels:create-with", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/?selected=everything");
@@ -93,7 +93,7 @@ test.describe("Creating an issue with labels via LabelPicker", () => {
   });
 });
 
-test.describe("Editing labels on issue detail page via IssueLabelEditor", () => {
+test.describe("Editing labels on issue detail page via IssueLabelEditor @labels:edit", () => {
   test.beforeEach(async () => {
     await fetch("http://localhost:8080/v1/dev/reset", {
       method: "POST",
@@ -101,7 +101,7 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor", () => 
     });
   });
 
-  test("displays existing labels on issue detail", async ({
+  test("displays existing labels on issue detail @labels:display @labels:edit", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/issues/i-seed00002");
@@ -118,7 +118,7 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor", () => 
     await expect(labelSection.getByText("auth", { exact: true })).toBeVisible();
   });
 
-  test("can add and remove labels via the editor", async ({
+  test("can add and remove labels via the editor @labels:edit", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/issues/i-seed00002");

@@ -1,7 +1,7 @@
 import { test, expect } from "../fixtures/auth";
 
-test.describe("Issue Detail", () => {
-  test("displays issue description and metadata", async ({
+test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:navigate-tabs @errors:404", () => {
+  test("displays issue description and metadata @issues:view-detail", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/issues/i-seed00002");
@@ -14,7 +14,7 @@ test.describe("Issue Detail", () => {
     ).toBeVisible();
   });
 
-  test("shows progress notes when present", async ({
+  test("shows progress notes when present @issues:view-detail", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/issues/i-seed00002");
@@ -22,7 +22,7 @@ test.describe("Issue Detail", () => {
     await expect(page.getByText(/Provider selected/)).toBeVisible();
   });
 
-  test("shows breadcrumbs with link back to issues", async ({
+  test("shows breadcrumbs with link back to issues @issues:view-detail", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/issues/i-seed00002");
@@ -31,7 +31,7 @@ test.describe("Issue Detail", () => {
     await expect(breadcrumb.getByText("Dashboard")).toBeVisible();
   });
 
-  test("displays tabbed sections", async ({ authenticatedPage: page }) => {
+  test("displays tabbed sections @issues:navigate-tabs", async ({ authenticatedPage: page }) => {
     await page.goto("/issues/i-seed00001");
     // IssueDetail has tabs: Related Issues, Jobs, Patches, Activity, Metadata
     await expect(page.getByRole("tab", { name: "Related Issues" })).toBeVisible();
@@ -40,14 +40,14 @@ test.describe("Issue Detail", () => {
     await expect(page.getByRole("tab", { name: "Metadata" })).toBeVisible();
   });
 
-  test("shows 404 for non-existent issue", async ({
+  test("shows 404 for non-existent issue @errors:404", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/issues/i-nonexistent");
     await expect(page.getByText(/not found/i)).toBeVisible();
   });
 
-  test("can update issue status via modal", async ({
+  test("can update issue status via modal @issues:update-status", async ({
     authenticatedPage: page,
   }) => {
     // Use i-seed00005 (closed) which is not referenced by badge tests
