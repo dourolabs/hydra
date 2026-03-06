@@ -12,6 +12,35 @@ use tokio::{
     process::Command,
 };
 
+/// Grace period after the main process exits before killing the process group.
+const PROCESS_GROUP_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Time to wait for SIGTERM to take effect before sending SIGKILL.
+const SIGTERM_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Sends SIGTERM then SIGKILL to a process group.
+///
+/// The `pgid` is the process group ID (same as the leader's PID when spawned
+/// with `process_group(0)`). Signals are sent via `kill(-pgid, sig)` so they
+/// reach every process in the group.
+#[cfg(unix)]
+async fn kill_process_group(pgid: u32) {
+    let neg_pgid = -(pgid as i32);
+
+    // SIGTERM — give processes a chance to exit cleanly
+    // SAFETY: kill with a negative pid signals the process group.
+    unsafe {
+        libc::kill(neg_pgid, libc::SIGTERM);
+    }
+
+    tokio::time::sleep(SIGTERM_WAIT).await;
+
+    // SIGKILL — force-kill anything still alive
+    unsafe {
+        libc::kill(neg_pgid, libc::SIGKILL);
+    }
+}
+
 #[async_trait]
 pub trait WorkerCommands: Send + Sync {
     async fn run(
@@ -113,6 +142,8 @@ impl CodexCommands {
             ])
             .current_dir(working_dir)
             .envs(env);
+        #[cfg(unix)]
+        command.process_group(0);
         if let Some(model) = model {
             command.arg("--model");
             command.arg(model);
@@ -191,6 +222,8 @@ impl ClaudeCommands {
             command.arg(model);
         }
         command.current_dir(working_dir).envs(env);
+        #[cfg(unix)]
+        command.process_group(0);
         if let Some(key) = anthropic_api_key.as_ref() {
             command.env(ENV_ANTHROPIC_API_KEY, key);
         }
@@ -210,6 +243,9 @@ impl ClaudeCommands {
         let pid = child.id().unwrap_or(0);
         println!("Claude process spawned (PID: {pid})");
 
+        #[cfg(unix)]
+        let child_pgid = child.id();
+
         let child_stdout = child
             .stdout
             .take()
@@ -228,35 +264,43 @@ impl ClaudeCommands {
             Ok::<Vec<u8>, anyhow::Error>(stderr_buf)
         });
 
-        let mut formatter = StreamFormatter::new();
-        let mut reader = BufReader::new(child_stdout);
-        let mut stdout_buf = String::new();
-        let mut stdout_writer = io::stdout();
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let read = reader
-                .read_line(&mut line)
-                .await
-                .context("failed to read claude stdout")?;
-            if read == 0 {
-                let elapsed = spawn_time.elapsed().as_secs_f64();
-                println!("Claude stdout EOF reached (PID: {pid}, elapsed: {elapsed:.2}s)");
-                break;
-            }
-            for formatted in formatter.handle_line(&line) {
-                stdout_writer
-                    .write_all(formatted.as_bytes())
+        // Spawn stdout reading into a separate task so we can race it against
+        // the child process exiting. This prevents hanging when a background
+        // process inherits the stdout pipe fd.
+        let mut stdout_handle = tokio::spawn(async move {
+            let mut formatter = StreamFormatter::new();
+            let mut reader = BufReader::new(child_stdout);
+            let mut stdout_buf = String::new();
+            let mut stdout_writer = io::stdout();
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let read = reader
+                    .read_line(&mut line)
                     .await
-                    .context("failed to stream claude stdout")?;
-                stdout_writer
-                    .flush()
-                    .await
-                    .context("failed to flush claude stdout")?;
-                stdout_buf.push_str(&formatted);
+                    .context("failed to read claude stdout")?;
+                if read == 0 {
+                    let elapsed = spawn_time.elapsed().as_secs_f64();
+                    println!("Claude stdout EOF reached (PID: {pid}, elapsed: {elapsed:.2}s)");
+                    break;
+                }
+                for formatted in formatter.handle_line(&line) {
+                    stdout_writer
+                        .write_all(formatted.as_bytes())
+                        .await
+                        .context("failed to stream claude stdout")?;
+                    stdout_writer
+                        .flush()
+                        .await
+                        .context("failed to flush claude stdout")?;
+                    stdout_buf.push_str(&formatted);
+                }
             }
-        }
+            let last_message = formatter.last_assistant_text().map(str::to_owned);
+            Ok::<(String, Option<String>), anyhow::Error>((stdout_buf, last_message))
+        });
 
+        // Wait for the main claude process to exit.
         println!("Waiting for claude process to exit (PID: {pid})…");
         let status = child
             .wait()
@@ -266,6 +310,28 @@ impl ClaudeCommands {
         println!(
             "Claude process exited (PID: {pid}, status: {status}, elapsed: {wait_elapsed:.2}s)"
         );
+
+        // The main process has exited. Give stdout a grace period to reach EOF
+        // (it will if no background processes inherited the pipe).
+        let stdout_result =
+            tokio::time::timeout(PROCESS_GROUP_GRACE_PERIOD, &mut stdout_handle).await;
+
+        // If stdout didn't finish, kill the process group to close inherited fds.
+        #[cfg(unix)]
+        if stdout_result.is_err() {
+            if let Some(pgid) = child_pgid {
+                eprintln!(
+                    "claude process exited but stdout pipe still open; \
+                     killing process group {pgid}"
+                );
+                kill_process_group(pgid).await;
+            }
+        }
+
+        let (stdout_buf, last_message) = stdout_handle
+            .await
+            .context("failed to join claude stdout task")??;
+
         let stderr_buf = stderr_handle
             .await
             .context("failed to join claude stderr task")??;
@@ -283,10 +349,7 @@ impl ClaudeCommands {
             .await
             .with_context(|| format!("failed to write claude output to {output_path:?}"))?;
 
-        let last_message = formatter
-            .last_assistant_text()
-            .map(str::to_owned)
-            .unwrap_or(stdout_buf);
+        let last_message = last_message.unwrap_or(stdout_buf);
         Ok(last_message)
     }
 }
