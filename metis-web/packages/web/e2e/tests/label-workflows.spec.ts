@@ -94,6 +94,13 @@ test.describe("Creating an issue with labels via LabelPicker", () => {
 });
 
 test.describe("Editing labels on issue detail page via IssueLabelEditor", () => {
+  test.beforeEach(async () => {
+    await fetch("http://localhost:8080/v1/dev/reset", {
+      method: "POST",
+      headers: { Authorization: "Bearer dev-token-12345" },
+    });
+  });
+
   test("displays existing labels on issue detail", async ({
     authenticatedPage: page,
   }) => {
@@ -105,8 +112,10 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor", () => 
     ).toBeVisible();
 
     // i-seed00002 has labels "platform-v2" and "auth"
-    await expect(page.getByText("platform-v2")).toBeVisible();
-    await expect(page.getByText("auth", { exact: true })).toBeVisible();
+    // Scope to the label editor section to avoid matching labels inside ItemRow chips
+    const labelSection = page.getByText("Labels", { exact: true }).locator("..").locator("..");
+    await expect(labelSection.getByText("platform-v2")).toBeVisible();
+    await expect(labelSection.getByText("auth", { exact: true })).toBeVisible();
   });
 
   test("can add and remove labels via the editor", async ({
@@ -123,17 +132,19 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor", () => 
     await page.getByRole("button", { name: "Edit" }).click();
 
     // Verify existing labels are shown as editable chips
-    await expect(page.getByText("platform-v2")).toBeVisible();
-    await expect(page.getByText("auth", { exact: true })).toBeVisible();
+    // Use the label picker area to scope selectors
+    const labelInput = page
+      .getByText("Labels", { exact: true })
+      .locator("..")
+      .locator("input");
+    const editorArea = page.getByText("Labels", { exact: true }).locator("..").locator("..");
+    await expect(editorArea.getByText("platform-v2")).toBeVisible();
+    await expect(editorArea.getByText("auth", { exact: true })).toBeVisible();
 
     // Remove the "auth" label
     await page.getByRole("button", { name: "Remove label auth" }).click();
 
     // Add the "infra" label
-    const labelInput = page
-      .getByText("Labels", { exact: true })
-      .locator("..")
-      .locator("input");
     await labelInput.fill("infra");
     const infraOption = page.locator("li").filter({ hasText: "infra" });
     await expect(infraOption).toBeVisible();
@@ -148,10 +159,12 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor", () => 
     await page.getByRole("button", { name: "Save" }).click();
 
     // Verify updated labels
-    await expect(page.getByText("platform-v2")).toBeVisible();
-    await expect(page.getByText("infra")).toBeVisible();
+    // Scope to the label editor section to avoid matching labels inside ItemRow chips
+    const labelSectionAfterSave = page.getByText("Labels", { exact: true }).locator("..").locator("..");
+    await expect(labelSectionAfterSave.getByText("platform-v2")).toBeVisible();
+    await expect(labelSectionAfterSave.getByText("infra")).toBeVisible();
     await expect(
-      page.getByText("auth", { exact: true })
+      labelSectionAfterSave.getByText("auth", { exact: true })
     ).not.toBeVisible();
   });
 });
