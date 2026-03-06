@@ -46,6 +46,7 @@ export function LabelPicker({ selectedNames, onChange }: LabelPickerProps) {
         onChange([...selectedNames, name]);
       }
       setInputValue("");
+      setIsOpen(false);
     },
     [selectedNames, onChange],
   );
@@ -84,7 +85,7 @@ export function LabelPicker({ selectedNames, onChange }: LabelPickerProps) {
   return (
     <div className={styles.container} ref={containerRef}>
       <label className={styles.label}>Labels</label>
-      <div className={styles.inputWrapper} onClick={() => setIsOpen(true)}>
+      <div className={styles.inputWrapper} onClick={() => setIsOpen((prev) => !prev)}>
         {selectedNames.map((name) => (
           <LabelChip
             key={name}
