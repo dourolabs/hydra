@@ -3,7 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar } from "@metis/ui";
 import type { JobSummaryRecord, LabelSummary } from "@metis/api";
+import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./useTransitiveWorkItems";
+import { StatusBoxes } from "./StatusBoxes";
 import { useAuth } from "../auth/useAuth";
 import { apiClient } from "../../api/client";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
@@ -73,11 +75,12 @@ const TYPE_ICONS: Record<WorkItem["kind"], (() => React.JSX.Element) | null> = {
 interface ItemRowProps {
   item: WorkItem;
   jobs?: JobSummaryRecord[];
+  childStatuses?: ChildStatus[];
   filterRootId?: string | null;
   inboxLabelId?: string;
 }
 
-export function ItemRow({ item, jobs, filterRootId, inboxLabelId }: ItemRowProps) {
+export function ItemRow({ item, jobs, childStatuses, filterRootId, inboxLabelId }: ItemRowProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -306,8 +309,13 @@ export function ItemRow({ item, jobs, filterRootId, inboxLabelId }: ItemRowProps
           </svg>
         </button>
       )}
-      <span className={styles.timestamp}>
-        {formatRelativeTime(item.lastUpdated)}
+      <span className={styles.rightColumn}>
+        <span className={styles.timestamp}>
+          {formatRelativeTime(item.lastUpdated)}
+        </span>
+        {childStatuses && childStatuses.length > 0 && (
+          <StatusBoxes children={childStatuses} />
+        )}
       </span>
     </li>
   );

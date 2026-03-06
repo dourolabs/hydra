@@ -1,0 +1,56 @@
+.statusBoxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-items: center;
+}
+
+.statusBox {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+.statusBoxOpen {
+  background: transparent;
+  border: 1px solid var(--color-text-tertiary);
+}
+
+.statusBoxInProgress {
+  background: var(--color-text-tertiary);
+}
+
+.statusBoxClosed {
+  background: var(--color-status-closed);
+}
+
+.statusBoxFailed {
+  background: var(--color-status-failed);
+}
+
+.statusBoxAttention {
+  background: var(--color-status-blocked);
+}
+
+.statusBoxActive {
+  background: var(--color-status-in-progress);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statusBoxActive {
+    animation: none;
+  }
+}
