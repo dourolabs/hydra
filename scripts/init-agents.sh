@@ -32,14 +32,15 @@ for agent in "${AGENTS[@]}"; do
     EXTRA_FLAGS+=("--is-assignment-agent")
   fi
 
-  if metis agents create "$agent" \
-       --prompt-file "${PROMPTS_DIR}/${agent}.md" \
-       "${EXTRA_FLAGS[@]}" 2>/dev/null; then
+  create_args=("$agent" "--prompt-file" "${PROMPTS_DIR}/${agent}.md")
+  (( ${#EXTRA_FLAGS[@]} > 0 )) && create_args+=("${EXTRA_FLAGS[@]}")
+
+  if metis agents create "${create_args[@]}" 2>/dev/null; then
     echo "Created agent: ${agent}"
   else
-    metis agents update "$agent" \
-      --prompt-file "${PROMPTS_DIR}/${agent}.md" \
-      "${EXTRA_FLAGS[@]}"
+    update_args=("$agent" "--prompt-file" "${PROMPTS_DIR}/${agent}.md")
+    (( ${#EXTRA_FLAGS[@]} > 0 )) && update_args+=("${EXTRA_FLAGS[@]}")
+    metis agents update "${update_args[@]}"
     echo "Updated agent: ${agent}"
   fi
 done
