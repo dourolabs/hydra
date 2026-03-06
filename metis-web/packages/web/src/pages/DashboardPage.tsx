@@ -9,12 +9,11 @@ import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/I
 import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
 import {
   useTransitiveWorkItems,
-  findRootIssueIds,
-  findTransitiveChildren,
 } from "../features/dashboard/useTransitiveWorkItems";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
+import { useInboxLabel } from "../features/labels/useLabels";
 import styles from "./DashboardPage.module.css";
 
 export function DashboardPage() {
@@ -47,6 +46,7 @@ export function DashboardPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const username = user ? actorDisplayName(user.actor) : "";
+  const { data: inboxLabel } = useInboxLabel();
 
   const roots = useMemo(() => {
     if (!issues) return [];
@@ -77,24 +77,15 @@ export function DashboardPage() {
   const { items: allWorkItems, isLoading: workItemsLoading } =
     useTransitiveWorkItems(hookRootId, issues ?? []);
 
-  // Compute inbox badge count using the same tree-walk logic as
-  // useTransitiveWorkItems so it matches the displayed "Active (N)" count.
   const inboxCount = useMemo(() => {
-    if (!issues) return 0;
-    const rootIds = findRootIssueIds(issues);
-    const reachableIds = new Set<string>();
-    for (const rootId of rootIds) {
-      for (const id of findTransitiveChildren(rootId, issues)) {
-        reachableIds.add(id);
-      }
-    }
+    if (!issues || !inboxLabel) return 0;
     return issues.filter(
       (issue) =>
-        reachableIds.has(issue.issue_id) &&
         !TERMINAL_STATUSES.has(issue.issue.status) &&
-        issue.issue.assignee === username,
+        issue.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) &&
+        (issue.issue.creator === username || issue.issue.assignee === username),
     ).length;
-  }, [issues, username]);
+  }, [issues, username, inboxLabel]);
 
   const workItems = useMemo(() => {
     if (isLabelFilter) {
@@ -106,12 +97,14 @@ export function DashboardPage() {
       );
     }
     if (filterRootId !== "inbox") return allWorkItems;
+    if (!inboxLabel) return [];
     return allWorkItems.filter(
       (item) =>
         item.kind === "issue" &&
-        item.data.issue.assignee === username,
+        item.data.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) &&
+        (item.data.issue.creator === username || item.data.issue.assignee === username),
     );
-  }, [filterRootId, isLabelFilter, allWorkItems, username]);
+  }, [filterRootId, isLabelFilter, allWorkItems, username, inboxLabel]);
 
   useEffect(() => {
     if (!searchParams.has("selected")) {
@@ -180,6 +173,7 @@ export function DashboardPage() {
           filterRootId={filterRootId}
           searchValue={searchValue}
           onSearchChange={handleSearchChange}
+          inboxLabelId={filterRootId === "inbox" && inboxLabel ? inboxLabel.label_id : undefined}
         />
       </div>
       <button
