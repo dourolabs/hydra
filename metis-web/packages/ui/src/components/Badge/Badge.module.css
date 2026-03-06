@@ -14,81 +14,81 @@
 }
 
 .open {
-  background-color: rgba(74, 158, 255, 0.15);
+  background-color: var(--color-status-open-bg);
   color: var(--color-status-open);
 }
 
 .in_progress {
-  background-color: rgba(240, 192, 64, 0.15);
+  background-color: var(--color-status-in-progress-bg);
   color: var(--color-status-in-progress);
 }
 
 .closed {
-  background-color: rgba(0, 204, 102, 0.15);
+  background-color: var(--color-status-closed-bg);
   color: var(--color-status-closed);
 }
 
 .failed {
-  background-color: rgba(255, 68, 68, 0.15);
+  background-color: var(--color-status-failed-bg);
   color: var(--color-status-failed);
 }
 
 .dropped {
-  background-color: rgba(139, 48, 48, 0.15);
+  background-color: var(--color-status-dropped-bg);
   color: var(--color-status-dropped);
 }
 
 .blocked {
-  background-color: rgba(204, 102, 255, 0.15);
+  background-color: var(--color-status-blocked-bg);
   color: var(--color-status-blocked);
 }
 
 .rejected {
-  background-color: rgba(255, 136, 0, 0.15);
+  background-color: var(--color-status-rejected-bg);
   color: var(--color-status-rejected);
 }
 
 .merged {
-  background-color: rgba(153, 102, 255, 0.15);
+  background-color: var(--color-status-merged-bg);
   color: var(--color-status-merged);
 }
 
 .changes_requested {
-  background-color: rgba(255, 136, 0, 0.15);
+  background-color: var(--color-status-rejected-bg);
   color: var(--color-status-rejected);
 }
 
 .approved {
-  background-color: rgba(0, 204, 102, 0.15);
+  background-color: var(--color-status-closed-bg);
   color: var(--color-status-closed);
 }
 
 .created {
-  background-color: rgba(74, 158, 255, 0.15);
+  background-color: var(--color-status-open-bg);
   color: var(--color-status-open);
 }
 
 .pending {
-  background-color: rgba(74, 158, 255, 0.15);
+  background-color: var(--color-status-open-bg);
   color: var(--color-status-open);
 }
 
 .running {
-  background-color: rgba(240, 192, 64, 0.15);
+  background-color: var(--color-status-in-progress-bg);
   color: var(--color-status-in-progress);
 }
 
 .complete {
-  background-color: rgba(0, 204, 102, 0.15);
+  background-color: var(--color-status-closed-bg);
   color: var(--color-status-closed);
 }
 
 .success {
-  background-color: rgba(0, 204, 102, 0.15);
+  background-color: var(--color-status-closed-bg);
   color: var(--color-status-closed);
 }
 
 .unknown {
-  background-color: rgba(160, 160, 160, 0.15);
+  background-color: var(--color-status-unknown-bg);
   color: var(--color-status-unknown);
 }
