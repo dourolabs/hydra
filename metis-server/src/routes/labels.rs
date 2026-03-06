@@ -31,7 +31,12 @@ pub async fn create_label(
     info!(actor = %actor.name(), "create_label invoked");
 
     let label_id = state
-        .create_label(payload.label.name, payload.label.color)
+        .create_label(
+            payload.label.name,
+            payload.label.color,
+            payload.label.recurse,
+            payload.label.hidden,
+        )
         .await
         .map_err(map_create_label_error)?;
 
@@ -57,6 +62,8 @@ pub async fn list_labels(
                 label_id,
                 label.name,
                 label.color,
+                label.recurse,
+                label.hidden,
                 label.created_at,
                 label.updated_at,
             )
@@ -87,6 +94,8 @@ pub async fn get_label(
         label_id,
         label.name,
         label.color,
+        label.recurse,
+        label.hidden,
         label.created_at,
         label.updated_at,
     )))
@@ -102,7 +111,13 @@ pub async fn update_label(
     info!(actor = %actor.name(), label_id = %label_id, "update_label invoked");
 
     state
-        .update_label(&label_id, payload.label.name, payload.label.color)
+        .update_label(
+            &label_id,
+            payload.label.name,
+            payload.label.color,
+            Some(payload.label.recurse),
+            Some(payload.label.hidden),
+        )
         .await
         .map_err(map_update_label_error)?;
 
@@ -117,6 +132,8 @@ pub async fn update_label(
         label_id,
         label.name,
         label.color,
+        label.recurse,
+        label.hidden,
         label.created_at,
         label.updated_at,
     )))

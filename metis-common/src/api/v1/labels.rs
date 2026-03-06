@@ -13,11 +13,24 @@ pub struct Label {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Rgb>,
+    #[serde(default = "default_true")]
+    pub recurse: bool,
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Label {
     pub fn new(name: String, color: Option<Rgb>) -> Self {
-        Self { name, color }
+        Self {
+            name,
+            color,
+            recurse: true,
+            hidden: false,
+        }
     }
 }
 
@@ -30,14 +43,20 @@ pub struct LabelSummary {
     pub label_id: LabelId,
     pub name: String,
     pub color: Rgb,
+    #[serde(default = "default_true")]
+    pub recurse: bool,
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 impl LabelSummary {
-    pub fn new(label_id: LabelId, name: String, color: Rgb) -> Self {
+    pub fn new(label_id: LabelId, name: String, color: Rgb, recurse: bool, hidden: bool) -> Self {
         Self {
             label_id,
             name,
             color,
+            recurse,
+            hidden,
         }
     }
 }
@@ -51,6 +70,10 @@ pub struct LabelRecord {
     pub label_id: LabelId,
     pub name: String,
     pub color: Rgb,
+    #[serde(default = "default_true")]
+    pub recurse: bool,
+    #[serde(default)]
+    pub hidden: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -60,6 +83,8 @@ impl LabelRecord {
         label_id: LabelId,
         name: String,
         color: Rgb,
+        recurse: bool,
+        hidden: bool,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -67,6 +92,8 @@ impl LabelRecord {
             label_id,
             name,
             color,
+            recurse,
+            hidden,
             created_at,
             updated_at,
         }

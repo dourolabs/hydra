@@ -9,6 +9,8 @@ export type LabelRecord = {
   label_id: LabelId;
   name: string;
   color: Rgb;
+  recurse: boolean;
+  hidden: boolean;
   created_at: string;
   updated_at: string;
 };

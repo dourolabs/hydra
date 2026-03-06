@@ -10,6 +10,8 @@ pub struct Label {
     pub name: String,
     pub color: Rgb,
     pub deleted: bool,
+    pub recurse: bool,
+    pub hidden: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -21,6 +23,8 @@ impl Label {
             name,
             color,
             deleted: false,
+            recurse: true,
+            hidden: false,
             created_at: now,
             updated_at: now,
         }

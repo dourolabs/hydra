@@ -1218,6 +1218,8 @@ struct LabelRow {
     name: String,
     color: String,
     deleted: bool,
+    recurse: bool,
+    hidden: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -2761,7 +2763,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError> {
         let sql = format!(
-            "SELECT id, name, color, deleted, created_at, updated_at \
+            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
              FROM {TABLE_LABELS} WHERE id = $1"
         );
         let row = sqlx::query_as::<_, LabelRow>(&sql)
@@ -2800,7 +2802,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         };
 
         let sql = format!(
-            "SELECT id, name, color, deleted, created_at, updated_at \
+            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
              FROM {TABLE_LABELS}{where_clause} ORDER BY name"
         );
 
@@ -2825,7 +2827,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
         let sql = format!(
-            "SELECT id, name, color, deleted, created_at, updated_at \
+            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
              FROM {TABLE_LABELS} WHERE name = $1 AND deleted = false"
         );
         let row = sqlx::query_as::<_, LabelRow>(&sql)
@@ -2850,27 +2852,27 @@ impl ReadOnlyStore for PostgresStoreV2 {
         object_id: &MetisId,
     ) -> Result<Vec<LabelSummary>, StoreError> {
         let sql = format!(
-            "SELECT l.id, l.name, l.color \
+            "SELECT l.id, l.name, l.color, l.recurse, l.hidden \
              FROM {TABLE_LABELS} l \
              INNER JOIN {TABLE_LABEL_ASSOCIATIONS} la ON l.id = la.label_id \
              WHERE la.object_id = $1 AND l.deleted = false \
              ORDER BY l.name"
         );
-        let rows = sqlx::query_as::<_, (String, String, String)>(&sql)
+        let rows = sqlx::query_as::<_, (String, String, String, bool, bool)>(&sql)
             .bind(object_id.as_ref())
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
 
         rows.into_iter()
-            .map(|(id, name, color)| {
+            .map(|(id, name, color, recurse, hidden)| {
                 let label_id = id.parse::<LabelId>().map_err(|err| {
                     StoreError::Internal(format!("invalid label id stored in database: {err}"))
                 })?;
                 let color: Rgb = color.parse().map_err(|err| {
                     StoreError::Internal(format!("invalid color stored in database: {err}"))
                 })?;
-                Ok(LabelSummary::new(label_id, name, color))
+                Ok(LabelSummary::new(label_id, name, color, recurse, hidden))
             })
             .collect()
     }
@@ -2885,20 +2887,20 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let ids: Vec<&str> = object_ids.iter().map(|id| id.as_ref()).collect();
         let sql = format!(
-            "SELECT la.object_id, l.id, l.name, l.color \
+            "SELECT la.object_id, l.id, l.name, l.color, l.recurse, l.hidden \
              FROM {TABLE_LABELS} l \
              INNER JOIN {TABLE_LABEL_ASSOCIATIONS} la ON l.id = la.label_id \
              WHERE la.object_id = ANY($1) AND l.deleted = false \
              ORDER BY l.name"
         );
-        let rows = sqlx::query_as::<_, (String, String, String, String)>(&sql)
+        let rows = sqlx::query_as::<_, (String, String, String, String, bool, bool)>(&sql)
             .bind(&ids)
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
 
         let mut result: HashMap<MetisId, Vec<LabelSummary>> = HashMap::new();
-        for (obj_id_str, label_id_str, name, color) in rows {
+        for (obj_id_str, label_id_str, name, color, recurse, hidden) in rows {
             let obj_id = obj_id_str.parse::<MetisId>().map_err(|err| {
                 StoreError::Internal(format!("invalid object id stored in database: {err}"))
             })?;
@@ -2911,7 +2913,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             result
                 .entry(obj_id)
                 .or_default()
-                .push(LabelSummary::new(label_id, name, color));
+                .push(LabelSummary::new(label_id, name, color, recurse, hidden));
         }
         Ok(result)
     }
@@ -3699,14 +3701,16 @@ impl Store for PostgresStoreV2 {
         let id = LabelId::new_for_count(count);
 
         let sql = format!(
-            "INSERT INTO {TABLE_LABELS} (id, name, color, deleted, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6)"
+            "INSERT INTO {TABLE_LABELS} (id, name, color, deleted, recurse, hidden, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         );
         sqlx::query(&sql)
             .bind(id.as_ref())
             .bind(&label.name)
             .bind(label.color.as_ref())
             .bind(label.deleted)
+            .bind(label.recurse)
+            .bind(label.hidden)
             .bind(label.created_at)
             .bind(label.updated_at)
             .execute(&self.pool)
@@ -3728,11 +3732,13 @@ impl Store for PostgresStoreV2 {
         }
 
         let sql = format!(
-            "UPDATE {TABLE_LABELS} SET name = $1, color = $2, updated_at = $3 WHERE id = $4"
+            "UPDATE {TABLE_LABELS} SET name = $1, color = $2, recurse = $3, hidden = $4, updated_at = $5 WHERE id = $6"
         );
         sqlx::query(&sql)
             .bind(&label.name)
             .bind(label.color.as_ref())
+            .bind(label.recurse)
+            .bind(label.hidden)
             .bind(Utc::now())
             .bind(id.as_ref())
             .execute(&self.pool)
@@ -3848,6 +3854,8 @@ fn row_to_label(row: &LabelRow) -> Result<Label, StoreError> {
         name: row.name.clone(),
         color,
         deleted: row.deleted,
+        recurse: row.recurse,
+        hidden: row.hidden,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })

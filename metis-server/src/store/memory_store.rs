@@ -1185,6 +1185,8 @@ impl ReadOnlyStore for MemoryStore {
                     label_id.clone(),
                     label.name.clone(),
                     label.color.clone(),
+                    label.recurse,
+                    label.hidden,
                 ))
             })
             .collect();
