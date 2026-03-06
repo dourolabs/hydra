@@ -5,43 +5,8 @@ import { useLabels } from "../labels/useLabels";
 import { descriptionSnippet } from "../../utils/text";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { computeIssueProgress, type ChildStatus, type IssueProgress } from "./computeIssueProgress";
+import { StatusBoxes } from "./StatusBoxes";
 import styles from "./IssueFilterSidebar.module.css";
-
-interface IssueFilterSidebarProps {
-  roots: IssueTreeNode[];
-  allIssues: IssueSummaryRecord[];
-  activeFilter: string | null;
-  onFilterChange: (rootId: string | null) => void;
-  collapsed: boolean;
-  drawerOpen: boolean;
-  onDrawerClose: () => void;
-  jobsByIssue: Map<string, JobSummaryRecord[]>;
-  username: string;
-  inboxCount: number;
-}
-
-function getBoxClass(child: ChildStatus): string {
-  // Priority: active task > assigned to user (open) > base status
-  if (child.hasActiveTask) return styles.statusBoxActive;
-  if (child.assignedToUser && child.status === "open") return styles.statusBoxAttention;
-  if (child.status === "closed") return styles.statusBoxClosed;
-  if (child.status === "in-progress") return styles.statusBoxInProgress;
-  if (child.status === "failed") return styles.statusBoxFailed;
-  return styles.statusBoxOpen;
-}
-
-/** Row of small colored squares — one per child issue, color-coded by status. */
-function StatusBoxes({ children }: { children: ChildStatus[] }) {
-  if (children.length === 0) return null;
-
-  return (
-    <span className={styles.statusBoxes}>
-      {children.map((child) => (
-        <span key={child.id} className={`${styles.statusBox} ${getBoxClass(child)}`} />
-      ))}
-    </span>
-  );
-}
 
 /** Label filter prefix used in activeFilter to distinguish label filters from issue filters. */
 export const LABEL_FILTER_PREFIX = "label:";
@@ -96,6 +61,19 @@ function computeLabelProgress(
       children,
     };
   });
+}
+
+interface IssueFilterSidebarProps {
+  roots: IssueTreeNode[];
+  allIssues: IssueSummaryRecord[];
+  activeFilter: string | null;
+  onFilterChange: (rootId: string | null) => void;
+  collapsed: boolean;
+  drawerOpen: boolean;
+  onDrawerClose: () => void;
+  jobsByIssue: Map<string, JobSummaryRecord[]>;
+  username: string;
+  inboxCount: number;
 }
 
 export function IssueFilterSidebar({

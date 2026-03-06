@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { JobSummaryRecord } from "@metis/api";
+import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { topologicalSortWorkItems } from "../issues/topologicalSort";
 import { ItemRow } from "./ItemRow";
@@ -9,6 +10,7 @@ import styles from "./HeterogeneousItemList.module.css";
 interface HeterogeneousItemListProps {
   items: WorkItem[];
   jobsByIssue: Map<string, JobSummaryRecord[]>;
+  childStatusMap: Map<string, ChildStatus[]>;
   isLoading: boolean;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
@@ -36,6 +38,7 @@ function sortByLastUpdated(a: WorkItem, b: WorkItem): number {
 export function HeterogeneousItemList({
   items,
   jobsByIssue,
+  childStatusMap,
   isLoading,
   sidebarCollapsed,
   onToggleSidebar,
@@ -136,6 +139,11 @@ export function HeterogeneousItemList({
                       ? jobsByIssue.get(item.id)
                       : undefined
                   }
+                  childStatuses={
+                    item.kind === "issue"
+                      ? childStatusMap.get(item.id)
+                      : undefined
+                  }
                   filterRootId={filterRootId}
                   inboxLabelId={inboxLabelId}
                 />
@@ -158,6 +166,7 @@ export function HeterogeneousItemList({
                   filterRootId={filterRootId}
                 />
               ))}
+
             </ul>
           </>
         )}
@@ -175,6 +184,11 @@ export function HeterogeneousItemList({
                   jobs={
                     item.kind === "issue"
                       ? jobsByIssue.get(item.id)
+                      : undefined
+                  }
+                  childStatuses={
+                    item.kind === "issue"
+                      ? childStatusMap.get(item.id)
                       : undefined
                   }
                   filterRootId={filterRootId}

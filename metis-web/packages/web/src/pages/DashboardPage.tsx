@@ -10,6 +10,7 @@ import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemLi
 import {
   useTransitiveWorkItems,
 } from "../features/dashboard/useTransitiveWorkItems";
+import type { ChildStatus } from "../features/dashboard/computeIssueProgress";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
@@ -86,6 +87,43 @@ export function DashboardPage() {
         (issue.issue.creator === username || issue.issue.assignee === username),
     ).length;
   }, [issues, username, inboxLabel]);
+
+  const childStatusMap = useMemo(() => {
+    const map = new Map<string, ChildStatus[]>();
+    if (!issues) return map;
+    const childrenByParent = new Map<string, string[]>();
+    for (const issue of issues) {
+      for (const dep of issue.issue.dependencies) {
+        if (dep.type === "child-of") {
+          const siblings = childrenByParent.get(dep.issue_id) ?? [];
+          siblings.push(issue.issue_id);
+          childrenByParent.set(dep.issue_id, siblings);
+        }
+      }
+    }
+    const issueById = new Map(issues.map((i) => [i.issue_id, i]));
+    for (const [parentId, childIds] of childrenByParent) {
+      const statuses: ChildStatus[] = [];
+      for (const childId of childIds) {
+        const child = issueById.get(childId);
+        if (!child) continue;
+        const jobs = jobsByIssue?.get(childId) ?? [];
+        const hasActiveTask = jobs.some(
+          (j) => j.task.status === "running" || j.task.status === "pending",
+        );
+        statuses.push({
+          id: childId,
+          status: child.issue.status,
+          hasActiveTask,
+          assignedToUser: !!(username && child.issue.assignee === username),
+        });
+      }
+      if (statuses.length > 0) {
+        map.set(parentId, statuses);
+      }
+    }
+    return map;
+  }, [issues, jobsByIssue, username]);
 
   const workItems = useMemo(() => {
     if (isLabelFilter) {
@@ -166,6 +204,7 @@ export function DashboardPage() {
         <HeterogeneousItemList
           items={workItems}
           jobsByIssue={jobsByIssue ?? new Map()}
+          childStatusMap={childStatusMap}
           isLoading={workItemsLoading}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={handleToggleSidebar}
