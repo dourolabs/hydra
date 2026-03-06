@@ -122,37 +122,6 @@
   flex-shrink: 0;
 }
 
-.patchBadge {
-  flex-shrink: 0;
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 9999px;
-  white-space: nowrap;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-tertiary);
-}
-
-.patchBadgeOpen {
-  color: var(--color-status-open);
-}
-
-.patchBadgeApproved {
-  color: var(--color-status-closed);
-}
-
-.patchBadgeChangesRequested {
-  color: var(--color-status-blocked);
-}
-
-.patchBadgeMerged {
-  color: var(--color-status-closed);
-}
-
-.patchBadgeClosed {
-  color: var(--color-status-failed);
-}
-
 .prLink {
   display: inline-flex;
   align-items: center;
