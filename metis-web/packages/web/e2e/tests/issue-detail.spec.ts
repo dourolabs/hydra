@@ -65,10 +65,10 @@ test.describe("Issue Detail", () => {
     // Use i-seed00005 (closed) which is not referenced by badge tests
     await page.goto("/issues/i-seed00005");
 
-    // Click the Update Status button
-    const updateBtn = page.getByRole("button", { name: "Update Status" });
-    await expect(updateBtn).toBeVisible();
-    await updateBtn.click();
+    // Click the status chip to open the update modal
+    const statusChip = page.locator("button").filter({ hasText: "✎" });
+    await expect(statusChip).toBeVisible();
+    await statusChip.click();
 
     // Modal should be open
     const modal = page.getByRole("dialog");
