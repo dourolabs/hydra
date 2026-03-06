@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import type { Task } from "@metis/api";
 import { Badge } from "@metis/ui";
-import { jobToBadgeStatus } from "../../utils/statusMapping";
+import { normalizeJobStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import styles from "./JobSettings.module.css";
 
@@ -49,7 +49,7 @@ export function JobSettings({ task }: JobSettingsProps) {
 
   entries.push({
     label: "Status",
-    value: <Badge status={jobToBadgeStatus(task.status)} />,
+    value: <Badge status={normalizeJobStatus(task.status)} />,
   });
 
   entries.push({ label: "Context", value: formatContext(task.context) });

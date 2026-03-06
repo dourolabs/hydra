@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { Badge, Spinner } from "@metis/ui";
-import { patchToBadgeStatus } from "../../utils/statusMapping";
+import { normalizePatchStatus } from "../../utils/statusMapping";
 import { usePatchesByIssue } from "./usePatchesByIssue";
 import styles from "./PatchList.module.css";
 
@@ -40,7 +40,7 @@ export function PatchList({ patchIds, issueId }: PatchListProps) {
           : `/patches/${record.patch_id}`;
         return (
           <li key={record.patch_id} className={styles.item}>
-            <Badge status={patchToBadgeStatus(record.patch.status)} />
+            <Badge status={normalizePatchStatus(record.patch.status)} />
             <Link to={patchUrl} className={styles.id}>
               {record.patch_id}
             </Link>

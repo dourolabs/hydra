@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Badge, Spinner, Tabs } from "@metis/ui";
-import { jobToBadgeStatus } from "../utils/statusMapping";
+import { normalizeJobStatus } from "../utils/statusMapping";
 import { getRuntime } from "../utils/time";
 import { useJob } from "../features/jobs/useJob";
 import { JobLogViewer } from "../features/jobs/JobLogViewer";
@@ -59,7 +59,7 @@ export function JobLogPage() {
           <div className={styles.header}>
             <div className={styles.headerTop}>
               <span className={styles.jobId}>{record.job_id}</span>
-              <Badge status={jobToBadgeStatus(record.task.status)} />
+              <Badge status={normalizeJobStatus(record.task.status)} />
             </div>
             <div className={styles.meta}>
               <div className={styles.metaItem}>

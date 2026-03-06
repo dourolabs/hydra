@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
 import type { IssueSummaryRecord, IssueType, JobSummaryRecord } from "@metis/api";
 import { toJobSummary } from "../../utils/jobMapping";
-import { issueToBadgeStatus } from "../../utils/statusMapping";
+import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
 import styles from "./IssueRow.module.css";
@@ -56,7 +56,7 @@ export function IssueRow({
   return (
     <span className={classNames.join(" ")}>
       <span className={styles.topRow}>
-        <Badge status={issueToBadgeStatus(issue.status)} />
+        <Badge status={normalizeIssueStatus(issue.status)} />
         <span className={`${styles.typeChip} ${chipClass}`}>{issue.type}</span>
         {blocked && <span className={styles.blockedLabel}>BLOCKED</span>}
         <span className={styles.desc}>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Avatar, Badge, DiffViewer, MarkdownViewer, Panel, Tabs } from "@metis/ui";
 import type { PatchVersionRecord } from "@metis/api";
-import { patchToBadgeStatus, ciToBadgeStatus } from "../../utils/statusMapping";
+import { normalizePatchStatus, normalizeCiState } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import { PatchActivity } from "./PatchActivity";
 import styles from "./PatchDetail.module.css";
@@ -28,7 +28,7 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
       {/* Header: Title + Status */}
       <div className={styles.header}>
         <h2 className={styles.title}>{patch.title}</h2>
-        <Badge status={patchToBadgeStatus(patch.status)} />
+        <Badge status={normalizePatchStatus(patch.status)} />
       </div>
 
       {/* Metadata row: Branch, Base, Repository, GitHub PR, CI */}
@@ -80,7 +80,7 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
           <div className={styles.metaItem}>
             <span className={styles.metaLabel}>CI</span>
             <span className={styles.metaValue}>
-              <Badge status={ciToBadgeStatus(patch.github.ci.state)} />
+              <Badge status={normalizeCiState(patch.github.ci.state)} />
               <span className={styles.ciState}>{patch.github.ci.state}</span>
               {patch.github.ci.failure && (
                 <span className={styles.ciFailure}>
@@ -189,7 +189,7 @@ function ReviewsList({ reviews }: ReviewsListProps) {
             <Avatar name={review.author} size="sm" />
             <span className={styles.reviewAuthor}>{review.author}</span>
             <Badge
-              status={review.is_approved ? "closed" : "rejected"}
+              status={review.is_approved ? "approved" : "changes-requested"}
             />
             {review.submitted_at && (
               <span className={styles.reviewTime}>

@@ -1,6 +1,6 @@
 import { Badge } from "@metis/ui";
 import type { PatchVersionRecord } from "@metis/api";
-import { patchToBadgeStatus } from "../../utils/statusMapping";
+import { normalizePatchStatus } from "../../utils/statusMapping";
 import { usePatchVersions } from "./usePatchVersions";
 import { ActivityTimeline } from "../activity/ActivityTimeline";
 import type { Change } from "../activity/types";
@@ -71,9 +71,9 @@ function PatchChangeEntry({ change }: { change: Change }) {
       <div className={styles.change}>
         <span className={styles.changeLabel}>Status</span>
         <span className={styles.statusTransition}>
-          <Badge status={patchToBadgeStatus(change.before)} />
+          <Badge status={normalizePatchStatus(change.before)} />
           <span className={styles.arrow}>{"\u2192"}</span>
-          <Badge status={patchToBadgeStatus(change.after)} />
+          <Badge status={normalizePatchStatus(change.after)} />
         </span>
       </div>
     );

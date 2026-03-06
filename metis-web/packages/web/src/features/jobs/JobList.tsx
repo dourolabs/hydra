@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { Badge, Spinner } from "@metis/ui";
-import { jobToBadgeStatus } from "../../utils/statusMapping";
+import { normalizeJobStatus } from "../../utils/statusMapping";
 import { getRuntime } from "../../utils/time";
 import { useJobsByIssue } from "./useJobsByIssue";
 import styles from "./JobList.module.css";
@@ -43,7 +43,7 @@ export function JobList({ issueId }: JobListProps) {
         {jobs.map((record) => (
           <tr key={record.job_id} className={styles.row}>
             <td className={styles.td}>
-              <Badge status={jobToBadgeStatus(record.task.status)} />
+              <Badge status={normalizeJobStatus(record.task.status)} />
             </td>
             <td className={styles.td}>
               <Link
