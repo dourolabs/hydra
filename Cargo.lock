@@ -2950,6 +2950,7 @@ dependencies = [
  "git2",
  "httpmock",
  "jsonwebtoken",
+ "libc",
  "metis-build-cache",
  "metis-common",
  "metis-server",
