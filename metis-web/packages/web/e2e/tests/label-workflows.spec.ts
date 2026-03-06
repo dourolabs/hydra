@@ -1,7 +1,7 @@
 import { test, expect } from "../fixtures/auth";
 
 test.describe("Label display on dashboard item rows", () => {
-  test("shows label chips on issues with labels", async ({
+  test("shows label swatches on issues with labels", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/?selected=everything");
@@ -9,30 +9,29 @@ test.describe("Label display on dashboard item rows", () => {
 
     // Seed data: i-seed00001 has "platform-v2", i-seed00002 has "platform-v2" + "auth",
     // i-seed00006 has "infra"
-    await expect(page.getByText("platform-v2").first()).toBeVisible();
-    await expect(
-      page.getByText("auth", { exact: true }).first()
-    ).toBeVisible();
-    await expect(page.getByText("infra").first()).toBeVisible();
+    // Labels are rendered as colored dot swatches with title attributes (no visible text)
+    await expect(page.locator('[title="platform-v2"]').first()).toBeVisible();
+    await expect(page.locator('[title="auth"]').first()).toBeVisible();
+    await expect(page.locator('[title="infra"]').first()).toBeVisible();
   });
 
-  test("label chips appear within their respective issue rows", async ({
+  test("label swatches appear within their respective issue rows", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/?selected=everything");
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
-    // Verify "infra" label appears in the i-seed00006 row
+    // Verify "infra" label swatch appears in the i-seed00006 row
     const rateRow = page.locator("li[role=button]").filter({
       hasText: "Implement API rate limiting",
     });
-    await expect(rateRow.getByText("infra")).toBeVisible();
+    await expect(rateRow.locator('[title="infra"]')).toBeVisible();
 
-    // Verify "platform-v2" label appears in the i-seed00001 row
+    // Verify "platform-v2" label swatch appears in the i-seed00001 row
     const migrationRow = page.locator("li[role=button]").filter({
       hasText: "Platform v2.0 Migration",
     });
-    await expect(migrationRow.getByText("platform-v2")).toBeVisible();
+    await expect(migrationRow.locator('[title="platform-v2"]')).toBeVisible();
   });
 });
 

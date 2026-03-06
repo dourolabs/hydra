@@ -4,12 +4,12 @@ import { Avatar, JobStatusIndicator } from "@metis/ui";
 import type { JobSummaryRecord, LabelSummary } from "@metis/api";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { useAuth } from "../auth/useAuth";
-import { useMediaQuery } from "../../hooks/useMediaQuery";
+
 import { toJobSummary } from "../../utils/jobMapping";
 import { issueToBadgeStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
-import { LabelChip } from "../labels/LabelChip";
+
 import styles from "./ItemRow.module.css";
 
 const STATUS_DOT_CLASSES: Record<string, string> = {
@@ -68,12 +68,9 @@ interface ItemRowProps {
   filterRootId?: string | null;
 }
 
-const MOBILE_MAX_LABELS = 2;
-
 export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isMobile = useMediaQuery("(max-width: 768px)");
   const Icon = TYPE_ICONS[item.kind];
 
   const handleClick = useCallback(() => {
@@ -156,14 +153,10 @@ export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
   if (item.isTerminal) rowClasses.push(styles.terminal);
   if (isAssignedToMe) rowClasses.push(styles.assignedToMe);
 
-  // Label overflow (issues only)
+  // Labels (issues only)
   const allLabels = item.kind === "issue" && item.data.issue.labels && item.data.issue.labels.length > 0
     ? item.data.issue.labels
     : null;
-  const visibleLabels = allLabels
-    ? (isMobile ? allLabels.slice(0, MOBILE_MAX_LABELS) : allLabels)
-    : [];
-  const overflowCount = allLabels && isMobile ? allLabels.length - MOBILE_MAX_LABELS : 0;
 
   return (
     <li
@@ -195,16 +188,14 @@ export function ItemRow({ item, jobs, filterRootId }: ItemRowProps) {
       </span>
       {allLabels && (
         <span className={styles.labels}>
-          {visibleLabels.map((label: LabelSummary) => (
-            <LabelChip
+          {allLabels.map((label: LabelSummary) => (
+            <span
               key={label.label_id}
-              name={label.name}
-              color={label.color}
+              className={styles.labelSwatch}
+              style={{ backgroundColor: label.color }}
+              title={label.name}
             />
           ))}
-          {overflowCount > 0 && (
-            <span className={styles.overflowBadge}>+{overflowCount}</span>
-          )}
         </span>
       )}
       {jobSummaries && jobSummaries.length > 0 && (
