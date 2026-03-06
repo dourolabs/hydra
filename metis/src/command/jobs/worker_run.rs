@@ -182,6 +182,8 @@ pub async fn run(
     let output_path = output_dir.path().join(crate::constants::OUTPUT_TXT_FILE);
 
     let mut errors = Vec::new();
+    log_status("Phase: agent execution — starting");
+    let agent_start = Instant::now();
     let last_message = match commands
         .run(
             &prompt,
@@ -195,8 +197,18 @@ pub async fn run(
         )
         .await
     {
-        Ok(message) => message,
+        Ok(message) => {
+            let elapsed = agent_start.elapsed().as_secs_f64();
+            log_status(format!(
+                "Phase: agent execution — completed successfully ({elapsed:.2}s)"
+            ));
+            message
+        }
         Err(err) => {
+            let elapsed = agent_start.elapsed().as_secs_f64();
+            log_status(format!(
+                "Phase: agent execution — failed ({elapsed:.2}s): {err}"
+            ));
             errors.push(err);
             errors
                 .last()
@@ -206,13 +218,22 @@ pub async fn run(
     };
 
     if base_commit.is_some() {
+        log_status("Phase: git finalize — starting");
+        let git_start = Instant::now();
         if let Err(err) = finalize_task_run(&repo_path, &job, github_token.as_deref()) {
+            let elapsed = git_start.elapsed().as_secs_f64();
+            log_status(format!("Phase: git finalize — failed ({elapsed:.2}s)"));
             errors.push(err.context("failed to finalize task output branches"));
+        } else {
+            let elapsed = git_start.elapsed().as_secs_f64();
+            log_status(format!("Phase: git finalize — completed ({elapsed:.2}s)"));
         }
     }
 
     // Push document changes back to the server (best-effort).
     if execution_env.contains_key(ENV_METIS_DOCUMENTS_DIR) {
+        log_status("Phase: document push — starting");
+        let doc_push_start = Instant::now();
         if let Err(err) = push_documents(
             client,
             PushArgs {
@@ -223,7 +244,13 @@ pub async fn run(
         )
         .await
         {
-            log_status(format!("Warning: document push failed, continuing: {err}"));
+            let elapsed = doc_push_start.elapsed().as_secs_f64();
+            log_status(format!(
+                "Phase: document push — failed ({elapsed:.2}s): {err}"
+            ));
+        } else {
+            let elapsed = doc_push_start.elapsed().as_secs_f64();
+            log_status(format!("Phase: document push — completed ({elapsed:.2}s)"));
         }
     }
 
@@ -231,6 +258,7 @@ pub async fn run(
         if let (Some(build_cache), Some(service_repo_name)) =
             (build_cache.as_ref(), service_repo_name.as_ref())
         {
+            log_status("Phase: cache upload — starting");
             let cache_upload_start = Instant::now();
             match build_cache_client(build_cache) {
                 Ok(client) => match resolve_head_oid(&repo_path) {
@@ -324,8 +352,17 @@ pub async fn run(
         }
     };
 
+    log_status("Phase: status submission — starting");
+    let status_start = Instant::now();
     if let Err(err) = submit_job_status(client, &job, status_update).await {
+        let elapsed = status_start.elapsed().as_secs_f64();
+        log_status(format!("Phase: status submission — failed ({elapsed:.2}s)"));
         errors.push(err);
+    } else {
+        let elapsed = status_start.elapsed().as_secs_f64();
+        log_status(format!(
+            "Phase: status submission — completed ({elapsed:.2}s)"
+        ));
     }
 
     if let Some(err) = errors.into_iter().next() {
