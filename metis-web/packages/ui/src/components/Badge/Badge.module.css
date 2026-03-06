@@ -50,7 +50,7 @@
 
 .merged {
   background-color: rgba(153, 102, 255, 0.15);
-  color: #9966ff;
+  color: var(--color-status-merged);
 }
 
 .changes_requested {
@@ -90,5 +90,5 @@
 
 .unknown {
   background-color: rgba(160, 160, 160, 0.15);
-  color: #a0a0a0;
+  color: var(--color-status-unknown);
 }
