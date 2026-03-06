@@ -5620,7 +5620,7 @@ mod tests {
     // ---- Label tests ----
 
     fn sample_label(name: &str, color: &str) -> Label {
-        Label::new(name.to_string(), color.parse().unwrap())
+        Label::new(name.to_string(), color.parse().unwrap(), true, false)
     }
 
     #[tokio::test]

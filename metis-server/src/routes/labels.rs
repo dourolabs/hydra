@@ -34,8 +34,8 @@ pub async fn create_label(
         .create_label(
             payload.label.name,
             payload.label.color,
-            payload.label.recurse,
-            payload.label.hidden,
+            payload.label.recurse.unwrap_or(true),
+            payload.label.hidden.unwrap_or(false),
         )
         .await
         .map_err(map_create_label_error)?;
@@ -115,8 +115,8 @@ pub async fn update_label(
             &label_id,
             payload.label.name,
             payload.label.color,
-            Some(payload.label.recurse),
-            Some(payload.label.hidden),
+            payload.label.recurse,
+            payload.label.hidden,
         )
         .await
         .map_err(map_update_label_error)?;

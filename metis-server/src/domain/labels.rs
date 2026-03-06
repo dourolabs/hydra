@@ -17,14 +17,14 @@ pub struct Label {
 }
 
 impl Label {
-    pub fn new(name: String, color: Rgb) -> Self {
+    pub fn new(name: String, color: Rgb, recurse: bool, hidden: bool) -> Self {
         let now = Utc::now();
         Self {
             name,
             color,
             deleted: false,
-            recurse: true,
-            hidden: false,
+            recurse,
+            hidden,
             created_at: now,
             updated_at: now,
         }

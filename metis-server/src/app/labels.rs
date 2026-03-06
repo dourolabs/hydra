@@ -75,9 +75,7 @@ impl AppState {
         }
 
         let color = color.unwrap_or_else(|| default_color_for_name(&name));
-        let mut label = Label::new(name, color);
-        label.recurse = recurse;
-        label.hidden = hidden;
+        let label = Label::new(name, color, recurse, hidden);
 
         let label_id = self.store.add_label(label).await.map_err(|e| match e {
             StoreError::LabelAlreadyExists(name) => CreateLabelError::AlreadyExists(name),

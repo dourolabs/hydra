@@ -5369,7 +5369,7 @@ mod tests {
     }
 
     fn sample_label() -> Label {
-        Label::new("bug".to_string(), "#ff0000".parse().unwrap())
+        Label::new("bug".to_string(), "#ff0000".parse().unwrap(), true, false)
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -5388,7 +5388,12 @@ mod tests {
         assert!(!fetched.deleted);
 
         // UPDATE
-        let updated_label = Label::new("critical-bug".to_string(), "#cc0000".parse().unwrap());
+        let updated_label = Label::new(
+            "critical-bug".to_string(),
+            "#cc0000".parse().unwrap(),
+            true,
+            false,
+        );
         store.update_label(&label_id, updated_label).await.unwrap();
 
         let fetched_updated = store.get_label(&label_id).await.unwrap();
@@ -5435,10 +5440,20 @@ mod tests {
         assert!(list_without_deleted.is_empty());
 
         // UNIQUENESS — creating a label with a duplicate name should fail
-        let label2 = Label::new("feature".to_string(), "#00ff00".parse().unwrap());
+        let label2 = Label::new(
+            "feature".to_string(),
+            "#00ff00".parse().unwrap(),
+            true,
+            false,
+        );
         store.add_label(label2).await.unwrap();
 
-        let duplicate = Label::new("feature".to_string(), "#0000ff".parse().unwrap());
+        let duplicate = Label::new(
+            "feature".to_string(),
+            "#0000ff".parse().unwrap(),
+            true,
+            false,
+        );
         let dup_result = store.add_label(duplicate).await;
         assert!(matches!(dup_result, Err(StoreError::LabelAlreadyExists(_))));
     }
@@ -5482,10 +5497,15 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
 
         // Create two labels
-        let label1 = Label::new("bug".to_string(), "#e74c3c".parse().unwrap());
+        let label1 = Label::new("bug".to_string(), "#e74c3c".parse().unwrap(), true, false);
         let label1_id = store.add_label(label1).await.unwrap();
 
-        let label2 = Label::new("feature".to_string(), "#3498db".parse().unwrap());
+        let label2 = Label::new(
+            "feature".to_string(),
+            "#3498db".parse().unwrap(),
+            true,
+            false,
+        );
         let label2_id = store.add_label(label2).await.unwrap();
 
         // Create an issue to associate labels with

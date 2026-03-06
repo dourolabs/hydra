@@ -13,14 +13,10 @@ pub struct Label {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Rgb>,
-    #[serde(default = "default_true")]
-    pub recurse: bool,
-    #[serde(default)]
-    pub hidden: bool,
-}
-
-fn default_true() -> bool {
-    true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recurse: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
 }
 
 impl Label {
@@ -28,10 +24,14 @@ impl Label {
         Self {
             name,
             color,
-            recurse: true,
-            hidden: false,
+            recurse: None,
+            hidden: None,
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A lightweight label representation for embedding in other responses.

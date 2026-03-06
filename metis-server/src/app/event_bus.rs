@@ -2024,8 +2024,12 @@ mod tests {
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
-        let label =
-            crate::domain::labels::Label::new("bug".to_string(), "#e74c3c".parse().unwrap());
+        let label = crate::domain::labels::Label::new(
+            "bug".to_string(),
+            "#e74c3c".parse().unwrap(),
+            true,
+            false,
+        );
         let label_id = inner.add_label(label).await.unwrap();
 
         let object_id = MetisId::from(issue_id.clone());
@@ -2062,8 +2066,12 @@ mod tests {
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
-        let label =
-            crate::domain::labels::Label::new("bug".to_string(), "#e74c3c".parse().unwrap());
+        let label = crate::domain::labels::Label::new(
+            "bug".to_string(),
+            "#e74c3c".parse().unwrap(),
+            true,
+            false,
+        );
         let label_id = inner.add_label(label).await.unwrap();
 
         let object_id = MetisId::from(issue_id.clone());
@@ -2123,8 +2131,12 @@ mod tests {
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume PatchCreated
 
-        let label =
-            crate::domain::labels::Label::new("urgent".to_string(), "#e74c3c".parse().unwrap());
+        let label = crate::domain::labels::Label::new(
+            "urgent".to_string(),
+            "#e74c3c".parse().unwrap(),
+            true,
+            false,
+        );
         let label_id = inner.add_label(label).await.unwrap();
 
         let object_id = MetisId::from(patch_id.clone());
@@ -2169,8 +2181,12 @@ mod tests {
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume DocumentCreated
 
-        let label =
-            crate::domain::labels::Label::new("docs".to_string(), "#3498db".parse().unwrap());
+        let label = crate::domain::labels::Label::new(
+            "docs".to_string(),
+            "#3498db".parse().unwrap(),
+            true,
+            false,
+        );
         let label_id = inner.add_label(label).await.unwrap();
 
         let object_id = MetisId::from(doc_id.clone());
@@ -2200,8 +2216,12 @@ mod tests {
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
 
-        let label =
-            crate::domain::labels::Label::new("tag".to_string(), "#000000".parse().unwrap());
+        let label = crate::domain::labels::Label::new(
+            "tag".to_string(),
+            "#000000".parse().unwrap(),
+            true,
+            false,
+        );
         let label_id = inner.add_label(label).await.unwrap();
 
         // Use a patch-like id for a patch that doesn't exist in the store

@@ -1393,8 +1393,12 @@ mod tests {
             .unwrap();
 
         // Add a label and associate it with the issue.
-        let label =
-            crate::domain::labels::Label::new("bug".to_string(), "#e74c3c".parse().unwrap());
+        let label = crate::domain::labels::Label::new(
+            "bug".to_string(),
+            "#e74c3c".parse().unwrap(),
+            true,
+            false,
+        );
         let label_id = store.add_label(label).await.unwrap();
         let object_id = metis_common::MetisId::from(issue_id.clone());
         store
@@ -1457,8 +1461,12 @@ mod tests {
             .await
             .unwrap();
 
-        let label =
-            crate::domain::labels::Label::new("urgent".to_string(), "#e74c3c".parse().unwrap());
+        let label = crate::domain::labels::Label::new(
+            "urgent".to_string(),
+            "#e74c3c".parse().unwrap(),
+            true,
+            false,
+        );
         let label_id = store.add_label(label).await.unwrap();
         let object_id = metis_common::MetisId::from(patch_id.clone());
         store
@@ -1512,8 +1520,12 @@ mod tests {
             .await
             .unwrap();
 
-        let label =
-            crate::domain::labels::Label::new("docs".to_string(), "#3498db".parse().unwrap());
+        let label = crate::domain::labels::Label::new(
+            "docs".to_string(),
+            "#3498db".parse().unwrap(),
+            true,
+            false,
+        );
         let label_id = store.add_label(label).await.unwrap();
         let object_id = metis_common::MetisId::from(doc_id.clone());
         store
