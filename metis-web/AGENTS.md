@@ -96,16 +96,17 @@ Before submitting a patch, verify your changes using the dev testing stack.
 
 1. Install dependencies: `cd metis-web && pnpm install`
 2. Install Playwright browsers (not needed in the worker Docker image): `pnpm --filter @metis/web exec playwright install chromium`
-3. Start the dev stack: `./scripts/dev-test.sh`
-   - Mock server: http://localhost:8080
-   - BFF: http://localhost:4000
-   - Frontend: http://localhost:3000
-4. Make your code changes
-5. Run E2E tests: `pnpm e2e`
-6. If tests fail, check screenshots in `packages/web/test-results/`
-7. If tests pass, create your patch
+3. Run E2E tests: `pnpm e2e`
+   - Playwright automatically starts the mock server, BFF, and frontend via its `webServer` config
+   - Servers are automatically stopped when tests complete
+4. If tests fail, check screenshots in `packages/web/test-results/`
+5. If tests pass, create your patch
 
-Alternatively, run `./scripts/dev-test.sh --test` to start the stack and run E2E tests in one command.
+> **WARNING: Do not use `dev-test.sh --test` with `run_in_background`.** Background dev servers can outlive the agent session and cause job hangs. Always use `pnpm e2e` instead — Playwright manages the full server lifecycle automatically.
+
+> **Do not start dev servers manually before running `pnpm e2e`.** Playwright's `reuseExistingServer: true` means it will skip starting servers if the ports are already occupied, but manually started servers won't be cleaned up when tests finish. Let Playwright handle it.
+
+Use `./scripts/dev-test.sh` only for interactive development where you need long-running servers (e.g., manual browser testing). Never use it in automated or agent workflows.
 
 ### Ports
 
@@ -136,7 +137,7 @@ pnpm --filter @metis/web exec playwright test --headed  # visible browser
 - Screenshots are saved to `packages/web/test-results/` on failure.
 - Traces are recorded on first retry (CI only by default). View with `pnpm --filter @metis/web exec playwright show-trace <trace-file>`.
 - Run with `--headed` to watch the browser during test execution.
-- Playwright uses the `webServer` config in `packages/web/playwright.config.ts` to auto-start all three servers when running tests directly via `playwright test`.
+- Playwright's `webServer` config in `packages/web/playwright.config.ts` auto-starts all three servers (mock server, BFF, frontend) when running `pnpm e2e`.
 
 ### Visual Audit & Screenshot Capture
 
@@ -144,9 +145,10 @@ The visual audit script captures screenshots of every major page at both desktop
 
 #### Running the visual audit
 
-1. Start the dev stack: `./scripts/dev-test.sh`
+1. Start the dev stack for interactive use: `./scripts/dev-test.sh`
 2. Run the visual audit: `cd packages/web && pnpm visual-audit`
 3. Screenshots are saved to `packages/web/test-results/visual-audit/`
+4. Stop the dev stack when done (Ctrl-C the `dev-test.sh` process)
 
 Each screenshot is named `{viewport}-{page}.png`, for example:
 - `desktop-dashboard.png`, `mobile-dashboard.png`
