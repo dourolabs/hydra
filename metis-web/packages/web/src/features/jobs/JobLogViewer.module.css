@@ -43,6 +43,21 @@
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.followToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+
+.followCheckbox {
+  cursor: pointer;
+}
+
 @keyframes pulse {
   0%,
   100% {
