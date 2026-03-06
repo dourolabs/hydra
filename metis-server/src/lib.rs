@@ -307,7 +307,7 @@ pub async fn run() -> anyhow::Result<()> {
     // Initialize SecretManager from config (mandatory)
     let secret_manager = Arc::new(
         SecretManager::from_base64(&app_config.metis.secret_encryption_key)
-            .context("invalid metis.secret_encryption_key")?,
+            .context("invalid metis.METIS_SECRET_ENCRYPTION_KEY")?,
     );
     info!("secret encryption enabled");
 

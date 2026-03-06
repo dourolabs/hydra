@@ -72,6 +72,7 @@ pub struct MetisSection {
     pub namespace: String,
     #[serde(default)]
     pub server_hostname: String,
+    #[serde(rename = "METIS_SECRET_ENCRYPTION_KEY")]
     pub secret_encryption_key: String,
     #[serde(default)]
     pub allowed_orgs: Vec<String>,
@@ -87,17 +88,17 @@ impl MetisSection {
     fn validate(&self) -> Result<()> {
         ensure!(
             non_empty(&self.secret_encryption_key).is_some(),
-            "metis.secret_encryption_key must be set"
+            "metis.METIS_SECRET_ENCRYPTION_KEY must be set"
         );
         // Validate it's valid base64 and exactly 32 bytes
         {
             use base64::Engine;
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(self.secret_encryption_key.trim())
-                .context("metis.secret_encryption_key is not valid base64")?;
+                .context("metis.METIS_SECRET_ENCRYPTION_KEY is not valid base64")?;
             ensure!(
                 bytes.len() == 32,
-                "metis.secret_encryption_key must decode to exactly 32 bytes (got {})",
+                "metis.METIS_SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes (got {})",
                 bytes.len()
             );
         }
@@ -658,7 +659,7 @@ mod tests {
             format!(
                 r#"
 metis:
-  secret_encryption_key: "{TEST_SECRET_KEY}"
+  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
 
 job:
   default_image: "metis-worker:latest"
@@ -686,7 +687,7 @@ github_app:
             format!(
                 r#"
 metis:
-  secret_encryption_key: "{TEST_SECRET_KEY}"
+  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
   allowed_orgs: []
 
 job:
@@ -722,7 +723,7 @@ github_app:
             format!(
                 r#"
 metis:
-  secret_encryption_key: "{TEST_SECRET_KEY}"
+  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
   allowed_orgs: [" ", ""]
 
 job:
@@ -778,7 +779,7 @@ github_app:
         let error = AppConfig::load(&path).expect_err("expected missing secret_encryption_key");
         assert!(error_chain_contains(
             &error,
-            "missing field `secret_encryption_key`"
+            "missing field `METIS_SECRET_ENCRYPTION_KEY`"
         ));
 
         Ok(())
@@ -792,7 +793,7 @@ github_app:
             &path,
             r#"
 metis:
-  secret_encryption_key: "not-valid-base64!!!"
+  METIS_SECRET_ENCRYPTION_KEY: "not-valid-base64!!!"
 
 job:
   default_image: "metis-worker:latest"
@@ -810,7 +811,7 @@ github_app:
         let error = AppConfig::load(&path).expect_err("expected invalid base64");
         assert!(error_chain_contains(
             &error,
-            "metis.secret_encryption_key is not valid base64"
+            "metis.METIS_SECRET_ENCRYPTION_KEY is not valid base64"
         ));
 
         Ok(())
@@ -828,7 +829,7 @@ github_app:
             format!(
                 r#"
 metis:
-  secret_encryption_key: "{short_key}"
+  METIS_SECRET_ENCRYPTION_KEY: "{short_key}"
 
 job:
   default_image: "metis-worker:latest"
@@ -847,7 +848,7 @@ github_app:
         let error = AppConfig::load(&path).expect_err("expected wrong-length key");
         assert!(error_chain_contains(
             &error,
-            "metis.secret_encryption_key must decode to exactly 32 bytes"
+            "metis.METIS_SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes"
         ));
 
         Ok(())
