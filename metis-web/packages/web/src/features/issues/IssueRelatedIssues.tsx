@@ -1,9 +1,21 @@
-import { Link } from "react-router-dom";
 import { Spinner } from "@metis/ui";
-import { IssueRow } from "./IssueRow";
+import type { IssueSummaryRecord } from "@metis/api";
+import { ItemRow } from "../dashboard/ItemRow";
+import type { WorkItem } from "../dashboard/useTransitiveWorkItems";
+import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { useIssues } from "./useIssues";
 import { topologicalSort } from "./topologicalSort";
 import styles from "./IssueRelatedIssues.module.css";
+
+function toWorkItem(record: IssueSummaryRecord): WorkItem {
+  return {
+    kind: "issue",
+    id: record.issue_id,
+    data: record,
+    lastUpdated: record.timestamp,
+    isTerminal: TERMINAL_STATUSES.has(record.issue.status),
+  };
+}
 
 interface IssueRelatedIssuesProps {
   issueId: string;
@@ -37,7 +49,9 @@ export function IssueRelatedIssues({ issueId }: IssueRelatedIssuesProps) {
       )
     : [];
 
-  if (parents.length === 0 && children.length === 0) {
+  const allRelated = [...parents, ...children];
+
+  if (allRelated.length === 0) {
     return (
       <div className={styles.empty}>
         <p className={styles.emptyText}>No related issues.</p>
@@ -46,41 +60,10 @@ export function IssueRelatedIssues({ issueId }: IssueRelatedIssuesProps) {
   }
 
   return (
-    <>
-      {parents.length > 0 && (
-        <>
-          <div className={styles.sectionLabel}>Parents</div>
-          <ul className={styles.list}>
-            {parents.map((record) => (
-              <li key={record.issue_id} className={styles.item}>
-                <Link
-                  to={`/issues/${record.issue_id}`}
-                  className={styles.link}
-                >
-                  <IssueRow record={record} showId />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {children.length > 0 && (
-        <>
-          <div className={styles.sectionLabel}>Children</div>
-          <ul className={styles.list}>
-            {children.map((record) => (
-              <li key={record.issue_id} className={styles.item}>
-                <Link
-                  to={`/issues/${record.issue_id}`}
-                  className={styles.link}
-                >
-                  <IssueRow record={record} showId />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </>
+    <ul className={styles.list}>
+      {allRelated.map((record) => (
+        <ItemRow key={record.issue_id} item={toWorkItem(record)} />
+      ))}
+    </ul>
   );
 }
