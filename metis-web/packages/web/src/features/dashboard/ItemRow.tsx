@@ -77,7 +77,41 @@ export function ItemRow({ item, jobs, filterRootId, inboxLabelId }: ItemRowProps
   const archiveMutation = useMutation({
     mutationFn: (issueId: string) =>
       apiClient.removeLabelFromObject(inboxLabelId!, issueId),
-    onSuccess: () => {
+    onMutate: async (issueId) => {
+      await queryClient.cancelQueries({ queryKey: ["issues"] });
+      const previousQueries = queryClient.getQueriesData({ queryKey: ["issues"] });
+      queryClient.setQueriesData<{ issues: Array<{ issue_id: string; issue: { labels?: Array<{ label_id: string }> } }> }>(
+        { queryKey: ["issues"] },
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            issues: old.issues.map((issue) =>
+              issue.issue_id === issueId
+                ? {
+                    ...issue,
+                    issue: {
+                      ...issue.issue,
+                      labels: (issue.issue.labels ?? []).filter(
+                        (l) => l.label_id !== inboxLabelId,
+                      ),
+                    },
+                  }
+                : issue,
+            ),
+          };
+        },
+      );
+      return { previousQueries };
+    },
+    onError: (_err, _issueId, context) => {
+      if (context?.previousQueries) {
+        for (const [key, data] of context.previousQueries) {
+          queryClient.setQueryData(key, data);
+        }
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["issues"] });
     },
   });
