@@ -199,6 +199,7 @@ export function DashboardPage() {
           drawerOpen={drawerOpen}
           onDrawerClose={handleDrawerClose}
           jobsByIssue={jobsByIssue ?? new Map()}
+          isActiveMap={isActiveMap}
           username={username}
           inboxCount={inboxCount}
         />

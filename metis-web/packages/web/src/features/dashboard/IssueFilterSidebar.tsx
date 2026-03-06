@@ -4,7 +4,7 @@ import type { IssueTreeNode } from "../issues/useIssues";
 import { useLabels } from "../labels/useLabels";
 import { descriptionSnippet } from "../../utils/text";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
-import { computeIssueProgress, computeIsActiveMap, type ChildStatus, type IssueProgress } from "./computeIssueProgress";
+import { computeIssueProgress, type ChildStatus, type IssueProgress } from "./computeIssueProgress";
 import { StatusBoxes } from "./StatusBoxes";
 import styles from "./IssueFilterSidebar.module.css";
 
@@ -68,6 +68,7 @@ interface IssueFilterSidebarProps {
   drawerOpen: boolean;
   onDrawerClose: () => void;
   jobsByIssue: Map<string, JobSummaryRecord[]>;
+  isActiveMap: Map<string, boolean>;
   username: string;
   inboxCount: number;
 }
@@ -81,6 +82,7 @@ export function IssueFilterSidebar({
   drawerOpen,
   onDrawerClose,
   jobsByIssue,
+  isActiveMap,
   username,
   inboxCount,
 }: IssueFilterSidebarProps) {
@@ -115,11 +117,6 @@ export function IssueFilterSidebar({
   const [completedExpanded, setCompletedExpanded] = useState(false);
 
   const { data: labels } = useLabels();
-
-  const isActiveMap = useMemo(
-    () => computeIsActiveMap(allIssues, jobsByIssue),
-    [allIssues, jobsByIssue],
-  );
 
   const labelProgressList = useMemo(() => {
     if (!labels || labels.length === 0) return [];
