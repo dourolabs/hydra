@@ -33,23 +33,11 @@ test.describe("Issue Detail", () => {
 
   test("displays tabbed sections", async ({ authenticatedPage: page }) => {
     await page.goto("/issues/i-seed00001");
-    // IssueDetail has tabs: Related Issues, Jobs, Patches, Todo, Activity, Settings
+    // IssueDetail has tabs: Related Issues, Jobs, Patches, Activity, Metadata
     await expect(page.getByRole("tab", { name: "Related Issues" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Jobs" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Patches" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Todo" })).toBeVisible();
-  });
-
-  test("shows todo list items when Todo tab is clicked", async ({
-    authenticatedPage: page,
-  }) => {
-    await page.goto("/issues/i-seed00001");
-    // Click the "Todo" tab
-    await page.getByRole("tab", { name: "Todo" }).click();
-    // i-seed00001 has todo items like "Finalize OAuth2 provider selection"
-    await expect(
-      page.getByText("Finalize OAuth2 provider selection")
-    ).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Metadata" })).toBeVisible();
   });
 
   test("shows 404 for non-existent issue", async ({
