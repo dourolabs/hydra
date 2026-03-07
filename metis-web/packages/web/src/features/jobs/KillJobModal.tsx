@@ -24,7 +24,7 @@ export function KillJobModal({ open, onClose, jobId }: KillJobModalProps) {
       if (previous) {
         queryClient.setQueryData<JobVersionRecord>(["job", jobId], {
           ...previous,
-          task: { ...previous.task, status: "killed" },
+          task: { ...previous.task, status: "failed" },
         });
       }
       return { previous };
