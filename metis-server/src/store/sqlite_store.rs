@@ -2457,7 +2457,7 @@ impl ReadOnlyStore for SqliteStore {
             });
         }
         if let Some(before) = query.before {
-            conditions.push(format!("created_at <= ?{}", bind_values.len() + 1));
+            conditions.push(format!("created_at < ?{}", bind_values.len() + 1));
             bind_values.push(before.to_rfc3339());
         }
         if let Some(after) = query.after {
