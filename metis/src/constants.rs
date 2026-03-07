@@ -18,6 +18,3 @@ pub const DEFAULT_CONFIG_FILE: &str = "~/.local/share/metis/config.toml";
 
 /// The default auth token file path (`~/.local/share/metis/auth-token`).
 pub const DEFAULT_AUTH_TOKEN_PATH: &str = "~/.local/share/metis/auth-token";
-
-/// Path where the server writes the local auth token in local auth mode.
-pub const DEFAULT_LOCAL_TOKEN_PATH: &str = "~/.local/share/metis/local-token";

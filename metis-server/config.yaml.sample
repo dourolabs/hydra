@@ -19,14 +19,17 @@ metis:
 
 # Authentication mode: "local" or "github".
 # - local: auto-creates a default user actor on startup and writes a static
-#   token to local_token_path. No GitHub OAuth needed.
+#   token to ~/.local/share/metis/auth-token (the standard CLI auth path).
+#   No GitHub OAuth needed.
 # - github: requires the github_app section below for device-flow OAuth.
 # Default: local
 auth_mode: "github"
 
-# File path where the local auth token is written (only used in local mode).
-# The CLI checks this path automatically before attempting GitHub device flow.
-# local_token_path: "~/.local/share/metis/local-token"
+# Optional GitHub personal access token for local mode. When set, this token
+# is stored for the local user so that GitHub API consumers (PR sync, patch
+# assets, etc.) can function without the full GitHub App OAuth flow.
+# Required scopes: repo (full control of private repositories).
+# github_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 job:
   # Container image the worker Pod will execute.

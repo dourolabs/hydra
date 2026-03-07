@@ -39,9 +39,6 @@ impl fmt::Display for AuthMode {
     }
 }
 
-/// Default path where the local auth token is written and read.
-pub const DEFAULT_LOCAL_TOKEN_PATH: &str = "~/.local/share/metis/local-token";
-
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub metis: MetisSection,
@@ -54,9 +51,14 @@ pub struct AppConfig {
     pub github_app: Option<GithubAppSection>,
     #[serde(default)]
     pub auth_mode: AuthMode,
-    /// File path where the local auth token is written in local mode.
-    #[serde(default = "default_local_token_path")]
-    pub local_token_path: String,
+    /// Optional GitHub personal access token for local mode. When set, this
+    /// token is stored for the local user so that GitHub API consumers (PR sync,
+    /// patch assets, etc.) can function without the full GitHub App OAuth flow.
+    ///
+    /// Required GitHub token scopes: `repo` (full control of private
+    /// repositories).
+    #[serde(default)]
+    pub github_token: Option<String>,
     #[serde(default)]
     pub background: BackgroundSection,
     #[serde(default)]
@@ -500,10 +502,6 @@ pub(crate) fn non_empty(value: &str) -> Option<&str> {
 
 fn default_namespace() -> String {
     "default".to_string()
-}
-
-fn default_local_token_path() -> String {
-    DEFAULT_LOCAL_TOKEN_PATH.to_string()
 }
 
 pub const DEFAULT_AGENT_MAX_TRIES: i32 = 3;
@@ -974,29 +972,6 @@ job:
             &error,
             "github_app section is required when auth_mode is 'github'"
         ));
-
-        Ok(())
-    }
-
-    #[test]
-    fn config_local_token_path_defaults() -> anyhow::Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.yaml");
-        fs::write(
-            &path,
-            format!(
-                r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
-
-job:
-  default_image: "metis-worker:latest"
-"#
-            ),
-        )?;
-
-        let config = AppConfig::load(&path)?;
-        assert_eq!(config.local_token_path, DEFAULT_LOCAL_TOKEN_PATH);
 
         Ok(())
     }

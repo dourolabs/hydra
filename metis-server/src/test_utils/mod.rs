@@ -85,7 +85,7 @@ pub fn test_app_config() -> AppConfig {
             oauth_base_url: "https://github.com".to_string(),
         }),
         auth_mode: crate::config::AuthMode::Github,
-        local_token_path: crate::config::DEFAULT_LOCAL_TOKEN_PATH.to_string(),
+        github_token: None,
         background: BackgroundSection {
             scheduler: test_scheduler_section(),
             ..BackgroundSection::default()
