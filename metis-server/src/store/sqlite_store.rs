@@ -184,6 +184,8 @@ struct TaskRow {
     created_at: String,
     #[allow(dead_code)]
     updated_at: String,
+    #[sqlx(default)]
+    creation_time: Option<String>,
 }
 
 impl SqliteStore {
@@ -848,13 +850,19 @@ impl SqliteStore {
             ))
         })?;
         let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+        let creation_time = row
+            .creation_time
+            .as_deref()
+            .map(parse_sqlite_timestamp)
+            .transpose()?
+            .unwrap_or(timestamp);
         let task = self.row_to_task(row)?;
         Ok(Versioned::with_optional_actor(
             task,
             version,
             timestamp,
             parse_actor_json_string(row.actor.as_deref())?,
-            timestamp,
+            creation_time,
         ))
     }
 
@@ -1741,7 +1749,8 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Versioned<Task>, StoreError> {
         let row = sqlx::query_as::<_, TaskRow>(
             &format!(
-                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at
+                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at,
+                 (SELECT MIN(created_at) FROM {TABLE_TASKS_V2} WHERE id = ?1) AS creation_time
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number DESC
@@ -1763,7 +1772,7 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
         let rows = sqlx::query_as::<_, TaskRow>(
             &format!(
-                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at
+                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, NULL AS creation_time
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number"
@@ -1778,9 +1787,17 @@ impl ReadOnlyStore for SqliteStore {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
 
-        rows.iter()
+        let mut results: Vec<Versioned<Task>> = rows
+            .iter()
             .map(|row| self.row_to_versioned_task(row))
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let creation_time = results.first().map(|r| r.timestamp);
+        for r in &mut results {
+            r.creation_time = creation_time.unwrap_or(r.timestamp);
+        }
+
+        Ok(results)
     }
 
     async fn list_tasks(
@@ -1788,7 +1805,8 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         let mut sql = format!(
-            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.creator, t.deleted, t.actor, t.created_at, t.updated_at \
+            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.creator, t.deleted, t.actor, t.created_at, t.updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_TASKS_V2} WHERE id = t.id) AS creation_time \
              FROM {TABLE_TASKS_V2} t \
              INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
              ON t.id = latest.id AND t.version_number = latest.max_version"
@@ -1873,7 +1891,7 @@ impl ReadOnlyStore for SqliteStore {
         // SQLite doesn't support ANY($1), so we build a query with placeholders
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at \
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, NULL AS creation_time \
              FROM {TABLE_TASKS_V2} \
              WHERE id IN ({}) \
              ORDER BY id, version_number",
