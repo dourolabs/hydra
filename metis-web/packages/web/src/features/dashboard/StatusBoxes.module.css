@@ -23,7 +23,7 @@
 }
 
 .statusBoxClosed {
-  background: var(--color-status-closed);
+  background: var(--color-status-issue-closed);
 }
 
 .statusBoxFailed {
