@@ -185,7 +185,13 @@ mod tests {
     async fn setup_inbox_label(handles: &test_utils::TestStateHandles) -> metis_common::LabelId {
         handles
             .state
-            .create_label(INBOX_LABEL_NAME.to_string(), None, false, true)
+            .create_label(
+                INBOX_LABEL_NAME.to_string(),
+                None,
+                false,
+                true,
+                ActorRef::test(),
+            )
             .await
             .unwrap()
     }

@@ -1038,11 +1038,7 @@ impl StoreWithEvents {
 
     // ---- Label mutations ----
 
-    pub async fn add_label_with_actor(
-        &self,
-        label: Label,
-        actor: ActorRef,
-    ) -> Result<LabelId, StoreError> {
+    pub async fn add_label(&self, label: Label, actor: ActorRef) -> Result<LabelId, StoreError> {
         let new_label = label.clone();
         let label_id = self.inner.add_label(label).await?;
         let payload = Arc::new(MutationPayload::Label {
@@ -1055,7 +1051,7 @@ impl StoreWithEvents {
         Ok(label_id)
     }
 
-    pub async fn update_label_with_actor(
+    pub async fn update_label(
         &self,
         id: &LabelId,
         label: Label,
@@ -1073,11 +1069,7 @@ impl StoreWithEvents {
         Ok(())
     }
 
-    pub async fn delete_label_with_actor(
-        &self,
-        id: &LabelId,
-        actor: ActorRef,
-    ) -> Result<(), StoreError> {
+    pub async fn delete_label(&self, id: &LabelId, actor: ActorRef) -> Result<(), StoreError> {
         let old_label = self.inner.get_label(id).await.ok();
         self.inner.delete_label(id).await?;
         // After soft-delete, get_label returns NotFound, so construct the

@@ -31,7 +31,7 @@ pub async fn create_label(
     info!(actor = %actor.name(), "create_label invoked");
 
     let label_id = state
-        .create_label_with_actor(
+        .create_label(
             payload.label.name,
             payload.label.color,
             payload.label.recurse.unwrap_or(true),
@@ -112,7 +112,7 @@ pub async fn update_label(
     info!(actor = %actor.name(), label_id = %label_id, "update_label invoked");
 
     state
-        .update_label_with_actor(
+        .update_label(
             &label_id,
             payload.label.name,
             payload.label.color,
@@ -150,7 +150,7 @@ pub async fn delete_label(
     info!(actor = %actor.name(), label_id = %label_id, "delete_label invoked");
 
     state
-        .delete_label_with_actor(&label_id, ActorRef::from(&actor))
+        .delete_label(&label_id, ActorRef::from(&actor))
         .await
         .map_err(|e| map_label_not_found(e, &label_id))?;
 
