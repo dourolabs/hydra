@@ -753,19 +753,21 @@ pub trait Store: ReadOnlyStore {
     // ---- Label association mutations ----
 
     /// Associates a label with an object. The object_kind is inferred from the
-    /// MetisId prefix. No-ops if the association already exists.
+    /// MetisId prefix. Returns `true` if the association was newly created,
+    /// `false` if it already existed.
     async fn add_label_association(
         &self,
         label_id: &LabelId,
         object_id: &MetisId,
-    ) -> Result<(), StoreError>;
+    ) -> Result<bool, StoreError>;
 
-    /// Removes a label association. No-ops if the association does not exist.
+    /// Removes a label association. Returns `true` if the association was
+    /// actually removed, `false` if it did not exist.
     async fn remove_label_association(
         &self,
         label_id: &LabelId,
         object_id: &MetisId,
-    ) -> Result<(), StoreError>;
+    ) -> Result<bool, StoreError>;
 
     // ---- User secret mutations ----
 

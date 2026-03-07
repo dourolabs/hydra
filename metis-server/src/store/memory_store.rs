@@ -1832,8 +1832,9 @@ impl Store for MemoryStore {
         &self,
         label_id: &LabelId,
         object_id: &MetisId,
-    ) -> Result<(), StoreError> {
-        self.object_labels
+    ) -> Result<bool, StoreError> {
+        let newly_added = self
+            .object_labels
             .entry(object_id.clone())
             .or_default()
             .insert(label_id.clone());
@@ -1841,21 +1842,23 @@ impl Store for MemoryStore {
             .entry(label_id.clone())
             .or_default()
             .insert(object_id.clone());
-        Ok(())
+        Ok(newly_added)
     }
 
     async fn remove_label_association(
         &self,
         label_id: &LabelId,
         object_id: &MetisId,
-    ) -> Result<(), StoreError> {
-        if let Some(mut label_ids) = self.object_labels.get_mut(object_id) {
-            label_ids.remove(label_id);
-        }
+    ) -> Result<bool, StoreError> {
+        let removed = self
+            .object_labels
+            .get_mut(object_id)
+            .map(|mut label_ids| label_ids.remove(label_id))
+            .unwrap_or(false);
         if let Some(mut object_ids) = self.label_objects.get_mut(label_id) {
             object_ids.remove(object_id);
         }
-        Ok(())
+        Ok(removed)
     }
 
     // ---- User secret mutations ----
