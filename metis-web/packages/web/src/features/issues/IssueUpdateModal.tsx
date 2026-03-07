@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Modal, Button, Textarea, Select } from "@metis/ui";
 import type { SelectOption } from "@metis/ui";
-import type { Issue, IssueStatus } from "@metis/api";
+import type { Issue, IssueStatus, IssueVersionRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import styles from "./IssueUpdateModal.module.css";
@@ -53,17 +53,37 @@ export function IssueUpdateModal({
         },
         job_id: null,
       }),
+    onMutate: async (params) => {
+      await queryClient.cancelQueries({ queryKey: ["issue", issueId] });
+      const previous = queryClient.getQueryData<IssueVersionRecord>(["issue", issueId]);
+      if (previous) {
+        queryClient.setQueryData<IssueVersionRecord>(["issue", issueId], {
+          ...previous,
+          issue: {
+            ...previous.issue,
+            status: params.status,
+            progress: params.progress,
+          },
+        });
+      }
+      return { previous };
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
-      queryClient.invalidateQueries({ queryKey: ["issues"] });
       addToast("Issue updated", "success");
       onClose();
     },
-    onError: (err) => {
+    onError: (err, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["issue", issueId], context.previous);
+      }
       addToast(
         err instanceof Error ? err.message : "Failed to update issue",
         "error",
       );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
+      queryClient.invalidateQueries({ queryKey: ["issues"] });
     },
   });
 

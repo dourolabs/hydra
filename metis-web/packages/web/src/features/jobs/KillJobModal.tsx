@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { JobVersionRecord } from "@metis/api";
 import { Modal, Button } from "@metis/ui";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
@@ -17,17 +18,33 @@ export function KillJobModal({ open, onClose, jobId }: KillJobModalProps) {
 
   const mutation = useMutation({
     mutationFn: () => apiClient.killJob(jobId),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["job", jobId] });
+      const previous = queryClient.getQueryData<JobVersionRecord>(["job", jobId]);
+      if (previous) {
+        queryClient.setQueryData<JobVersionRecord>(["job", jobId], {
+          ...previous,
+          task: { ...previous.task, status: "killed" },
+        });
+      }
+      return { previous };
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["job", jobId] });
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
       addToast("Job killed successfully", "success");
       onClose();
     },
-    onError: (err) => {
+    onError: (err, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["job", jobId], context.previous);
+      }
       addToast(
         err instanceof Error ? err.message : "Failed to kill job",
         "error",
       );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["job", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
     },
   });
 
