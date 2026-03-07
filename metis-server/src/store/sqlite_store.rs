@@ -2,13 +2,17 @@ use crate::domain::{
     actors::{Actor, ActorId, ActorRef, UNKNOWN_CREATOR},
     agents::Agent,
     documents::Document,
-    issues::{Issue, IssueGraphFilter},
+    issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
+        JobSettings, TodoItem,
+    },
     labels::Label,
     messages::Message,
     notifications::Notification,
     patches::Patch,
     users::{User, Username},
 };
+use crate::store::issue_graph::IssueGraphContext;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
@@ -34,6 +38,8 @@ use super::{ReadOnlyStore, Store, StoreError, Task, TaskStatusLog};
 const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
 const TABLE_ACTORS_V2: &str = "actors_v2";
 const TABLE_USERS_V2: &str = "users_v2";
+const TABLE_ISSUES_V2: &str = "issues_v2";
+const TABLE_LABEL_ASSOCIATIONS: &str = "label_associations";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
 
@@ -84,6 +90,30 @@ struct UserRow {
     created_at: String,
     #[allow(dead_code)]
     updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct IssueRow {
+    id: String,
+    version_number: i64,
+    issue_type: String,
+    title: String,
+    description: String,
+    creator: String,
+    progress: String,
+    status: String,
+    assignee: Option<String>,
+    job_settings: String,
+    todo_list: String,
+    dependencies: String,
+    patches: String,
+    deleted: bool,
+    actor: Option<String>,
+    created_at: String,
+    #[allow(dead_code)]
+    updated_at: String,
+    #[sqlx(default)]
+    creation_time: Option<String>,
 }
 
 impl SqliteStore {
@@ -300,6 +330,117 @@ impl SqliteStore {
             row.deleted,
         )
     }
+
+    // ---- Issue helpers ----
+
+    async fn ensure_issue_exists(&self, id: &IssueId) -> Result<(), StoreError> {
+        let exists = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(1) FROM {TABLE_ISSUES_V2} WHERE id = ?1"
+        ))
+        .bind(id.as_ref())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if exists == 0 {
+            Err(StoreError::IssueNotFound(id.clone()))
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn validate_issue_dependencies(
+        &self,
+        dependencies: &[IssueDependency],
+    ) -> Result<(), StoreError> {
+        for dependency in dependencies {
+            if let Err(err) = self.ensure_issue_exists(&dependency.issue_id).await {
+                if matches!(err, StoreError::IssueNotFound(_)) {
+                    return Err(StoreError::InvalidDependency(dependency.issue_id.clone()));
+                }
+                return Err(err);
+            }
+        }
+        Ok(())
+    }
+
+    async fn insert_issue(
+        &self,
+        id: &IssueId,
+        version_number: VersionNumber,
+        issue: &Issue,
+        actor: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for issue '{id}'"))
+        })?;
+
+        let job_settings_json = serde_json::to_string(&issue.job_settings)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize job_settings: {e}")))?;
+        let todo_list_json = serde_json::to_string(&issue.todo_list)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
+        let dependencies_json = serde_json::to_string(&issue.dependencies)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize dependencies: {e}")))?;
+        let patches_json = serde_json::to_string(&issue.patches)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize patches: {e}")))?;
+
+        sqlx::query(
+            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
+        )
+        .bind(id.as_ref())
+        .bind(version_number)
+        .bind(issue.issue_type.as_str())
+        .bind(&issue.title)
+        .bind(&issue.description)
+        .bind(issue.creator.as_str())
+        .bind(&issue.progress)
+        .bind(issue.status.as_str())
+        .bind(issue.assignee.as_deref())
+        .bind(&job_settings_json)
+        .bind(&todo_list_json)
+        .bind(&dependencies_json)
+        .bind(&patches_json)
+        .bind(issue.deleted)
+        .bind(actor)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    fn row_to_issue(&self, row: &IssueRow) -> Result<Issue, StoreError> {
+        let issue_type = IssueType::from_str(&row.issue_type)
+            .map_err(|e| StoreError::Internal(format!("invalid issue_type: {e}")))?;
+        let status = IssueStatus::from_str(&row.status).map_err(StoreError::InvalidIssueStatus)?;
+        let job_settings: JobSettings = serde_json::from_str(&row.job_settings).map_err(|e| {
+            StoreError::Internal(format!("failed to deserialize job_settings: {e}"))
+        })?;
+        let todo_list: Vec<TodoItem> = serde_json::from_str(&row.todo_list)
+            .map_err(|e| StoreError::Internal(format!("failed to deserialize todo_list: {e}")))?;
+        let dependencies: Vec<IssueDependency> =
+            serde_json::from_str(&row.dependencies).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize dependencies: {e}"))
+            })?;
+        let patches: Vec<PatchId> = serde_json::from_str(&row.patches)
+            .map_err(|e| StoreError::Internal(format!("failed to deserialize patches: {e}")))?;
+
+        Ok(Issue {
+            issue_type,
+            title: row.title.clone(),
+            description: row.description.clone(),
+            creator: Username::from(row.creator.clone()),
+            progress: row.progress.clone(),
+            status,
+            assignee: row.assignee.clone(),
+            job_settings,
+            todo_list,
+            dependencies,
+            patches,
+            deleted: row.deleted,
+        })
+    }
 }
 
 fn actor_to_json_string(actor: &ActorRef) -> String {
@@ -428,39 +569,283 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_issue(
         &self,
         id: &IssueId,
-        _include_deleted: bool,
+        include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
-        Err(StoreError::IssueNotFound(id.clone()))
+        let row = sqlx::query_as::<_, IssueRow>(&format!(
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = ?1) AS creation_time
+             FROM {TABLE_ISSUES_V2}
+             WHERE id = ?1
+             ORDER BY version_number DESC
+             LIMIT 1"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for issue '{}'",
+                row.id
+            ))
+        })?;
+        let issue = self.row_to_issue(&row)?;
+
+        if !include_deleted && issue.deleted {
+            return Err(StoreError::IssueNotFound(id.clone()));
+        }
+
+        let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+        let creation_time = row
+            .creation_time
+            .as_deref()
+            .map(parse_sqlite_timestamp)
+            .transpose()?
+            .unwrap_or(timestamp);
+
+        Ok(Versioned::with_optional_actor(
+            issue,
+            version,
+            timestamp,
+            parse_actor_json_string(row.actor.as_deref())?,
+            creation_time,
+        ))
     }
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
-        Err(StoreError::IssueNotFound(id.clone()))
+        let rows = sqlx::query_as::<_, IssueRow>(&format!(
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, NULL AS creation_time
+             FROM {TABLE_ISSUES_V2}
+             WHERE id = ?1
+             ORDER BY version_number"
+        ))
+        .bind(id.as_ref())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if rows.is_empty() {
+            return Err(StoreError::IssueNotFound(id.clone()));
+        }
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for issue '{}'",
+                    row.id
+                ))
+            })?;
+            let issue = self.row_to_issue(row)?;
+            let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+            results.push(Versioned::with_optional_actor(
+                issue,
+                version,
+                timestamp,
+                parse_actor_json_string(row.actor.as_deref())?,
+                timestamp,
+            ));
+        }
+
+        let creation_time = results.first().map(|r| r.timestamp);
+        for r in &mut results {
+            r.creation_time = creation_time.unwrap_or(r.timestamp);
+        }
+
+        Ok(results)
     }
 
     async fn list_issues(
         &self,
-        _query: &SearchIssuesQuery,
+        query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        Ok(Vec::new())
+        // SQLite doesn't have DISTINCT ON; use a subquery with MAX(version_number) instead
+        let subquery = format!(
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.dependencies, i.patches, i.deleted, i.actor, i.created_at, i.updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time
+             FROM {TABLE_ISSUES_V2} i
+             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_ISSUES_V2} GROUP BY id) latest
+             ON i.id = latest.id AND i.version_number = latest.max_vn"
+        );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
+        let mut predicates = Vec::new();
+        let mut bindings: Vec<String> = Vec::new();
+
+        if let Some(issue_type) = query.issue_type.as_ref() {
+            bindings.push(issue_type.as_str().to_string());
+            predicates.push(format!("issue_type = ?{}", bindings.len()));
+        }
+
+        if let Some(status) = query.status.as_ref() {
+            bindings.push(status.as_str().to_string());
+            predicates.push(format!("status = ?{}", bindings.len()));
+        }
+
+        if let Some(assignee) = query
+            .assignee
+            .as_ref()
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
+            bindings.push(assignee.to_lowercase());
+            predicates.push(format!("LOWER(assignee) = ?{}", bindings.len()));
+        }
+
+        if let Some(term) = query
+            .q
+            .as_ref()
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty())
+        {
+            let pattern = format!("%{term}%");
+            let start = bindings.len() + 1;
+            bindings.push(pattern.clone()); // id
+            bindings.push(pattern.clone()); // title
+            bindings.push(pattern.clone()); // description
+            bindings.push(pattern.clone()); // progress
+            bindings.push(term.clone()); // type (exact)
+            bindings.push(term.clone()); // status (exact)
+            bindings.push(pattern.clone()); // creator
+            bindings.push(pattern); // assignee
+            predicates.push(format!(
+                "(LOWER(id) LIKE ?{s0} OR LOWER(title) LIKE ?{s1} OR LOWER(description) LIKE ?{s2} OR LOWER(progress) LIKE ?{s3} OR issue_type = ?{s4} OR status = ?{s5} OR LOWER(creator) LIKE ?{s6} OR LOWER(COALESCE(assignee,'')) LIKE ?{s7})",
+                s0 = start,
+                s1 = start + 1,
+                s2 = start + 2,
+                s3 = start + 3,
+                s4 = start + 4,
+                s5 = start + 5,
+                s6 = start + 6,
+                s7 = start + 7,
+            ));
+        }
+
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("deleted = 0".to_string());
+        }
+
+        if !query.label_ids.is_empty() {
+            let label_count = query.label_ids.len();
+            let placeholders: Vec<String> = query
+                .label_ids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+                .collect();
+            predicates.push(format!(
+                "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la WHERE la.label_id IN ({}) GROUP BY la.object_id HAVING COUNT(DISTINCT la.label_id) = {label_count})",
+                placeholders.join(", ")
+            ));
+            for label_id in &query.label_ids {
+                bindings.push(label_id.to_string());
+            }
+        }
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_as::<_, IssueRow>(&sql);
+        for value in &bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut issues = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for issue '{}'",
+                    row.id
+                ))
+            })?;
+            let issue = self.row_to_issue(&row)?;
+            let issue_id = row.id.parse::<IssueId>().map_err(|err| {
+                StoreError::Internal(format!("invalid issue id stored in database: {err}"))
+            })?;
+            let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+            let creation_time = row
+                .creation_time
+                .as_deref()
+                .map(parse_sqlite_timestamp)
+                .transpose()?
+                .unwrap_or(timestamp);
+            let versioned = Versioned::with_optional_actor(
+                issue,
+                version,
+                timestamp,
+                parse_actor_json_string(row.actor.as_deref())?,
+                creation_time,
+            );
+            issues.push((issue_id, versioned));
+        }
+
+        Ok(issues)
     }
 
     async fn search_issue_graph(
         &self,
-        _filters: &[IssueGraphFilter],
+        filters: &[IssueGraphFilter],
     ) -> Result<HashSet<IssueId>, StoreError> {
-        Ok(HashSet::new())
+        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
+        let issue_values: Vec<(IssueId, Issue)> = issues
+            .into_iter()
+            .map(|(id, issue)| (id, issue.item))
+            .collect();
+        let context = IssueGraphContext::from_issues(&issue_values);
+        context.apply_filters(filters)
     }
 
-    async fn get_issue_children(&self, _issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        Ok(Vec::new())
+    async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
+        self.ensure_issue_exists(issue_id).await?;
+        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
+        Ok(issues
+            .into_iter()
+            .filter_map(|(id, issue)| {
+                issue
+                    .item
+                    .dependencies
+                    .iter()
+                    .any(|dep| {
+                        dep.dependency_type == IssueDependencyType::ChildOf
+                            && dep.issue_id == *issue_id
+                    })
+                    .then_some(id)
+            })
+            .collect())
     }
 
-    async fn get_issue_blocked_on(&self, _issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        Ok(Vec::new())
+    async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
+        self.ensure_issue_exists(issue_id).await?;
+        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
+        Ok(issues
+            .into_iter()
+            .filter_map(|(id, issue)| {
+                issue
+                    .item
+                    .dependencies
+                    .iter()
+                    .any(|dep| {
+                        dep.dependency_type == IssueDependencyType::BlockedOn
+                            && dep.issue_id == *issue_id
+                    })
+                    .then_some(id)
+            })
+            .collect())
     }
 
-    async fn get_tasks_for_issue(&self, _issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
-        Ok(Vec::new())
+    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
+        self.ensure_issue_exists(issue_id).await?;
+        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, None);
+        let tasks = self.list_tasks(&query).await?;
+        Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }
 
     async fn get_patch(
@@ -546,7 +931,13 @@ impl ReadOnlyStore for SqliteStore {
     }
 
     async fn count_distinct_issues(&self) -> Result<u64, StoreError> {
-        Ok(0)
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_ISSUES_V2}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(count as u64)
     }
 
     async fn count_distinct_patches(&self) -> Result<u64, StoreError> {
@@ -872,29 +1263,53 @@ impl Store for SqliteStore {
 
     async fn add_issue(
         &self,
-        _issue: Issue,
-        _actor: &ActorRef,
+        issue: Issue,
+        actor: &ActorRef,
     ) -> Result<(IssueId, VersionNumber), StoreError> {
-        Err(StoreError::Internal(
-            "SQLite issues not yet implemented".to_string(),
-        ))
+        self.validate_issue_dependencies(&issue.dependencies)
+            .await?;
+        let count = self.count_distinct_issues().await?;
+        let id = IssueId::new_for_count(count);
+        let actor_json = actor_to_json_string(actor);
+        self.insert_issue(&id, 1, &issue, Some(&actor_json)).await?;
+        Ok((id, 1))
     }
 
     async fn update_issue(
         &self,
         id: &IssueId,
-        _issue: Issue,
-        _actor: &ActorRef,
+        issue: Issue,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        Err(StoreError::IssueNotFound(id.clone()))
+        self.get_issue(id, true).await?;
+        self.validate_issue_dependencies(&issue.dependencies)
+            .await?;
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_ISSUES_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("issue '{id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for issue '{id}'"))
+        })?;
+
+        let actor_json = actor_to_json_string(actor);
+        self.insert_issue(id, next_version, &issue, Some(&actor_json))
+            .await?;
+        Ok(next_version)
     }
 
     async fn delete_issue(
         &self,
         id: &IssueId,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        Err(StoreError::IssueNotFound(id.clone()))
+        let current = self.get_issue(id, true).await?;
+        let mut issue = current.item;
+        issue.deleted = true;
+        self.update_issue(id, issue, actor).await
     }
 
     async fn add_patch(
@@ -1185,7 +1600,7 @@ impl Store for SqliteStore {
         &self,
         _label_id: &LabelId,
         _object_id: &MetisId,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         Err(StoreError::Internal(
             "SQLite label associations not yet implemented".to_string(),
         ))
@@ -1195,8 +1610,8 @@ impl Store for SqliteStore {
         &self,
         _label_id: &LabelId,
         _object_id: &MetisId,
-    ) -> Result<(), StoreError> {
-        Ok(())
+    ) -> Result<bool, StoreError> {
+        Ok(false)
     }
 
     async fn set_user_secret(
@@ -1831,5 +2246,291 @@ mod tests {
         let query = SearchUsersQuery::new(None, Some(true));
         let users = store.list_users(&query).await.unwrap();
         assert_eq!(users.len(), 2);
+    }
+
+    // ---- Issue helpers ----
+
+    fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
+        Issue::new(
+            IssueType::Task,
+            "Test Title".to_string(),
+            "issue details".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            dependencies,
+            Vec::new(),
+        )
+    }
+
+    // ---- Issue tests ----
+
+    #[tokio::test]
+    async fn issue_crud_round_trip() {
+        let store = create_test_store().await;
+
+        let (issue_id, version) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.title, "Test Title");
+        assert_eq!(fetched.item.description, "issue details");
+        assert_eq!(fetched.version, 1);
+
+        let issues = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, issue_id);
+    }
+
+    #[tokio::test]
+    async fn issue_versions_increment_and_latest_returned() {
+        let store = create_test_store().await;
+
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut updated = sample_issue(vec![]);
+        updated.description = "updated details".to_string();
+        let v2 = store
+            .update_issue(&issue_id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v2, 2);
+
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.description, "updated details");
+        assert_eq!(fetched.version, 2);
+
+        let versions = store.get_issue_versions(&issue_id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].version, 1);
+        assert_eq!(versions[1].version, 2);
+        assert_eq!(versions[0].item.description, "issue details");
+        assert_eq!(versions[1].item.description, "updated details");
+    }
+
+    #[tokio::test]
+    async fn delete_issue_soft_deletes() {
+        let store = create_test_store().await;
+
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        store
+            .delete_issue(&issue_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let err = store.get_issue(&issue_id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::IssueNotFound(_)));
+
+        let fetched = store.get_issue(&issue_id, true).await.unwrap();
+        assert!(fetched.item.deleted);
+        assert_eq!(fetched.version, 2);
+
+        let list = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
+        assert!(list.is_empty());
+
+        let mut query_deleted = SearchIssuesQuery::default();
+        query_deleted.include_deleted = Some(true);
+        let list = store.list_issues(&query_deleted).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(list[0].1.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn add_issue_rejects_missing_dependencies() {
+        let store = create_test_store().await;
+        let missing_dependency = IssueId::new();
+
+        let err = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::BlockedOn,
+                    missing_dependency.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::InvalidDependency(id) if id == missing_dependency
+        ));
+    }
+
+    #[tokio::test]
+    async fn issue_dependency_indexes_populated_on_create() {
+        let store = create_test_store().await;
+
+        let (parent_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (blocker_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let (child_id, _) = store
+            .add_issue(
+                sample_issue(vec![
+                    IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone()),
+                    IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone()),
+                ]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.get_issue_children(&parent_id).await.unwrap(),
+            vec![child_id.clone()]
+        );
+        assert_eq!(
+            store.get_issue_blocked_on(&blocker_id).await.unwrap(),
+            vec![child_id]
+        );
+    }
+
+    #[tokio::test]
+    async fn graph_filter_returns_children() {
+        let store = create_test_store().await;
+
+        let (parent, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (_grandchild, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    child.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let filter: IssueGraphFilter = format!("*:child-of:{parent}").parse().unwrap();
+        let matches = store.search_issue_graph(&[filter]).await.unwrap();
+
+        assert_eq!(matches, HashSet::from([child]));
+    }
+
+    #[tokio::test]
+    async fn count_distinct_issues_increments() {
+        let store = create_test_store().await;
+
+        assert_eq!(store.count_distinct_issues().await.unwrap(), 0);
+
+        store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_issues().await.unwrap(), 1);
+
+        store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_issues().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_status() {
+        let store = create_test_store().await;
+
+        let (id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut closed_issue = sample_issue(vec![]);
+        closed_issue.status = IssueStatus::Closed;
+        store
+            .add_issue(closed_issue, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchIssuesQuery::default();
+        query.status = Some(IssueStatus::Open.into());
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id);
+    }
+
+    #[tokio::test]
+    async fn list_issues_text_search() {
+        let store = create_test_store().await;
+
+        let mut special = sample_issue(vec![]);
+        special.title = "Special Needle Title".to_string();
+        store.add_issue(special, &ActorRef::test()).await.unwrap();
+
+        store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchIssuesQuery::default();
+        query.q = Some("needle".to_string());
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.title, "Special Needle Title");
+    }
+
+    #[tokio::test]
+    async fn get_issue_not_found() {
+        let store = create_test_store().await;
+        let missing = IssueId::new();
+        let err = store.get_issue(&missing, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::IssueNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn update_issue_not_found() {
+        let store = create_test_store().await;
+        let missing = IssueId::new();
+        let err = store
+            .update_issue(&missing, sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::IssueNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn get_issue_children_not_found() {
+        let store = create_test_store().await;
+        let missing = IssueId::new();
+        let err = store.get_issue_children(&missing).await.unwrap_err();
+        assert!(matches!(err, StoreError::IssueNotFound(_)));
     }
 }
