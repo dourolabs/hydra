@@ -24,6 +24,7 @@ export function JobLogPage() {
   const { data: record, isLoading, error } = useJob(jobId ?? "");
   const [activeTab, setActiveTab] = useState("logs");
   const [killModalOpen, setKillModalOpen] = useState(false);
+  const [killRequested, setKillRequested] = useState(false);
 
   return (
     <div className={styles.page}>
@@ -63,13 +64,20 @@ export function JobLogPage() {
               <span className={styles.jobId}>{record.job_id}</span>
               <Badge status={normalizeJobStatus(record.task.status)} />
               {record.task.status === "running" && (
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => setKillModalOpen(true)}
-                >
-                  Kill Job
-                </Button>
+                killRequested ? (
+                  <span className={styles.terminating}>
+                    <Spinner size="sm" />
+                    Terminating...
+                  </span>
+                ) : (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => setKillModalOpen(true)}
+                  >
+                    Kill Job
+                  </Button>
+                )
               )}
             </div>
             <div className={styles.meta}>
@@ -108,6 +116,7 @@ export function JobLogPage() {
           <KillJobModal
             open={killModalOpen}
             onClose={() => setKillModalOpen(false)}
+            onKillSuccess={() => setKillRequested(true)}
             jobId={record.job_id}
           />
         </>
