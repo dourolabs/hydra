@@ -19,6 +19,7 @@
   --color-status-open: #4a9eff;
   --color-status-in-progress: #f0c040;
   --color-status-closed: #cc3333;
+  --color-status-issue-closed: #00cc66;
   --color-status-approved: #00cc66;
   --color-status-failed: #ff4444;
   --color-status-dropped: #8b3030;
@@ -30,6 +31,7 @@
   --color-status-open-bg: color-mix(in srgb, var(--color-status-open) 12%, transparent);
   --color-status-in-progress-bg: color-mix(in srgb, var(--color-status-in-progress) 12%, transparent);
   --color-status-closed-bg: color-mix(in srgb, var(--color-status-closed) 12%, transparent);
+  --color-status-issue-closed-bg: color-mix(in srgb, var(--color-status-issue-closed) 12%, transparent);
   --color-status-approved-bg: color-mix(in srgb, var(--color-status-approved) 12%, transparent);
   --color-status-failed-bg: color-mix(in srgb, var(--color-status-failed) 12%, transparent);
   --color-status-dropped-bg: color-mix(in srgb, var(--color-status-dropped) 12%, transparent);

@@ -41,17 +41,16 @@ export function normalizeJobStatus(status: string): BadgeStatus {
   return "unknown";
 }
 
-/** Cast an issue status to BadgeStatus. Issue statuses already match 1:1. */
+/** Normalize an issue status to a BadgeStatus. Maps "closed" to "issue-closed" (green). */
 export function normalizeIssueStatus(status: string): BadgeStatus {
-  const valid: Set<string> = new Set([
-    "open",
-    "in-progress",
-    "closed",
-    "failed",
-    "dropped",
-    "blocked",
-    "rejected",
-  ]);
-  if (valid.has(status)) return status as BadgeStatus;
-  return "unknown";
+  const map: Record<string, BadgeStatus> = {
+    open: "open",
+    "in-progress": "in-progress",
+    closed: "issue-closed",
+    failed: "failed",
+    dropped: "dropped",
+    blocked: "blocked",
+    rejected: "rejected",
+  };
+  return map[status] ?? "unknown";
 }

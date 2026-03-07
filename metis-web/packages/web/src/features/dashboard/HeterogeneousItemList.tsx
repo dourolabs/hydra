@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { JobSummaryRecord } from "@metis/api";
+import type { JobSummaryRecord, PatchSummaryRecord } from "@metis/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { topologicalSortWorkItems } from "../issues/topologicalSort";
@@ -50,6 +50,16 @@ export function HeterogeneousItemList({
   onSearchChange,
   inboxLabelId,
 }: HeterogeneousItemListProps) {
+  const patchMap = useMemo(() => {
+    const map = new Map<string, PatchSummaryRecord>();
+    for (const item of items) {
+      if (item.kind === "patch") {
+        map.set(item.id, item.data);
+      }
+    }
+    return map;
+  }, [items]);
+
   const activeItems = useMemo(
     () => topologicalSortWorkItems(items.filter(isActiveItem)),
     [items],
@@ -148,7 +158,7 @@ export function HeterogeneousItemList({
                   isActive={item.kind === "issue" ? (isActiveMap.get(item.id) ?? false) : false}
                   filterRootId={filterRootId}
                   inboxLabelId={inboxLabelId}
-
+                  patchMap={patchMap}
                 />
               ))}
             </ul>
@@ -167,7 +177,7 @@ export function HeterogeneousItemList({
                   item={item}
                   jobs={undefined}
                   filterRootId={filterRootId}
-
+                  patchMap={patchMap}
                 />
               ))}
 
@@ -198,7 +208,7 @@ export function HeterogeneousItemList({
                   isActive={item.kind === "issue" ? (isActiveMap.get(item.id) ?? false) : false}
                   filterRootId={filterRootId}
                   inboxLabelId={inboxLabelId}
-
+                  patchMap={patchMap}
                 />
               ))}
             </ul>
