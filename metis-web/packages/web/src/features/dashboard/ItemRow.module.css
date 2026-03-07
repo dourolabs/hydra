@@ -121,18 +121,14 @@
 .labels {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 4px;
   flex-shrink: 0;
-  width: 160px;
 }
 
 .assignee {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   flex-shrink: 0;
-  width: 28px;
 }
 
 .prLink {
@@ -193,7 +189,6 @@
   align-items: flex-end;
   gap: 2px;
   flex-shrink: 0;
-  min-width: 72px;
 }
 
 .timestamp {

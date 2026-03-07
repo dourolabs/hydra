@@ -277,15 +277,17 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
           </span>
         )}
       </span>
-      <span className={styles.labels}>
-        {allLabels && allLabels.map((label: LabelSummary) => (
-          <LabelChip
-            key={label.label_id}
-            name={label.name}
-            color={label.color}
-          />
-        ))}
-      </span>
+      {allLabels && (
+        <span className={styles.labels}>
+          {allLabels.map((label: LabelSummary) => (
+            <LabelChip
+              key={label.label_id}
+              name={label.name}
+              color={label.color}
+            />
+          ))}
+        </span>
+      )}
       {patchBadgeStatus && (
         <Badge status={patchBadgeStatus} />
       )}
@@ -315,9 +317,11 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
           </svg>
         </a>
       )}
-      <span className={styles.assignee}>
-        {assignee && <Avatar name={assignee} size="sm" />}
-      </span>
+      {assignee && (
+        <span className={styles.assignee}>
+          <Avatar name={assignee} size="sm" />
+        </span>
+      )}
       {showArchive && (
         <button
           type="button"
