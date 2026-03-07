@@ -346,20 +346,10 @@ pub fn generate_summary(event: &ServerEvent) -> String {
             }
             format!("Message {id} was updated")
         }
-        MutationPayload::Label { old, new, .. } => {
-            let id = match event {
-                ServerEvent::LabelCreated { label_id, .. }
-                | ServerEvent::LabelUpdated { label_id, .. }
-                | ServerEvent::LabelDeleted { label_id, .. } => label_id.to_string(),
-                _ => "unknown".to_string(),
-            };
-            if old.is_none() {
-                return format!("Label {id} '{}' was created", new.name);
-            }
-            if new.deleted {
-                return format!("Label {id} '{}' was deleted", new.name);
-            }
-            format!("Label {id} '{}' was updated", new.name)
+        MutationPayload::Label { .. } => {
+            // Label events are excluded from notification generation via the event filter;
+            // this arm should never be reached.
+            unreachable!("label events should be filtered out before notification generation")
         }
         MutationPayload::Notification { new, .. } => {
             let id = match event {
