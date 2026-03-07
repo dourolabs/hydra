@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar, Badge } from "@metis/ui";
@@ -12,6 +12,7 @@ import { normalizeIssueStatus, normalizePatchStatus } from "../../utils/statusMa
 import { descriptionSnippet } from "../../utils/text";
 import { formatDuration } from "../../utils/time";
 import { LabelChip } from "../labels/LabelChip";
+import { useSwipeToArchive } from "./useSwipeToArchive";
 import styles from "./ItemRow.module.css";
 
 const STATUS_DOT_CLASSES: Record<string, string> = {
@@ -257,8 +258,15 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
 
   const showArchive = !!inboxLabelId && item.kind === "issue";
 
+  const rowRef = useRef<HTMLLIElement>(null);
+  const handleArchiveSwipe = useCallback(() => {
+    archiveMutation.mutate(item.id);
+  }, [archiveMutation, item.id]);
+  useSwipeToArchive(rowRef, { onArchive: handleArchiveSwipe, enabled: showArchive });
+
   return (
     <li
+      ref={rowRef}
       className={rowClasses.join(" ")}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
