@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use bollard::{
     Docker,
     container::{
-        Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions,
-        WaitContainerOptions,
+        Config, CreateContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
+        StartContainerOptions, WaitContainerOptions,
     },
     image::CreateImageOptions,
     models::HostConfig,
@@ -35,15 +36,83 @@ pub struct LocalDockerJobEngine {
 }
 
 impl LocalDockerJobEngine {
-    pub fn new(server_url: String) -> Result<Self, JobEngineError> {
+    pub async fn new(server_url: String) -> Result<Self, JobEngineError> {
         let docker = Docker::connect_with_local_defaults().map_err(|e| {
             JobEngineError::Internal(format!("Failed to connect to Docker daemon: {e}"))
         })?;
-        Ok(Self {
+        let engine = Self {
             docker,
             server_url,
             containers: DashMap::new(),
-        })
+        };
+        engine.recover_containers().await?;
+        Ok(engine)
+    }
+
+    async fn recover_containers(&self) -> Result<(), JobEngineError> {
+        let filters = HashMap::from([("label".to_string(), vec!["metis-id".to_string()])]);
+        let options = ListContainersOptions {
+            all: true,
+            filters,
+            ..Default::default()
+        };
+
+        let containers = self
+            .docker
+            .list_containers(Some(options))
+            .await
+            .map_err(|e| {
+                JobEngineError::Internal(format!("Failed to list containers for recovery: {e}"))
+            })?;
+
+        let mut recovered = 0u64;
+        for container in &containers {
+            let task_id = container
+                .labels
+                .as_ref()
+                .and_then(|labels| labels.get("metis-id"))
+                .and_then(|id| TaskId::from_str(id).ok());
+
+            let task_id = match task_id {
+                Some(id) => id,
+                None => {
+                    // Fall back to parsing from container name.
+                    let name = extract_task_id_from_names(container.names.as_deref());
+                    match name {
+                        Some(id) => id,
+                        None => {
+                            warn!(
+                                container_id = container.id.as_deref().unwrap_or("unknown"),
+                                "skipping container: could not extract task ID"
+                            );
+                            continue;
+                        }
+                    }
+                }
+            };
+
+            let container_id = match &container.id {
+                Some(id) => id.clone(),
+                None => continue,
+            };
+
+            let creation_time = container
+                .created
+                .and_then(|ts| DateTime::from_timestamp(ts, 0))
+                .unwrap_or_else(Utc::now);
+
+            self.containers.insert(
+                task_id,
+                ContainerInfo {
+                    container_id,
+                    creation_time,
+                },
+            );
+            recovered += 1;
+        }
+
+        info!(recovered, "recovered existing Docker containers on startup");
+        Ok(())
     }
 
     fn build_env_vars(
@@ -440,6 +509,17 @@ impl JobEngine for LocalDockerJobEngine {
     }
 }
 
+/// Extracts a TaskId from Docker container names (e.g., ["/metis-worker-t-abc123"]).
+fn extract_task_id_from_names(names: Option<&[String]>) -> Option<TaskId> {
+    const PREFIX: &str = "metis-worker-";
+    names?.iter().find_map(|name| {
+        // Docker prefixes names with '/'.
+        let stripped = name.strip_prefix('/').unwrap_or(name);
+        let id_str = stripped.strip_prefix(PREFIX)?;
+        TaskId::from_str(id_str).ok()
+    })
+}
+
 /// Best-effort parsing of Kubernetes-style memory limits (e.g., "512Mi", "1Gi") to bytes.
 fn parse_memory_limit(limit: &str) -> Option<i64> {
     let limit = limit.trim();
@@ -512,5 +592,34 @@ mod tests {
             LocalDockerJobEngine::container_name(&id),
             "metis-worker-t-abcd"
         );
+    }
+
+    #[test]
+    fn extract_task_id_from_names_with_slash_prefix() {
+        let names = vec!["/metis-worker-t-abcdef".to_string()];
+        let result = extract_task_id_from_names(Some(&names));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().to_string(), "t-abcdef");
+    }
+
+    #[test]
+    fn extract_task_id_from_names_without_slash() {
+        let names = vec!["metis-worker-t-xyz123".to_string()];
+        let result = extract_task_id_from_names(Some(&names));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().to_string(), "t-xyz123");
+    }
+
+    #[test]
+    fn extract_task_id_from_names_no_match() {
+        let names = vec!["/some-other-container".to_string()];
+        let result = extract_task_id_from_names(Some(&names));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_task_id_from_names_none() {
+        let result = extract_task_id_from_names(None);
+        assert!(result.is_none());
     }
 }
