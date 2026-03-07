@@ -183,6 +183,23 @@
   color: var(--color-status-in-progress);
 }
 
+/* Swipe-to-archive states */
+.swiping {
+  transition: none !important;
+  transform: translateX(var(--swipe-x, 0));
+}
+
+.swipeCommit {
+  transition: transform 200ms ease-out, opacity 200ms ease-out;
+  transform: translateX(-100%);
+  opacity: 0;
+}
+
+.swipeSnapBack {
+  transition: transform 200ms ease-out;
+  transform: translateX(0);
+}
+
 @media (max-width: 768px) {
   .row {
     padding: var(--space-2);

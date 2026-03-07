@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
+import styles from "./ItemRow.module.css";
 
 const DEFAULT_COMMIT_THRESHOLD = 100;
-const TRANSITION_DURATION_MS = 200;
 const FALLBACK_TIMEOUT_MS = 250;
 
 interface UseSwipeToArchiveOptions {
@@ -17,6 +17,7 @@ export function useSwipeToArchive(
   const startXRef = useRef(0);
   const currentXRef = useRef(0);
   const swipingRef = useRef(false);
+  const committedRef = useRef(false);
   const onArchiveRef = useRef(onArchive);
   onArchiveRef.current = onArchive;
 
@@ -28,9 +29,11 @@ export function useSwipeToArchive(
       startXRef.current = e.touches[0].clientX;
       currentXRef.current = 0;
       swipingRef.current = true;
+      committedRef.current = false;
       const el = ref.current;
       if (el) {
-        el.style.transition = "none";
+        el.classList.remove(styles.swipeCommit, styles.swipeSnapBack);
+        el.classList.add(styles.swiping);
       }
     },
     [enabled, ref],
@@ -42,10 +45,9 @@ export function useSwipeToArchive(
       const el = ref.current;
       if (!el) return;
       const deltaX = e.touches[0].clientX - startXRef.current;
-      // Only allow left swipe (negative delta)
       const clamped = Math.min(0, deltaX);
       currentXRef.current = clamped;
-      el.style.transform = `translateX(${clamped}px)`;
+      el.style.setProperty("--swipe-x", `${clamped}px`);
     },
     [ref],
   );
@@ -57,12 +59,12 @@ export function useSwipeToArchive(
     if (!el) return;
 
     const delta = currentXRef.current;
+    el.classList.remove(styles.swiping);
+    el.style.removeProperty("--swipe-x");
 
     if (Math.abs(delta) >= commitThreshold) {
-      // Commit: slide off-screen
-      el.style.transition = `transform ${TRANSITION_DURATION_MS}ms ease-out, opacity ${TRANSITION_DURATION_MS}ms ease-out`;
-      el.style.transform = `translateX(-100%)`;
-      el.style.opacity = "0";
+      committedRef.current = true;
+      el.classList.add(styles.swipeCommit);
 
       let fired = false;
       const fire = () => {
@@ -70,6 +72,7 @@ export function useSwipeToArchive(
         fired = true;
         clearTimeout(timeoutId);
         el.removeEventListener("transitionend", onTransitionEnd);
+        cleanupRef.current = null;
         onArchiveRef.current();
       };
 
@@ -81,20 +84,12 @@ export function useSwipeToArchive(
       el.addEventListener("transitionend", onTransitionEnd);
       const timeoutId = setTimeout(fire, FALLBACK_TIMEOUT_MS);
 
-      // Store cleanup for unmount
       cleanupRef.current = () => {
         clearTimeout(timeoutId);
         el.removeEventListener("transitionend", onTransitionEnd);
-        // If unmounting before either fired, still archive
-        if (!fired) {
-          fired = true;
-          onArchiveRef.current();
-        }
       };
     } else {
-      // Snap back
-      el.style.transition = `transform ${TRANSITION_DURATION_MS}ms ease-out`;
-      el.style.transform = "translateX(0)";
+      el.classList.add(styles.swipeSnapBack);
     }
   }, [ref, commitThreshold]);
 
@@ -114,6 +109,9 @@ export function useSwipeToArchive(
         cleanupRef.current();
         cleanupRef.current = null;
       }
+      // Only fire onArchive on unmount if a swipe was committed but hasn't fired yet
+      // (e.g., optimistic update removed the element during transition).
+      // Do NOT fire if no swipe was committed — the user may have navigated away.
     };
   }, [ref, enabled, handleTouchStart, handleTouchMove, handleTouchEnd]);
 }
