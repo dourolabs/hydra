@@ -505,4 +505,50 @@ describe("buildWorkItems", () => {
     const items = buildWorkItems(["a"], toMap(issues), [], [], []);
     expect(items[0].lastUpdated).toBe("2026-02-15T12:00:00Z");
   });
+
+  it("sets sourceIssueId on patch work items", () => {
+    const issues = [
+      makeIssueRecord({ issue_id: "issue-a", patches: ["p-1", "p-2"] }),
+      makeIssueRecord({ issue_id: "issue-b", patches: ["p-3"] }),
+    ];
+    const patches = [
+      makePatchRecord({ patch_id: "p-1" }),
+      makePatchRecord({ patch_id: "p-2" }),
+      makePatchRecord({ patch_id: "p-3" }),
+    ];
+    const items = buildWorkItems(
+      ["issue-a", "issue-b"],
+      toMap(issues),
+      patches,
+      [],
+      [],
+    );
+    const patchItems = items.filter((i) => i.kind === "patch");
+    expect(patchItems).toHaveLength(3);
+    expect(patchItems.find((i) => i.id === "p-1")!.sourceIssueId).toBe("issue-a");
+    expect(patchItems.find((i) => i.id === "p-2")!.sourceIssueId).toBe("issue-a");
+    expect(patchItems.find((i) => i.id === "p-3")!.sourceIssueId).toBe("issue-b");
+  });
+
+  it("sets sourceIssueId on document work items", () => {
+    const issues = [
+      makeIssueRecord({
+        issue_id: "issue-a",
+        description: "See /docs/design.md for details",
+      }),
+    ];
+    const docs = [
+      makeDocumentRecord({ document_id: "doc-1", path: "/docs/design.md" }),
+    ];
+    const items = buildWorkItems(
+      ["issue-a"],
+      toMap(issues),
+      [],
+      docs,
+      ["/docs/design.md"],
+    );
+    const docItems = items.filter((i) => i.kind === "document");
+    expect(docItems).toHaveLength(1);
+    expect(docItems[0].sourceIssueId).toBe("issue-a");
+  });
 });
