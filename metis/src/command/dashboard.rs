@@ -2423,7 +2423,7 @@ fn issue_line_lines(
                     spans.push(Span::raw(" "));
                     spans.push(Span::styled(
                         format!("[{runtime}]"),
-                        status_style(task.status),
+                        Style::default().fg(Color::Yellow),
                     ));
                 }
             }
@@ -3945,17 +3945,6 @@ fn format_task_error(error: &TaskError) -> String {
     match error {
         TaskError::JobEngineError { reason } => format!("error: {reason}"),
         other => format!("error: {other:?}"),
-    }
-}
-
-fn status_style(status: Status) -> Style {
-    match status {
-        Status::Complete => Style::default().fg(Color::Green),
-        Status::Running => Style::default().fg(Color::Yellow),
-        Status::Failed => Style::default().fg(Color::Red),
-        Status::Pending => Style::default().fg(Color::Cyan),
-        Status::Created => Style::default().fg(Color::Blue),
-        _ => Style::default(),
     }
 }
 
