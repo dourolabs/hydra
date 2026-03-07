@@ -62,6 +62,11 @@ pub enum MutationPayload {
         new: Message,
         actor: ActorRef,
     },
+    Label {
+        old: Option<Label>,
+        new: Label,
+        actor: ActorRef,
+    },
     Notification {
         old: Option<Notification>,
         new: Notification,
@@ -77,6 +82,7 @@ impl MutationPayload {
             | MutationPayload::Patch { actor, .. }
             | MutationPayload::Job { actor, .. }
             | MutationPayload::Document { actor, .. }
+            | MutationPayload::Label { actor, .. }
             | MutationPayload::Message { actor, .. }
             | MutationPayload::Notification { actor, .. } => actor,
         }
@@ -98,6 +104,9 @@ pub enum EventType {
     DocumentCreated,
     DocumentUpdated,
     DocumentDeleted,
+    LabelCreated,
+    LabelUpdated,
+    LabelDeleted,
     MessageCreated,
     MessageUpdated,
     NotificationCreated,
@@ -190,6 +199,27 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
+    LabelCreated {
+        seq: u64,
+        label_id: LabelId,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
+    LabelUpdated {
+        seq: u64,
+        label_id: LabelId,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
+    LabelDeleted {
+        seq: u64,
+        label_id: LabelId,
+        version: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
     MessageCreated {
         seq: u64,
         message_id: MessageId,
@@ -232,6 +262,9 @@ impl ServerEvent {
             | ServerEvent::DocumentCreated { seq, .. }
             | ServerEvent::DocumentUpdated { seq, .. }
             | ServerEvent::DocumentDeleted { seq, .. }
+            | ServerEvent::LabelCreated { seq, .. }
+            | ServerEvent::LabelUpdated { seq, .. }
+            | ServerEvent::LabelDeleted { seq, .. }
             | ServerEvent::MessageCreated { seq, .. }
             | ServerEvent::MessageUpdated { seq, .. }
             | ServerEvent::NotificationCreated { seq, .. } => *seq,
@@ -252,6 +285,9 @@ impl ServerEvent {
             | ServerEvent::DocumentCreated { payload, .. }
             | ServerEvent::DocumentUpdated { payload, .. }
             | ServerEvent::DocumentDeleted { payload, .. }
+            | ServerEvent::LabelCreated { payload, .. }
+            | ServerEvent::LabelUpdated { payload, .. }
+            | ServerEvent::LabelDeleted { payload, .. }
             | ServerEvent::MessageCreated { payload, .. }
             | ServerEvent::MessageUpdated { payload, .. }
             | ServerEvent::NotificationCreated { payload, .. } => payload,
@@ -272,6 +308,9 @@ impl ServerEvent {
             ServerEvent::DocumentCreated { .. } => EventType::DocumentCreated,
             ServerEvent::DocumentUpdated { .. } => EventType::DocumentUpdated,
             ServerEvent::DocumentDeleted { .. } => EventType::DocumentDeleted,
+            ServerEvent::LabelCreated { .. } => EventType::LabelCreated,
+            ServerEvent::LabelUpdated { .. } => EventType::LabelUpdated,
+            ServerEvent::LabelDeleted { .. } => EventType::LabelDeleted,
             ServerEvent::MessageCreated { .. } => EventType::MessageCreated,
             ServerEvent::MessageUpdated { .. } => EventType::MessageUpdated,
             ServerEvent::NotificationCreated { .. } => EventType::NotificationCreated,
@@ -467,6 +506,51 @@ impl EventBus {
         self.send(ServerEvent::DocumentDeleted {
             seq: self.next_seq(),
             document_id,
+            version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_label_created(
+        &self,
+        label_id: LabelId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::LabelCreated {
+            seq: self.next_seq(),
+            label_id,
+            version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_label_updated(
+        &self,
+        label_id: LabelId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::LabelUpdated {
+            seq: self.next_seq(),
+            label_id,
+            version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_label_deleted(
+        &self,
+        label_id: LabelId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::LabelDeleted {
+            seq: self.next_seq(),
+            label_id,
             version,
             timestamp: Utc::now(),
             payload,
@@ -954,16 +1038,53 @@ impl StoreWithEvents {
 
     // ---- Label mutations ----
 
-    pub async fn add_label(&self, label: Label) -> Result<LabelId, StoreError> {
-        self.inner.add_label(label).await
+    pub async fn add_label(&self, label: Label, actor: ActorRef) -> Result<LabelId, StoreError> {
+        let new_label = label.clone();
+        let label_id = self.inner.add_label(label).await?;
+        let payload = Arc::new(MutationPayload::Label {
+            old: None,
+            new: new_label,
+            actor,
+        });
+        self.event_bus
+            .emit_label_created(label_id.clone(), 1, payload);
+        Ok(label_id)
     }
 
-    pub async fn update_label(&self, id: &LabelId, label: Label) -> Result<(), StoreError> {
-        self.inner.update_label(id, label).await
+    pub async fn update_label(
+        &self,
+        id: &LabelId,
+        label: Label,
+        actor: ActorRef,
+    ) -> Result<(), StoreError> {
+        let old_label = self.inner.get_label(id).await.ok();
+        let new_label = label.clone();
+        self.inner.update_label(id, label).await?;
+        let payload = Arc::new(MutationPayload::Label {
+            old: old_label,
+            new: new_label,
+            actor,
+        });
+        self.event_bus.emit_label_updated(id.clone(), 1, payload);
+        Ok(())
     }
 
-    pub async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError> {
-        self.inner.delete_label(id).await
+    pub async fn delete_label(&self, id: &LabelId, actor: ActorRef) -> Result<(), StoreError> {
+        let old_label = self.inner.get_label(id).await.ok();
+        self.inner.delete_label(id).await?;
+        // After soft-delete, get_label returns NotFound, so construct the
+        // deleted version from the old label.
+        let mut deleted_label = old_label
+            .clone()
+            .expect("entity must exist after successful delete");
+        deleted_label.deleted = true;
+        let payload = Arc::new(MutationPayload::Label {
+            old: old_label,
+            new: deleted_label,
+            actor,
+        });
+        self.event_bus.emit_label_deleted(id.clone(), 1, payload);
+        Ok(())
     }
 
     // ---- Label association mutations ----

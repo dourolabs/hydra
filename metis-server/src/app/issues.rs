@@ -149,6 +149,7 @@ impl AppState {
         let dependencies = issue.dependencies.clone();
 
         let store = self.store.as_ref();
+        let label_actor = actor.clone();
 
         let (issue_id, version) = match issue_id {
             Some(id) => {
@@ -249,7 +250,7 @@ impl AppState {
         // Sync label associations if requested
         if label_ids.is_some() || label_names.is_some() {
             let resolved = self
-                .resolve_label_ids(label_ids, label_names)
+                .resolve_label_ids(label_ids, label_names, label_actor)
                 .await
                 .map_err(|e| UpsertIssueError::Store {
                     source: match e {

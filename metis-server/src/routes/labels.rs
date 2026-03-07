@@ -1,5 +1,5 @@
 use crate::app::{AppState, CreateLabelError, UpdateLabelError};
-use crate::domain::actors::Actor;
+use crate::domain::actors::{Actor, ActorRef};
 use crate::store::StoreError;
 use axum::{Extension, Json, extract::Path, extract::Query, extract::State};
 use metis_common::{
@@ -36,6 +36,7 @@ pub async fn create_label(
             payload.label.color,
             payload.label.recurse.unwrap_or(true),
             payload.label.hidden.unwrap_or(false),
+            ActorRef::from(&actor),
         )
         .await
         .map_err(map_create_label_error)?;
@@ -117,6 +118,7 @@ pub async fn update_label(
             payload.label.color,
             payload.label.recurse,
             payload.label.hidden,
+            ActorRef::from(&actor),
         )
         .await
         .map_err(map_update_label_error)?;
@@ -148,7 +150,7 @@ pub async fn delete_label(
     info!(actor = %actor.name(), label_id = %label_id, "delete_label invoked");
 
     state
-        .delete_label(&label_id)
+        .delete_label(&label_id, ActorRef::from(&actor))
         .await
         .map_err(|e| map_label_not_found(e, &label_id))?;
 
