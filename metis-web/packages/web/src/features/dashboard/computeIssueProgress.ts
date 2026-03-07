@@ -60,7 +60,7 @@ export interface IssueProgress {
 
 /**
  * Count issues needing attention for a badge.
- * An issue needs attention when it is open/in-progress and matches the filter.
+ * An issue needs attention when it has a non-terminal status and matches the filter.
  */
 export function countNeedsAttentionBadge(
   issues: IssueSummaryRecord[],
