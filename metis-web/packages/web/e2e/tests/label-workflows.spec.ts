@@ -9,7 +9,7 @@ test.describe("Label display on dashboard item rows", () => {
 
     // Seed data: i-seed00001 has "platform-v2", i-seed00002 has "platform-v2" + "auth",
     // i-seed00006 has "infra"
-    const rows = page.locator("li[role=button]");
+    const rows = page.locator("div[role=button]");
     await expect(rows.filter({ hasText: "platform-v2" }).first()).toBeVisible();
     await expect(rows.filter({ hasText: "auth" }).first()).toBeVisible();
     await expect(rows.filter({ hasText: "infra" }).first()).toBeVisible();
@@ -22,13 +22,13 @@ test.describe("Label display on dashboard item rows", () => {
     await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
 
     // Verify "infra" label chip appears in the i-seed00006 row
-    const rateRow = page.locator("li[role=button]").filter({
+    const rateRow = page.locator("div[role=button]").filter({
       hasText: "Implement API rate limiting",
     });
     await expect(rateRow.getByText("infra")).toBeVisible();
 
     // Verify "platform-v2" label chip appears in the i-seed00001 row
-    const migrationRow = page.locator("li[role=button]").filter({
+    const migrationRow = page.locator("div[role=button]").filter({
       hasText: "Platform v2.0 Migration",
     });
     await expect(migrationRow.getByText("platform-v2")).toBeVisible();
