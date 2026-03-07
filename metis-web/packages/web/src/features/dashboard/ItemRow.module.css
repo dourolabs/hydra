@@ -202,6 +202,54 @@
   color: var(--color-status-in-progress);
 }
 
+/* Archive reveal background */
+.archiveReveal {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: var(--space-4);
+  gap: var(--space-2);
+  background: var(--color-archive-bg);
+  color: var(--color-accent);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  pointer-events: none;
+  user-select: none;
+}
+
+.archiveRevealIcon {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* Swipe content wrapper */
+.swipeContent {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-primary);
+  min-width: 0;
+  flex: 1;
+}
+
+.row:hover .swipeContent {
+  background: var(--color-bg-tertiary);
+}
+
+/* When swipeContent is present, row padding is handled by the content wrapper */
+.rowSwipeable {
+  padding: 0;
+  overflow: hidden;
+}
+
 /* Swipe-to-archive states */
 .swiping {
   transition: none !important;
@@ -221,6 +269,10 @@
 
 @media (max-width: 768px) {
   .row {
+    padding: var(--space-2);
+  }
+
+  .swipeContent {
     padding: var(--space-2);
   }
 

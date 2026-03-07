@@ -46,6 +46,9 @@
   --color-type-merge-request: #cc66ff;
   --color-type-merge-request-bg: color-mix(in srgb, var(--color-type-merge-request) 12%, transparent);
 
+  /* Archive */
+  --color-archive-bg: color-mix(in srgb, var(--color-accent-dim) 30%, var(--color-bg-primary));
+
   /* Danger (red - destructive actions) */
   --color-danger: #cc3333;
   --color-danger-bright: #ff4444;
