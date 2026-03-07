@@ -136,7 +136,7 @@ export function DashboardPage() {
           return matchingSet.has(item.id);
         }
         // For artifacts, include if their source issue is a descendant
-        return descendantIds.has(item.sourceIssueId);
+        return item.sourceIssueId !== undefined && descendantIds.has(item.sourceIssueId);
       });
     };
 
