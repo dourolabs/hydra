@@ -121,3 +121,9 @@
   color: var(--color-text-tertiary);
   margin: 0 var(--space-1);
 }
+
+.metadataTab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
