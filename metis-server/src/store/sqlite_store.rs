@@ -1225,8 +1225,9 @@ impl ReadOnlyStore for SqliteStore {
         {
             let pattern = format!("%{term}%");
             let start = bindings.len() + 1;
-            // id, title, description, status, service_repo_name, diff, branch_name
-            for _ in 0..7 {
+            // id, title, description, status, service_repo_name, diff, branch_name,
+            // github JSON sub-fields: owner, repo, number, head_ref, base_ref
+            for _ in 0..12 {
                 bindings.push(pattern.clone());
             }
             predicates.push(format!(
@@ -1236,7 +1237,12 @@ impl ReadOnlyStore for SqliteStore {
                  OR LOWER(status) LIKE ?{s3} \
                  OR LOWER(service_repo_name) LIKE ?{s4} \
                  OR LOWER(diff) LIKE ?{s5} \
-                 OR LOWER(COALESCE(branch_name,'')) LIKE ?{s6})",
+                 OR LOWER(COALESCE(branch_name,'')) LIKE ?{s6} \
+                 OR LOWER(COALESCE(json_extract(github,'$.owner'),'')) LIKE ?{s7} \
+                 OR LOWER(COALESCE(json_extract(github,'$.repo'),'')) LIKE ?{s8} \
+                 OR CAST(json_extract(github,'$.number') AS TEXT) LIKE ?{s9} \
+                 OR LOWER(COALESCE(json_extract(github,'$.head_ref'),'')) LIKE ?{s10} \
+                 OR LOWER(COALESCE(json_extract(github,'$.base_ref'),'')) LIKE ?{s11})",
                 s0 = start,
                 s1 = start + 1,
                 s2 = start + 2,
@@ -1244,6 +1250,11 @@ impl ReadOnlyStore for SqliteStore {
                 s4 = start + 4,
                 s5 = start + 5,
                 s6 = start + 6,
+                s7 = start + 7,
+                s8 = start + 8,
+                s9 = start + 9,
+                s10 = start + 10,
+                s11 = start + 11,
             ));
         }
 
@@ -3413,6 +3424,89 @@ mod tests {
         assert_eq!(patches[0].1.item.status, PatchStatus::Open);
     }
 
+    /// Patch with every optional field set so serialization round-trip can assert full equality.
+    fn sample_patch_all_fields() -> Patch {
+        use crate::domain::patches::GitOid;
+        use std::str::FromStr;
+
+        let base_oid = GitOid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
+        let head_oid = GitOid::from_str("fedcba9876543210fedcba9876543210fedcba98").unwrap();
+        let mut patch = Patch::new(
+            "full title".to_string(),
+            "full desc".to_string(),
+            "full diff".to_string(),
+            PatchStatus::Open,
+            true,
+            None,
+            Username::from("test-creator"),
+            vec![Review::new(
+                "looks good".to_string(),
+                true,
+                "alice".to_string(),
+                None,
+            )],
+            RepoName::from_str("org/repo").unwrap(),
+            Some(GithubPr::new(
+                "owner".to_string(),
+                "repo".to_string(),
+                42,
+                Some("feature".to_string()),
+                Some("main".to_string()),
+                Some("https://github.com/owner/repo/pull/42".to_string()),
+                None,
+            )),
+            Some("feature/xyz".to_string()),
+            Some(CommitRange::new(base_oid, head_oid)),
+            Some("main".to_string()),
+        );
+        patch.creator = Username::from("patch-creator");
+        patch
+    }
+
+    #[tokio::test]
+    async fn patch_serialization_round_trip_all_fields() {
+        let store = create_test_store().await;
+        let patch = sample_patch_all_fields();
+
+        let (patch_id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_patch(&patch_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item, patch,
+            "Patch must round-trip all fields (creator, base_branch, branch_name, commit_range, github, reviews)"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_patches_text_search_matches_github_fields() {
+        let store = create_test_store().await;
+
+        let patch = sample_patch_all_fields();
+        store
+            .add_patch(patch, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Search by github owner
+        let mut query = SearchPatchesQuery::default();
+        query.q = Some("owner".to_string());
+        let results = store.list_patches(&query).await.unwrap();
+        assert_eq!(results.len(), 1, "should match github owner field");
+
+        // Search by github head_ref
+        query.q = Some("feature".to_string());
+        let results = store.list_patches(&query).await.unwrap();
+        assert_eq!(results.len(), 1, "should match github head_ref field");
+
+        // Search that doesn't match anything
+        query.q = Some("zzz_nonexistent_zzz".to_string());
+        let results = store.list_patches(&query).await.unwrap();
+        assert!(results.is_empty(), "should not match anything");
+    }
+
     // ---- Document tests ----
 
     #[tokio::test]
@@ -3589,5 +3683,23 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(store.count_distinct_documents().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn document_serialization_round_trip_all_fields() {
+        let store = create_test_store().await;
+        let task_id = TaskId::new();
+        let doc = sample_document(Some("docs/roundtrip.md"), Some(task_id));
+
+        let (doc_id, _) = store
+            .add_document(doc.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_document(&doc_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item, doc,
+            "Document must round-trip all fields (path, created_by)"
+        );
     }
 }
