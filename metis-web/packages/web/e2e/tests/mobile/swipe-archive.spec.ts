@@ -16,7 +16,7 @@ test.describe("Mobile Swipe to Archive @mobile:swipe-archive", () => {
     // Verify the archive reveal background is rendered with "Archive" text
     await expect(row.getByText("Archive")).toBeAttached();
 
-    // Get the swipe content element (second child div of the row)
+    // Get the swipe content element via its data-testid
     const swipeContent = row.locator('[data-testid="swipe-content"]');
     const box = await swipeContent.boundingBox();
     expect(box).toBeTruthy();
