@@ -346,6 +346,10 @@ async fn resolve_secrets_user_secret_takes_priority() {
         env_vars.get("ANTHROPIC_API_KEY").unwrap(),
         "global-anthropic-key"
     );
+    // METIS_AVAILABLE_SECRETS should contain both
+    let available = env_vars.get("METIS_AVAILABLE_SECRETS").unwrap();
+    assert!(available.contains("OPENAI_API_KEY"));
+    assert!(available.contains("ANTHROPIC_API_KEY"));
 }
 
 #[tokio::test]
@@ -367,6 +371,11 @@ async fn resolve_secrets_falls_back_to_config() {
     );
     // CLAUDE_CODE_OAUTH_TOKEN has no config value, so it should be absent
     assert!(!env_vars.contains_key("CLAUDE_CODE_OAUTH_TOKEN"));
+    // METIS_AVAILABLE_SECRETS should list the two config-injected secrets
+    let available = env_vars.get("METIS_AVAILABLE_SECRETS").unwrap();
+    assert!(available.contains("OPENAI_API_KEY"));
+    assert!(available.contains("ANTHROPIC_API_KEY"));
+    assert!(!available.contains("CLAUDE_CODE_OAUTH_TOKEN"));
 }
 
 #[tokio::test]
@@ -413,8 +422,50 @@ async fn resolve_secrets_no_user_secret_no_config_not_set() {
         .resolve_secrets_into_env_vars(&username, &mut env_vars)
         .await;
 
-    // Nothing stored, nothing in config — env_vars should be empty
+    // Nothing stored, nothing in config — system secrets should be absent
     assert!(!env_vars.contains_key("OPENAI_API_KEY"));
     assert!(!env_vars.contains_key("ANTHROPIC_API_KEY"));
     assert!(!env_vars.contains_key("CLAUDE_CODE_OAUTH_TOKEN"));
+    // METIS_AVAILABLE_SECRETS should be empty string
+    assert_eq!(env_vars.get("METIS_AVAILABLE_SECRETS").unwrap(), "");
+}
+
+#[tokio::test]
+async fn resolve_secrets_injects_all_user_secrets() {
+    let handles = test_state_with_secrets_and_config();
+    let secret_manager = test_secret_manager();
+    let username = Username::from("eve");
+
+    // Store custom user secrets
+    let encrypted1 = secret_manager.encrypt("my-custom-value").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "MY_CUSTOM_SECRET", &encrypted1)
+        .await
+        .unwrap();
+
+    let encrypted2 = secret_manager.encrypt("another-value").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "ANOTHER_SECRET", &encrypted2)
+        .await
+        .unwrap();
+
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars)
+        .await;
+
+    // Custom user secrets should be injected
+    assert_eq!(env_vars.get("MY_CUSTOM_SECRET").unwrap(), "my-custom-value");
+    assert_eq!(env_vars.get("ANOTHER_SECRET").unwrap(), "another-value");
+    // System secrets should fall back to config
+    assert_eq!(env_vars.get("OPENAI_API_KEY").unwrap(), "global-openai-key");
+    // METIS_AVAILABLE_SECRETS should list all injected secrets
+    let available = env_vars.get("METIS_AVAILABLE_SECRETS").unwrap();
+    assert!(available.contains("MY_CUSTOM_SECRET"));
+    assert!(available.contains("ANOTHER_SECRET"));
+    assert!(available.contains("OPENAI_API_KEY"));
+    assert!(available.contains("ANTHROPIC_API_KEY"));
 }

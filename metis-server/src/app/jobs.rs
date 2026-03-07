@@ -231,10 +231,56 @@ impl AppState {
         env_vars: &mut HashMap<String, String>,
     ) {
         use metis_common::constants::{
-            ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
+            ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_AVAILABLE_SECRETS,
+            ENV_OPENAI_API_KEY,
         };
 
-        let secret_entries: [(&str, Option<&str>); 3] = [
+        // 1. Load ALL user secrets and inject them as env vars.
+        let user_secret_names = match self.store.list_user_secret_names(creator).await {
+            Ok(names) => names,
+            Err(err) => {
+                warn!(
+                    username = %creator,
+                    error = %err,
+                    "failed to list user secret names"
+                );
+                Vec::new()
+            }
+        };
+
+        let mut injected_names: Vec<String> = Vec::new();
+
+        for secret_name in &user_secret_names {
+            match self.store.get_user_secret(creator, secret_name).await {
+                Ok(Some(encrypted)) => match self.secret_manager.decrypt(&encrypted) {
+                    Ok(value) if !value.trim().is_empty() => {
+                        env_vars.insert(secret_name.clone(), value);
+                        injected_names.push(secret_name.clone());
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        warn!(
+                            username = %creator,
+                            secret = %secret_name,
+                            error = %err,
+                            "failed to decrypt user secret, skipping"
+                        );
+                    }
+                },
+                Ok(None) => {}
+                Err(err) => {
+                    warn!(
+                        username = %creator,
+                        secret = %secret_name,
+                        error = %err,
+                        "failed to look up user secret, skipping"
+                    );
+                }
+            }
+        }
+
+        // 2. For system secrets not already set by user secrets, fall back to config.
+        let system_entries: [(&str, Option<&str>); 3] = [
             (
                 ENV_OPENAI_API_KEY,
                 self.config.metis.openai_api_key.as_deref(),
@@ -249,44 +295,28 @@ impl AppState {
             ),
         ];
 
-        for (secret_name, config_fallback) in secret_entries {
-            // 1. Try user-specific secret
-            match self.store.get_user_secret(creator, secret_name).await {
-                Ok(Some(encrypted)) => match self.secret_manager.decrypt(&encrypted) {
-                    Ok(value) if !value.trim().is_empty() => {
-                        env_vars.insert(secret_name.to_string(), value);
-                        continue;
-                    }
-                    Ok(_) => {}
-                    Err(err) => {
-                        warn!(
-                            username = %creator,
-                            secret = secret_name,
-                            error = %err,
-                            "failed to decrypt user secret, falling back to global config"
-                        );
-                    }
-                },
-                Ok(None) => {}
-                Err(err) => {
-                    warn!(
-                        username = %creator,
-                        secret = secret_name,
-                        error = %err,
-                        "failed to look up user secret, falling back to global config"
-                    );
-                }
+        for (secret_name, config_fallback) in system_entries {
+            if env_vars.contains_key(secret_name) {
+                continue;
             }
 
-            // 2. Fall back to config file value
             let global_value = config_fallback
                 .map(str::to_string)
                 .filter(|v| !v.trim().is_empty());
 
             if let Some(value) = global_value {
                 env_vars.insert(secret_name.to_string(), value);
+                injected_names.push(secret_name.to_string());
             }
         }
+
+        // 3. Set METIS_AVAILABLE_SECRETS with comma-separated list of injected secret names.
+        injected_names.sort();
+        injected_names.dedup();
+        env_vars.insert(
+            ENV_METIS_AVAILABLE_SECRETS.to_string(),
+            injected_names.join(","),
+        );
     }
 
     pub async fn start_pending_task(&self, task_id: TaskId, actor: ActorRef) {

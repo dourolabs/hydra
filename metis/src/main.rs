@@ -121,6 +121,11 @@ enum Commands {
         #[command(subcommand)]
         command: command::repos::ReposCommand,
     },
+    /// Manage user secrets.
+    Secrets {
+        #[command(subcommand)]
+        command: command::secrets::SecretsCommand,
+    },
     /// Manage users.
     Users {
         #[command(subcommand)]
@@ -236,6 +241,7 @@ async fn dispatch(
             command::notifications::run(client, command, context).await?
         }
         Commands::Repos { command } => command::repos::run(client, command, context).await?,
+        Commands::Secrets { command } => command::secrets::run(client, command).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
         Commands::Chat {
             prompt,

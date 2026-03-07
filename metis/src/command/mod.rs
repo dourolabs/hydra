@@ -10,5 +10,6 @@ pub mod notifications;
 pub mod output;
 pub mod patches;
 pub mod repos;
+pub mod secrets;
 pub mod users;
 pub mod utils;

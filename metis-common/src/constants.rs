@@ -11,4 +11,5 @@ pub const ENV_METIS_ID: &str = "METIS_ID";
 pub const ENV_METIS_ISSUE_ID: &str = "METIS_ISSUE_ID";
 pub const ENV_METIS_TOKEN: &str = "METIS_TOKEN";
 pub const ENV_METIS_DOCUMENTS_DIR: &str = "METIS_DOCUMENTS_DIR";
+pub const ENV_METIS_AVAILABLE_SECRETS: &str = "METIS_AVAILABLE_SECRETS";
 pub const ENV_BROWSER: &str = "BROWSER";
