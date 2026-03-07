@@ -9,7 +9,7 @@ use crate::domain::{
     labels::Label,
     messages::Message,
     notifications::Notification,
-    patches::Patch,
+    patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
     users::{User, Username},
 };
 use crate::store::issue_graph::IssueGraphContext;
@@ -39,6 +39,8 @@ const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
 const TABLE_ACTORS_V2: &str = "actors_v2";
 const TABLE_USERS_V2: &str = "users_v2";
 const TABLE_ISSUES_V2: &str = "issues_v2";
+const TABLE_PATCHES_V2: &str = "patches_v2";
+const TABLE_DOCUMENTS_V2: &str = "documents_v2";
 const TABLE_LABEL_ASSOCIATIONS: &str = "label_associations";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
@@ -107,6 +109,49 @@ struct IssueRow {
     todo_list: String,
     dependencies: String,
     patches: String,
+    deleted: bool,
+    actor: Option<String>,
+    created_at: String,
+    #[allow(dead_code)]
+    updated_at: String,
+    #[sqlx(default)]
+    creation_time: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct PatchRow {
+    id: String,
+    version_number: i64,
+    title: String,
+    description: String,
+    diff: String,
+    status: String,
+    is_automatic_backup: bool,
+    created_by: Option<String>,
+    creator: Option<String>,
+    base_branch: Option<String>,
+    branch_name: Option<String>,
+    commit_range: Option<String>,
+    reviews: String,
+    service_repo_name: String,
+    github: Option<String>,
+    deleted: bool,
+    actor: Option<String>,
+    created_at: String,
+    #[allow(dead_code)]
+    updated_at: String,
+    #[sqlx(default)]
+    creation_time: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct DocumentRow {
+    id: String,
+    version_number: i64,
+    title: String,
+    body_markdown: String,
+    path: Option<String>,
+    created_by: Option<String>,
     deleted: bool,
     actor: Option<String>,
     created_at: String,
@@ -408,6 +453,198 @@ impl SqliteStore {
         .map_err(map_sqlx_error)?;
 
         Ok(())
+    }
+
+    // ---- Patch helpers ----
+
+    async fn ensure_patch_exists(&self, id: &PatchId) -> Result<(), StoreError> {
+        let exists = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(1) FROM {TABLE_PATCHES_V2} WHERE id = ?1"
+        ))
+        .bind(id.as_ref())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if exists == 0 {
+            Err(StoreError::PatchNotFound(id.clone()))
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn insert_patch(
+        &self,
+        id: &PatchId,
+        version_number: VersionNumber,
+        patch: &Patch,
+        actor: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for patch '{id}'"))
+        })?;
+
+        let reviews_json = serde_json::to_string(&patch.reviews)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize reviews: {e}")))?;
+        let github_json = patch
+            .github
+            .as_ref()
+            .map(|g| {
+                serde_json::to_string(g)
+                    .map_err(|e| StoreError::Internal(format!("failed to serialize github: {e}")))
+            })
+            .transpose()?;
+        let commit_range_json = patch
+            .commit_range
+            .as_ref()
+            .map(|cr| {
+                serde_json::to_string(cr).map_err(|e| {
+                    StoreError::Internal(format!("failed to serialize commit_range: {e}"))
+                })
+            })
+            .transpose()?;
+
+        sqlx::query(
+            &format!(
+                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, created_by, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)"
+            )
+        )
+        .bind(id.as_ref())
+        .bind(version_number)
+        .bind(&patch.title)
+        .bind(&patch.description)
+        .bind(&patch.diff)
+        .bind(patch.status.as_str())
+        .bind(patch.is_automatic_backup)
+        .bind(patch.created_by.as_ref().map(|t| t.as_ref()))
+        .bind(patch.creator.as_str())
+        .bind(patch.base_branch.as_deref())
+        .bind(patch.branch_name.as_deref())
+        .bind(&commit_range_json)
+        .bind(&reviews_json)
+        .bind(patch.service_repo_name.as_str())
+        .bind(&github_json)
+        .bind(patch.deleted)
+        .bind(actor)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    fn row_to_patch(&self, row: &PatchRow) -> Result<Patch, StoreError> {
+        let status = PatchStatus::from_str(&row.status)
+            .map_err(|e| StoreError::Internal(format!("invalid patch status: {e}")))?;
+        let reviews: Vec<Review> = serde_json::from_str(&row.reviews)
+            .map_err(|e| StoreError::Internal(format!("failed to deserialize reviews: {e}")))?;
+        let github: Option<GithubPr> = row
+            .github
+            .as_ref()
+            .map(|g| {
+                serde_json::from_str(g)
+                    .map_err(|e| StoreError::Internal(format!("failed to deserialize github: {e}")))
+            })
+            .transpose()?;
+        let service_repo_name = RepoName::from_str(&row.service_repo_name)
+            .map_err(|e| StoreError::Internal(format!("invalid service_repo_name: {e}")))?;
+        let created_by = row
+            .created_by
+            .as_ref()
+            .map(|s| {
+                TaskId::from_str(s)
+                    .map_err(|e| StoreError::Internal(format!("invalid created_by task id: {e}")))
+            })
+            .transpose()?;
+        let commit_range: Option<CommitRange> = row
+            .commit_range
+            .as_ref()
+            .map(|cr| {
+                serde_json::from_str(cr).map_err(|e| {
+                    StoreError::Internal(format!("failed to deserialize commit_range: {e}"))
+                })
+            })
+            .transpose()?;
+        let creator = Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR));
+
+        Ok(Patch {
+            title: row.title.clone(),
+            description: row.description.clone(),
+            diff: row.diff.clone(),
+            status,
+            is_automatic_backup: row.is_automatic_backup,
+            created_by,
+            creator,
+            reviews,
+            service_repo_name,
+            github,
+            deleted: row.deleted,
+            branch_name: row.branch_name.clone(),
+            commit_range,
+            base_branch: row.base_branch.clone(),
+        })
+    }
+
+    // ---- Document helpers ----
+
+    async fn insert_document(
+        &self,
+        id: &DocumentId,
+        version_number: VersionNumber,
+        document: &Document,
+        actor: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for document '{id}'"))
+        })?;
+
+        sqlx::query(
+            &format!(
+                "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, created_by, deleted, actor)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+            )
+        )
+        .bind(id.as_ref())
+        .bind(version_number)
+        .bind(&document.title)
+        .bind(&document.body_markdown)
+        .bind(document.path.as_ref().map(|p| p.as_str()))
+        .bind(document.created_by.as_ref().map(|t| t.as_ref()))
+        .bind(document.deleted)
+        .bind(actor)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    fn row_to_document(&self, row: &DocumentRow) -> Result<Document, StoreError> {
+        let created_by = row
+            .created_by
+            .as_ref()
+            .map(|s| {
+                TaskId::from_str(s)
+                    .map_err(|e| StoreError::Internal(format!("invalid created_by task id: {e}")))
+            })
+            .transpose()?;
+        let path = row
+            .path
+            .as_ref()
+            .map(|s| {
+                s.parse()
+                    .map_err(|e| StoreError::Internal(format!("invalid document path: {e}")))
+            })
+            .transpose()?;
+
+        Ok(Document {
+            title: row.title.clone(),
+            body_markdown: row.body_markdown.clone(),
+            path,
+            created_by,
+            deleted: row.deleted,
+        })
     }
 
     fn row_to_issue(&self, row: &IssueRow) -> Result<Issue, StoreError> {
@@ -851,53 +1088,428 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_patch(
         &self,
         id: &PatchId,
-        _include_deleted: bool,
+        include_deleted: bool,
     ) -> Result<Versioned<Patch>, StoreError> {
-        Err(StoreError::PatchNotFound(id.clone()))
+        let row = sqlx::query_as::<_, PatchRow>(&format!(
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, created_at, updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_PATCHES_V2} WHERE id = ?1) AS creation_time
+             FROM {TABLE_PATCHES_V2}
+             WHERE id = ?1
+             ORDER BY version_number DESC
+             LIMIT 1"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for patch '{}'",
+                row.id
+            ))
+        })?;
+        let patch = self.row_to_patch(&row)?;
+        if !include_deleted && patch.deleted {
+            return Err(StoreError::PatchNotFound(id.clone()));
+        }
+        let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+        let creation_time = row
+            .creation_time
+            .as_deref()
+            .map(parse_sqlite_timestamp)
+            .transpose()?
+            .unwrap_or(timestamp);
+        Ok(Versioned::with_optional_actor(
+            patch,
+            version,
+            timestamp,
+            parse_actor_json_string(row.actor.as_deref())?,
+            creation_time,
+        ))
     }
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
-        Err(StoreError::PatchNotFound(id.clone()))
+        let rows = sqlx::query_as::<_, PatchRow>(&format!(
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, created_at, updated_at, NULL AS creation_time
+             FROM {TABLE_PATCHES_V2}
+             WHERE id = ?1
+             ORDER BY version_number"
+        ))
+        .bind(id.as_ref())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if rows.is_empty() {
+            return Err(StoreError::PatchNotFound(id.clone()));
+        }
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for patch '{}'",
+                    row.id
+                ))
+            })?;
+            let patch = self.row_to_patch(row)?;
+            let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+            results.push(Versioned::with_optional_actor(
+                patch,
+                version,
+                timestamp,
+                parse_actor_json_string(row.actor.as_deref())?,
+                timestamp,
+            ));
+        }
+
+        let creation_time = results.first().map(|r| r.timestamp);
+        for r in &mut results {
+            r.creation_time = creation_time.unwrap_or(r.timestamp);
+        }
+
+        Ok(results)
     }
 
     async fn list_patches(
         &self,
-        _query: &SearchPatchesQuery,
+        query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
-        Ok(Vec::new())
+        let subquery = format!(
+            "SELECT p.id, p.version_number, p.title, p.description, p.diff, p.status, p.is_automatic_backup, p.created_by, p.creator, p.base_branch, p.branch_name, p.commit_range, p.reviews, p.service_repo_name, p.github, p.deleted, p.actor, p.created_at, p.updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_PATCHES_V2} WHERE id = p.id) AS creation_time
+             FROM {TABLE_PATCHES_V2} p
+             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_PATCHES_V2} GROUP BY id) latest
+             ON p.id = latest.id AND p.version_number = latest.max_vn"
+        );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
+        let mut predicates = Vec::new();
+        let mut bindings: Vec<String> = Vec::new();
+
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("deleted = 0".to_string());
+        }
+
+        if !query.status.is_empty() {
+            let status_strings: Vec<String> = query
+                .status
+                .iter()
+                .map(|s| {
+                    let domain: crate::domain::patches::PatchStatus = (*s).into();
+                    domain.as_str().to_string()
+                })
+                .collect();
+            let placeholders: Vec<String> = status_strings
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+                .collect();
+            predicates.push(format!("status IN ({})", placeholders.join(", ")));
+            for s in status_strings {
+                bindings.push(s);
+            }
+        }
+
+        if let Some(ref branch) = query.branch_name {
+            bindings.push(branch.clone());
+            predicates.push(format!("branch_name = ?{}", bindings.len()));
+        }
+
+        if let Some(term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            let pattern = format!("%{term}%");
+            let start = bindings.len() + 1;
+            // id, title, description, status, service_repo_name, diff, branch_name
+            for _ in 0..7 {
+                bindings.push(pattern.clone());
+            }
+            predicates.push(format!(
+                "(LOWER(id) LIKE ?{s0} \
+                 OR LOWER(title) LIKE ?{s1} \
+                 OR LOWER(description) LIKE ?{s2} \
+                 OR LOWER(status) LIKE ?{s3} \
+                 OR LOWER(service_repo_name) LIKE ?{s4} \
+                 OR LOWER(diff) LIKE ?{s5} \
+                 OR LOWER(COALESCE(branch_name,'')) LIKE ?{s6})",
+                s0 = start,
+                s1 = start + 1,
+                s2 = start + 2,
+                s3 = start + 3,
+                s4 = start + 4,
+                s5 = start + 5,
+                s6 = start + 6,
+            ));
+        }
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_as::<_, PatchRow>(&sql);
+        for value in &bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut patches = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for patch '{}'",
+                    row.id
+                ))
+            })?;
+            let patch = self.row_to_patch(&row)?;
+            let patch_id = row.id.parse::<PatchId>().map_err(|err| {
+                StoreError::Internal(format!("invalid patch id stored in database: {err}"))
+            })?;
+            let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+            let creation_time = row
+                .creation_time
+                .as_deref()
+                .map(parse_sqlite_timestamp)
+                .transpose()?
+                .unwrap_or(timestamp);
+            let versioned = Versioned::with_optional_actor(
+                patch,
+                version,
+                timestamp,
+                parse_actor_json_string(row.actor.as_deref())?,
+                creation_time,
+            );
+            patches.push((patch_id, versioned));
+        }
+
+        Ok(patches)
     }
 
-    async fn get_issues_for_patch(&self, _patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
-        Ok(Vec::new())
+    async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
+        self.ensure_patch_exists(patch_id).await?;
+        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
+
+        Ok(issues
+            .into_iter()
+            .filter(|(_, issue)| issue.item.patches.contains(patch_id))
+            .map(|(id, _)| id)
+            .collect())
     }
 
     async fn get_document(
         &self,
         id: &DocumentId,
-        _include_deleted: bool,
+        include_deleted: bool,
     ) -> Result<Versioned<Document>, StoreError> {
-        Err(StoreError::DocumentNotFound(id.clone()))
+        let row = sqlx::query_as::<_, DocumentRow>(&format!(
+            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = ?1) AS creation_time
+             FROM {TABLE_DOCUMENTS_V2}
+             WHERE id = ?1
+             ORDER BY version_number DESC
+             LIMIT 1"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+        if !include_deleted && row.deleted {
+            return Err(StoreError::DocumentNotFound(id.clone()));
+        }
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for document '{}'",
+                row.id
+            ))
+        })?;
+        let document = self.row_to_document(&row)?;
+        let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+        let creation_time = row
+            .creation_time
+            .as_deref()
+            .map(parse_sqlite_timestamp)
+            .transpose()?
+            .unwrap_or(timestamp);
+        Ok(Versioned::with_optional_actor(
+            document,
+            version,
+            timestamp,
+            parse_actor_json_string(row.actor.as_deref())?,
+            creation_time,
+        ))
     }
 
     async fn get_document_versions(
         &self,
         id: &DocumentId,
     ) -> Result<Vec<Versioned<Document>>, StoreError> {
-        Err(StoreError::DocumentNotFound(id.clone()))
+        let rows = sqlx::query_as::<_, DocumentRow>(&format!(
+            "SELECT id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at, NULL AS creation_time
+             FROM {TABLE_DOCUMENTS_V2}
+             WHERE id = ?1
+             ORDER BY version_number"
+        ))
+        .bind(id.as_ref())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if rows.is_empty() {
+            return Err(StoreError::DocumentNotFound(id.clone()));
+        }
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for document '{}'",
+                    row.id
+                ))
+            })?;
+            let document = self.row_to_document(row)?;
+            let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+            results.push(Versioned::with_optional_actor(
+                document,
+                version,
+                timestamp,
+                parse_actor_json_string(row.actor.as_deref())?,
+                timestamp,
+            ));
+        }
+
+        let creation_time = results.first().map(|r| r.timestamp);
+        for r in &mut results {
+            r.creation_time = creation_time.unwrap_or(r.timestamp);
+        }
+
+        Ok(results)
     }
 
     async fn list_documents(
         &self,
-        _query: &SearchDocumentsQuery,
+        query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        Ok(Vec::new())
+        let subquery = format!(
+            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.created_by, d.deleted, d.actor, d.created_at, d.updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = d.id) AS creation_time
+             FROM {TABLE_DOCUMENTS_V2} d
+             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_DOCUMENTS_V2} GROUP BY id) latest
+             ON d.id = latest.id AND d.version_number = latest.max_vn"
+        );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
+        let mut predicates = Vec::new();
+        let mut bindings: Vec<String> = Vec::new();
+
+        if let Some(path) = query.path_prefix.as_ref() {
+            if query.path_is_exact.unwrap_or(false) {
+                bindings.push(path.clone());
+                predicates.push(format!("COALESCE(path,'') = ?{}", bindings.len()));
+            } else {
+                bindings.push(format!("{path}%"));
+                predicates.push(format!("COALESCE(path,'') LIKE ?{}", bindings.len()));
+            }
+        }
+
+        if let Some(created_by) = query.created_by.as_ref() {
+            bindings.push(created_by.as_ref().to_string());
+            predicates.push(format!("created_by = ?{}", bindings.len()));
+        }
+
+        if let Some(term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            let pattern = format!("%{term}%");
+            let start = bindings.len() + 1;
+            bindings.push(pattern.clone());
+            bindings.push(pattern.clone());
+            bindings.push(pattern);
+            predicates.push(format!(
+                "(LOWER(title) LIKE ?{s0} \
+                 OR LOWER(body_markdown) LIKE ?{s1} \
+                 OR LOWER(COALESCE(path,'')) LIKE ?{s2})",
+                s0 = start,
+                s1 = start + 1,
+                s2 = start + 2,
+            ));
+        }
+
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("deleted = 0".to_string());
+        }
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_as::<_, DocumentRow>(&sql);
+        for value in &bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut documents = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for document '{}'",
+                    row.id
+                ))
+            })?;
+            let document = self.row_to_document(&row)?;
+            let document_id = row.id.parse::<DocumentId>().map_err(|err| {
+                StoreError::Internal(format!("invalid document id stored in database: {err}"))
+            })?;
+            let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+            let creation_time = row
+                .creation_time
+                .as_deref()
+                .map(parse_sqlite_timestamp)
+                .transpose()?
+                .unwrap_or(timestamp);
+            let versioned = Versioned::with_optional_actor(
+                document,
+                version,
+                timestamp,
+                parse_actor_json_string(row.actor.as_deref())?,
+                creation_time,
+            );
+            documents.push((document_id, versioned));
+        }
+
+        Ok(documents)
     }
 
     async fn get_documents_by_path(
         &self,
-        _path_prefix: &str,
+        path_prefix: &str,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        Ok(Vec::new())
+        self.list_documents(&SearchDocumentsQuery::new(
+            None,
+            Some(path_prefix.to_string()),
+            None,
+            None,
+            None,
+        ))
+        .await
     }
 
     async fn get_task(
@@ -941,11 +1553,23 @@ impl ReadOnlyStore for SqliteStore {
     }
 
     async fn count_distinct_patches(&self) -> Result<u64, StoreError> {
-        Ok(0)
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_PATCHES_V2}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(count as u64)
     }
 
     async fn count_distinct_documents(&self) -> Result<u64, StoreError> {
-        Ok(0)
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_DOCUMENTS_V2}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(count as u64)
     }
 
     async fn count_distinct_tasks(&self) -> Result<u64, StoreError> {
@@ -1314,56 +1938,97 @@ impl Store for SqliteStore {
 
     async fn add_patch(
         &self,
-        _patch: Patch,
-        _actor: &ActorRef,
+        patch: Patch,
+        actor: &ActorRef,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
-        Err(StoreError::Internal(
-            "SQLite patches not yet implemented".to_string(),
-        ))
+        let count = self.count_distinct_patches().await?;
+        let id = PatchId::new_for_count(count);
+        let actor_json = actor_to_json_string(actor);
+        self.insert_patch(&id, 1, &patch, Some(&actor_json)).await?;
+        Ok((id, 1))
     }
 
     async fn update_patch(
         &self,
         id: &PatchId,
-        _patch: Patch,
-        _actor: &ActorRef,
+        patch: Patch,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        Err(StoreError::PatchNotFound(id.clone()))
+        self.get_patch(id, true).await?;
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_PATCHES_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("patch '{id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for patch '{id}'"))
+        })?;
+
+        let actor_json = actor_to_json_string(actor);
+        self.insert_patch(id, next_version, &patch, Some(&actor_json))
+            .await?;
+        Ok(next_version)
     }
 
     async fn delete_patch(
         &self,
         id: &PatchId,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        Err(StoreError::PatchNotFound(id.clone()))
+        let current = self.get_patch(id, true).await?;
+        let mut patch = current.item;
+        patch.deleted = true;
+        self.update_patch(id, patch, actor).await
     }
 
     async fn add_document(
         &self,
-        _document: Document,
-        _actor: &ActorRef,
+        document: Document,
+        actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        Err(StoreError::Internal(
-            "SQLite documents not yet implemented".to_string(),
-        ))
+        let count = self.count_distinct_documents().await?;
+        let id = DocumentId::new_for_count(count);
+        let actor_json = actor_to_json_string(actor);
+        self.insert_document(&id, 1, &document, Some(&actor_json))
+            .await?;
+        Ok((id, 1))
     }
 
     async fn update_document(
         &self,
         id: &DocumentId,
-        _document: Document,
-        _actor: &ActorRef,
+        document: Document,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        Err(StoreError::DocumentNotFound(id.clone()))
+        self.get_document(id, true).await?;
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_DOCUMENTS_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("document '{id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for document '{id}'"))
+        })?;
+
+        let actor_json = actor_to_json_string(actor);
+        self.insert_document(id, next_version, &document, Some(&actor_json))
+            .await?;
+        Ok(next_version)
     }
 
     async fn delete_document(
         &self,
         id: &DocumentId,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        Err(StoreError::DocumentNotFound(id.clone()))
+        let current = self.get_document(id, true).await?;
+        let mut document = current.item;
+        document.deleted = true;
+        self.update_document(id, document, actor).await
     }
 
     async fn add_task(
@@ -2532,5 +3197,397 @@ mod tests {
         let missing = IssueId::new();
         let err = store.get_issue_children(&missing).await.unwrap_err();
         assert!(matches!(err, StoreError::IssueNotFound(_)));
+    }
+
+    // ---- Patch tests ----
+
+    fn dummy_diff() -> String {
+        "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n".to_string()
+    }
+
+    fn sample_patch() -> Patch {
+        Patch::new(
+            "sample patch".to_string(),
+            "sample patch".to_string(),
+            dummy_diff(),
+            PatchStatus::Open,
+            false,
+            None,
+            Username::from("test-creator"),
+            Vec::new(),
+            RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    fn sample_document(path: Option<&str>, created_by: Option<TaskId>) -> Document {
+        Document {
+            title: "Doc".to_string(),
+            body_markdown: "Body".to_string(),
+            path: path.map(|p| p.parse().unwrap()),
+            created_by,
+            deleted: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn add_and_get_patch_assigns_id() {
+        let store = create_test_store().await;
+
+        let patch = sample_patch();
+        let (id, _) = store
+            .add_patch(patch.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_patch(&id, false).await.unwrap();
+        assert_eq!(fetched.item, patch);
+        assert_eq!(fetched.version, 1);
+    }
+
+    #[tokio::test]
+    async fn update_patch_overwrites_existing_value() {
+        let store = create_test_store().await;
+
+        let (id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        let updated = Patch::new(
+            "new title".to_string(),
+            "updated patch".to_string(),
+            dummy_diff(),
+            PatchStatus::Open,
+            false,
+            None,
+            Username::from("test-creator"),
+            Vec::new(),
+            RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        store
+            .update_patch(&id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_patch(&id, false).await.unwrap();
+        assert_eq!(fetched.item, updated);
+        assert_eq!(fetched.version, 2);
+    }
+
+    #[tokio::test]
+    async fn patch_versions_return_ordered_entries() {
+        let store = create_test_store().await;
+
+        let mut patch = sample_patch();
+        patch.title = "v1".to_string();
+        let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
+
+        let mut v2 = sample_patch();
+        v2.title = "v2".to_string();
+        store
+            .update_patch(&patch_id, v2, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let versions = store.get_patch_versions(&patch_id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].version, 1);
+        assert_eq!(versions[1].version, 2);
+        assert_eq!(versions[0].item.title, "v1");
+        assert_eq!(versions[1].item.title, "v2");
+    }
+
+    #[tokio::test]
+    async fn delete_patch_sets_deleted_flag_and_filters_from_list() {
+        let store = create_test_store().await;
+        let (patch_id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let patches = store
+            .list_patches(&SearchPatchesQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert!(!patches[0].1.item.deleted);
+
+        store
+            .delete_patch(&patch_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let patches = store
+            .list_patches(&SearchPatchesQuery::default())
+            .await
+            .unwrap();
+        assert!(patches.is_empty());
+
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(None, Some(true), vec![], None))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert!(patches[0].1.item.deleted);
+
+        let patch = store.get_patch(&patch_id, true).await.unwrap();
+        assert!(patch.item.deleted);
+
+        let err = store.get_patch(&patch_id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::PatchNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn get_issues_for_patch_returns_correct_issues() {
+        let store = create_test_store().await;
+
+        let (patch_id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut issue = sample_issue(vec![]);
+        issue.patches = vec![patch_id.clone()];
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+
+        let issue_ids = store.get_issues_for_patch(&patch_id).await.unwrap();
+        assert_eq!(issue_ids, vec![issue_id]);
+    }
+
+    #[tokio::test]
+    async fn count_distinct_patches_counts_correctly() {
+        let store = create_test_store().await;
+        assert_eq!(store.count_distinct_patches().await.unwrap(), 0);
+
+        let (id, _) = store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_patches().await.unwrap(), 1);
+
+        store
+            .update_patch(&id, sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_patches().await.unwrap(), 1);
+
+        store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_patches().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_patches_filters_by_status() {
+        let store = create_test_store().await;
+
+        store
+            .add_patch(sample_patch(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut closed_patch = sample_patch();
+        closed_patch.status = PatchStatus::Closed;
+        store
+            .add_patch(closed_patch, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let query = SearchPatchesQuery::new(
+            None,
+            None,
+            vec![metis_common::api::v1::patches::PatchStatus::Open],
+            None,
+        );
+        let patches = store.list_patches(&query).await.unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].1.item.status, PatchStatus::Open);
+    }
+
+    // ---- Document tests ----
+
+    #[tokio::test]
+    async fn documents_round_trip() {
+        let store = create_test_store().await;
+        let (doc_id, _) = store
+            .add_document(
+                sample_document(Some("docs/guides/intro.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let fetched = store.get_document(&doc_id, false).await.unwrap();
+        assert_eq!(fetched.item.title, "Doc");
+        assert_eq!(fetched.version, 1);
+
+        let mut updated = fetched.item.clone();
+        updated.body_markdown = "Updated body".to_string();
+        store
+            .update_document(&doc_id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let versions = store.get_document_versions(&doc_id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].version, 1);
+        assert_eq!(versions[1].version, 2);
+        assert_eq!(versions[1].item.body_markdown, "Updated body");
+
+        let documents = store
+            .list_documents(&SearchDocumentsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].0, doc_id);
+    }
+
+    #[tokio::test]
+    async fn document_path_prefix_query() {
+        let store = create_test_store().await;
+        let (doc1, _) = store
+            .add_document(
+                sample_document(Some("docs/howto.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .add_document(
+                sample_document(Some("notes/todo.md"), None),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let by_path = store.get_documents_by_path("/docs/").await.unwrap();
+        assert_eq!(by_path.len(), 1);
+        assert_eq!(by_path[0].0, doc1);
+    }
+
+    #[tokio::test]
+    async fn document_filters_apply_query() {
+        let store = create_test_store().await;
+        let task_id = TaskId::new();
+        let other_task = TaskId::new();
+
+        let (first, _) = store
+            .add_document(
+                sample_document(Some("docs/howto.md"), Some(task_id.clone())),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        store
+            .add_document(
+                sample_document(Some("notes/todo.md"), Some(other_task.clone())),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let query = SearchDocumentsQuery::new(
+            Some("how".to_string()),
+            Some("/docs/".to_string()),
+            None,
+            Some(task_id.clone()),
+            None,
+        );
+
+        let filtered = store.list_documents(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, first);
+
+        let created_by_filtered = store
+            .list_documents(&SearchDocumentsQuery::new(
+                None,
+                None,
+                None,
+                Some(other_task),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(created_by_filtered.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn delete_document_sets_deleted_flag_and_filters_from_list() {
+        let store = create_test_store().await;
+        let (doc_id, _) = store
+            .add_document(sample_document(None, None), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let documents = store
+            .list_documents(&SearchDocumentsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(documents.len(), 1);
+
+        store
+            .delete_document(&doc_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let documents = store
+            .list_documents(&SearchDocumentsQuery::default())
+            .await
+            .unwrap();
+        assert!(documents.is_empty());
+
+        let documents = store
+            .list_documents(&SearchDocumentsQuery::new(
+                None,
+                None,
+                None,
+                None,
+                Some(true),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(documents.len(), 1);
+        assert!(documents[0].1.item.deleted);
+
+        let doc = store.get_document(&doc_id, true).await.unwrap();
+        assert!(doc.item.deleted);
+
+        let err = store.get_document(&doc_id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::DocumentNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn count_distinct_documents_counts_correctly() {
+        let store = create_test_store().await;
+        assert_eq!(store.count_distinct_documents().await.unwrap(), 0);
+
+        let (id, _) = store
+            .add_document(sample_document(None, None), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_documents().await.unwrap(), 1);
+
+        let mut updated = sample_document(None, None);
+        updated.body_markdown = "v2".to_string();
+        store
+            .update_document(&id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_documents().await.unwrap(), 1);
+
+        store
+            .add_document(sample_document(None, None), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_documents().await.unwrap(), 2);
     }
 }
