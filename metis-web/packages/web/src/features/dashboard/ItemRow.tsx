@@ -362,7 +362,7 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
             </svg>
             Archive
           </div>
-          <div ref={swipeContentRef} className={styles.swipeContent}>
+          <div ref={swipeContentRef} className={styles.swipeContent} data-testid="swipe-content">
             {rowContent}
           </div>
         </>
