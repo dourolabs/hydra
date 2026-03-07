@@ -2023,6 +2023,15 @@ impl ReadOnlyStore for SqliteStore {
         Ok(count as u64)
     }
 
+    async fn count_distinct_labels(&self) -> Result<u64, StoreError> {
+        let count =
+            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(DISTINCT id) FROM {TABLE_LABELS}"))
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+        Ok(count as u64)
+    }
+
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         let row = sqlx::query_as::<_, ActorRow>(
@@ -3020,11 +3029,7 @@ impl Store for SqliteStore {
             return Err(StoreError::LabelAlreadyExists(label.name.clone()));
         }
 
-        let count = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {TABLE_LABELS}"))
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        let count = u64::try_from(count).unwrap_or(0);
+        let count = self.count_distinct_labels().await?;
         let id = LabelId::new_for_count(count);
 
         let sql = format!(
@@ -3975,6 +3980,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(store.count_distinct_issues().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn count_distinct_labels_increments() {
+        let store = create_test_store().await;
+
+        assert_eq!(store.count_distinct_labels().await.unwrap(), 0);
+
+        store
+            .add_label(sample_label("bug", "#ff0000"))
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_labels().await.unwrap(), 1);
+
+        store
+            .add_label(sample_label("feature", "#00ff00"))
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_labels().await.unwrap(), 2);
     }
 
     #[tokio::test]
