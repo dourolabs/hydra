@@ -1,3 +1,4 @@
+use crate::domain::actors::ActorRef;
 use crate::domain::labels::Label;
 use crate::store::{ReadOnlyStore, StoreError};
 use metis_common::api::v1::labels::{LabelSummary, SearchLabelsQuery};
@@ -98,6 +99,22 @@ impl AppState {
         recurse: bool,
         hidden: bool,
     ) -> Result<LabelId, CreateLabelError> {
+        let actor = ActorRef::System {
+            worker_name: "label-crud".into(),
+            on_behalf_of: None,
+        };
+        self.create_label_with_actor(name, color, recurse, hidden, actor)
+            .await
+    }
+
+    pub async fn create_label_with_actor(
+        &self,
+        name: String,
+        color: Option<Rgb>,
+        recurse: bool,
+        hidden: bool,
+        actor: ActorRef,
+    ) -> Result<LabelId, CreateLabelError> {
         let name = name.trim().to_lowercase();
         if name.is_empty() {
             return Err(CreateLabelError::EmptyName);
@@ -106,10 +123,14 @@ impl AppState {
         let color = color.unwrap_or_else(|| default_color_for_name(&name));
         let label = Label::new(name, color, recurse, hidden);
 
-        let label_id = self.store.add_label(label).await.map_err(|e| match e {
-            StoreError::LabelAlreadyExists(name) => CreateLabelError::AlreadyExists(name),
-            other => CreateLabelError::Store { source: other },
-        })?;
+        let label_id = self
+            .store
+            .add_label_with_actor(label, actor)
+            .await
+            .map_err(|e| match e {
+                StoreError::LabelAlreadyExists(name) => CreateLabelError::AlreadyExists(name),
+                other => CreateLabelError::Store { source: other },
+            })?;
 
         Ok(label_id)
     }
@@ -121,6 +142,29 @@ impl AppState {
         color: Option<Rgb>,
         recurse: Option<bool>,
         hidden: Option<bool>,
+    ) -> Result<(), UpdateLabelError> {
+        self.update_label_with_actor(
+            label_id,
+            name,
+            color,
+            recurse,
+            hidden,
+            ActorRef::System {
+                worker_name: "label-crud".into(),
+                on_behalf_of: None,
+            },
+        )
+        .await
+    }
+
+    pub async fn update_label_with_actor(
+        &self,
+        label_id: &LabelId,
+        name: String,
+        color: Option<Rgb>,
+        recurse: Option<bool>,
+        hidden: Option<bool>,
+        actor: ActorRef,
     ) -> Result<(), UpdateLabelError> {
         let existing = self.store.get_label(label_id).await.map_err(|e| match e {
             StoreError::LabelNotFound(id) => UpdateLabelError::NotFound(id),
@@ -145,7 +189,7 @@ impl AppState {
         updated.updated_at = chrono::Utc::now();
 
         self.store
-            .update_label(label_id, updated)
+            .update_label_with_actor(label_id, updated, actor)
             .await
             .map_err(|e| match e {
                 StoreError::LabelAlreadyExists(name) => UpdateLabelError::AlreadyExists(name),
@@ -157,7 +201,22 @@ impl AppState {
     }
 
     pub async fn delete_label(&self, label_id: &LabelId) -> Result<(), StoreError> {
-        self.store.delete_label(label_id).await
+        self.delete_label_with_actor(
+            label_id,
+            ActorRef::System {
+                worker_name: "label-crud".into(),
+                on_behalf_of: None,
+            },
+        )
+        .await
+    }
+
+    pub async fn delete_label_with_actor(
+        &self,
+        label_id: &LabelId,
+        actor: ActorRef,
+    ) -> Result<(), StoreError> {
+        self.store.delete_label_with_actor(label_id, actor).await
     }
 
     pub async fn get_label(&self, label_id: &LabelId) -> Result<Label, StoreError> {

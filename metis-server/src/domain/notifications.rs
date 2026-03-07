@@ -225,9 +225,10 @@ impl NotificationPolicy for WalkUpPolicy {
                 }
             }
             MutationPayload::Document { .. }
+            | MutationPayload::Label { .. }
             | MutationPayload::Message { .. }
             | MutationPayload::Notification { .. } => {
-                // No source issue for documents, messages, or notifications
+                // No source issue for documents, labels, messages, or notifications
                 vec![]
             }
         };
@@ -345,6 +346,21 @@ pub fn generate_summary(event: &ServerEvent) -> String {
             }
             format!("Message {id} was updated")
         }
+        MutationPayload::Label { old, new, .. } => {
+            let id = match event {
+                ServerEvent::LabelCreated { label_id, .. }
+                | ServerEvent::LabelUpdated { label_id, .. }
+                | ServerEvent::LabelDeleted { label_id, .. } => label_id.to_string(),
+                _ => "unknown".to_string(),
+            };
+            if old.is_none() {
+                return format!("Label {id} '{}' was created", new.name);
+            }
+            if new.deleted {
+                return format!("Label {id} '{}' was deleted", new.name);
+            }
+            format!("Label {id} '{}' was updated", new.name)
+        }
         MutationPayload::Notification { new, .. } => {
             let id = match event {
                 ServerEvent::NotificationCreated {
@@ -370,6 +386,9 @@ pub fn event_object_kind(event: &ServerEvent) -> &'static str {
         ServerEvent::DocumentCreated { .. }
         | ServerEvent::DocumentUpdated { .. }
         | ServerEvent::DocumentDeleted { .. } => "document",
+        ServerEvent::LabelCreated { .. }
+        | ServerEvent::LabelUpdated { .. }
+        | ServerEvent::LabelDeleted { .. } => "label",
         ServerEvent::MessageCreated { .. } | ServerEvent::MessageUpdated { .. } => "message",
         ServerEvent::NotificationCreated { .. } => "notification",
     }
@@ -390,6 +409,9 @@ pub fn event_object_id(event: &ServerEvent) -> MetisId {
         ServerEvent::DocumentCreated { document_id, .. }
         | ServerEvent::DocumentUpdated { document_id, .. }
         | ServerEvent::DocumentDeleted { document_id, .. } => document_id.clone().into(),
+        ServerEvent::LabelCreated { label_id, .. }
+        | ServerEvent::LabelUpdated { label_id, .. }
+        | ServerEvent::LabelDeleted { label_id, .. } => label_id.clone().into(),
         ServerEvent::MessageCreated { message_id, .. }
         | ServerEvent::MessageUpdated { message_id, .. } => message_id.clone().into(),
         ServerEvent::NotificationCreated {
@@ -412,6 +434,9 @@ pub fn event_version(event: &ServerEvent) -> VersionNumber {
         | ServerEvent::DocumentCreated { version, .. }
         | ServerEvent::DocumentUpdated { version, .. }
         | ServerEvent::DocumentDeleted { version, .. }
+        | ServerEvent::LabelCreated { version, .. }
+        | ServerEvent::LabelUpdated { version, .. }
+        | ServerEvent::LabelDeleted { version, .. }
         | ServerEvent::MessageCreated { version, .. }
         | ServerEvent::MessageUpdated { version, .. }
         | ServerEvent::NotificationCreated { version, .. } => *version,
@@ -425,15 +450,18 @@ pub fn event_type_str(event: &ServerEvent) -> &'static str {
         | ServerEvent::PatchCreated { .. }
         | ServerEvent::JobCreated { .. }
         | ServerEvent::DocumentCreated { .. }
+        | ServerEvent::LabelCreated { .. }
         | ServerEvent::MessageCreated { .. } => "created",
         ServerEvent::IssueUpdated { .. }
         | ServerEvent::PatchUpdated { .. }
         | ServerEvent::JobUpdated { .. }
         | ServerEvent::DocumentUpdated { .. }
+        | ServerEvent::LabelUpdated { .. }
         | ServerEvent::MessageUpdated { .. } => "updated",
         ServerEvent::IssueDeleted { .. }
         | ServerEvent::PatchDeleted { .. }
-        | ServerEvent::DocumentDeleted { .. } => "deleted",
+        | ServerEvent::DocumentDeleted { .. }
+        | ServerEvent::LabelDeleted { .. } => "deleted",
         ServerEvent::NotificationCreated { .. } => "created",
     }
 }
@@ -453,6 +481,7 @@ pub fn event_source_issue_id(event: &ServerEvent) -> Option<IssueId> {
         MutationPayload::Job { new, .. } => new.spawned_from.clone(),
         MutationPayload::Patch { .. }
         | MutationPayload::Document { .. }
+        | MutationPayload::Label { .. }
         | MutationPayload::Message { .. }
         | MutationPayload::Notification { .. } => None,
     }

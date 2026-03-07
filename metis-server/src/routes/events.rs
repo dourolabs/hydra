@@ -11,7 +11,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
 use metis_common::{
-    NotificationId,
+    LabelId, NotificationId,
     api::v1::{
         documents::{DocumentSummaryRecord, DocumentVersionRecord},
         error::ApiError,
@@ -177,6 +177,7 @@ struct EventFilter {
     issue_ids: Option<Vec<IssueId>>,
     job_ids: Option<Vec<TaskId>>,
     patch_ids: Option<Vec<PatchId>>,
+    label_ids: Option<Vec<LabelId>>,
     document_ids: Option<Vec<DocumentId>>,
     message_ids: Option<Vec<MessageId>>,
     notification_ids: Option<Vec<NotificationId>>,
@@ -222,6 +223,17 @@ impl EventFilter {
             .transpose()
             .map_err(|e| format!("invalid patch_ids: {e}"))?;
 
+        let label_ids = query
+            .label_ids
+            .as_ref()
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().parse::<LabelId>())
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .map_err(|e| format!("invalid label_ids: {e}"))?;
+
         let document_ids = query
             .document_ids
             .as_ref()
@@ -260,6 +272,7 @@ impl EventFilter {
             issue_ids,
             job_ids,
             patch_ids,
+            label_ids,
             document_ids,
             message_ids,
             notification_ids,
@@ -299,6 +312,13 @@ impl EventFilter {
                     }
                 }
             }
+            EntityId::Label(id) => {
+                if let Some(ids) = &self.label_ids {
+                    if !ids.contains(id) {
+                        return false;
+                    }
+                }
+            }
             EntityId::Document(id) => {
                 if let Some(ids) = &self.document_ids {
                     if !ids.contains(id) {
@@ -332,6 +352,7 @@ enum EntityId<'a> {
     Issue(&'a IssueId),
     Task(&'a TaskId),
     Patch(&'a PatchId),
+    Label(&'a LabelId),
     Document(&'a DocumentId),
     Message(&'a MessageId),
     Notification(&'a NotificationId),
@@ -351,6 +372,10 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
         ServerEvent::JobCreated { task_id, .. } | ServerEvent::JobUpdated { task_id, .. } => {
             ("jobs", EntityId::Task(task_id))
         }
+
+        ServerEvent::LabelCreated { label_id, .. }
+        | ServerEvent::LabelUpdated { label_id, .. }
+        | ServerEvent::LabelDeleted { label_id, .. } => ("labels", EntityId::Label(label_id)),
 
         ServerEvent::DocumentCreated { document_id, .. }
         | ServerEvent::DocumentUpdated { document_id, .. }
@@ -485,6 +510,19 @@ async fn serialize_entity(
             );
             let summary_record = DocumentSummaryRecord::from(&full_record);
             serde_json::to_value(summary_record).ok()?
+        }
+        MutationPayload::Label { new, .. } => {
+            let label_id: LabelId = entity_id.parse().ok()?;
+            let record = metis_common::api::v1::labels::LabelRecord::new(
+                label_id,
+                new.name.clone(),
+                new.color.clone(),
+                new.recurse,
+                new.hidden,
+                new.created_at,
+                new.updated_at,
+            );
+            serde_json::to_value(record).ok()?
         }
         MutationPayload::Message { new, .. } => {
             let api_msg: metis_common::api::v1::messages::Message = new.clone().into();
@@ -680,6 +718,48 @@ async fn server_event_to_sse(
             SseEventType::DocumentDeleted,
             "document",
             document_id.to_string(),
+            *version,
+            *timestamp,
+            payload,
+        ),
+        ServerEvent::LabelCreated {
+            label_id,
+            version,
+            timestamp,
+            payload,
+            ..
+        } => (
+            SseEventType::LabelCreated,
+            "label",
+            label_id.to_string(),
+            *version,
+            *timestamp,
+            payload,
+        ),
+        ServerEvent::LabelUpdated {
+            label_id,
+            version,
+            timestamp,
+            payload,
+            ..
+        } => (
+            SseEventType::LabelUpdated,
+            "label",
+            label_id.to_string(),
+            *version,
+            *timestamp,
+            payload,
+        ),
+        ServerEvent::LabelDeleted {
+            label_id,
+            version,
+            timestamp,
+            payload,
+            ..
+        } => (
+            SseEventType::LabelDeleted,
+            "label",
+            label_id.to_string(),
             *version,
             *timestamp,
             payload,
