@@ -4,7 +4,6 @@ import styles from "./SearchBox.module.css";
 export interface SearchBoxProps {
   value: string;
   onChange: (value: string) => void;
-  onSettingsClick?: () => void;
   onSubmit?: () => void;
   placeholder?: string;
   leftElement?: ReactNode;
@@ -13,7 +12,6 @@ export interface SearchBoxProps {
 export function SearchBox({
   value,
   onChange,
-  onSettingsClick,
   onSubmit,
   placeholder = "Search issues...",
   leftElement,
@@ -48,26 +46,6 @@ export function SearchBox({
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
       />
-      {onSettingsClick && (
-        <button
-          type="button"
-          className={styles.iconButton}
-          onClick={(e) => {
-            e.stopPropagation();
-            onSettingsClick();
-          }}
-          aria-label="Search settings"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <line x1="2" y1="4" x2="14" y2="4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1="2" y1="8" x2="14" y2="8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1="2" y1="12" x2="14" y2="12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            <circle cx="5" cy="4" r="1.5" fill="var(--color-bg-tertiary)" stroke="currentColor" strokeWidth="1.5" />
-            <circle cx="10" cy="8" r="1.5" fill="var(--color-bg-tertiary)" stroke="currentColor" strokeWidth="1.5" />
-            <circle cx="7" cy="12" r="1.5" fill="var(--color-bg-tertiary)" stroke="currentColor" strokeWidth="1.5" />
-          </svg>
-        </button>
-      )}
     </div>
   );
 }
