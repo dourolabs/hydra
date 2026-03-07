@@ -526,13 +526,14 @@ describe("countNeedsAttentionBadge", () => {
     expect(countNeedsAttentionBadge([], assignedToAlice)).toBe(0);
   });
 
-  it("counts issues matching filter with open or in-progress status", () => {
+  it("counts issues matching filter with non-terminal status", () => {
     const issues = [
       makeIssueRecord({ issue_id: "i-1", status: "open", assignee: "alice" }),
       makeIssueRecord({ issue_id: "i-2", status: "in-progress", assignee: "alice" }),
-      makeIssueRecord({ issue_id: "i-3", status: "closed", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-3", status: "blocked", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-4", status: "closed", assignee: "alice" }),
     ];
-    expect(countNeedsAttentionBadge(issues, assignedToAlice)).toBe(2);
+    expect(countNeedsAttentionBadge(issues, assignedToAlice)).toBe(3);
   });
 
   it("does not count issues that do not match filter", () => {
@@ -550,7 +551,16 @@ describe("countNeedsAttentionBadge", () => {
     expect(countNeedsAttentionBadge(issues, assignedToAlice)).toBe(0);
   });
 
-  it("counts issues with active jobs (no exclusion for running jobs)", () => {
+  it("excludes issues with active jobs when isActiveMap is provided", () => {
+    const issues = [
+      makeIssueRecord({ issue_id: "i-1", status: "open", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-2", status: "open", assignee: "alice" }),
+    ];
+    const isActiveMap = new Map([["i-1", true], ["i-2", false]]);
+    expect(countNeedsAttentionBadge(issues, assignedToAlice, isActiveMap)).toBe(1);
+  });
+
+  it("counts all matching issues when isActiveMap is not provided", () => {
     const issues = [
       makeIssueRecord({ issue_id: "i-1", status: "open", assignee: "alice" }),
       makeIssueRecord({ issue_id: "i-2", status: "open", assignee: "alice" }),

@@ -13,7 +13,6 @@ import {
   findTransitiveChildren,
 } from "../features/dashboard/useTransitiveWorkItems";
 import { computeIsActiveMap, countNeedsAttentionBadge, type ChildStatus } from "../features/dashboard/computeIssueProgress";
-import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
@@ -66,25 +65,26 @@ export function DashboardPage() {
   const { items: allWorkItems, isLoading: workItemsLoading } =
     useTransitiveWorkItems(hookRootId, issues ?? []);
 
-  const inboxCount = useMemo(() => {
-    if (!issues || !inboxLabel) return 0;
-    return issues.filter(
-      (issue) =>
-        !TERMINAL_STATUSES.has(issue.issue.status) &&
-        issue.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) &&
-        (issue.issue.creator === username || issue.issue.assignee === username),
-    ).length;
-  }, [issues, username, inboxLabel]);
-
   const isActiveMap = useMemo(() => {
     if (!issues || !jobsByIssue) return new Map<string, boolean>();
     return computeIsActiveMap(issues, jobsByIssue);
   }, [issues, jobsByIssue]);
 
+  const inboxCount = useMemo(() => {
+    if (!issues || !inboxLabel) return 0;
+    return countNeedsAttentionBadge(
+      issues,
+      (issue) =>
+        (issue.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) ?? false) &&
+        issue.issue.assignee === username,
+      isActiveMap,
+    );
+  }, [issues, username, inboxLabel, isActiveMap]);
+
   const myIssuesCount = useMemo(() => {
     if (!issues || !username) return 0;
-    return countNeedsAttentionBadge(issues, (issue) => issue.issue.assignee === username);
-  }, [issues, username]);
+    return countNeedsAttentionBadge(issues, (issue) => issue.issue.assignee === username, isActiveMap);
+  }, [issues, username, isActiveMap]);
 
   const childStatusMap = useMemo(() => {
     const map = new Map<string, ChildStatus[]>();
