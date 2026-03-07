@@ -1,5 +1,6 @@
 import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
+import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 
 export function computeIsActiveMap(
   issues: IssueSummaryRecord[],
@@ -64,13 +65,13 @@ export interface IssueProgress {
 export function countNeedsAttentionBadge(
   issues: IssueSummaryRecord[],
   filter: (issue: IssueSummaryRecord) => boolean,
+  isActiveMap?: Map<string, boolean>,
 ): number {
   return issues.filter((issue) => {
     const status = issue.issue.status;
-    return (
-      (status === "open" || status === "in-progress") &&
-      filter(issue)
-    );
+    if (TERMINAL_STATUSES.has(status)) return false;
+    if (isActiveMap?.get(issue.issue_id)) return false;
+    return filter(issue);
   }).length;
 }
 
