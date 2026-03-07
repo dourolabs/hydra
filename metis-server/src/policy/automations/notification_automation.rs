@@ -38,7 +38,12 @@ impl Automation for NotificationAutomation {
         // Match all events except NotificationCreated to avoid infinite loops
         // (this automation emits NotificationCreated events).
         EventFilter {
-            exclude_event_types: vec![EventType::NotificationCreated],
+            exclude_event_types: vec![
+                EventType::NotificationCreated,
+                EventType::LabelCreated,
+                EventType::LabelUpdated,
+                EventType::LabelDeleted,
+            ],
             ..Default::default()
         }
     }
