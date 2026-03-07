@@ -162,7 +162,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
             <IssueActivity issueId={record.issue_id} />
           )}
           {activeTab === "metadata" && (
-            <>
+            <div className={styles.metadataTab}>
               <div className={styles.meta}>
                 {issue.creator && (
                   <div className={styles.metaItem}>
@@ -196,7 +196,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
                 </div>
               </div>
               <IssueSettings jobSettings={issue.job_settings} />
-            </>
+            </div>
           )}
         </div>
       </Panel>
