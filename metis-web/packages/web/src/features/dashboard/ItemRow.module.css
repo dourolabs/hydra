@@ -82,7 +82,7 @@
 }
 
 .rowAttention {
-  border-left: 3px solid var(--color-status-rejected);
+  box-shadow: inset 3px 0 0 var(--color-status-rejected);
 }
 
 .icon {
