@@ -18,6 +18,10 @@ const PROCESS_GROUP_GRACE_PERIOD: std::time::Duration = std::time::Duration::fro
 /// Time to wait for SIGTERM to take effect before sending SIGKILL.
 const SIGTERM_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Timeout for stdout/stderr pipe reads after process group kill.
+/// If pipes don't EOF within this duration, we drop the handles and move on.
+const PIPE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Sends SIGTERM then SIGKILL to a process group.
 ///
 /// The `pgid` is the process group ID (same as the leader's PID when spawned
@@ -328,13 +332,33 @@ impl ClaudeCommands {
             }
         }
 
-        let (stdout_buf, last_message) = stdout_handle
-            .await
-            .context("failed to join claude stdout task")??;
+        // Await stdout with a timeout so we never hang indefinitely.
+        let stdout_result = tokio::time::timeout(PIPE_READ_TIMEOUT, stdout_handle).await;
+        let (stdout_buf, last_message) = match stdout_result {
+            Ok(join_result) => join_result.context("failed to join claude stdout task")??,
+            Err(_) => {
+                let timeout = PIPE_READ_TIMEOUT;
+                eprintln!(
+                    "stdout pipe read timed out after {timeout:?} — \
+                     dropping handle and proceeding with partial output"
+                );
+                (String::new(), None)
+            }
+        };
 
-        let stderr_buf = stderr_handle
-            .await
-            .context("failed to join claude stderr task")??;
+        // Await stderr with a timeout so we never hang indefinitely.
+        let stderr_result = tokio::time::timeout(PIPE_READ_TIMEOUT, stderr_handle).await;
+        let stderr_buf = match stderr_result {
+            Ok(join_result) => join_result.context("failed to join claude stderr task")??,
+            Err(_) => {
+                let timeout = PIPE_READ_TIMEOUT;
+                eprintln!(
+                    "stderr pipe read timed out after {timeout:?} — \
+                     dropping handle and proceeding without stderr"
+                );
+                Vec::new()
+            }
+        };
 
         if !status.success() {
             return Err(anyhow!(
