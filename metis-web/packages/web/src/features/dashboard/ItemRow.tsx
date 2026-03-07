@@ -265,7 +265,7 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
   const { rowRef, onTouchStart, onTouchMove, onTouchEnd } = useSwipeToArchive(handleArchiveSwipe);
 
   return (
-    <li className={`${styles.rowWrapper}${showArchive ? ` ${styles.swipeEnabled}` : ""}`} role="button">
+    <li className={`${styles.rowWrapper}${showArchive ? ` ${styles.swipeEnabled}` : ""}`}>
 
       {showArchive && (
         <span className={styles.swipeReveal} aria-hidden>
@@ -278,6 +278,7 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
       )}
       <div
         ref={showArchive ? rowRef : undefined}
+        role="button"
         className={rowClasses.join(" ")}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
