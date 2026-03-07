@@ -155,26 +155,6 @@ export function HeterogeneousItemList({
           </>
         )}
 
-        {artifactItems.length > 0 && (
-          <>
-            <div className={styles.sectionHeader}>
-              Artifacts ({artifactItems.length})
-            </div>
-            <ul className={styles.list}>
-              {artifactItems.map((item) => (
-                <ItemRow
-                  key={`${item.kind}-${item.id}`}
-                  item={item}
-                  jobs={undefined}
-                  filterRootId={filterRootId}
-
-                />
-              ))}
-
-            </ul>
-          </>
-        )}
-
         {completeItems.length > 0 && (
           <>
             <div className={styles.sectionHeader}>
@@ -201,6 +181,26 @@ export function HeterogeneousItemList({
 
                 />
               ))}
+            </ul>
+          </>
+        )}
+
+        {artifactItems.length > 0 && (
+          <>
+            <div className={styles.sectionHeader}>
+              Artifacts ({artifactItems.length})
+            </div>
+            <ul className={styles.list}>
+              {artifactItems.map((item) => (
+                <ItemRow
+                  key={`${item.kind}-${item.id}`}
+                  item={item}
+                  jobs={undefined}
+                  filterRootId={filterRootId}
+
+                />
+              ))}
+
             </ul>
           </>
         )}
