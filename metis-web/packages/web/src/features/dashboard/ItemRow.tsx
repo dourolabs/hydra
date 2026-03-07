@@ -227,10 +227,6 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
     durationClass = styles.timestamp;
   }
 
-  const rowClasses = [styles.row];
-  if (item.isTerminal) rowClasses.push(styles.terminal);
-  if (isAssignedToMe && badgeStatus) rowClasses.push(styles.rowAttention);
-
   // Labels (issues only) — filter out hidden labels
   const allLabels = item.kind === "issue" && item.data.issue.labels && item.data.issue.labels.length > 0
     ? item.data.issue.labels.filter((l: LabelSummary) => !l.hidden)
@@ -238,21 +234,20 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
 
   const showArchive = !!inboxLabelId && item.kind === "issue";
 
+  const rowClasses = [styles.row];
+  if (item.isTerminal) rowClasses.push(styles.terminal);
+  if (isAssignedToMe && badgeStatus) rowClasses.push(styles.rowAttention);
+  if (showArchive) rowClasses.push(styles.rowSwipeable);
+
   const rowRef = useRef<HTMLLIElement>(null);
+  const swipeContentRef = useRef<HTMLDivElement>(null);
   const handleArchiveSwipe = useCallback(() => {
     archiveMutation.mutate(item.id);
   }, [archiveMutation, item.id]);
-  useSwipeToArchive(rowRef, { onArchive: handleArchiveSwipe, enabled: showArchive });
+  useSwipeToArchive(swipeContentRef, { onArchive: handleArchiveSwipe, enabled: showArchive });
 
-  return (
-    <li
-      ref={rowRef}
-      className={rowClasses.join(" ")}
-      onClick={handleClick}
-      onKeyDown={handleKeyDown}
-      role="button"
-      tabIndex={0}
-    >
+  const rowContent = (
+    <>
       {badgeStatus && (
         hasRunningJob ? (
           <span className={`${styles.statusDot} ${styles.statusDotPulsing}`} />
@@ -346,6 +341,34 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
           <StatusBoxes children={childStatuses} />
         )}
       </span>
+    </>
+  );
+
+  return (
+    <li
+      ref={rowRef}
+      className={rowClasses.join(" ")}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+    >
+      {showArchive ? (
+        <>
+          <div className={styles.archiveReveal}>
+            <svg className={styles.archiveRevealIcon} width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 4h12v2H2zM3 6v7a1 1 0 001 1h8a1 1 0 001-1V6" />
+              <path d="M6 9h4" />
+            </svg>
+            Archive
+          </div>
+          <div ref={swipeContentRef} className={styles.swipeContent}>
+            {rowContent}
+          </div>
+        </>
+      ) : (
+        rowContent
+      )}
     </li>
   );
 }
