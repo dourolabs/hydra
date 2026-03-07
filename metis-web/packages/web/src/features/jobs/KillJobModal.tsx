@@ -9,10 +9,11 @@ import styles from "./KillJobModal.module.css";
 interface KillJobModalProps {
   open: boolean;
   onClose: () => void;
+  onKillSuccess?: () => void;
   jobId: string;
 }
 
-export function KillJobModal({ open, onClose, jobId }: KillJobModalProps) {
+export function KillJobModal({ open, onClose, onKillSuccess, jobId }: KillJobModalProps) {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
 
@@ -31,6 +32,7 @@ export function KillJobModal({ open, onClose, jobId }: KillJobModalProps) {
     },
     onSuccess: () => {
       addToast("Job killed successfully", "success");
+      onKillSuccess?.();
       onClose();
     },
     onError: (err, _variables, context) => {

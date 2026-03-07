@@ -27,6 +27,12 @@ test.describe("Job Kill @jobs:kill", () => {
 
     // Success toast should appear
     await expect(page.getByText(/Job killed successfully/)).toBeVisible();
+
+    // Terminating spinner should appear while job status is still "running"
+    await expect(page.getByText("Terminating...")).toBeVisible();
+
+    // Kill Job button should not be visible while terminating
+    await expect(killButton).not.toBeVisible();
   });
 
   test("cancel does not kill the job @jobs:kill", async ({

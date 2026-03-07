@@ -136,14 +136,15 @@ export function createJobRoutes(store: Store): Hono {
   });
 
   // DELETE /v1/jobs/:id — kill job
+  // The real server sends a kill signal to K8s but the job stays "running"
+  // until the pod actually terminates. We simulate this by not updating
+  // the store immediately, so refetches still return "running".
   app.delete("/v1/jobs/:id", (c) => {
     const id = c.req.param("id");
     const entry = store.get<Task>(COLLECTION, id);
     if (!entry) {
       return c.json({ error: `job '${id}' not found` }, 404);
     }
-    const updated: Task = { ...entry.data, status: "failed" as Status };
-    store.update<Task>(COLLECTION, id, updated, SSE_PREFIX);
     const resp: KillJobResponse = { job_id: id, status: "failed" };
     return c.json(resp);
   });
