@@ -292,4 +292,8 @@
   .assignee {
     display: none;
   }
+
+  .archiveButton {
+    display: none;
+  }
 }

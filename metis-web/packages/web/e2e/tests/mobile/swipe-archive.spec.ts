@@ -1,5 +1,27 @@
 import { test, expect } from "../../fixtures/auth";
 
+test.describe("Mobile click to open @mobile:click-to-open", () => {
+  test("tapping an inbox issue row navigates to the issue detail page", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/?selected=inbox");
+
+    const itemText = "Update deployment documentation";
+    await expect(page.getByText(itemText)).toBeVisible();
+
+    const row = page.locator("li", { hasText: itemText });
+
+    // Archive button should not be visible on mobile
+    const archiveButton = row.locator("button[title='Archive']");
+    await expect(archiveButton).not.toBeVisible();
+
+    // Tapping the row should navigate to the issue detail page
+    await row.click();
+    await page.waitForURL(/\/issues\//, { timeout: 5000 });
+    expect(page.url()).toContain("/issues/");
+  });
+});
+
 test.describe("Mobile Swipe to Archive @mobile:swipe-archive", () => {
   test("swiping an inbox item past threshold archives it @mobile:swipe-archive", async ({
     authenticatedPage: page,
