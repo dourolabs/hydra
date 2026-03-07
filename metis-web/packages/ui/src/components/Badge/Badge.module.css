@@ -27,6 +27,11 @@
   color: var(--color-status-closed);
 }
 
+.issue_closed {
+  background-color: var(--color-status-issue-closed-bg);
+  color: var(--color-status-issue-closed);
+}
+
 .failed {
   background-color: var(--color-status-failed-bg);
   color: var(--color-status-failed);

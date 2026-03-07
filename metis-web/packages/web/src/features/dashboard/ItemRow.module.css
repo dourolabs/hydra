@@ -42,6 +42,10 @@
   background-color: var(--color-status-closed);
 }
 
+.statusDotIssueClosed {
+  background-color: var(--color-status-issue-closed);
+}
+
 .statusDotFailed {
   background-color: var(--color-status-failed);
 }

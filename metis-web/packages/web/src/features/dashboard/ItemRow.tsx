@@ -19,6 +19,7 @@ const STATUS_DOT_CLASSES: Record<string, string> = {
   open: styles.statusDotOpen,
   "in-progress": styles.statusDotInProgress,
   closed: styles.statusDotClosed,
+  "issue-closed": styles.statusDotIssueClosed,
   failed: styles.statusDotFailed,
   dropped: styles.statusDotDropped,
   blocked: styles.statusDotBlocked,
