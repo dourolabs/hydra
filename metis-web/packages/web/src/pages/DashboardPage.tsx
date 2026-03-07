@@ -9,6 +9,7 @@ import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/I
 import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
 import {
   useTransitiveWorkItems,
+  findTransitiveChildren,
 } from "../features/dashboard/useTransitiveWorkItems";
 import { computeIsActiveMap, countNeedsAttentionBadge, type ChildStatus } from "../features/dashboard/computeIssueProgress";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
@@ -118,30 +119,60 @@ export function DashboardPage() {
   }, [issues, isActiveMap, username]);
 
   const workItems = useMemo(() => {
+    // Helper: given matching issue IDs, collect all their transitive descendants
+    // and return items that are either matching issues or artifacts from those descendants.
+    const filterWithDescendantArtifacts = (
+      matchingIssueIds: string[],
+    ) => {
+      const descendantIds = new Set<string>();
+      for (const id of matchingIssueIds) {
+        for (const descId of findTransitiveChildren(id, issues ?? [])) {
+          descendantIds.add(descId);
+        }
+      }
+      const matchingSet = new Set(matchingIssueIds);
+      return allWorkItems.filter((item) => {
+        if (item.kind === "issue") {
+          return matchingSet.has(item.id);
+        }
+        // For artifacts, include if their source issue is a descendant
+        return descendantIds.has(item.sourceIssueId);
+      });
+    };
+
     if (isLabelFilter) {
       const labelId = filterRootId!.slice(LABEL_FILTER_PREFIX.length);
-      return allWorkItems.filter(
-        (item) =>
-          item.kind === "issue" &&
-          item.data.issue.labels?.some((l: { label_id: string }) => l.label_id === labelId),
-      );
+      const matchingIds = allWorkItems
+        .filter(
+          (item) =>
+            item.kind === "issue" &&
+            item.data.issue.labels?.some((l: { label_id: string }) => l.label_id === labelId),
+        )
+        .map((item) => item.id);
+      return filterWithDescendantArtifacts(matchingIds);
     }
     if (isMyIssuesFilter) {
-      return allWorkItems.filter(
-        (item) =>
-          item.kind === "issue" &&
-          item.data.issue.creator === username,
-      );
+      const matchingIds = allWorkItems
+        .filter(
+          (item) =>
+            item.kind === "issue" &&
+            item.data.issue.creator === username,
+        )
+        .map((item) => item.id);
+      return filterWithDescendantArtifacts(matchingIds);
     }
     if (filterRootId !== "inbox") return allWorkItems;
     if (!inboxLabel) return [];
-    return allWorkItems.filter(
-      (item) =>
-        item.kind === "issue" &&
-        item.data.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) &&
-        (item.data.issue.creator === username || item.data.issue.assignee === username),
-    );
-  }, [filterRootId, isLabelFilter, isMyIssuesFilter, allWorkItems, username, inboxLabel]);
+    const matchingIds = allWorkItems
+      .filter(
+        (item) =>
+          item.kind === "issue" &&
+          item.data.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) &&
+          (item.data.issue.creator === username || item.data.issue.assignee === username),
+      )
+      .map((item) => item.id);
+    return filterWithDescendantArtifacts(matchingIds);
+  }, [filterRootId, isLabelFilter, isMyIssuesFilter, allWorkItems, username, inboxLabel, issues]);
 
   useEffect(() => {
     if (!searchParams.has("selected")) {

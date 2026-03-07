@@ -26,6 +26,7 @@ export type WorkItem =
       data: PatchSummaryRecord;
       lastUpdated: string;
       isTerminal: boolean;
+      sourceIssueId: string;
     }
   | {
       kind: "document";
@@ -33,6 +34,7 @@ export type WorkItem =
       data: DocumentSummaryRecord;
       lastUpdated: string;
       isTerminal: boolean;
+      sourceIssueId: string;
     };
 
 // ---------------------------------------------------------------------------
@@ -173,6 +175,30 @@ export function buildWorkItems(
 ): WorkItem[] {
   const items: WorkItem[] = [];
 
+  // Build reverse mapping: patchId -> issueId
+  const patchToIssue = new Map<string, string>();
+  for (const issueId of issueIds) {
+    const issue = issueMap.get(issueId);
+    if (!issue) continue;
+    for (const patchId of issue.issue.patches) {
+      if (!patchToIssue.has(patchId)) {
+        patchToIssue.set(patchId, issueId);
+      }
+    }
+  }
+
+  // Build reverse mapping: document path -> issueId
+  const docPathToIssue = new Map<string, string>();
+  for (const issueId of issueIds) {
+    const issue = issueMap.get(issueId);
+    if (!issue) continue;
+    for (const path of extractDocumentPaths(issue.issue.description)) {
+      if (!docPathToIssue.has(path)) {
+        docPathToIssue.set(path, issueId);
+      }
+    }
+  }
+
   // Issue work items
   for (const issueId of issueIds) {
     const issue = issueMap.get(issueId);
@@ -194,6 +220,7 @@ export function buildWorkItems(
       data: patch,
       lastUpdated: patch.timestamp,
       isTerminal: TERMINAL_PATCH_STATUSES.has(patch.patch.status),
+      sourceIssueId: patchToIssue.get(patch.patch_id) ?? "",
     });
   }
 
@@ -207,6 +234,7 @@ export function buildWorkItems(
         data: doc,
         lastUpdated: doc.timestamp,
         isTerminal: false, // documents are never terminal
+        sourceIssueId: docPathToIssue.get(doc.document.path) ?? "",
       });
     }
   }
