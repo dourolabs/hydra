@@ -77,9 +77,12 @@
   animation: pulse 2s ease-in-out infinite;
 }
 
-.attentionIcon {
-  display: block;
-  flex-shrink: 0;
+.statusDotAttention {
+  background-color: var(--color-status-rejected);
+}
+
+.rowAttention {
+  border-left: 3px solid var(--color-status-rejected);
 }
 
 .icon {
