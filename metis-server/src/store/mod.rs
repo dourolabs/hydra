@@ -31,6 +31,7 @@ mod issue_graph;
 mod memory_store;
 pub mod migration;
 pub mod postgres_v2;
+pub mod sqlite_store;
 
 pub use crate::domain::jobs::Task;
 pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
