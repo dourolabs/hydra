@@ -1185,7 +1185,7 @@ impl Store for SqliteStore {
         &self,
         _label_id: &LabelId,
         _object_id: &MetisId,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         Err(StoreError::Internal(
             "SQLite label associations not yet implemented".to_string(),
         ))
@@ -1195,8 +1195,8 @@ impl Store for SqliteStore {
         &self,
         _label_id: &LabelId,
         _object_id: &MetisId,
-    ) -> Result<(), StoreError> {
-        Ok(())
+    ) -> Result<bool, StoreError> {
+        Ok(false)
     }
 
     async fn set_user_secret(
