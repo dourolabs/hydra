@@ -5,8 +5,10 @@ use std::collections::HashMap;
 use crate::{domain::actors::Actor, store::StoreError};
 
 mod kubernetes_job_engine;
+mod local_docker_job_engine;
 
 pub use kubernetes_job_engine::KubernetesJobEngine;
+pub use local_docker_job_engine::LocalDockerJobEngine;
 pub use metis_common::TaskId;
 
 /// Represents the lifecycle state of a Metis job.
@@ -63,6 +65,8 @@ pub enum JobEngineError {
     AlreadyExists(TaskId),
     #[error("Kubernetes API error: {0}")]
     Kubernetes(#[from] kube::Error),
+    #[error("Docker error: {0}")]
+    Docker(#[from] bollard::errors::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Store error: {0}")]
