@@ -17,7 +17,7 @@ test.describe("Mobile Swipe to Archive @mobile:swipe-archive", () => {
     await expect(row.getByText("Archive")).toBeAttached();
 
     // Get the swipe content element (second child div of the row)
-    const swipeContent = row.locator("> div:nth-child(2)");
+    const swipeContent = row.locator('[data-testid="swipe-content"]');
     const box = await swipeContent.boundingBox();
     expect(box).toBeTruthy();
 
