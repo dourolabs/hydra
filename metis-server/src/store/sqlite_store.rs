@@ -3425,7 +3425,7 @@ mod tests {
     }
 
     /// Patch with every optional field set so serialization round-trip can assert full equality.
-    fn sample_patch_all_fields() -> Patch {
+    fn sample_patch_all_fields(created_by: Option<TaskId>) -> Patch {
         use crate::domain::patches::GitOid;
         use std::str::FromStr;
 
@@ -3437,7 +3437,7 @@ mod tests {
             "full diff".to_string(),
             PatchStatus::Open,
             true,
-            None,
+            created_by,
             Username::from("test-creator"),
             vec![Review::new(
                 "looks good".to_string(),
@@ -3466,7 +3466,8 @@ mod tests {
     #[tokio::test]
     async fn patch_serialization_round_trip_all_fields() {
         let store = create_test_store().await;
-        let patch = sample_patch_all_fields();
+        let task_id = TaskId::new();
+        let patch = sample_patch_all_fields(Some(task_id));
 
         let (patch_id, _) = store
             .add_patch(patch.clone(), &ActorRef::test())
@@ -3484,11 +3485,8 @@ mod tests {
     async fn list_patches_text_search_matches_github_fields() {
         let store = create_test_store().await;
 
-        let patch = sample_patch_all_fields();
-        store
-            .add_patch(patch, &ActorRef::test())
-            .await
-            .unwrap();
+        let patch = sample_patch_all_fields(None);
+        store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         // Search by github owner
         let mut query = SearchPatchesQuery::default();
