@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
-import { useIssues, buildIssueTree } from "../features/issues/useIssues";
+import { useIssues } from "../features/issues/useIssues";
 import { useAllJobs } from "../features/jobs/useAllJobs";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
@@ -48,21 +48,6 @@ export function DashboardPage() {
 
   const username = user ? actorDisplayName(user.actor) : "";
   const { data: inboxLabel } = useInboxLabel();
-
-  const roots = useMemo(() => {
-    if (!issues) return [];
-    const tree = buildIssueTree(issues);
-    return tree
-      .filter(
-        (root) =>
-          !root.hardBlocked && root.issue.issue.creator === username,
-      )
-      .sort(
-        (a, b) =>
-          new Date(b.issue.creation_time).getTime() -
-          new Date(a.issue.creation_time).getTime(),
-      );
-  }, [issues, username]);
 
   const assignees = useMemo(() => {
     if (!issues) return [];
@@ -204,14 +189,12 @@ export function DashboardPage() {
     <div className={styles.page}>
       <div className={styles.dashboardRow}>
         <IssueFilterSidebar
-          roots={roots}
           allIssues={issues ?? []}
           activeFilter={filterRootId}
           onFilterChange={handleFilterChange}
           collapsed={sidebarCollapsed}
           drawerOpen={drawerOpen}
           onDrawerClose={handleDrawerClose}
-          jobsByIssue={jobsByIssue ?? new Map()}
           isActiveMap={isActiveMap}
           username={username}
           inboxCount={inboxCount}
