@@ -972,24 +972,30 @@ impl StoreWithEvents {
         &self,
         label_id: &LabelId,
         object_id: &MetisId,
-    ) -> Result<(), StoreError> {
-        self.inner
+    ) -> Result<bool, StoreError> {
+        let changed = self
+            .inner
             .add_label_association(label_id, object_id)
             .await?;
-        self.emit_entity_updated_on_label_change(object_id).await;
-        Ok(())
+        if changed {
+            self.emit_entity_updated_on_label_change(object_id).await;
+        }
+        Ok(changed)
     }
 
     pub async fn remove_label_association(
         &self,
         label_id: &LabelId,
         object_id: &MetisId,
-    ) -> Result<(), StoreError> {
-        self.inner
+    ) -> Result<bool, StoreError> {
+        let changed = self
+            .inner
             .remove_label_association(label_id, object_id)
             .await?;
-        self.emit_entity_updated_on_label_change(object_id).await;
-        Ok(())
+        if changed {
+            self.emit_entity_updated_on_label_change(object_id).await;
+        }
+        Ok(changed)
     }
 
     // ---- User secret mutations ----
@@ -2050,6 +2056,87 @@ mod tests {
             }
             other => panic!("expected IssueUpdated, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn add_label_association_twice_emits_only_one_event() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue = dummy_issue();
+        let (issue_id, _) = store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap(); // consume IssueCreated
+
+        let label = crate::domain::labels::Label::new(
+            "bug".to_string(),
+            "#e74c3c".parse().unwrap(),
+            true,
+            false,
+        );
+        let label_id = inner.add_label(label).await.unwrap();
+
+        let object_id = MetisId::from(issue_id.clone());
+
+        // First add should return true and emit an event
+        let changed = store
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+        assert!(changed);
+        let event = rx.recv().await.expect("should receive IssueUpdated");
+        assert!(matches!(event, ServerEvent::IssueUpdated { .. }));
+
+        // Second add (duplicate) should return false and NOT emit an event
+        let changed = store
+            .add_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+        assert!(!changed);
+        assert!(
+            rx.try_recv().is_err(),
+            "no event should be emitted for duplicate add"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_nonexistent_label_association_does_not_emit_event() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue = dummy_issue();
+        let (issue_id, _) = store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap(); // consume IssueCreated
+
+        let label = crate::domain::labels::Label::new(
+            "bug".to_string(),
+            "#e74c3c".parse().unwrap(),
+            true,
+            false,
+        );
+        let label_id = inner.add_label(label).await.unwrap();
+
+        let object_id = MetisId::from(issue_id.clone());
+
+        // Removing a label that was never added should return false and not emit
+        let changed = store
+            .remove_label_association(&label_id, &object_id)
+            .await
+            .unwrap();
+        assert!(!changed);
+        assert!(
+            rx.try_recv().is_err(),
+            "no event should be emitted for no-op remove"
+        );
     }
 
     #[tokio::test]

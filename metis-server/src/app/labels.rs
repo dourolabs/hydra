@@ -176,7 +176,10 @@ impl AppState {
         label_id: &LabelId,
         object_id: &MetisId,
     ) -> Result<(), StoreError> {
-        self.store.add_label_association(label_id, object_id).await
+        self.store
+            .add_label_association(label_id, object_id)
+            .await?;
+        Ok(())
     }
 
     pub async fn remove_label_association(
@@ -186,7 +189,8 @@ impl AppState {
     ) -> Result<(), StoreError> {
         self.store
             .remove_label_association(label_id, object_id)
-            .await
+            .await?;
+        Ok(())
     }
 
     pub async fn get_labels_for_object(

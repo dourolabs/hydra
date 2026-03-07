@@ -514,7 +514,7 @@ impl Store for FailingStore {
         &self,
         _label_id: &LabelId,
         _object_id: &MetisId,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         fail()
     }
 
@@ -522,7 +522,7 @@ impl Store for FailingStore {
         &self,
         _label_id: &LabelId,
         _object_id: &MetisId,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         fail()
     }
 

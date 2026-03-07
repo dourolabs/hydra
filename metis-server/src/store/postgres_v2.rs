@@ -3768,38 +3768,38 @@ impl Store for PostgresStoreV2 {
         &self,
         label_id: &LabelId,
         object_id: &MetisId,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         let object_kind = super::object_kind_from_id(object_id)?;
         let sql = format!(
             "INSERT INTO {TABLE_LABEL_ASSOCIATIONS} (label_id, object_id, object_kind) \
              VALUES ($1, $2, $3) \
              ON CONFLICT (label_id, object_id) DO NOTHING"
         );
-        sqlx::query(&sql)
+        let result = sqlx::query(&sql)
             .bind(label_id.as_ref())
             .bind(object_id.as_ref())
             .bind(object_kind)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     async fn remove_label_association(
         &self,
         label_id: &LabelId,
         object_id: &MetisId,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         let sql = format!(
             "DELETE FROM {TABLE_LABEL_ASSOCIATIONS} WHERE label_id = $1 AND object_id = $2"
         );
-        sqlx::query(&sql)
+        let result = sqlx::query(&sql)
             .bind(label_id.as_ref())
             .bind(object_id.as_ref())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     // ---- User secret mutations ----
