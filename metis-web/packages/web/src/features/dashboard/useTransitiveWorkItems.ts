@@ -26,7 +26,7 @@ export type WorkItem =
       data: PatchSummaryRecord;
       lastUpdated: string;
       isTerminal: boolean;
-      sourceIssueId: string;
+      sourceIssueId: string | undefined;
     }
   | {
       kind: "document";
@@ -34,7 +34,7 @@ export type WorkItem =
       data: DocumentSummaryRecord;
       lastUpdated: string;
       isTerminal: boolean;
-      sourceIssueId: string;
+      sourceIssueId: string | undefined;
     };
 
 // ---------------------------------------------------------------------------
@@ -220,7 +220,7 @@ export function buildWorkItems(
       data: patch,
       lastUpdated: patch.timestamp,
       isTerminal: TERMINAL_PATCH_STATUSES.has(patch.patch.status),
-      sourceIssueId: patchToIssue.get(patch.patch_id) ?? "",
+      sourceIssueId: patchToIssue.get(patch.patch_id),
     });
   }
 
@@ -234,7 +234,7 @@ export function buildWorkItems(
         data: doc,
         lastUpdated: doc.timestamp,
         isTerminal: false, // documents are never terminal
-        sourceIssueId: docPathToIssue.get(doc.document.path) ?? "",
+        sourceIssueId: docPathToIssue.get(doc.document.path),
       });
     }
   }

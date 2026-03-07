@@ -37,8 +37,9 @@ test.describe("Patches @patches:view-detail @patches:navigate", () => {
     // Click on the Patches tab
     await page.getByRole("tab", { name: "Patches" }).click();
 
-    // Click the patch link to navigate to it
-    await page.getByText("p-seed00001").click();
+    // Click the patch link to navigate to it (use first() since the patch
+    // appears in both PatchPreview and the Patches tab list)
+    await page.getByText("p-seed00001").first().click();
     await expect(page).toHaveURL(/\/patches\/p-seed00001/);
     await expect(
       page.getByRole("heading", { name: "Add OAuth2 provider integration" })
