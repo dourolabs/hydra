@@ -1,7 +1,7 @@
 use super::resolve_username;
 use crate::{
     app::AppState,
-    domain::{actors::Actor, secrets::ALLOWED_SECRET_NAMES, users::Username},
+    domain::{actors::Actor, secrets::validate_secret_name, users::Username},
     store::ReadOnlyStore,
 };
 use axum::{
@@ -56,10 +56,9 @@ pub async fn set_secret(
     let username = resolve_username(&actor, &username)?;
     authorize(&actor, &username)?;
 
-    if !ALLOWED_SECRET_NAMES.contains(&name.as_str()) {
+    if let Err(msg) = validate_secret_name(&name) {
         return Err(ApiError::bad_request(format!(
-            "unknown secret name '{name}'; allowed names: {}",
-            ALLOWED_SECRET_NAMES.join(", ")
+            "invalid secret name '{name}': {msg}"
         )));
     }
 
@@ -95,10 +94,9 @@ pub async fn delete_secret(
     let username = resolve_username(&actor, &username)?;
     authorize(&actor, &username)?;
 
-    if !ALLOWED_SECRET_NAMES.contains(&name.as_str()) {
+    if let Err(msg) = validate_secret_name(&name) {
         return Err(ApiError::bad_request(format!(
-            "unknown secret name '{name}'; allowed names: {}",
-            ALLOWED_SECRET_NAMES.join(", ")
+            "invalid secret name '{name}': {msg}"
         )));
     }
 

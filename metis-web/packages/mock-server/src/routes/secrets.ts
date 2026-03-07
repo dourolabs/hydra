@@ -2,13 +2,17 @@ import { Hono } from "hono";
 import type { ListSecretsResponse, SetSecretRequest } from "@metis/api";
 import { DEV_USERNAME } from "../auth.js";
 
-const ALLOWED_SECRET_NAMES = [
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "CLAUDE_CODE_OAUTH_TOKEN",
-  "GITHUB_TOKEN",
-  "GITHUB_REFRESH_TOKEN",
-];
+const SECRET_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
+
+function validateSecretName(name: string): string | null {
+  if (!SECRET_NAME_PATTERN.test(name)) {
+    return "secret name must be 1-128 chars, start with uppercase letter, and contain only uppercase letters, digits, and underscores";
+  }
+  if (name.startsWith("METIS_")) {
+    return "secret name must not start with METIS_ (reserved prefix)";
+  }
+  return null;
+}
 
 // In-memory store of configured secret names per user
 const userSecrets = new Map<string, Set<string>>();
@@ -46,9 +50,10 @@ export function createSecretRoutes(): Hono {
     const username = resolveUsername(c.req.param("username"));
     const name = c.req.param("name");
 
-    if (!ALLOWED_SECRET_NAMES.includes(name)) {
+    const validationError = validateSecretName(name);
+    if (validationError) {
       return c.json(
-        { error: `unknown secret name '${name}'; allowed names: ${ALLOWED_SECRET_NAMES.join(", ")}` },
+        { error: `invalid secret name '${name}': ${validationError}` },
         400,
       );
     }
@@ -64,9 +69,10 @@ export function createSecretRoutes(): Hono {
     const username = resolveUsername(c.req.param("username"));
     const name = c.req.param("name");
 
-    if (!ALLOWED_SECRET_NAMES.includes(name)) {
+    const validationError = validateSecretName(name);
+    if (validationError) {
       return c.json(
-        { error: `unknown secret name '${name}'; allowed names: ${ALLOWED_SECRET_NAMES.join(", ")}` },
+        { error: `invalid secret name '${name}': ${validationError}` },
         400,
       );
     }

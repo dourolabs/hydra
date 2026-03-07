@@ -3,21 +3,40 @@ use aes_gcm::{
     aead::{Aead, OsRng, rand_core::RngCore},
 };
 
-/// Known secret names that users can store.
+/// Well-known secret names used for auto-injection logic.
 pub const SECRET_OPENAI_API_KEY: &str = "OPENAI_API_KEY";
 pub const SECRET_ANTHROPIC_API_KEY: &str = "ANTHROPIC_API_KEY";
 pub const SECRET_CLAUDE_CODE_OAUTH_TOKEN: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 pub const SECRET_GITHUB_TOKEN: &str = "GITHUB_TOKEN";
 pub const SECRET_GITHUB_REFRESH_TOKEN: &str = "GITHUB_REFRESH_TOKEN";
 
-/// All allowed secret names.
-pub const ALLOWED_SECRET_NAMES: &[&str] = &[
-    SECRET_OPENAI_API_KEY,
-    SECRET_ANTHROPIC_API_KEY,
-    SECRET_CLAUDE_CODE_OAUTH_TOKEN,
-    SECRET_GITHUB_TOKEN,
-    SECRET_GITHUB_REFRESH_TOKEN,
-];
+/// Validates a user-provided secret name.
+///
+/// Rules:
+/// - 1 to 128 characters
+/// - Only uppercase ASCII letters, digits, and underscores
+/// - Must start with an uppercase letter
+/// - Must not start with `METIS_` (reserved for system env vars)
+pub fn validate_secret_name(name: &str) -> Result<(), String> {
+    if name.is_empty() || name.len() > 128 {
+        return Err("secret name must be between 1 and 128 characters".to_string());
+    }
+    if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+        return Err("secret name must start with an uppercase letter".to_string());
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        return Err(
+            "secret name must contain only uppercase letters, digits, and underscores".to_string(),
+        );
+    }
+    if name.starts_with("METIS_") {
+        return Err("secret name must not start with METIS_ (reserved prefix)".to_string());
+    }
+    Ok(())
+}
 
 const NONCE_SIZE: usize = 12;
 
@@ -184,5 +203,51 @@ mod tests {
         let encrypted = manager.encrypt(plaintext).unwrap();
         let decrypted = manager.decrypt(&encrypted).unwrap();
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn validate_secret_name_valid() {
+        assert!(validate_secret_name("OPENAI_API_KEY").is_ok());
+        assert!(validate_secret_name("MY_SECRET").is_ok());
+        assert!(validate_secret_name("A").is_ok());
+        assert!(validate_secret_name("SECRET123").is_ok());
+        assert!(validate_secret_name("A_B_C_1_2_3").is_ok());
+    }
+
+    #[test]
+    fn validate_secret_name_empty() {
+        assert!(validate_secret_name("").is_err());
+    }
+
+    #[test]
+    fn validate_secret_name_too_long() {
+        let long_name = "A".repeat(129);
+        assert!(validate_secret_name(&long_name).is_err());
+        // Exactly 128 should be fine
+        let max_name = "A".repeat(128);
+        assert!(validate_secret_name(&max_name).is_ok());
+    }
+
+    #[test]
+    fn validate_secret_name_must_start_with_uppercase() {
+        assert!(validate_secret_name("1SECRET").is_err());
+        assert!(validate_secret_name("_SECRET").is_err());
+        assert!(validate_secret_name("aSecret").is_err());
+    }
+
+    #[test]
+    fn validate_secret_name_invalid_chars() {
+        assert!(validate_secret_name("MY-SECRET").is_err());
+        assert!(validate_secret_name("MY SECRET").is_err());
+        assert!(validate_secret_name("my_secret").is_err());
+        assert!(validate_secret_name("Secret").is_err());
+    }
+
+    #[test]
+    fn validate_secret_name_metis_prefix_reserved() {
+        assert!(validate_secret_name("METIS_TOKEN").is_err());
+        assert!(validate_secret_name("METIS_SERVER_URL").is_err());
+        // METIS without underscore is fine
+        assert!(validate_secret_name("METISKEY").is_ok());
     }
 }
