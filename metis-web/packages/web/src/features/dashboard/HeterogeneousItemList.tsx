@@ -121,7 +121,6 @@ export function HeterogeneousItemList({
         <SearchBox
           value={searchValue}
           onChange={onSearchChange}
-          onSettingsClick={() => {}}
           placeholder="Search issues..."
           leftElement={hamburgerButton}
         />
