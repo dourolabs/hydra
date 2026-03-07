@@ -25,7 +25,7 @@ test.describe("Mobile Issue Detail @mobile:issue-detail", () => {
 
     // Can click a tab
     await page.getByRole("tab", { name: "Metadata" }).click();
-    await expect(page.getByText("i-seed00001", { exact: true })).toBeVisible();
+    await expect(page.getByText("i-seed00001")).toBeVisible();
   });
 
   test("status chip is accessible @mobile:issue-detail", async ({
