@@ -201,6 +201,7 @@ function makePatchWorkItem(
     } as PatchSummaryRecord,
     lastUpdated,
     isTerminal: false,
+    sourceIssueId: undefined,
   };
 }
 
