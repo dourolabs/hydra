@@ -75,7 +75,7 @@ export function DashboardPage() {
     return countNeedsAttentionBadge(
       issues,
       (issue) =>
-        issue.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) &&
+        (issue.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) ?? false) &&
         issue.issue.assignee === username,
       isActiveMap,
     );
