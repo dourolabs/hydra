@@ -93,6 +93,117 @@ test.describe("Creating an issue with labels via LabelPicker @labels:create-with
   });
 });
 
+test.describe("Hidden labels are excluded from all user-facing label UI @labels:hidden", () => {
+  // i-seed00008 ("Add dark mode support") has visible "platform-v2" and hidden "inbox" labels
+  test("hidden labels do not appear in issue detail label display @labels:hidden", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/issues/i-seed00008");
+    await expect(
+      page.getByRole("heading", { name: "Add dark mode support" })
+    ).toBeVisible();
+
+    const labelSection = page.getByTestId("label-editor");
+    await expect(labelSection.getByText("platform-v2")).toBeVisible();
+    await expect(labelSection.getByText("inbox")).not.toBeVisible();
+  });
+
+  test("hidden labels do not appear as selected chips in edit mode @labels:hidden", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/issues/i-seed00008");
+    await expect(
+      page.getByRole("heading", { name: "Add dark mode support" })
+    ).toBeVisible();
+
+    // Enter edit mode
+    await page.getByRole("button", { name: "Edit labels" }).click();
+
+    // The editable area should show platform-v2 but NOT inbox
+    const editorArea = page.getByText("Labels", { exact: true }).locator("..").locator("..");
+    await expect(editorArea.getByText("platform-v2")).toBeVisible();
+    await expect(editorArea.getByText("inbox")).not.toBeVisible();
+  });
+
+  test("saving labels in edit mode preserves hidden labels @labels:hidden", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/issues/i-seed00008");
+    await expect(
+      page.getByRole("heading", { name: "Add dark mode support" })
+    ).toBeVisible();
+
+    // Enter edit mode
+    await page.getByRole("button", { name: "Edit labels" }).click();
+
+    // Save without changes
+    await page.getByRole("button", { name: "Save" }).click();
+
+    // After saving, the visible label should still be displayed
+    const labelSection = page.getByTestId("label-editor");
+    await expect(labelSection.getByText("platform-v2")).toBeVisible();
+    // Hidden "inbox" label should still not be visible (but preserved on the issue)
+    await expect(labelSection.getByText("inbox")).not.toBeVisible();
+
+    // Re-enter edit mode to confirm visible labels are still correct
+    await page.getByRole("button", { name: "Edit labels" }).click();
+    const editorArea = page.getByText("Labels", { exact: true }).locator("..").locator("..");
+    await expect(editorArea.getByText("platform-v2")).toBeVisible();
+    await expect(editorArea.getByText("inbox")).not.toBeVisible();
+  });
+
+  test("hidden labels do not appear in dashboard issue rows @labels:hidden", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/?selected=everything");
+
+    // Use CSS class selector to target ItemRow elements specifically (not sidebar items)
+    const darkModeRow = page.locator('li[class*="row"]').filter({
+      hasText: "Add dark mode support",
+    });
+    await expect(darkModeRow).toBeVisible();
+    // i-seed00008 has visible "platform-v2" and hidden "inbox" labels
+    await expect(darkModeRow.getByText("platform-v2")).toBeVisible();
+    await expect(darkModeRow.getByText("inbox")).not.toBeVisible();
+  });
+
+  test("hidden labels do not appear in label picker dropdown @labels:hidden", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/?selected=everything");
+    await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
+
+    // Open the create issue modal
+    await page.getByRole("button", { name: "+ Create Issue" }).click();
+    const modal = page.getByRole("dialog");
+    await expect(modal).toBeVisible();
+
+    // Open the label picker and search for "inbox"
+    const labelInput = modal.getByPlaceholder("Add labels...");
+    await labelInput.click();
+    await labelInput.fill("inbox");
+
+    // Should show "Create" option but not an existing "inbox" label
+    const inboxOption = modal.locator("li").filter({ hasText: /^inbox$/ });
+    await expect(inboxOption).not.toBeVisible();
+  });
+
+  test("hidden labels do not appear in sidebar label filter section @labels:hidden", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/?selected=everything");
+    await expect(page.getByText("Platform v2.0 Migration")).toBeVisible();
+
+    // The sidebar Labels section should list visible labels but not "inbox"
+    // Use exact match to distinguish from the "Inbox" navigation item
+    const sidebar = page.locator('[class*="sidebar"]');
+    await expect(sidebar.getByText("Labels")).toBeVisible();
+    await expect(sidebar.getByText("platform-v2")).toBeVisible();
+    // The label section header "Labels" is visible, but "inbox" as a label entry should not be
+    await expect(sidebar.getByText("inbox", { exact: true })).not.toBeVisible();
+  });
+});
+
 test.describe("Newly created label appears in sidebar @labels:sidebar-create", () => {
   test("label created during issue creation shows in sidebar @labels:sidebar-create", async ({
     authenticatedPage: page,
