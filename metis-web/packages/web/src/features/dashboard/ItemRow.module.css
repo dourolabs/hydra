@@ -78,11 +78,11 @@
 }
 
 .statusDotAttention {
-  background-color: var(--color-status-rejected);
+  background-color: var(--color-status-attention);
 }
 
 .rowAttention {
-  box-shadow: inset 3px 0 0 var(--color-status-rejected);
+  box-shadow: inset 3px 0 0 var(--color-status-attention);
 }
 
 .icon {

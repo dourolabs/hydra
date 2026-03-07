@@ -39,7 +39,7 @@
 }
 
 .statusBoxAttention {
-  background: var(--color-status-blocked);
+  background: var(--color-status-attention);
 }
 
 .statusBoxActive {
