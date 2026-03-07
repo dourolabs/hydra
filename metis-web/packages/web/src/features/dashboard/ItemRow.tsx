@@ -38,6 +38,23 @@ function PatchIcon() {
   );
 }
 
+function AttentionIcon() {
+  return (
+    <svg
+      className={styles.attentionIcon}
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="var(--color-status-rejected)"
+      stroke="none"
+    >
+      <path d="M7.134 1.5a1 1 0 011.732 0l6.062 10.5A1 1 0 0114.062 13.5H1.938a1 1 0 01-.866-1.5L7.134 1.5z" />
+      <rect x="7.25" y="5.5" width="1.5" height="4" rx="0.75" fill="var(--color-bg-primary)" />
+      <circle cx="8" cy="11" r="0.85" fill="var(--color-bg-primary)" />
+    </svg>
+  );
+}
+
 function DocumentIcon() {
   return (
     <svg
@@ -266,9 +283,13 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
       tabIndex={0}
     >
       {badgeStatus && (
-        <span
-          className={`${styles.statusDot} ${hasRunningJob ? styles.statusDotPulsing : isAssignedToMe ? styles.statusDotAttention : (STATUS_DOT_CLASSES[badgeStatus] ?? "")}`}
-        />
+        hasRunningJob ? (
+          <span className={`${styles.statusDot} ${styles.statusDotPulsing}`} />
+        ) : isAssignedToMe ? (
+          <AttentionIcon />
+        ) : (
+          <span className={`${styles.statusDot} ${STATUS_DOT_CLASSES[badgeStatus] ?? ""}`} />
+        )
       )}
       {Icon && (
         <span className={styles.icon}>

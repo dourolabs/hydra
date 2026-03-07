@@ -72,8 +72,9 @@
   animation: pulse 2s ease-in-out infinite;
 }
 
-.statusDotAttention {
-  background-color: var(--color-status-rejected);
+.attentionIcon {
+  display: block;
+  flex-shrink: 0;
 }
 
 .icon {
