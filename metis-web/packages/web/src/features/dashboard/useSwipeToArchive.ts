@@ -17,7 +17,6 @@ export function useSwipeToArchive(
   const startXRef = useRef(0);
   const currentXRef = useRef(0);
   const swipingRef = useRef(false);
-  const committedRef = useRef(false);
   const onArchiveRef = useRef(onArchive);
   onArchiveRef.current = onArchive;
 
@@ -29,7 +28,6 @@ export function useSwipeToArchive(
       startXRef.current = e.touches[0].clientX;
       currentXRef.current = 0;
       swipingRef.current = true;
-      committedRef.current = false;
       const el = ref.current;
       if (el) {
         el.classList.remove(styles.swipeCommit, styles.swipeSnapBack);
@@ -63,7 +61,6 @@ export function useSwipeToArchive(
     el.style.removeProperty("--swipe-x");
 
     if (Math.abs(delta) >= commitThreshold) {
-      committedRef.current = true;
       el.classList.add(styles.swipeCommit);
 
       let fired = false;
