@@ -576,4 +576,13 @@ describe("countNeedsAttentionBadge", () => {
     ];
     expect(countNeedsAttentionBadge(issues, assignedToAlice)).toBe(1);
   });
+
+  it("excludes rejected issues from attention count", () => {
+    const issues = [
+      makeIssueRecord({ issue_id: "i-1", status: "rejected", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-2", status: "open", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-3", status: "in-progress", assignee: "alice" }),
+    ];
+    expect(countNeedsAttentionBadge(issues, assignedToAlice)).toBe(2);
+  });
 });
