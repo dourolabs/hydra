@@ -7,7 +7,10 @@ pub async fn get_github_app_client_id(
     State(state): State<AppState>,
 ) -> Result<Json<GithubAppClientIdResponse>, ApiError> {
     info!("get_github_app_client_id invoked");
-    let client_id = state.config.github_app.client_id().to_string();
+    let github_app = state.config.github_app.as_ref().ok_or_else(|| {
+        ApiError::bad_request("GitHub app not configured (server is in local auth mode)")
+    })?;
+    let client_id = github_app.client_id().to_string();
 
     Ok(Json(GithubAppClientIdResponse { client_id }))
 }

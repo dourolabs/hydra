@@ -9,6 +9,7 @@ mod health;
 mod issues;
 mod jobs;
 mod labels;
+mod local_auth;
 mod login;
 pub(crate) mod merge_queues;
 mod messages;

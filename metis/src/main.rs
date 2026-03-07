@@ -210,6 +210,12 @@ async fn resolve_client(
         return MetisClient::new(server_url, token.to_string());
     }
 
+    // Check for a local auth token written by the server in local mode.
+    let local_token_path = config::expand_path(PathBuf::from(constants::DEFAULT_LOCAL_TOKEN_PATH));
+    if let Some(token) = read_token_from_path(&local_token_path)? {
+        return MetisClient::new(server_url, token);
+    }
+
     github_device_flow::login_with_github_device_flow(unauth_client, config_path, server_url).await
 }
 

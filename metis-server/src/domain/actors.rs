@@ -200,9 +200,13 @@ pub async fn get_github_token_for_user(
     )
     .await;
 
-    if !github_token_is_valid(&state.config.github_app, &github_token).await? {
-        let refreshed =
-            refresh_github_token(&state.config.github_app, &github_refresh_token).await?;
+    let github_app = state
+        .config
+        .github_app
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("GitHub app not configured"))?;
+    if !github_token_is_valid(github_app, &github_token).await? {
+        let refreshed = refresh_github_token(github_app, &github_refresh_token).await?;
 
         // Write refreshed tokens to user_secrets (encrypted).
         store_github_token_secrets(

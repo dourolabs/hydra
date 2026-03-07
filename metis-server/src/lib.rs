@@ -18,11 +18,13 @@ mod test;
 
 use crate::app::{AppState, ServiceState};
 use crate::background::start_background_scheduler;
-use crate::config::{AppConfig, GithubAppSection, build_kube_client};
+use crate::config::{AppConfig, AuthMode, GithubAppSection, build_kube_client, expand_path};
+use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::secrets::SecretManager;
+use crate::domain::users::Username;
 use crate::job_engine::KubernetesJobEngine;
 use crate::store::{
-    MemoryStore, Store, migration,
+    MemoryStore, Store, StoreError, migration,
     postgres_v2::{self, PostgresStoreV2},
 };
 use anyhow::Context;
@@ -261,7 +263,13 @@ pub async fn run() -> anyhow::Result<()> {
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
     let service_state = ServiceState::default();
-    let github_app = build_github_app_client(&app_config.github_app)?;
+
+    info!(auth_mode = %app_config.auth_mode, "starting server");
+
+    let github_app = match app_config.github_app.as_ref() {
+        Some(gh) => build_github_app_client(gh)?,
+        None => None,
+    };
 
     // Build Kubernetes client
     let kube_client = build_kube_client(&app_config.kubernetes).await?;
@@ -295,6 +303,11 @@ pub async fn run() -> anyhow::Result<()> {
         }
         None => Arc::new(MemoryStore::new()),
     };
+
+    // In local auth mode, create a default user actor and write its token.
+    if app_config.auth_mode == AuthMode::Local {
+        setup_local_auth(&app_config, store.as_ref()).await?;
+    }
 
     // Create job engine
     let job_engine = KubernetesJobEngine {
@@ -331,6 +344,51 @@ pub async fn run() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 
     run_with_state(state, listener).await
+}
+
+/// Default username for the local single-player actor.
+const LOCAL_ACTOR_USERNAME: &str = "local";
+
+/// Create a default user actor for local auth mode and write its token to a
+/// well-known file path so the CLI can pick it up automatically.
+pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
+    let username = Username::from(LOCAL_ACTOR_USERNAME);
+    let (actor, auth_token) = Actor::new_for_user(username);
+    let system_actor = ActorRef::System {
+        worker_name: "local-auth-setup".into(),
+        on_behalf_of: None,
+    };
+
+    match store.add_actor(actor.clone(), &system_actor).await {
+        Ok(()) => {}
+        Err(StoreError::ActorAlreadyExists(_)) => {
+            store.update_actor(actor.clone(), &system_actor).await?;
+        }
+        Err(err) => return Err(err.into()),
+    }
+
+    let token_path = expand_path(&config.local_token_path);
+    if let Some(parent) = token_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create directory for local token: {}",
+                parent.display()
+            )
+        })?;
+    }
+    std::fs::write(&token_path, &auth_token).with_context(|| {
+        format!(
+            "failed to write local auth token to {}",
+            token_path.display()
+        )
+    })?;
+
+    info!(
+        path = %token_path.display(),
+        "local auth token written"
+    );
+
+    Ok(())
 }
 
 async fn health_check() -> Json<serde_json::Value> {

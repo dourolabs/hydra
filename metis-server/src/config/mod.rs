@@ -7,11 +7,40 @@ use metis_common::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfi
 use octocrab::models::AppId;
 use serde::Deserialize;
 use std::{
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
 };
 
 use crate::policy::config::PolicyConfig;
+
+/// Authentication mode for the server.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMode {
+    /// Local single-player mode: a default user actor is auto-created on
+    /// startup and its token is written to a well-known file path.
+    Local,
+    /// GitHub OAuth mode: users authenticate via the GitHub device flow.
+    Github,
+}
+
+impl Default for AuthMode {
+    fn default() -> Self {
+        Self::Local
+    }
+}
+
+impl fmt::Display for AuthMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Local => write!(f, "local"),
+            Self::Github => write!(f, "github"),
+        }
+    }
+}
+
+/// Default path where the local auth token is written and read.
+pub const DEFAULT_LOCAL_TOKEN_PATH: &str = "~/.local/share/metis/local-token";
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
@@ -21,7 +50,13 @@ pub struct AppConfig {
     pub kubernetes: KubernetesSection,
     #[serde(default)]
     pub database: DatabaseSection,
-    pub github_app: GithubAppSection,
+    #[serde(default)]
+    pub github_app: Option<GithubAppSection>,
+    #[serde(default)]
+    pub auth_mode: AuthMode,
+    /// File path where the local auth token is written in local mode.
+    #[serde(default = "default_local_token_path")]
+    pub local_token_path: String,
     #[serde(default)]
     pub background: BackgroundSection,
     #[serde(default)]
@@ -51,7 +86,15 @@ impl AppConfig {
 
     fn validate(&self) -> Result<()> {
         self.metis.validate()?;
-        self.github_app.validate()?;
+        if self.auth_mode == AuthMode::Github {
+            ensure!(
+                self.github_app.is_some(),
+                "github_app section is required when auth_mode is 'github'"
+            );
+        }
+        if let Some(ref github_app) = self.github_app {
+            github_app.validate()?;
+        }
         self.background.validate()?;
         self.build_cache.validate()?;
         self.validate_policies()
@@ -459,6 +502,10 @@ fn default_namespace() -> String {
     "default".to_string()
 }
 
+fn default_local_token_path() -> String {
+    DEFAULT_LOCAL_TOKEN_PATH.to_string()
+}
+
 pub const DEFAULT_AGENT_MAX_TRIES: i32 = 3;
 pub const DEFAULT_AGENT_MAX_SIMULTANEOUS: i32 = i32::MAX;
 const fn default_min_connections() -> u32 {
@@ -850,6 +897,106 @@ github_app:
             &error,
             "metis.METIS_SECRET_ENCRYPTION_KEY must decode to exactly 32 bytes"
         ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_loads_without_github_app_in_local_mode() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+metis:
+  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+
+auth_mode: local
+
+job:
+  default_image: "metis-worker:latest"
+"#
+            ),
+        )?;
+
+        let config = AppConfig::load(&path)?;
+        assert_eq!(config.auth_mode, AuthMode::Local);
+        assert!(config.github_app.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_defaults_auth_mode_to_local() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+metis:
+  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+
+job:
+  default_image: "metis-worker:latest"
+"#
+            ),
+        )?;
+
+        let config = AppConfig::load(&path)?;
+        assert_eq!(config.auth_mode, AuthMode::Local);
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_rejects_github_mode_without_github_app() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+metis:
+  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+
+auth_mode: github
+
+job:
+  default_image: "metis-worker:latest"
+"#
+            ),
+        )?;
+
+        let error = AppConfig::load(&path).expect_err("expected missing github_app");
+        assert!(error_chain_contains(
+            &error,
+            "github_app section is required when auth_mode is 'github'"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_local_token_path_defaults() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+metis:
+  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+
+job:
+  default_image: "metis-worker:latest"
+"#
+            ),
+        )?;
+
+        let config = AppConfig::load(&path)?;
+        assert_eq!(config.local_token_path, DEFAULT_LOCAL_TOKEN_PATH);
 
         Ok(())
     }

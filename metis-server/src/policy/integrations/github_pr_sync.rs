@@ -132,8 +132,11 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 ))
             })?;
 
+        let github_app = ctx.app_state.config.github_app.as_ref().ok_or_else(|| {
+            AutomationError::Other(anyhow::anyhow!("github_pr_sync: GitHub app not configured"))
+        })?;
         let client = Octocrab::builder()
-            .base_uri(ctx.app_state.config.github_app.api_base_url().to_string())
+            .base_uri(github_app.api_base_url().to_string())
             .map_err(|e| {
                 AutomationError::Other(anyhow::anyhow!(
                     "github_pr_sync: failed to build octocrab client: {e}"
