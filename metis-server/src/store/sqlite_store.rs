@@ -45,6 +45,9 @@ const TABLE_TASKS_V2: &str = "tasks_v2";
 const TABLE_AGENTS: &str = "agents";
 const TABLE_LABELS: &str = "labels";
 const TABLE_LABEL_ASSOCIATIONS: &str = "label_associations";
+const TABLE_NOTIFICATIONS: &str = "notifications";
+const TABLE_MESSAGES_V2: &str = "messages_v2";
+const TABLE_USER_SECRETS: &str = "user_secrets";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
 
@@ -212,6 +215,39 @@ struct LabelRow {
     hidden: bool,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct NotificationRow {
+    id: String,
+    recipient: String,
+    source_actor: Option<String>,
+    object_kind: String,
+    object_id: String,
+    object_version: i64,
+    event_type: String,
+    summary: String,
+    source_issue_id: Option<String>,
+    policy: String,
+    is_read: bool,
+    created_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct MessageRow {
+    id: String,
+    version_number: i64,
+    sender: Option<String>,
+    recipient: String,
+    body: String,
+    is_read: bool,
+    deleted: bool,
+    actor: Option<String>,
+    created_at: String,
+    #[allow(dead_code)]
+    updated_at: String,
+    #[sqlx(default)]
+    creation_time: Option<String>,
 }
 
 fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
@@ -955,6 +991,190 @@ impl SqliteStore {
             patches,
             deleted: row.deleted,
         })
+    }
+
+    // ---- Notification helpers ----
+
+    fn row_to_notification(&self, row: &NotificationRow) -> Result<Notification, StoreError> {
+        let recipient = Actor::parse_name(&row.recipient).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid recipient '{}' stored for notification '{}'",
+                row.recipient, row.id
+            ))
+        })?;
+        let source_actor = row
+            .source_actor
+            .as_deref()
+            .map(|s| {
+                Actor::parse_name(s).map_err(|_| {
+                    StoreError::Internal(format!(
+                        "invalid source_actor '{}' stored for notification '{}'",
+                        s, row.id
+                    ))
+                })
+            })
+            .transpose()?;
+        let object_id = MetisId::from_str(&row.object_id).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid object_id '{}' stored for notification '{}'",
+                row.object_id, row.id
+            ))
+        })?;
+        let source_issue_id = row
+            .source_issue_id
+            .as_deref()
+            .map(|s| {
+                IssueId::from_str(s).map_err(|_| {
+                    StoreError::Internal(format!(
+                        "invalid source_issue_id '{}' stored for notification '{}'",
+                        s, row.id
+                    ))
+                })
+            })
+            .transpose()?;
+        let object_version = VersionNumber::try_from(row.object_version).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid object_version stored for notification '{}'",
+                row.id
+            ))
+        })?;
+        let created_at = parse_sqlite_timestamp(&row.created_at)?;
+
+        Ok(Notification {
+            recipient,
+            source_actor,
+            object_kind: row.object_kind.clone(),
+            object_id,
+            object_version,
+            event_type: row.event_type.clone(),
+            summary: row.summary.clone(),
+            source_issue_id,
+            policy: row.policy.clone(),
+            is_read: row.is_read,
+            created_at,
+        })
+    }
+
+    async fn insert_notification_row(
+        &self,
+        id: &NotificationId,
+        notification: &Notification,
+    ) -> Result<(), StoreError> {
+        let recipient_name = notification.recipient.to_string();
+        let source_actor_name = notification.source_actor.as_ref().map(|a| a.to_string());
+        let object_id_str = notification.object_id.to_string();
+        let source_issue_str = notification.source_issue_id.as_ref().map(|i| i.to_string());
+        let object_version = i64::try_from(notification.object_version).map_err(|_| {
+            StoreError::Internal(format!("object_version overflow for notification '{id}'"))
+        })?;
+        let created_at = notification.created_at.to_rfc3339();
+
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_NOTIFICATIONS} \
+             (id, recipient, source_actor, object_kind, object_id, object_version, \
+              event_type, summary, source_issue_id, policy, is_read, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+        ))
+        .bind(id.as_ref())
+        .bind(&recipient_name)
+        .bind(&source_actor_name)
+        .bind(&notification.object_kind)
+        .bind(&object_id_str)
+        .bind(object_version)
+        .bind(&notification.event_type)
+        .bind(&notification.summary)
+        .bind(&source_issue_str)
+        .bind(&notification.policy)
+        .bind(notification.is_read)
+        .bind(&created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    async fn count_notifications(&self) -> Result<u64, StoreError> {
+        let count =
+            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {TABLE_NOTIFICATIONS}"))
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+        Ok(count as u64)
+    }
+
+    // ---- Message helpers ----
+
+    fn row_to_message(&self, row: &MessageRow) -> Result<Message, StoreError> {
+        let sender = row
+            .sender
+            .as_deref()
+            .map(|s| {
+                Actor::parse_name(s).map_err(|_| {
+                    StoreError::Internal(format!(
+                        "invalid sender '{}' stored for message '{}'",
+                        s, row.id
+                    ))
+                })
+            })
+            .transpose()?;
+        let recipient = Actor::parse_name(&row.recipient).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid recipient '{}' stored for message '{}'",
+                row.recipient, row.id
+            ))
+        })?;
+
+        Ok(Message {
+            sender,
+            recipient,
+            body: row.body.clone(),
+            deleted: row.deleted,
+            is_read: row.is_read,
+        })
+    }
+
+    async fn insert_message_row(
+        &self,
+        id: &MessageId,
+        version_number: VersionNumber,
+        message: &Message,
+        actor: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for message '{id}'"))
+        })?;
+        let sender_name = message.sender.as_ref().map(|s| s.to_string());
+        let recipient_name = message.recipient.to_string();
+
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_MESSAGES_V2} \
+             (id, version_number, sender, recipient, body, is_read, deleted, actor) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+        ))
+        .bind(id.as_ref())
+        .bind(version_number)
+        .bind(&sender_name)
+        .bind(&recipient_name)
+        .bind(&message.body)
+        .bind(message.is_read)
+        .bind(message.deleted)
+        .bind(actor)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    async fn count_distinct_messages(&self) -> Result<u64, StoreError> {
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_MESSAGES_V2}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(count as u64)
     }
 }
 
@@ -2202,29 +2422,226 @@ impl ReadOnlyStore for SqliteStore {
     }
 
     async fn get_notification(&self, id: &NotificationId) -> Result<Notification, StoreError> {
-        Err(StoreError::NotificationNotFound(id.clone()))
+        let sql = format!(
+            "SELECT id, recipient, source_actor, object_kind, object_id, object_version, \
+             event_type, summary, source_issue_id, policy, is_read, created_at \
+             FROM {TABLE_NOTIFICATIONS} WHERE id = ?1"
+        );
+        let row = sqlx::query_as::<_, NotificationRow>(&sql)
+            .bind(id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .ok_or_else(|| StoreError::NotificationNotFound(id.clone()))?;
+        self.row_to_notification(&row)
     }
 
     async fn list_notifications(
         &self,
-        _query: &ListNotificationsQuery,
+        query: &ListNotificationsQuery,
     ) -> Result<Vec<(NotificationId, Notification)>, StoreError> {
-        Ok(Vec::new())
+        let limit = i64::from(query.limit.unwrap_or(50));
+        let mut conditions = Vec::new();
+        let mut bind_values: Vec<String> = Vec::new();
+
+        if let Some(ref recipient) = query.recipient {
+            conditions.push(format!("recipient = ?{}", bind_values.len() + 1));
+            bind_values.push(recipient.clone());
+        }
+        if let Some(is_read) = query.is_read {
+            conditions.push(format!("is_read = ?{}", bind_values.len() + 1));
+            bind_values.push(if is_read {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            });
+        }
+        if let Some(before) = query.before {
+            conditions.push(format!("created_at <= ?{}", bind_values.len() + 1));
+            bind_values.push(before.to_rfc3339());
+        }
+        if let Some(after) = query.after {
+            conditions.push(format!("created_at > ?{}", bind_values.len() + 1));
+            bind_values.push(after.to_rfc3339());
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let limit_param = bind_values.len() + 1;
+        let sql = format!(
+            "SELECT id, recipient, source_actor, object_kind, object_id, object_version, \
+             event_type, summary, source_issue_id, policy, is_read, created_at \
+             FROM {TABLE_NOTIFICATIONS}{where_clause} \
+             ORDER BY created_at DESC LIMIT ?{limit_param}"
+        );
+
+        let mut qb = sqlx::query_as::<_, NotificationRow>(&sql);
+        for val in &bind_values {
+            qb = qb.bind(val);
+        }
+        qb = qb.bind(limit);
+
+        let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+        let mut notifications = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let notification_id = row.id.parse::<NotificationId>().map_err(|err| {
+                StoreError::Internal(format!("invalid notification id stored in database: {err}"))
+            })?;
+            let notification = self.row_to_notification(row)?;
+            notifications.push((notification_id, notification));
+        }
+        Ok(notifications)
     }
 
-    async fn count_unread_notifications(&self, _recipient: &ActorId) -> Result<u64, StoreError> {
-        Ok(0)
+    async fn count_unread_notifications(&self, recipient: &ActorId) -> Result<u64, StoreError> {
+        let recipient_name = recipient.to_string();
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(*) FROM {TABLE_NOTIFICATIONS} WHERE recipient = ?1 AND is_read = 0"
+        ))
+        .bind(&recipient_name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
     }
 
     async fn get_message(&self, id: &MessageId) -> Result<Versioned<Message>, StoreError> {
-        Err(StoreError::MessageNotFound(id.clone()))
+        let sql = format!(
+            "SELECT id, version_number, sender, recipient, body, is_read, deleted, actor, \
+             created_at, updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_MESSAGES_V2} WHERE id = ?1) AS creation_time \
+             FROM {TABLE_MESSAGES_V2} \
+             WHERE id = ?1 \
+             ORDER BY version_number DESC \
+             LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, MessageRow>(&sql)
+            .bind(id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
+
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for message '{}'",
+                row.id
+            ))
+        })?;
+        let created_at = parse_sqlite_timestamp(&row.created_at)?;
+        let creation_time = row
+            .creation_time
+            .as_deref()
+            .map(parse_sqlite_timestamp)
+            .transpose()?
+            .unwrap_or(created_at);
+        let actor = parse_actor_json_string(row.actor.as_deref())?;
+        let message = self.row_to_message(&row)?;
+        Ok(Versioned::with_optional_actor(
+            message,
+            version,
+            created_at,
+            actor,
+            creation_time,
+        ))
     }
 
     async fn list_messages(
         &self,
-        _query: &SearchMessagesQuery,
+        query: &SearchMessagesQuery,
     ) -> Result<Vec<(MessageId, Versioned<Message>)>, StoreError> {
-        Ok(Vec::new())
+        let limit = i64::from(query.limit.unwrap_or(50));
+        let include_deleted = query.include_deleted.unwrap_or(false);
+
+        // SQLite doesn't have DISTINCT ON, so use a subquery with GROUP BY to get the latest version
+        let subquery = format!(
+            "SELECT m.id, m.version_number, m.sender, m.recipient, m.body, m.is_read, \
+             m.deleted, m.actor, m.created_at, m.updated_at, \
+             (SELECT MIN(m2.created_at) FROM {TABLE_MESSAGES_V2} m2 WHERE m2.id = m.id) AS creation_time \
+             FROM {TABLE_MESSAGES_V2} m \
+             INNER JOIN (SELECT id, MAX(version_number) AS max_ver FROM {TABLE_MESSAGES_V2} GROUP BY id) latest \
+             ON m.id = latest.id AND m.version_number = latest.max_ver"
+        );
+
+        let mut conditions = Vec::new();
+        let mut bind_values: Vec<String> = Vec::new();
+
+        if !include_deleted {
+            conditions.push("deleted = 0".to_string());
+        }
+        if let Some(ref sender) = query.sender {
+            conditions.push(format!("sender = ?{}", bind_values.len() + 1));
+            bind_values.push(sender.clone());
+        }
+        if let Some(ref recipient) = query.recipient {
+            conditions.push(format!("recipient = ?{}", bind_values.len() + 1));
+            bind_values.push(recipient.clone());
+        }
+        if let Some(after) = query.after {
+            conditions.push(format!("created_at > ?{}", bind_values.len() + 1));
+            bind_values.push(after.to_rfc3339());
+        }
+        if let Some(before) = query.before {
+            conditions.push(format!("created_at < ?{}", bind_values.len() + 1));
+            bind_values.push(before.to_rfc3339());
+        }
+        if let Some(is_read) = query.is_read {
+            conditions.push(format!("is_read = ?{}", bind_values.len() + 1));
+            bind_values.push(if is_read {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            });
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let limit_param = bind_values.len() + 1;
+        let sql = format!(
+            "SELECT * FROM ({subquery}) AS latest{where_clause} \
+             ORDER BY created_at DESC LIMIT ?{limit_param}"
+        );
+
+        let mut qb = sqlx::query_as::<_, MessageRow>(&sql);
+        for val in &bind_values {
+            qb = qb.bind(val);
+        }
+        qb = qb.bind(limit);
+
+        let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for message '{}'",
+                    row.id
+                ))
+            })?;
+            let message_id = row.id.parse::<MessageId>().map_err(|err| {
+                StoreError::Internal(format!("invalid message id stored in database: {err}"))
+            })?;
+            let created_at = parse_sqlite_timestamp(&row.created_at)?;
+            let creation_time = row
+                .creation_time
+                .as_deref()
+                .map(parse_sqlite_timestamp)
+                .transpose()?
+                .unwrap_or(created_at);
+            let actor = parse_actor_json_string(row.actor.as_deref())?;
+            let message = self.row_to_message(&row)?;
+            let versioned =
+                Versioned::with_optional_actor(message, version, created_at, actor, creation_time);
+            messages.push((message_id, versioned));
+        }
+        Ok(messages)
     }
 
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
@@ -2437,17 +2854,31 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_user_secret(
         &self,
-        _username: &Username,
-        _secret_name: &str,
+        username: &Username,
+        secret_name: &str,
     ) -> Result<Option<Vec<u8>>, StoreError> {
-        Ok(None)
+        let sql = format!(
+            "SELECT encrypted_value FROM {TABLE_USER_SECRETS} WHERE username = ?1 AND secret_name = ?2"
+        );
+        let row = sqlx::query_scalar::<_, Vec<u8>>(&sql)
+            .bind(username.as_str())
+            .bind(secret_name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(row)
     }
 
-    async fn list_user_secret_names(
-        &self,
-        _username: &Username,
-    ) -> Result<Vec<String>, StoreError> {
-        Ok(Vec::new())
+    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError> {
+        let sql = format!(
+            "SELECT secret_name FROM {TABLE_USER_SECRETS} WHERE username = ?1 ORDER BY secret_name"
+        );
+        let rows = sqlx::query_scalar::<_, String>(&sql)
+            .bind(username.as_str())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(rows)
     }
 }
 
@@ -2848,42 +3279,94 @@ impl Store for SqliteStore {
 
     async fn insert_notification(
         &self,
-        _notification: Notification,
+        notification: Notification,
     ) -> Result<NotificationId, StoreError> {
-        Err(StoreError::Internal(
-            "SQLite notifications not yet implemented".to_string(),
-        ))
+        let count = self.count_notifications().await?;
+        let id = NotificationId::new_for_count(count);
+        self.insert_notification_row(&id, &notification).await?;
+        Ok(id)
     }
 
     async fn mark_notification_read(&self, id: &NotificationId) -> Result<(), StoreError> {
-        Err(StoreError::NotificationNotFound(id.clone()))
+        let result = sqlx::query(&format!(
+            "UPDATE {TABLE_NOTIFICATIONS} SET is_read = 1 WHERE id = ?1"
+        ))
+        .bind(id.as_ref())
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(StoreError::NotificationNotFound(id.clone()));
+        }
+        Ok(())
     }
 
     async fn mark_all_notifications_read(
         &self,
-        _recipient: &ActorId,
-        _before: Option<DateTime<Utc>>,
+        recipient: &ActorId,
+        before: Option<DateTime<Utc>>,
     ) -> Result<u64, StoreError> {
-        Ok(0)
+        let recipient_name = recipient.to_string();
+        let result = if let Some(before_ts) = before {
+            let before_str = before_ts.to_rfc3339();
+            sqlx::query(&format!(
+                "UPDATE {TABLE_NOTIFICATIONS} SET is_read = 1 \
+                 WHERE recipient = ?1 AND is_read = 0 AND created_at < ?2"
+            ))
+            .bind(&recipient_name)
+            .bind(&before_str)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+        } else {
+            sqlx::query(&format!(
+                "UPDATE {TABLE_NOTIFICATIONS} SET is_read = 1 \
+                 WHERE recipient = ?1 AND is_read = 0"
+            ))
+            .bind(&recipient_name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+        };
+        Ok(result.rows_affected())
     }
 
     async fn add_message(
         &self,
-        _message: Message,
-        _actor: &ActorRef,
+        message: Message,
+        actor: &ActorRef,
     ) -> Result<(MessageId, VersionNumber), StoreError> {
-        Err(StoreError::Internal(
-            "SQLite messages not yet implemented".to_string(),
-        ))
+        let count = self.count_distinct_messages().await?;
+        let id = MessageId::new_for_count(count);
+        let actor_json = actor_to_json_string(actor);
+        self.insert_message_row(&id, 1, &message, Some(&actor_json))
+            .await?;
+        Ok((id, 1))
     }
 
     async fn update_message(
         &self,
         id: &MessageId,
-        _message: Message,
-        _actor: &ActorRef,
+        message: Message,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        Err(StoreError::MessageNotFound(id.clone()))
+        self.get_message(id).await?;
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_MESSAGES_V2, id.as_ref())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("message '{id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for message '{id}'"))
+        })?;
+
+        let actor_json = actor_to_json_string(actor);
+        self.insert_message_row(id, next_version, &message, Some(&actor_json))
+            .await?;
+        Ok(next_version)
     }
 
     async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
@@ -3132,20 +3615,41 @@ impl Store for SqliteStore {
 
     async fn set_user_secret(
         &self,
-        _username: &Username,
-        _secret_name: &str,
-        _encrypted_value: &[u8],
+        username: &Username,
+        secret_name: &str,
+        encrypted_value: &[u8],
     ) -> Result<(), StoreError> {
-        Err(StoreError::Internal(
-            "SQLite user secrets not yet implemented".to_string(),
-        ))
+        let now = Utc::now().to_rfc3339();
+        let sql = format!(
+            "INSERT INTO {TABLE_USER_SECRETS} (username, secret_name, encrypted_value, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?4) \
+             ON CONFLICT (username, secret_name) \
+             DO UPDATE SET encrypted_value = ?3, updated_at = ?4"
+        );
+        sqlx::query(&sql)
+            .bind(username.as_str())
+            .bind(secret_name)
+            .bind(encrypted_value)
+            .bind(&now)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(())
     }
 
     async fn delete_user_secret(
         &self,
-        _username: &Username,
-        _secret_name: &str,
+        username: &Username,
+        secret_name: &str,
     ) -> Result<(), StoreError> {
+        let sql =
+            format!("DELETE FROM {TABLE_USER_SECRETS} WHERE username = ?1 AND secret_name = ?2");
+        sqlx::query(&sql)
+            .bind(username.as_str())
+            .bind(secret_name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
         Ok(())
     }
 }
@@ -5457,5 +5961,443 @@ mod tests {
         let store = create_test_store().await;
         let result = store.get_labels_for_objects(&[]).await.unwrap();
         assert!(result.is_empty());
+    }
+
+    // ---- Notification tests ----
+
+    fn sample_notification(recipient: &ActorId) -> Notification {
+        Notification {
+            recipient: recipient.clone(),
+            source_actor: None,
+            object_kind: "issue".to_string(),
+            object_id: IssueId::new().into(),
+            object_version: 1,
+            event_type: "created".to_string(),
+            summary: "A test notification".to_string(),
+            source_issue_id: None,
+            policy: "walk_up".to_string(),
+            is_read: false,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_and_get_notification() {
+        let store = create_test_store().await;
+        let recipient = ActorId::from_str("alice").unwrap();
+        let notif = sample_notification(&recipient);
+
+        let id = store.insert_notification(notif.clone()).await.unwrap();
+        let fetched = store.get_notification(&id).await.unwrap();
+
+        assert_eq!(fetched.recipient, notif.recipient);
+        assert_eq!(fetched.object_kind, "issue");
+        assert_eq!(fetched.event_type, "created");
+        assert_eq!(fetched.summary, "A test notification");
+        assert!(!fetched.is_read);
+    }
+
+    #[tokio::test]
+    async fn get_notification_not_found() {
+        let store = create_test_store().await;
+        let id = NotificationId::from_str("nf-nonexistent").unwrap();
+        let err = store.get_notification(&id).await.unwrap_err();
+        assert!(matches!(err, StoreError::NotificationNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn list_notifications_returns_inserted() {
+        let store = create_test_store().await;
+        let recipient = ActorId::from_str("alice").unwrap();
+
+        let id = store
+            .insert_notification(sample_notification(&recipient))
+            .await
+            .unwrap();
+
+        let mut query = ListNotificationsQuery::default();
+        query.recipient = Some("u-alice".to_string());
+        let results = store.list_notifications(&query).await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id);
+    }
+
+    #[tokio::test]
+    async fn list_notifications_filters_by_is_read() {
+        let store = create_test_store().await;
+        let recipient = ActorId::from_str("alice").unwrap();
+
+        let id1 = store
+            .insert_notification(sample_notification(&recipient))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(&recipient))
+            .await
+            .unwrap();
+
+        store.mark_notification_read(&id1).await.unwrap();
+
+        let mut query = ListNotificationsQuery::default();
+        query.recipient = Some("u-alice".to_string());
+        query.is_read = Some(false);
+        let unread = store.list_notifications(&query).await.unwrap();
+        assert_eq!(unread.len(), 1);
+
+        let mut query = ListNotificationsQuery::default();
+        query.recipient = Some("u-alice".to_string());
+        query.is_read = Some(true);
+        let read = store.list_notifications(&query).await.unwrap();
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].0, id1);
+    }
+
+    #[tokio::test]
+    async fn count_unread_notifications_returns_correct_count() {
+        let store = create_test_store().await;
+        let recipient = ActorId::from_str("alice").unwrap();
+
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            0
+        );
+
+        let id1 = store
+            .insert_notification(sample_notification(&recipient))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(&recipient))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            2
+        );
+
+        store.mark_notification_read(&id1).await.unwrap();
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_notification_read_not_found() {
+        let store = create_test_store().await;
+        let id = NotificationId::from_str("nf-nonexistent").unwrap();
+        let err = store.mark_notification_read(&id).await.unwrap_err();
+        assert!(matches!(err, StoreError::NotificationNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn mark_all_notifications_read_marks_all() {
+        let store = create_test_store().await;
+        let recipient = ActorId::from_str("alice").unwrap();
+
+        store
+            .insert_notification(sample_notification(&recipient))
+            .await
+            .unwrap();
+        store
+            .insert_notification(sample_notification(&recipient))
+            .await
+            .unwrap();
+
+        let count = store
+            .mark_all_notifications_read(&recipient, None)
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
+
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_all_notifications_read_respects_before() {
+        let store = create_test_store().await;
+        let recipient = ActorId::from_str("alice").unwrap();
+
+        let mut older = sample_notification(&recipient);
+        older.created_at = Utc::now() - Duration::hours(2);
+        store.insert_notification(older).await.unwrap();
+
+        let mut newer = sample_notification(&recipient);
+        newer.created_at = Utc::now() + Duration::hours(2);
+        store.insert_notification(newer).await.unwrap();
+
+        let cutoff = Utc::now();
+        let count = store
+            .mark_all_notifications_read(&recipient, Some(cutoff))
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(
+            store.count_unread_notifications(&recipient).await.unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn list_notifications_respects_limit() {
+        let store = create_test_store().await;
+        let recipient = ActorId::from_str("alice").unwrap();
+
+        for _ in 0..5 {
+            store
+                .insert_notification(sample_notification(&recipient))
+                .await
+                .unwrap();
+        }
+
+        let mut query = ListNotificationsQuery::default();
+        query.recipient = Some("u-alice".to_string());
+        query.limit = Some(3);
+        let results = store.list_notifications(&query).await.unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    // ---- Message tests ----
+
+    fn sample_message() -> Message {
+        Message {
+            sender: Some(ActorId::from_str("alice").unwrap()),
+            recipient: ActorId::from_str("bob").unwrap(),
+            body: "Hello Bob!".to_string(),
+            deleted: false,
+            is_read: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn add_and_get_message() {
+        let store = create_test_store().await;
+        let msg = sample_message();
+
+        let (id, version) = store
+            .add_message(msg.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let fetched = store.get_message(&id).await.unwrap();
+        assert_eq!(fetched.item.body, "Hello Bob!");
+        assert_eq!(fetched.version, 1);
+        assert_eq!(fetched.item.sender, msg.sender);
+        assert_eq!(fetched.item.recipient, msg.recipient);
+    }
+
+    #[tokio::test]
+    async fn get_message_not_found() {
+        let store = create_test_store().await;
+        let id = MessageId::from_str("m-nonexistent").unwrap();
+        let err = store.get_message(&id).await.unwrap_err();
+        assert!(matches!(err, StoreError::MessageNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn update_message_creates_new_version() {
+        let store = create_test_store().await;
+        let msg = sample_message();
+
+        let (id, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
+
+        let mut updated = sample_message();
+        updated.body = "Updated body".to_string();
+        let v2 = store
+            .update_message(&id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v2, 2);
+
+        let fetched = store.get_message(&id).await.unwrap();
+        assert_eq!(fetched.item.body, "Updated body");
+        assert_eq!(fetched.version, 2);
+    }
+
+    #[tokio::test]
+    async fn list_messages_returns_latest_version() {
+        let store = create_test_store().await;
+        let msg = sample_message();
+
+        let (id, _) = store.add_message(msg, &ActorRef::test()).await.unwrap();
+
+        let mut updated = sample_message();
+        updated.body = "Updated".to_string();
+        store
+            .update_message(&id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchMessagesQuery::default();
+        query.recipient = Some("u-bob".to_string());
+        let results = store.list_messages(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.body, "Updated");
+        assert_eq!(results[0].1.version, 2);
+    }
+
+    #[tokio::test]
+    async fn list_messages_filters_deleted() {
+        let store = create_test_store().await;
+
+        let (id, _) = store
+            .add_message(sample_message(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut deleted = sample_message();
+        deleted.deleted = true;
+        store
+            .update_message(&id, deleted, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let results = store
+            .list_messages(&SearchMessagesQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 0);
+
+        let mut query = SearchMessagesQuery::default();
+        query.include_deleted = Some(true);
+        let results_with_deleted = store.list_messages(&query).await.unwrap();
+        assert_eq!(results_with_deleted.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn count_distinct_messages_counts_correctly() {
+        let store = create_test_store().await;
+        assert_eq!(store.count_distinct_messages().await.unwrap(), 0);
+
+        let (id, _) = store
+            .add_message(sample_message(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_messages().await.unwrap(), 1);
+
+        // Updating should not increase count
+        store
+            .update_message(&id, sample_message(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_messages().await.unwrap(), 1);
+    }
+
+    // ---- User secret tests ----
+
+    #[tokio::test]
+    async fn set_and_get_user_secret() {
+        let store = create_test_store().await;
+        let username = Username::from("alice".to_string());
+        let secret = b"supersecret";
+
+        store
+            .set_user_secret(&username, "api_key", secret)
+            .await
+            .unwrap();
+
+        let fetched = store.get_user_secret(&username, "api_key").await.unwrap();
+        assert_eq!(fetched, Some(secret.to_vec()));
+    }
+
+    #[tokio::test]
+    async fn get_user_secret_returns_none_when_missing() {
+        let store = create_test_store().await;
+        let username = Username::from("alice".to_string());
+
+        let fetched = store
+            .get_user_secret(&username, "nonexistent")
+            .await
+            .unwrap();
+        assert_eq!(fetched, None);
+    }
+
+    #[tokio::test]
+    async fn set_user_secret_overwrites() {
+        let store = create_test_store().await;
+        let username = Username::from("alice".to_string());
+
+        store
+            .set_user_secret(&username, "api_key", b"first")
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&username, "api_key", b"second")
+            .await
+            .unwrap();
+
+        let fetched = store.get_user_secret(&username, "api_key").await.unwrap();
+        assert_eq!(fetched, Some(b"second".to_vec()));
+    }
+
+    #[tokio::test]
+    async fn list_user_secret_names_returns_sorted() {
+        let store = create_test_store().await;
+        let username = Username::from("alice".to_string());
+
+        store
+            .set_user_secret(&username, "zebra", b"z")
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&username, "alpha", b"a")
+            .await
+            .unwrap();
+
+        let names = store.list_user_secret_names(&username).await.unwrap();
+        assert_eq!(names, vec!["alpha", "zebra"]);
+    }
+
+    #[tokio::test]
+    async fn delete_user_secret_removes_entry() {
+        let store = create_test_store().await;
+        let username = Username::from("alice".to_string());
+
+        store
+            .set_user_secret(&username, "api_key", b"secret")
+            .await
+            .unwrap();
+
+        store
+            .delete_user_secret(&username, "api_key")
+            .await
+            .unwrap();
+
+        let fetched = store.get_user_secret(&username, "api_key").await.unwrap();
+        assert_eq!(fetched, None);
+    }
+
+    #[tokio::test]
+    async fn delete_user_secret_noop_when_missing() {
+        let store = create_test_store().await;
+        let username = Username::from("alice".to_string());
+
+        // Should not error even if secret doesn't exist
+        store
+            .delete_user_secret(&username, "nonexistent")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_user_secret_names_isolated_by_user() {
+        let store = create_test_store().await;
+        let alice = Username::from("alice".to_string());
+        let bob = Username::from("bob".to_string());
+
+        store.set_user_secret(&alice, "key_a", b"a").await.unwrap();
+        store.set_user_secret(&bob, "key_b", b"b").await.unwrap();
+
+        let alice_names = store.list_user_secret_names(&alice).await.unwrap();
+        assert_eq!(alice_names, vec!["key_a"]);
+
+        let bob_names = store.list_user_secret_names(&bob).await.unwrap();
+        assert_eq!(bob_names, vec!["key_b"]);
     }
 }
