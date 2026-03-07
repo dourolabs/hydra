@@ -9,6 +9,7 @@ import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/I
 import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
 import {
   useTransitiveWorkItems,
+  buildChildrenMap,
   findTransitiveChildren,
 } from "../features/dashboard/useTransitiveWorkItems";
 import { computeIsActiveMap, countNeedsAttentionBadge, type ChildStatus } from "../features/dashboard/computeIssueProgress";
@@ -124,9 +125,10 @@ export function DashboardPage() {
     const filterWithDescendantArtifacts = (
       matchingIssueIds: string[],
     ) => {
+      const childrenMap = buildChildrenMap(issues ?? []);
       const descendantIds = new Set<string>();
       for (const id of matchingIssueIds) {
-        for (const descId of findTransitiveChildren(id, issues ?? [])) {
+        for (const descId of findTransitiveChildren(id, childrenMap)) {
           descendantIds.add(descId);
         }
       }

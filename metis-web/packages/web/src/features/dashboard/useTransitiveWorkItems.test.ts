@@ -6,6 +6,7 @@ import type {
 } from "@metis/api";
 import {
   extractDocumentPaths,
+  buildChildrenMap,
   findTransitiveChildren,
   findRootIssueIds,
   collectPatchIds,
@@ -133,13 +134,58 @@ describe("extractDocumentPaths", () => {
 });
 
 // ---------------------------------------------------------------------------
+// buildChildrenMap
+// ---------------------------------------------------------------------------
+
+describe("buildChildrenMap", () => {
+  it("returns empty map for empty input", () => {
+    expect(buildChildrenMap([])).toEqual(new Map());
+  });
+
+  it("builds correct adjacency list for a simple tree", () => {
+    const issues = [
+      makeIssueRecord({ issue_id: "root" }),
+      makeIssueRecord({
+        issue_id: "child-1",
+        dependencies: [{ type: "child-of", issue_id: "root" }],
+      }),
+      makeIssueRecord({
+        issue_id: "child-2",
+        dependencies: [{ type: "child-of", issue_id: "root" }],
+      }),
+      makeIssueRecord({
+        issue_id: "grandchild",
+        dependencies: [{ type: "child-of", issue_id: "child-1" }],
+      }),
+    ];
+    const map = buildChildrenMap(issues);
+    expect(map.get("root")).toEqual(["child-1", "child-2"]);
+    expect(map.get("child-1")).toEqual(["grandchild"]);
+    expect(map.has("child-2")).toBe(false);
+    expect(map.has("grandchild")).toBe(false);
+  });
+
+  it("ignores non-child-of dependencies", () => {
+    const issues = [
+      makeIssueRecord({
+        issue_id: "a",
+        dependencies: [{ type: "blocked-on", issue_id: "b" }],
+      }),
+      makeIssueRecord({ issue_id: "b" }),
+    ];
+    const map = buildChildrenMap(issues);
+    expect(map.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // findTransitiveChildren
 // ---------------------------------------------------------------------------
 
 describe("findTransitiveChildren", () => {
   it("returns just the root when it has no children", () => {
     const issues = [makeIssueRecord({ issue_id: "root" })];
-    expect(findTransitiveChildren("root", issues)).toEqual(["root"]);
+    expect(findTransitiveChildren("root", buildChildrenMap(issues))).toEqual(["root"]);
   });
 
   it("returns root and direct children", () => {
@@ -154,7 +200,7 @@ describe("findTransitiveChildren", () => {
         dependencies: [{ type: "child-of", issue_id: "root" }],
       }),
     ];
-    const result = findTransitiveChildren("root", issues);
+    const result = findTransitiveChildren("root", buildChildrenMap(issues));
     expect(result).toContain("root");
     expect(result).toContain("child-1");
     expect(result).toContain("child-2");
@@ -177,7 +223,7 @@ describe("findTransitiveChildren", () => {
         dependencies: [{ type: "child-of", issue_id: "grandchild" }],
       }),
     ];
-    const result = findTransitiveChildren("root", issues);
+    const result = findTransitiveChildren("root", buildChildrenMap(issues));
     expect(result).toContain("root");
     expect(result).toContain("child");
     expect(result).toContain("grandchild");
@@ -193,7 +239,7 @@ describe("findTransitiveChildren", () => {
         dependencies: [{ type: "blocked-on", issue_id: "root" }],
       }),
     ];
-    const result = findTransitiveChildren("root", issues);
+    const result = findTransitiveChildren("root", buildChildrenMap(issues));
     expect(result).toEqual(["root"]);
   });
 
@@ -202,7 +248,7 @@ describe("findTransitiveChildren", () => {
       makeIssueRecord({ issue_id: "root" }),
       makeIssueRecord({ issue_id: "unrelated" }),
     ];
-    const result = findTransitiveChildren("root", issues);
+    const result = findTransitiveChildren("root", buildChildrenMap(issues));
     expect(result).toEqual(["root"]);
   });
 
@@ -217,7 +263,7 @@ describe("findTransitiveChildren", () => {
         dependencies: [{ type: "child-of", issue_id: "a" }],
       }),
     ];
-    const result = findTransitiveChildren("a", issues);
+    const result = findTransitiveChildren("a", buildChildrenMap(issues));
     expect(result).toContain("a");
     expect(result).toContain("b");
     expect(result).toHaveLength(2);
@@ -231,7 +277,7 @@ describe("findTransitiveChildren", () => {
       }),
     ];
     // root is referenced but not in the list itself
-    const result = findTransitiveChildren("root", issues);
+    const result = findTransitiveChildren("root", buildChildrenMap(issues));
     expect(result).toContain("root");
     expect(result).toContain("child");
     expect(result).toHaveLength(2);

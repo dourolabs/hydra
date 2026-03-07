@@ -71,14 +71,11 @@ export function extractDocumentPaths(text: string): string[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Find all transitive children of a root issue via "child-of" edges,
- * including the root itself. Returns an array of issue IDs.
+ * Build a parent → children adjacency map from issue "child-of" edges.
  */
-export function findTransitiveChildren(
-  rootId: string,
+export function buildChildrenMap(
   issues: IssueSummaryRecord[],
-): string[] {
-  // Build parent -> children map
+): Map<string, string[]> {
   const childrenMap = new Map<string, string[]>();
   for (const issue of issues) {
     for (const dep of issue.issue.dependencies) {
@@ -89,7 +86,17 @@ export function findTransitiveChildren(
       }
     }
   }
+  return childrenMap;
+}
 
+/**
+ * Find all transitive children of a root issue via "child-of" edges,
+ * including the root itself. Returns an array of issue IDs.
+ */
+export function findTransitiveChildren(
+  rootId: string,
+  childrenMap: Map<string, string[]>,
+): string[] {
   const result: string[] = [];
   const visited = new Set<string>();
 
@@ -259,21 +266,24 @@ export function useTransitiveWorkItems(
     return map;
   }, [issues]);
 
+  // Build parent → children adjacency map once
+  const childrenMap = useMemo(() => buildChildrenMap(issues), [issues]);
+
   // Find transitive issue IDs under the selected root
   const transitiveIssueIds = useMemo(() => {
     if (rootIssueId) {
-      return findTransitiveChildren(rootIssueId, issues);
+      return findTransitiveChildren(rootIssueId, childrenMap);
     }
     // "All Items" mode: collect transitive children across all roots
     const rootIds = findRootIssueIds(issues);
     const allIds = new Set<string>();
     for (const rootId of rootIds) {
-      for (const id of findTransitiveChildren(rootId, issues)) {
+      for (const id of findTransitiveChildren(rootId, childrenMap)) {
         allIds.add(id);
       }
     }
     return Array.from(allIds);
-  }, [rootIssueId, issues]);
+  }, [rootIssueId, issues, childrenMap]);
 
   // Collect patch IDs from transitive issues
   const patchIds = useMemo(
