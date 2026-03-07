@@ -33,7 +33,7 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use super::{ReadOnlyStore, Store, StoreError, Task, TaskStatusLog};
+use super::{ReadOnlyStore, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 
 const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
 const TABLE_ACTORS_V2: &str = "actors_v2";
@@ -41,6 +41,7 @@ const TABLE_USERS_V2: &str = "users_v2";
 const TABLE_ISSUES_V2: &str = "issues_v2";
 const TABLE_PATCHES_V2: &str = "patches_v2";
 const TABLE_DOCUMENTS_V2: &str = "documents_v2";
+const TABLE_TASKS_V2: &str = "tasks_v2";
 const TABLE_LABEL_ASSOCIATIONS: &str = "label_associations";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
@@ -159,6 +160,30 @@ struct DocumentRow {
     updated_at: String,
     #[sqlx(default)]
     creation_time: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct TaskRow {
+    id: String,
+    version_number: i64,
+    prompt: String,
+    context: String,
+    spawned_from: Option<String>,
+    image: Option<String>,
+    model: Option<String>,
+    env_vars: String,
+    cpu_limit: Option<String>,
+    memory_limit: Option<String>,
+    status: String,
+    last_message: Option<String>,
+    error: Option<String>,
+    secrets: Option<String>,
+    creator: Option<String>,
+    deleted: bool,
+    actor: Option<String>,
+    created_at: String,
+    #[allow(dead_code)]
+    updated_at: String,
 }
 
 impl SqliteStore {
@@ -645,6 +670,192 @@ impl SqliteStore {
             created_by,
             deleted: row.deleted,
         })
+    }
+
+    // ---- Task helpers ----
+
+    async fn insert_task(
+        &self,
+        id: &TaskId,
+        version_number: VersionNumber,
+        task: &Task,
+        actor: Option<&str>,
+        created_at: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for task '{id}'"))
+        })?;
+
+        let context_json = serde_json::to_string(&task.context)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize context: {e}")))?;
+        let env_vars_json = serde_json::to_string(&task.env_vars)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize env_vars: {e}")))?;
+        let error_json = task
+            .error
+            .as_ref()
+            .map(|e| {
+                serde_json::to_string(e).map_err(|err| {
+                    StoreError::Internal(format!("failed to serialize error: {err}"))
+                })
+            })
+            .transpose()?;
+        let secrets_json = task
+            .secrets
+            .as_ref()
+            .map(|s| {
+                serde_json::to_string(s).map_err(|err| {
+                    StoreError::Internal(format!("failed to serialize secrets: {err}"))
+                })
+            })
+            .transpose()?;
+        let status_str = super::status_to_db_str(task.status);
+
+        if let Some(ts) = created_at {
+            sqlx::query(
+                &format!(
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)"
+                )
+            )
+            .bind(id.as_ref())
+            .bind(version_number)
+            .bind(&task.prompt)
+            .bind(&context_json)
+            .bind(task.spawned_from.as_ref().map(|i| i.as_ref()))
+            .bind(task.creator.as_str())
+            .bind(task.image.as_deref())
+            .bind(task.model.as_deref())
+            .bind(&env_vars_json)
+            .bind(task.cpu_limit.as_deref())
+            .bind(task.memory_limit.as_deref())
+            .bind(status_str)
+            .bind(task.last_message.as_deref())
+            .bind(&error_json)
+            .bind(task.deleted)
+            .bind(actor)
+            .bind(&secrets_json)
+            .bind(ts)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        } else {
+            sqlx::query(
+                &format!(
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)"
+                )
+            )
+            .bind(id.as_ref())
+            .bind(version_number)
+            .bind(&task.prompt)
+            .bind(&context_json)
+            .bind(task.spawned_from.as_ref().map(|i| i.as_ref()))
+            .bind(task.creator.as_str())
+            .bind(task.image.as_deref())
+            .bind(task.model.as_deref())
+            .bind(&env_vars_json)
+            .bind(task.cpu_limit.as_deref())
+            .bind(task.memory_limit.as_deref())
+            .bind(status_str)
+            .bind(task.last_message.as_deref())
+            .bind(&error_json)
+            .bind(task.deleted)
+            .bind(actor)
+            .bind(&secrets_json)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        }
+
+        Ok(())
+    }
+
+    fn row_to_task(&self, row: &TaskRow) -> Result<Task, StoreError> {
+        let context = serde_json::from_str(&row.context)
+            .map_err(|e| StoreError::Internal(format!("failed to deserialize context: {e}")))?;
+        let env_vars: HashMap<String, String> = serde_json::from_str(&row.env_vars)
+            .map_err(|e| StoreError::Internal(format!("failed to deserialize env_vars: {e}")))?;
+        let error: Option<TaskError> = row
+            .error
+            .as_ref()
+            .map(|e| {
+                serde_json::from_str(e).map_err(|err| {
+                    StoreError::Internal(format!("failed to deserialize error: {err}"))
+                })
+            })
+            .transpose()?;
+        let secrets: Option<Vec<String>> = row
+            .secrets
+            .as_ref()
+            .map(|s| {
+                serde_json::from_str(s).map_err(|err| {
+                    StoreError::Internal(format!("failed to deserialize secrets: {err}"))
+                })
+            })
+            .transpose()?;
+        let spawned_from = row
+            .spawned_from
+            .as_ref()
+            .map(|s| {
+                IssueId::from_str(s).map_err(|e| {
+                    StoreError::Internal(format!("invalid spawned_from issue id: {e}"))
+                })
+            })
+            .transpose()?;
+        let status = match row.status.as_str() {
+            "created" => Status::Created,
+            "pending" => Status::Pending,
+            "running" => Status::Running,
+            "complete" => Status::Complete,
+            "failed" => Status::Failed,
+            other => {
+                return Err(StoreError::Internal(format!(
+                    "invalid task status: {other}"
+                )));
+            }
+        };
+        let creator = Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR));
+
+        Ok(Task {
+            prompt: row.prompt.clone(),
+            context,
+            spawned_from,
+            creator,
+            image: row.image.clone(),
+            model: row.model.clone(),
+            env_vars,
+            cpu_limit: row.cpu_limit.clone(),
+            memory_limit: row.memory_limit.clone(),
+            secrets,
+            status,
+            last_message: row.last_message.clone(),
+            error,
+            deleted: row.deleted,
+        })
+    }
+
+    fn row_to_task_id(id: &str) -> Result<TaskId, StoreError> {
+        id.parse::<TaskId>().map_err(|err| {
+            StoreError::Internal(format!("invalid task id stored in database: {err}"))
+        })
+    }
+
+    fn row_to_versioned_task(&self, row: &TaskRow) -> Result<Versioned<Task>, StoreError> {
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for task '{}'",
+                row.id
+            ))
+        })?;
+        let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+        let task = self.row_to_task(row)?;
+        Ok(Versioned::with_optional_actor(
+            task,
+            version,
+            timestamp,
+            parse_actor_json_string(row.actor.as_deref())?,
+            timestamp,
+        ))
     }
 
     fn row_to_issue(&self, row: &IssueRow) -> Result<Issue, StoreError> {
@@ -1526,31 +1737,173 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_task(
         &self,
         id: &TaskId,
-        _include_deleted: bool,
+        include_deleted: bool,
     ) -> Result<Versioned<Task>, StoreError> {
-        Err(StoreError::TaskNotFound(id.clone()))
+        let row = sqlx::query_as::<_, TaskRow>(
+            &format!(
+                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at
+                 FROM {TABLE_TASKS_V2}
+                 WHERE id = ?1
+                 ORDER BY version_number DESC
+                 LIMIT 1"
+            )
+        )
+        .bind(id.as_ref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+        if !include_deleted && row.deleted {
+            return Err(StoreError::TaskNotFound(id.clone()));
+        }
+        self.row_to_versioned_task(&row)
     }
 
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
-        Err(StoreError::TaskNotFound(id.clone()))
+        let rows = sqlx::query_as::<_, TaskRow>(
+            &format!(
+                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at
+                 FROM {TABLE_TASKS_V2}
+                 WHERE id = ?1
+                 ORDER BY version_number"
+            )
+        )
+        .bind(id.as_ref())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if rows.is_empty() {
+            return Err(StoreError::TaskNotFound(id.clone()));
+        }
+
+        rows.iter()
+            .map(|row| self.row_to_versioned_task(row))
+            .collect()
     }
 
     async fn list_tasks(
         &self,
-        _query: &SearchJobsQuery,
+        query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
-        Ok(Vec::new())
+        let mut sql = format!(
+            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.creator, t.deleted, t.actor, t.created_at, t.updated_at \
+             FROM {TABLE_TASKS_V2} t \
+             INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
+             ON t.id = latest.id AND t.version_number = latest.max_version"
+        );
+        let mut predicates = Vec::new();
+        let mut bindings: Vec<String> = Vec::new();
+
+        if let Some(spawned_from) = query.spawned_from.as_ref() {
+            bindings.push(spawned_from.as_ref().to_string());
+            predicates.push(format!("t.spawned_from = ?{}", bindings.len()));
+        }
+
+        if let Some(term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            let pattern = format!("%{term}%");
+            bindings.push(pattern.clone());
+            let idx_id = bindings.len();
+            bindings.push(pattern.clone());
+            let idx_prompt = bindings.len();
+            bindings.push(pattern);
+            let idx_status = bindings.len();
+            predicates.push(format!(
+                "(LOWER(t.id) LIKE ?{idx_id} \
+                 OR LOWER(t.prompt) LIKE ?{idx_prompt} \
+                 OR LOWER(t.status) LIKE ?{idx_status})"
+            ));
+        }
+
+        if let Some(status) = query.status {
+            let server_status: Status = status.into();
+            bindings.push(super::status_to_db_str(server_status).to_string());
+            predicates.push(format!("t.status = ?{}", bindings.len()));
+        }
+
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("t.deleted = 0".to_string());
+        }
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_as::<_, TaskRow>(&sql);
+        for value in &bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut tasks = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let task_id = Self::row_to_task_id(&row.id)?;
+            let versioned = self.row_to_versioned_task(row)?;
+            tasks.push((task_id, versioned));
+        }
+
+        Ok(tasks)
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
-        Err(StoreError::TaskNotFound(id.clone()))
+        let versions = self.get_task_versions(id).await?;
+        super::task_status_log_from_versions(&versions)
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
     async fn get_status_logs(
         &self,
-        _ids: &[TaskId],
+        ids: &[TaskId],
     ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
-        Ok(HashMap::new())
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // SQLite doesn't support ANY($1), so we build a query with placeholders
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at \
+             FROM {TABLE_TASKS_V2} \
+             WHERE id IN ({}) \
+             ORDER BY id, version_number",
+            placeholders.join(", ")
+        );
+        let mut query_builder = sqlx::query_as::<_, TaskRow>(&sql);
+        for id in ids {
+            query_builder = query_builder.bind(id.as_ref());
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut grouped: HashMap<TaskId, Vec<Versioned<Task>>> = HashMap::new();
+        for row in &rows {
+            let task_id = Self::row_to_task_id(&row.id)?;
+            let versioned = self.row_to_versioned_task(row)?;
+            grouped.entry(task_id).or_default().push(versioned);
+        }
+
+        let mut result = HashMap::new();
+        for (task_id, versions) in grouped {
+            if let Some(log) = super::task_status_log_from_versions(&versions) {
+                result.insert(task_id, log);
+            }
+        }
+
+        Ok(result)
     }
 
     async fn count_distinct_issues(&self) -> Result<u64, StoreError> {
@@ -1584,7 +1937,13 @@ impl ReadOnlyStore for SqliteStore {
     }
 
     async fn count_distinct_tasks(&self) -> Result<u64, StoreError> {
-        Ok(0)
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_TASKS_V2}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(count as u64)
     }
 
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
@@ -2044,30 +2403,62 @@ impl Store for SqliteStore {
 
     async fn add_task(
         &self,
-        _task: Task,
-        _creation_time: DateTime<Utc>,
-        _actor: &ActorRef,
+        task: Task,
+        creation_time: DateTime<Utc>,
+        actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
-        Err(StoreError::Internal(
-            "SQLite tasks not yet implemented".to_string(),
-        ))
+        let count = self.count_distinct_tasks().await?;
+        let id = TaskId::new_for_count(count);
+
+        if let Some(issue_id) = task.spawned_from.as_ref() {
+            self.ensure_issue_exists(issue_id).await?;
+        }
+
+        let actor_json = actor_to_json_string(actor);
+        let created_at = creation_time.to_rfc3339();
+        self.insert_task(&id, 1, &task, Some(&actor_json), Some(&created_at))
+            .await?;
+        Ok((id, 1))
     }
 
     async fn update_task(
         &self,
         metis_id: &TaskId,
-        _task: Task,
-        _actor: &ActorRef,
+        task: Task,
+        actor: &ActorRef,
     ) -> Result<Versioned<Task>, StoreError> {
-        Err(StoreError::TaskNotFound(metis_id.clone()))
+        self.get_task(metis_id, true).await?;
+
+        if let Some(issue_id) = task.spawned_from.as_ref() {
+            self.ensure_issue_exists(issue_id).await?;
+        }
+
+        let latest_version = self
+            .fetch_latest_version_number(TABLE_TASKS_V2, metis_id.as_ref())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("task '{metis_id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for task '{metis_id}'"))
+        })?;
+
+        let actor_json = actor_to_json_string(actor);
+        self.insert_task(metis_id, next_version, &task, Some(&actor_json), None)
+            .await?;
+        self.get_task(metis_id, true).await
     }
 
     async fn delete_task(
         &self,
         id: &TaskId,
-        _actor: &ActorRef,
+        actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        Err(StoreError::TaskNotFound(id.clone()))
+        let current = self.get_task(id, true).await?;
+        let mut task = current.item;
+        task.deleted = true;
+        let versioned = self.update_task(id, task, actor).await?;
+        Ok(versioned.version)
     }
 
     async fn add_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError> {
@@ -2314,6 +2705,8 @@ impl Store for SqliteStore {
 mod tests {
     use super::*;
     use crate::domain::actors::{ActorId, ActorRef};
+    use crate::domain::jobs::BundleSpec;
+    use chrono::Duration;
     use metis_common::TaskId;
 
     async fn create_test_store() -> SqliteStore {
@@ -3485,10 +3878,7 @@ mod tests {
         let store = create_test_store().await;
 
         let patch = sample_patch_all_fields();
-        store
-            .add_patch(patch, &ActorRef::test())
-            .await
-            .unwrap();
+        store.add_patch(patch, &ActorRef::test()).await.unwrap();
 
         // Search by github owner
         let mut query = SearchPatchesQuery::default();
@@ -3701,5 +4091,395 @@ mod tests {
             fetched.item, doc,
             "Document must round-trip all fields (path, created_by)"
         );
+    }
+
+    // ---- Task helpers ----
+
+    fn spawn_task() -> Task {
+        Task::new(
+            "test prompt".to_string(),
+            BundleSpec::None,
+            None,
+            Username::from("test-creator"),
+            Some("metis-worker:latest".to_string()),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            Status::Created,
+            None,
+            None,
+        )
+    }
+
+    // ---- Task tests ----
+
+    #[tokio::test]
+    async fn task_add_and_get() {
+        let store = create_test_store().await;
+        let task = spawn_task();
+
+        let (task_id, version) = store
+            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let fetched = store.get_task(&task_id, false).await.unwrap();
+        assert_versioned(&fetched, &task, 1);
+        assert_eq!(fetched.item.status, Status::Created);
+    }
+
+    #[tokio::test]
+    async fn task_not_found() {
+        let store = create_test_store().await;
+        let missing_id = TaskId::new();
+        let err = store.get_task(&missing_id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::TaskNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn task_versions_increment_and_latest_returned() {
+        let store = create_test_store().await;
+
+        let mut task = spawn_task();
+        task.prompt = "v1".to_string();
+        let (task_id, _) = store
+            .add_task(task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut updated = spawn_task();
+        updated.prompt = "v2".to_string();
+        store
+            .update_task(&task_id, updated.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_task(&task_id, false).await.unwrap();
+        assert_versioned(&fetched, &updated, 2);
+    }
+
+    #[tokio::test]
+    async fn task_get_versions_returns_ordered_entries() {
+        let store = create_test_store().await;
+
+        let mut task = spawn_task();
+        task.prompt = "v1".to_string();
+        let (task_id, _) = store
+            .add_task(task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut v2 = spawn_task();
+        v2.prompt = "v2".to_string();
+        store
+            .update_task(&task_id, v2, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let versions = store.get_task_versions(&task_id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].version, 1);
+        assert_eq!(versions[1].version, 2);
+        assert_eq!(versions[0].item.prompt, "v1");
+        assert_eq!(versions[1].item.prompt, "v2");
+    }
+
+    #[tokio::test]
+    async fn task_list_returns_all_tasks() {
+        let store = create_test_store().await;
+
+        let (id1, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (id2, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let tasks = store.list_tasks(&SearchJobsQuery::default()).await.unwrap();
+        let ids: HashSet<_> = tasks.into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, HashSet::from([id1, id2]));
+    }
+
+    #[tokio::test]
+    async fn task_list_filters_by_text_search() {
+        let store = create_test_store().await;
+
+        let mut task1 = spawn_task();
+        task1.prompt = "deploy to production".to_string();
+        store
+            .add_task(task1, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task2 = spawn_task();
+        task2.prompt = "run tests".to_string();
+        store
+            .add_task(task2, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let query = SearchJobsQuery::new(Some("deploy".to_string()), None, None, None);
+        let tasks = store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].1.item.prompt, "deploy to production");
+    }
+
+    #[tokio::test]
+    async fn task_list_filters_by_status() {
+        let store = create_test_store().await;
+
+        let (task_id, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut running = spawn_task();
+        running.status = Status::Running;
+        store
+            .update_task(&task_id, running, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Search for running tasks
+        let query = SearchJobsQuery::new(
+            None,
+            None,
+            None,
+            Some(metis_common::task_status::Status::Running),
+        );
+        let tasks = store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+
+        // Search for created tasks - should be empty since task is now running
+        let query = SearchJobsQuery::new(
+            None,
+            None,
+            None,
+            Some(metis_common::task_status::Status::Created),
+        );
+        let tasks = store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn task_soft_delete_and_list_filtering() {
+        let store = create_test_store().await;
+
+        let (task_id, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        store
+            .delete_task(&task_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Should not appear in default list
+        let tasks = store.list_tasks(&SearchJobsQuery::default()).await.unwrap();
+        assert!(tasks.is_empty());
+
+        // Should appear when include_deleted is true
+        let query = SearchJobsQuery::new(None, None, Some(true), None);
+        let tasks = store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].1.item.deleted);
+
+        // get_task with include_deleted=false should fail
+        let err = store.get_task(&task_id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::TaskNotFound(_)));
+
+        // get_task with include_deleted=true should succeed
+        let fetched = store.get_task(&task_id, true).await.unwrap();
+        assert!(fetched.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn status_log_derived_from_task_versions() {
+        let store = create_test_store().await;
+        let created_at = Utc::now() - Duration::seconds(60);
+        let task = spawn_task();
+        let (task_id, _) = store
+            .add_task(task.clone(), created_at, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Initial status log should have one Created event
+        let log = store.get_status_log(&task_id).await.unwrap();
+        assert_eq!(log.events.len(), 1);
+        assert_eq!(log.current_status(), Status::Created);
+
+        // Update to Pending
+        let mut pending = task.clone();
+        pending.status = Status::Pending;
+        store
+            .update_task(&task_id, pending, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Update to Running
+        let mut running = task.clone();
+        running.status = Status::Running;
+        store
+            .update_task(&task_id, running, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Update to Complete
+        let mut complete = task.clone();
+        complete.status = Status::Complete;
+        complete.last_message = Some("done".to_string());
+        store
+            .update_task(&task_id, complete, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let log = store.get_status_log(&task_id).await.unwrap();
+        assert_eq!(log.current_status(), Status::Complete);
+        // Created, Pending (Created event), Running (Started), Complete (Completed)
+        assert_eq!(log.events.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn batch_get_status_logs_with_missing_tasks() {
+        let store = create_test_store().await;
+
+        let (task_id1, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let (task_id2, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let missing_id = TaskId::new();
+
+        let logs = store
+            .get_status_logs(&[task_id1.clone(), task_id2.clone(), missing_id.clone()])
+            .await
+            .unwrap();
+
+        // Should have logs for both existing tasks
+        assert!(logs.contains_key(&task_id1));
+        assert!(logs.contains_key(&task_id2));
+        // Missing task should be silently omitted
+        assert!(!logs.contains_key(&missing_id));
+        assert_eq!(logs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn count_distinct_tasks_counts_correctly() {
+        let store = create_test_store().await;
+        assert_eq!(store.count_distinct_tasks().await.unwrap(), 0);
+
+        let (id, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_tasks().await.unwrap(), 1);
+
+        // Updating the same task shouldn't increase the count
+        let mut updated = spawn_task();
+        updated.prompt = "v2".to_string();
+        store
+            .update_task(&id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_tasks().await.unwrap(), 1);
+
+        // Adding another task should increase the count
+        store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(store.count_distinct_tasks().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn task_serialization_round_trip_all_fields() {
+        let store = create_test_store().await;
+        let task = Task::new(
+            "full test".to_string(),
+            BundleSpec::None,
+            None,
+            Username::from("alice"),
+            Some("my-image:v1".to_string()),
+            Some("claude-3".to_string()),
+            HashMap::from([("KEY".to_string(), "VALUE".to_string())]),
+            Some("2".to_string()),
+            Some("4Gi".to_string()),
+            Some(vec!["secret1".to_string(), "secret2".to_string()]),
+            Status::Pending,
+            Some("last msg".to_string()),
+            Some(TaskError::JobEngineError {
+                reason: "test error".to_string(),
+            }),
+        );
+
+        let (task_id, _) = store
+            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_task(&task_id, false).await.unwrap();
+        assert_eq!(fetched.item, task, "Task must round-trip all fields");
+    }
+
+    #[tokio::test]
+    async fn task_creation_time_is_preserved() {
+        let store = create_test_store().await;
+        let creation_time = Utc::now() - Duration::hours(2);
+        let task = spawn_task();
+
+        let (task_id, _) = store
+            .add_task(task, creation_time, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_task(&task_id, false).await.unwrap();
+        // Timestamps may lose sub-millisecond precision, so check within 1 second
+        let diff = (fetched.timestamp - creation_time).num_seconds().abs();
+        assert!(
+            diff <= 1,
+            "Creation time should be preserved; got diff={diff}s"
+        );
+    }
+
+    #[tokio::test]
+    async fn status_log_failed_task() {
+        let store = create_test_store().await;
+        let task = spawn_task();
+        let (task_id, _) = store
+            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut running = task.clone();
+        running.status = Status::Running;
+        store
+            .update_task(&task_id, running, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut failed = task.clone();
+        failed.status = Status::Failed;
+        failed.error = Some(TaskError::JobEngineError {
+            reason: "OOM killed".to_string(),
+        });
+        store
+            .update_task(&task_id, failed, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let log = store.get_status_log(&task_id).await.unwrap();
+        assert_eq!(log.current_status(), Status::Failed);
+        assert_eq!(log.events.len(), 3); // Created, Started, Failed
     }
 }
