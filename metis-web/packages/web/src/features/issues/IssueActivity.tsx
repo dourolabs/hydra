@@ -15,7 +15,7 @@ interface IssueActivityProps {
 const STATUS_DOT_COLORS: Record<string, string> = {
   open: "var(--color-status-open)",
   "in-progress": "var(--color-status-in-progress)",
-  closed: "var(--color-status-closed)",
+  closed: "var(--color-status-issue-closed)",
   failed: "var(--color-status-failed)",
   dropped: "var(--color-status-dropped)",
   rejected: "var(--color-status-rejected)",
