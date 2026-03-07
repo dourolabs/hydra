@@ -42,6 +42,8 @@ const TABLE_ISSUES_V2: &str = "issues_v2";
 const TABLE_PATCHES_V2: &str = "patches_v2";
 const TABLE_DOCUMENTS_V2: &str = "documents_v2";
 const TABLE_TASKS_V2: &str = "tasks_v2";
+const TABLE_AGENTS: &str = "agents";
+const TABLE_LABELS: &str = "labels";
 const TABLE_LABEL_ASSOCIATIONS: &str = "label_associations";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
@@ -186,6 +188,63 @@ struct TaskRow {
     updated_at: String,
     #[sqlx(default)]
     creation_time: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct AgentRow {
+    name: String,
+    prompt_path: String,
+    max_tries: i32,
+    max_simultaneous: i32,
+    is_assignment_agent: bool,
+    deleted: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct LabelRow {
+    id: String,
+    name: String,
+    color: String,
+    deleted: bool,
+    recurse: bool,
+    hidden: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
+    let created_at = parse_sqlite_timestamp(&row.created_at)?;
+    let updated_at = parse_sqlite_timestamp(&row.updated_at)?;
+    Ok(Agent {
+        name: row.name,
+        prompt_path: row.prompt_path,
+        max_tries: row.max_tries,
+        max_simultaneous: row.max_simultaneous,
+        is_assignment_agent: row.is_assignment_agent,
+        deleted: row.deleted,
+        created_at,
+        updated_at,
+    })
+}
+
+fn row_to_label(row: &LabelRow) -> Result<Label, StoreError> {
+    let color = row
+        .color
+        .parse()
+        .map_err(|err| StoreError::Internal(format!("invalid label color in database: {err}")))?;
+    let created_at = parse_sqlite_timestamp(&row.created_at)?;
+    let updated_at = parse_sqlite_timestamp(&row.updated_at)?;
+    Ok(Label {
+        name: row.name.clone(),
+        color,
+        deleted: row.deleted,
+        recurse: row.recurse,
+        hidden: row.hidden,
+        created_at,
+        updated_at,
+    })
 }
 
 impl SqliteStore {
@@ -2160,44 +2219,211 @@ impl ReadOnlyStore for SqliteStore {
     }
 
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
-        Err(StoreError::AgentNotFound(name.to_string()))
+        let sql = format!(
+            "SELECT name, prompt_path, max_tries, max_simultaneous, \
+                    is_assignment_agent, deleted, created_at, updated_at \
+             FROM {TABLE_AGENTS} WHERE name = ?1"
+        );
+        let row = sqlx::query_as::<_, AgentRow>(&sql)
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .ok_or_else(|| StoreError::AgentNotFound(name.to_string()))?;
+        let agent = row_to_agent(row)?;
+        if agent.deleted {
+            return Err(StoreError::AgentNotFound(name.to_string()));
+        }
+        Ok(agent)
     }
 
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
-        Ok(Vec::new())
+        let sql = format!(
+            "SELECT name, prompt_path, max_tries, max_simultaneous, \
+                    is_assignment_agent, deleted, created_at, updated_at \
+             FROM {TABLE_AGENTS} WHERE deleted = 0 ORDER BY name"
+        );
+        let rows = sqlx::query_as::<_, AgentRow>(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        rows.into_iter().map(row_to_agent).collect()
     }
 
     async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError> {
-        Err(StoreError::LabelNotFound(id.clone()))
+        let sql = format!(
+            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
+             FROM {TABLE_LABELS} WHERE id = ?1"
+        );
+        let row = sqlx::query_as::<_, LabelRow>(&sql)
+            .bind(id.as_ref())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .ok_or_else(|| StoreError::LabelNotFound(id.clone()))?;
+        let label = row_to_label(&row)?;
+        if label.deleted {
+            return Err(StoreError::LabelNotFound(id.clone()));
+        }
+        Ok(label)
     }
 
     async fn list_labels(
         &self,
-        _query: &SearchLabelsQuery,
+        query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
-        Ok(Vec::new())
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let mut conditions = Vec::new();
+
+        if !include_deleted {
+            conditions.push("deleted = 0".to_string());
+        }
+
+        let q_val = query.q.clone();
+        if q_val.is_some() {
+            conditions.push("LOWER(name) LIKE ?1".to_string());
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let sql = format!(
+            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
+             FROM {TABLE_LABELS}{where_clause} ORDER BY name"
+        );
+
+        let mut qb = sqlx::query_as::<_, LabelRow>(&sql);
+        if let Some(ref q) = q_val {
+            qb = qb.bind(format!("%{}%", q.to_lowercase()));
+        }
+
+        let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+
+        let mut labels = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let label_id = row.id.parse::<LabelId>().map_err(|err| {
+                StoreError::Internal(format!("invalid label id stored in database: {err}"))
+            })?;
+            let label = row_to_label(row)?;
+            labels.push((label_id, label));
+        }
+
+        Ok(labels)
     }
 
-    async fn get_label_by_name(&self, _name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
-        Ok(None)
+    async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
+        let sql = format!(
+            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
+             FROM {TABLE_LABELS} WHERE LOWER(name) = LOWER(?1) AND deleted = 0"
+        );
+        let row = sqlx::query_as::<_, LabelRow>(&sql)
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        match row {
+            Some(row) => {
+                let label_id = row.id.parse::<LabelId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid label id stored in database: {err}"))
+                })?;
+                Ok(Some((label_id, row_to_label(&row)?)))
+            }
+            None => Ok(None),
+        }
     }
 
     async fn get_labels_for_object(
         &self,
-        _object_id: &MetisId,
+        object_id: &MetisId,
     ) -> Result<Vec<LabelSummary>, StoreError> {
-        Ok(Vec::new())
+        let sql = format!(
+            "SELECT l.id, l.name, l.color, l.recurse, l.hidden \
+             FROM {TABLE_LABELS} l \
+             INNER JOIN {TABLE_LABEL_ASSOCIATIONS} la ON l.id = la.label_id \
+             WHERE la.object_id = ?1 AND l.deleted = 0 \
+             ORDER BY l.name"
+        );
+        let rows = sqlx::query_as::<_, (String, String, String, bool, bool)>(&sql)
+            .bind(object_id.as_ref())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        rows.into_iter()
+            .map(|(id, name, color, recurse, hidden)| {
+                let label_id = id.parse::<LabelId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid label id stored in database: {err}"))
+                })?;
+                let color = color.parse().map_err(|err| {
+                    StoreError::Internal(format!("invalid color stored in database: {err}"))
+                })?;
+                Ok(LabelSummary::new(label_id, name, color, recurse, hidden))
+            })
+            .collect()
     }
 
     async fn get_labels_for_objects(
         &self,
-        _object_ids: &[MetisId],
+        object_ids: &[MetisId],
     ) -> Result<HashMap<MetisId, Vec<LabelSummary>>, StoreError> {
-        Ok(HashMap::new())
+        if object_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // SQLite doesn't support ANY($1), so build individual placeholders
+        let placeholders: Vec<String> = (1..=object_ids.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "SELECT la.object_id, l.id, l.name, l.color, l.recurse, l.hidden \
+             FROM {TABLE_LABELS} l \
+             INNER JOIN {TABLE_LABEL_ASSOCIATIONS} la ON l.id = la.label_id \
+             WHERE la.object_id IN ({}) AND l.deleted = 0 \
+             ORDER BY l.name",
+            placeholders.join(", ")
+        );
+        let mut qb = sqlx::query_as::<_, (String, String, String, String, bool, bool)>(&sql);
+        for oid in object_ids {
+            qb = qb.bind(oid.as_ref());
+        }
+        let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+
+        let mut result: HashMap<MetisId, Vec<LabelSummary>> = HashMap::new();
+        for (obj_id_str, label_id_str, name, color, recurse, hidden) in rows {
+            let obj_id = obj_id_str.parse::<MetisId>().map_err(|err| {
+                StoreError::Internal(format!("invalid object id stored in database: {err}"))
+            })?;
+            let label_id = label_id_str.parse::<LabelId>().map_err(|err| {
+                StoreError::Internal(format!("invalid label id stored in database: {err}"))
+            })?;
+            let color = color.parse().map_err(|err| {
+                StoreError::Internal(format!("invalid color stored in database: {err}"))
+            })?;
+            result
+                .entry(obj_id)
+                .or_default()
+                .push(LabelSummary::new(label_id, name, color, recurse, hidden));
+        }
+        Ok(result)
     }
 
-    async fn get_objects_for_label(&self, _label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
-        Ok(Vec::new())
+    async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError> {
+        let sql = format!("SELECT object_id FROM {TABLE_LABEL_ASSOCIATIONS} WHERE label_id = ?1");
+        let rows = sqlx::query_scalar::<_, String>(&sql)
+            .bind(label_id.as_ref())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        rows.into_iter()
+            .map(|id| {
+                id.parse::<MetisId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid object id stored in database: {err}"))
+                })
+            })
+            .collect()
     }
 
     async fn get_user_secret(
@@ -2651,52 +2877,252 @@ impl Store for SqliteStore {
         Err(StoreError::MessageNotFound(id.clone()))
     }
 
-    async fn add_agent(&self, _agent: Agent) -> Result<(), StoreError> {
-        Err(StoreError::Internal(
-            "SQLite agents not yet implemented".to_string(),
+    async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
+        let existing_deleted = sqlx::query_scalar::<_, bool>(&format!(
+            "SELECT deleted FROM {TABLE_AGENTS} WHERE name = ?1"
         ))
+        .bind(&agent.name)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        match existing_deleted {
+            Some(false) => {
+                return Err(StoreError::AgentAlreadyExists(agent.name));
+            }
+            Some(true) => {
+                if agent.is_assignment_agent {
+                    let has_assignment = sqlx::query_scalar::<_, bool>(&format!(
+                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
+                         WHERE is_assignment_agent = 1 AND deleted = 0)"
+                    ))
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                    if has_assignment {
+                        return Err(StoreError::AssignmentAgentAlreadyExists);
+                    }
+                }
+
+                let now = Utc::now().to_rfc3339();
+                let sql = format!(
+                    "UPDATE {TABLE_AGENTS} \
+                     SET prompt_path = ?1, max_tries = ?2, max_simultaneous = ?3, \
+                         is_assignment_agent = ?4, deleted = 0, \
+                         created_at = ?5, updated_at = ?6 \
+                     WHERE name = ?7"
+                );
+                sqlx::query(&sql)
+                    .bind(&agent.prompt_path)
+                    .bind(agent.max_tries)
+                    .bind(agent.max_simultaneous)
+                    .bind(agent.is_assignment_agent)
+                    .bind(&now)
+                    .bind(&now)
+                    .bind(&agent.name)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+
+                Ok(())
+            }
+            None => {
+                if agent.is_assignment_agent {
+                    let has_assignment = sqlx::query_scalar::<_, bool>(&format!(
+                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
+                         WHERE is_assignment_agent = 1 AND deleted = 0)"
+                    ))
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                    if has_assignment {
+                        return Err(StoreError::AssignmentAgentAlreadyExists);
+                    }
+                }
+
+                let sql = format!(
+                    "INSERT INTO {TABLE_AGENTS} \
+                     (name, prompt_path, max_tries, max_simultaneous, is_assignment_agent, \
+                      deleted, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+                );
+                sqlx::query(&sql)
+                    .bind(&agent.name)
+                    .bind(&agent.prompt_path)
+                    .bind(agent.max_tries)
+                    .bind(agent.max_simultaneous)
+                    .bind(agent.is_assignment_agent)
+                    .bind(agent.deleted)
+                    .bind(agent.created_at.to_rfc3339())
+                    .bind(agent.updated_at.to_rfc3339())
+                    .execute(&self.pool)
+                    .await
+                    .map_err(map_sqlx_error)?;
+
+                Ok(())
+            }
+        }
     }
 
-    async fn update_agent(&self, _agent: Agent) -> Result<(), StoreError> {
-        Err(StoreError::Internal(
-            "SQLite agents not yet implemented".to_string(),
-        ))
+    async fn update_agent(&self, agent: Agent) -> Result<(), StoreError> {
+        let _ = self.get_agent(&agent.name).await?;
+
+        if agent.is_assignment_agent {
+            let conflict = sqlx::query_scalar::<_, bool>(&format!(
+                "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
+                 WHERE is_assignment_agent = 1 AND deleted = 0 AND name != ?1)"
+            ))
+            .bind(&agent.name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+            if conflict {
+                return Err(StoreError::AssignmentAgentAlreadyExists);
+            }
+        }
+
+        let sql = format!(
+            "UPDATE {TABLE_AGENTS} \
+             SET prompt_path = ?1, max_tries = ?2, max_simultaneous = ?3, \
+                 is_assignment_agent = ?4, updated_at = ?5 \
+             WHERE name = ?6"
+        );
+        sqlx::query(&sql)
+            .bind(&agent.prompt_path)
+            .bind(agent.max_tries)
+            .bind(agent.max_simultaneous)
+            .bind(agent.is_assignment_agent)
+            .bind(Utc::now().to_rfc3339())
+            .bind(&agent.name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
     }
 
     async fn delete_agent(&self, name: &str) -> Result<(), StoreError> {
-        Err(StoreError::AgentNotFound(name.to_string()))
+        let _ = self.get_agent(name).await?;
+
+        let sql = format!("UPDATE {TABLE_AGENTS} SET deleted = 1, updated_at = ?1 WHERE name = ?2");
+        sqlx::query(&sql)
+            .bind(Utc::now().to_rfc3339())
+            .bind(name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
     }
 
-    async fn add_label(&self, _label: Label) -> Result<LabelId, StoreError> {
-        Err(StoreError::Internal(
-            "SQLite labels not yet implemented".to_string(),
-        ))
+    async fn add_label(&self, label: Label) -> Result<LabelId, StoreError> {
+        if self.get_label_by_name(&label.name).await?.is_some() {
+            return Err(StoreError::LabelAlreadyExists(label.name.clone()));
+        }
+
+        let count = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {TABLE_LABELS}"))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        let count = u64::try_from(count).unwrap_or(0);
+        let id = LabelId::new_for_count(count);
+
+        let sql = format!(
+            "INSERT INTO {TABLE_LABELS} (id, name, color, deleted, recurse, hidden, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+        );
+        sqlx::query(&sql)
+            .bind(id.as_ref())
+            .bind(&label.name)
+            .bind(label.color.as_ref())
+            .bind(label.deleted)
+            .bind(label.recurse)
+            .bind(label.hidden)
+            .bind(label.created_at.to_rfc3339())
+            .bind(label.updated_at.to_rfc3339())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(id)
     }
 
-    async fn update_label(&self, id: &LabelId, _label: Label) -> Result<(), StoreError> {
-        Err(StoreError::LabelNotFound(id.clone()))
+    async fn update_label(&self, id: &LabelId, label: Label) -> Result<(), StoreError> {
+        let _ = self.get_label(id).await?;
+
+        if let Some((existing_id, _)) = self.get_label_by_name(&label.name).await? {
+            if existing_id != *id {
+                return Err(StoreError::LabelAlreadyExists(label.name.clone()));
+            }
+        }
+
+        let sql = format!(
+            "UPDATE {TABLE_LABELS} SET name = ?1, color = ?2, recurse = ?3, hidden = ?4, updated_at = ?5 WHERE id = ?6"
+        );
+        sqlx::query(&sql)
+            .bind(&label.name)
+            .bind(label.color.as_ref())
+            .bind(label.recurse)
+            .bind(label.hidden)
+            .bind(Utc::now().to_rfc3339())
+            .bind(id.as_ref())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
     }
 
     async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError> {
-        Err(StoreError::LabelNotFound(id.clone()))
+        let _ = self.get_label(id).await?;
+
+        let sql = format!("UPDATE {TABLE_LABELS} SET deleted = 1, updated_at = ?1 WHERE id = ?2");
+        sqlx::query(&sql)
+            .bind(Utc::now().to_rfc3339())
+            .bind(id.as_ref())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
     }
 
     async fn add_label_association(
         &self,
-        _label_id: &LabelId,
-        _object_id: &MetisId,
+        label_id: &LabelId,
+        object_id: &MetisId,
     ) -> Result<bool, StoreError> {
-        Err(StoreError::Internal(
-            "SQLite label associations not yet implemented".to_string(),
-        ))
+        let object_kind = super::object_kind_from_id(object_id)?;
+        let sql = format!(
+            "INSERT INTO {TABLE_LABEL_ASSOCIATIONS} (label_id, object_id, object_kind) \
+             VALUES (?1, ?2, ?3) \
+             ON CONFLICT (label_id, object_id) DO NOTHING"
+        );
+        let result = sqlx::query(&sql)
+            .bind(label_id.as_ref())
+            .bind(object_id.as_ref())
+            .bind(object_kind)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(result.rows_affected() > 0)
     }
 
     async fn remove_label_association(
         &self,
-        _label_id: &LabelId,
-        _object_id: &MetisId,
+        label_id: &LabelId,
+        object_id: &MetisId,
     ) -> Result<bool, StoreError> {
-        Ok(false)
+        let sql = format!(
+            "DELETE FROM {TABLE_LABEL_ASSOCIATIONS} WHERE label_id = ?1 AND object_id = ?2"
+        );
+        let result = sqlx::query(&sql)
+            .bind(label_id.as_ref())
+            .bind(object_id.as_ref())
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(result.rows_affected() > 0)
     }
 
     async fn set_user_secret(
@@ -4500,5 +4926,512 @@ mod tests {
         let log = store.get_status_log(&task_id).await.unwrap();
         assert_eq!(log.current_status(), Status::Failed);
         assert_eq!(log.events.len(), 3); // Created, Started, Failed
+    }
+
+    // ---- Agent helpers ----
+
+    fn sample_agent(name: &str) -> Agent {
+        Agent::new(
+            name.to_string(),
+            format!("/agents/{name}/prompt.md"),
+            3,
+            i32::MAX,
+            false,
+        )
+    }
+
+    // ---- Agent tests ----
+
+    #[tokio::test]
+    async fn add_and_get_agent() {
+        let store = create_test_store().await;
+        let agent = sample_agent("swe");
+
+        store.add_agent(agent.clone()).await.unwrap();
+
+        let fetched = store.get_agent("swe").await.unwrap();
+        assert_eq!(fetched.name, "swe");
+        assert_eq!(fetched.prompt_path, "/agents/swe/prompt.md");
+        assert_eq!(fetched.max_tries, 3);
+        assert!(!fetched.is_assignment_agent);
+    }
+
+    #[tokio::test]
+    async fn add_agent_duplicate_returns_error() {
+        let store = create_test_store().await;
+        store.add_agent(sample_agent("swe")).await.unwrap();
+
+        let err = store.add_agent(sample_agent("swe")).await.unwrap_err();
+        assert!(matches!(err, StoreError::AgentAlreadyExists(_)));
+    }
+
+    #[tokio::test]
+    async fn list_agents_excludes_deleted() {
+        let store = create_test_store().await;
+        store.add_agent(sample_agent("alpha")).await.unwrap();
+        store.add_agent(sample_agent("beta")).await.unwrap();
+        store.delete_agent("alpha").await.unwrap();
+
+        let agents = store.list_agents().await.unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].name, "beta");
+    }
+
+    #[tokio::test]
+    async fn list_agents_sorted_by_name() {
+        let store = create_test_store().await;
+        store.add_agent(sample_agent("zebra")).await.unwrap();
+        store.add_agent(sample_agent("alpha")).await.unwrap();
+
+        let agents = store.list_agents().await.unwrap();
+        assert_eq!(agents[0].name, "alpha");
+        assert_eq!(agents[1].name, "zebra");
+    }
+
+    #[tokio::test]
+    async fn update_agent_changes_fields() {
+        let store = create_test_store().await;
+        store.add_agent(sample_agent("swe")).await.unwrap();
+
+        let mut updated = sample_agent("swe");
+        updated.max_tries = 5;
+        updated.prompt_path = "/agents/swe/v2.md".to_string();
+        store.update_agent(updated).await.unwrap();
+
+        let fetched = store.get_agent("swe").await.unwrap();
+        assert_eq!(fetched.max_tries, 5);
+        assert_eq!(fetched.prompt_path, "/agents/swe/v2.md");
+    }
+
+    #[tokio::test]
+    async fn update_nonexistent_agent_returns_error() {
+        let store = create_test_store().await;
+        let err = store
+            .update_agent(sample_agent("missing"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::AgentNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_agent_soft_deletes() {
+        let store = create_test_store().await;
+        store.add_agent(sample_agent("swe")).await.unwrap();
+        store.delete_agent("swe").await.unwrap();
+
+        let err = store.get_agent("swe").await.unwrap_err();
+        assert!(matches!(err, StoreError::AgentNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_agent_returns_error() {
+        let store = create_test_store().await;
+        let err = store.delete_agent("missing").await.unwrap_err();
+        assert!(matches!(err, StoreError::AgentNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn assignment_agent_uniqueness_on_add() {
+        let store = create_test_store().await;
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        store.add_agent(pm).await.unwrap();
+
+        let mut pm2 = sample_agent("pm2");
+        pm2.is_assignment_agent = true;
+        let err = store.add_agent(pm2).await.unwrap_err();
+        assert!(matches!(err, StoreError::AssignmentAgentAlreadyExists));
+    }
+
+    #[tokio::test]
+    async fn assignment_agent_uniqueness_on_update() {
+        let store = create_test_store().await;
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        store.add_agent(pm).await.unwrap();
+        store.add_agent(sample_agent("swe")).await.unwrap();
+
+        let mut swe_updated = sample_agent("swe");
+        swe_updated.is_assignment_agent = true;
+        let err = store.update_agent(swe_updated).await.unwrap_err();
+        assert!(matches!(err, StoreError::AssignmentAgentAlreadyExists));
+    }
+
+    #[tokio::test]
+    async fn assignment_agent_can_update_itself() {
+        let store = create_test_store().await;
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        store.add_agent(pm).await.unwrap();
+
+        let mut pm_updated = sample_agent("pm");
+        pm_updated.is_assignment_agent = true;
+        pm_updated.max_tries = 10;
+        store.update_agent(pm_updated).await.unwrap();
+
+        let fetched = store.get_agent("pm").await.unwrap();
+        assert_eq!(fetched.max_tries, 10);
+        assert!(fetched.is_assignment_agent);
+    }
+
+    #[tokio::test]
+    async fn deleted_assignment_agent_allows_new_one() {
+        let store = create_test_store().await;
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        store.add_agent(pm).await.unwrap();
+        store.delete_agent("pm").await.unwrap();
+
+        let mut pm2 = sample_agent("pm2");
+        pm2.is_assignment_agent = true;
+        store.add_agent(pm2).await.unwrap();
+
+        let fetched = store.get_agent("pm2").await.unwrap();
+        assert!(fetched.is_assignment_agent);
+    }
+
+    #[tokio::test]
+    async fn add_agent_after_soft_deletion_same_name() {
+        let store = create_test_store().await;
+        let agent = sample_agent("swe");
+        store.add_agent(agent).await.unwrap();
+        store.delete_agent("swe").await.unwrap();
+
+        let mut agent2 = sample_agent("swe");
+        agent2.prompt_path = "new/path".to_string();
+        store.add_agent(agent2).await.unwrap();
+
+        let fetched = store.get_agent("swe").await.unwrap();
+        assert_eq!(fetched.prompt_path, "new/path");
+        assert!(!fetched.deleted);
+    }
+
+    // ---- Label helpers ----
+
+    fn sample_label(name: &str, color: &str) -> Label {
+        Label::new(name.to_string(), color.parse().unwrap(), true, false)
+    }
+
+    // ---- Label tests ----
+
+    #[tokio::test]
+    async fn label_crud_round_trip() {
+        let store = create_test_store().await;
+
+        let label = sample_label("bug", "#e74c3c");
+        let label_id = store.add_label(label.clone()).await.unwrap();
+
+        let fetched = store.get_label(&label_id).await.unwrap();
+        assert_eq!(fetched.name, "bug");
+        assert_eq!(fetched.color.as_ref(), "#e74c3c");
+        assert!(!fetched.deleted);
+
+        let results = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, label_id);
+        assert_eq!(results[0].1.name, "bug");
+
+        let found = store.get_label_by_name("bug").await.unwrap();
+        assert!(found.is_some());
+        let (found_id, found_label) = found.unwrap();
+        assert_eq!(found_id, label_id);
+        assert_eq!(found_label.name, "bug");
+    }
+
+    #[tokio::test]
+    async fn add_label_rejects_duplicates() {
+        let store = create_test_store().await;
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        let err = store
+            .add_label(sample_label("bug", "#3498db"))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::LabelAlreadyExists(name) if name == "bug"
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_label_soft_deletes() {
+        let store = create_test_store().await;
+
+        let label_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        store.delete_label(&label_id).await.unwrap();
+
+        let err = store.get_label(&label_id).await.unwrap_err();
+        assert!(matches!(err, StoreError::LabelNotFound(_)));
+
+        let results = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+
+        let mut query = SearchLabelsQuery::default();
+        query.include_deleted = Some(true);
+        let results = store.list_labels(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.deleted);
+    }
+
+    #[tokio::test]
+    async fn update_label_changes_name_and_color() {
+        let store = create_test_store().await;
+
+        let label_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        let mut updated = store.get_label(&label_id).await.unwrap();
+        updated.name = "defect".to_string();
+        updated.color = "#3498db".parse().unwrap();
+        updated.updated_at = Utc::now();
+        store.update_label(&label_id, updated).await.unwrap();
+
+        let fetched = store.get_label(&label_id).await.unwrap();
+        assert_eq!(fetched.name, "defect");
+        assert_eq!(fetched.color.as_ref(), "#3498db");
+    }
+
+    #[tokio::test]
+    async fn update_label_rejects_name_collision() {
+        let store = create_test_store().await;
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+        let feature_id = store
+            .add_label(sample_label("feature", "#3498db"))
+            .await
+            .unwrap();
+
+        let mut updated = store.get_label(&feature_id).await.unwrap();
+        updated.name = "bug".to_string();
+        let err = store.update_label(&feature_id, updated).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::LabelAlreadyExists(name) if name == "bug"
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_label_allows_same_name() {
+        let store = create_test_store().await;
+
+        let label_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        let mut updated = store.get_label(&label_id).await.unwrap();
+        updated.color = "#3498db".parse().unwrap();
+        store.update_label(&label_id, updated).await.unwrap();
+
+        let fetched = store.get_label(&label_id).await.unwrap();
+        assert_eq!(fetched.name, "bug");
+        assert_eq!(fetched.color.as_ref(), "#3498db");
+    }
+
+    #[tokio::test]
+    async fn get_label_by_name_case_insensitive() {
+        let store = create_test_store().await;
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        let found = store.get_label_by_name("BUG").await.unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().1.name, "bug");
+    }
+
+    #[tokio::test]
+    async fn list_labels_filters_by_query() {
+        let store = create_test_store().await;
+
+        store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("feature", "#3498db"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("bugfix", "#2ecc71"))
+            .await
+            .unwrap();
+
+        let mut query = SearchLabelsQuery::default();
+        query.q = Some("bug".to_string());
+        let results = store.list_labels(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].1.name, "bug");
+        assert_eq!(results[1].1.name, "bugfix");
+    }
+
+    #[tokio::test]
+    async fn list_labels_sorted_by_name() {
+        let store = create_test_store().await;
+
+        store
+            .add_label(sample_label("zebra", "#000000"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("alpha", "#111111"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("middle", "#222222"))
+            .await
+            .unwrap();
+
+        let results = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].1.name, "alpha");
+        assert_eq!(results[1].1.name, "middle");
+        assert_eq!(results[2].1.name, "zebra");
+    }
+
+    // ---- Label association tests ----
+
+    #[tokio::test]
+    async fn label_association_add_and_query() {
+        let store = create_test_store().await;
+
+        let label_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        let issue_id: MetisId = IssueId::new().into();
+
+        let added = store
+            .add_label_association(&label_id, &issue_id)
+            .await
+            .unwrap();
+        assert!(added);
+
+        // Adding again should be a no-op
+        let added_again = store
+            .add_label_association(&label_id, &issue_id)
+            .await
+            .unwrap();
+        assert!(!added_again);
+
+        // Query labels for object
+        let labels = store.get_labels_for_object(&issue_id).await.unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].name, "bug");
+
+        // Query objects for label
+        let objects = store.get_objects_for_label(&label_id).await.unwrap();
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0], issue_id);
+    }
+
+    #[tokio::test]
+    async fn label_association_remove() {
+        let store = create_test_store().await;
+
+        let label_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+
+        let issue_id: MetisId = IssueId::new().into();
+
+        store
+            .add_label_association(&label_id, &issue_id)
+            .await
+            .unwrap();
+
+        let removed = store
+            .remove_label_association(&label_id, &issue_id)
+            .await
+            .unwrap();
+        assert!(removed);
+
+        // Removing again should return false
+        let removed_again = store
+            .remove_label_association(&label_id, &issue_id)
+            .await
+            .unwrap();
+        assert!(!removed_again);
+
+        let labels = store.get_labels_for_object(&issue_id).await.unwrap();
+        assert!(labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_labels_for_objects_batch() {
+        let store = create_test_store().await;
+
+        let label1_id = store
+            .add_label(sample_label("bug", "#e74c3c"))
+            .await
+            .unwrap();
+        let label2_id = store
+            .add_label(sample_label("feature", "#3498db"))
+            .await
+            .unwrap();
+
+        let issue1: MetisId = IssueId::new().into();
+        let issue2: MetisId = IssueId::new().into();
+        let issue3: MetisId = IssueId::new().into();
+
+        store
+            .add_label_association(&label1_id, &issue1)
+            .await
+            .unwrap();
+        store
+            .add_label_association(&label2_id, &issue1)
+            .await
+            .unwrap();
+        store
+            .add_label_association(&label1_id, &issue2)
+            .await
+            .unwrap();
+
+        let result = store
+            .get_labels_for_objects(&[issue1.clone(), issue2.clone(), issue3.clone()])
+            .await
+            .unwrap();
+
+        // issue1 has 2 labels
+        assert_eq!(result.get(&issue1).map(|v| v.len()).unwrap_or(0), 2);
+        // issue2 has 1 label
+        assert_eq!(result.get(&issue2).map(|v| v.len()).unwrap_or(0), 1);
+        // issue3 has no labels (may or may not be in map)
+        assert_eq!(result.get(&issue3).map(|v| v.len()).unwrap_or(0), 0);
+    }
+
+    #[tokio::test]
+    async fn get_labels_for_objects_empty_input() {
+        let store = create_test_store().await;
+        let result = store.get_labels_for_objects(&[]).await.unwrap();
+        assert!(result.is_empty());
     }
 }
