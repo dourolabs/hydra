@@ -1,5 +1,6 @@
 use crate::client::MetisClientInterface;
-use anyhow::{Context, Result};
+use crate::command::users;
+use anyhow::Result;
 use clap::Subcommand;
 
 #[derive(Debug, Subcommand)]
@@ -11,17 +12,7 @@ pub enum SecretsCommand {
 pub async fn run(client: &dyn MetisClientInterface, command: SecretsCommand) -> Result<()> {
     match command {
         SecretsCommand::List => {
-            let response = client
-                .list_user_secrets()
-                .await
-                .context("failed to list secrets")?;
-            if response.secrets.is_empty() {
-                println!("No secrets configured.");
-            } else {
-                for name in &response.secrets {
-                    println!("{name}");
-                }
-            }
+            users::run_secrets(client, users::SecretsCommand::List).await?;
         }
     }
     Ok(())

@@ -220,11 +220,9 @@ impl AppState {
         Ok(SetJobStatusResponse::new(job_id, status.as_status()))
     }
 
-    /// Resolves per-user secrets with global fallback, injecting them into `env_vars`.
-    ///
-    /// For each API key (OPENAI_API_KEY, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN):
-    /// 1. Check user_secrets for the task creator (requires SecretManager)
-    /// 2. Fall back to the config file value
+    /// Loads all user secrets and injects them as env vars, then falls back to config
+    /// values for system secrets (OPENAI_API_KEY, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN)
+    /// not already set. Sets METIS_AVAILABLE_SECRETS with the names of all injected secrets.
     pub(crate) async fn resolve_secrets_into_env_vars(
         &self,
         creator: &Username,
