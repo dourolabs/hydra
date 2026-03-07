@@ -509,7 +509,7 @@ impl JobEngine for LocalDockerJobEngine {
     }
 }
 
-/// Extracts a TaskId from Docker container names (e.g., ["/metis-worker-t-abc123"]).
+/// Extracts a TaskId from Docker container names (e.g., ["/metis-worker-t-abcdef"]).
 fn extract_task_id_from_names(names: Option<&[String]>) -> Option<TaskId> {
     const PREFIX: &str = "metis-worker-";
     names?.iter().find_map(|name| {
@@ -604,10 +604,10 @@ mod tests {
 
     #[test]
     fn extract_task_id_from_names_without_slash() {
-        let names = vec!["metis-worker-t-xyz123".to_string()];
+        let names = vec!["metis-worker-t-xyzabc".to_string()];
         let result = extract_task_id_from_names(Some(&names));
         assert!(result.is_some());
-        assert_eq!(result.unwrap().to_string(), "t-xyz123");
+        assert_eq!(result.unwrap().to_string(), "t-xyzabc");
     }
 
     #[test]
