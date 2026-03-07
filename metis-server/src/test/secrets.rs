@@ -177,15 +177,66 @@ async fn bad_request_for_invalid_secret_name() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
 
+    // Lowercase name is invalid
     let response = client
         .put(format!(
-            "{}/v1/users/{TEST_USERNAME}/secrets/INVALID_NAME",
+            "{}/v1/users/{TEST_USERNAME}/secrets/invalid_name",
             server.base_url()
         ))
         .json(&json!({ "value": "something" }))
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn bad_request_for_metis_prefix() -> anyhow::Result<()> {
+    let handles = test_state_with_secrets();
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+
+    let response = client
+        .put(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets/METIS_TOKEN",
+            server.base_url()
+        ))
+        .json(&json!({ "value": "something" }))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_custom_secret_name() -> anyhow::Result<()> {
+    let handles = test_state_with_secrets();
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+
+    // Set a custom secret (not one of the well-known names)
+    let response = client
+        .put(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets/MY_CUSTOM_SECRET",
+            server.base_url()
+        ))
+        .json(&json!({ "value": "custom-value" }))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Verify it appears in the list
+    let response = client
+        .get(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    let body: ListSecretsResponse = response.json().await?;
+    assert!(body.secrets.contains(&"MY_CUSTOM_SECRET".to_string()));
 
     Ok(())
 }
