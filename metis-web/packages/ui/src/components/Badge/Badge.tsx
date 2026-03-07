@@ -4,6 +4,7 @@ export type BadgeStatus =
   | "open"
   | "in-progress"
   | "closed"
+  | "issue-closed"
   | "failed"
   | "dropped"
   | "blocked"
@@ -27,6 +28,7 @@ const statusLabels: Record<BadgeStatus, string> = {
   open: "Open",
   "in-progress": "In Progress",
   closed: "Closed",
+  "issue-closed": "Closed",
   failed: "Failed",
   dropped: "Dropped",
   blocked: "Blocked",
