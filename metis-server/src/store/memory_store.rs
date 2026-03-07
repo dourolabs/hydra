@@ -867,6 +867,10 @@ impl ReadOnlyStore for MemoryStore {
         Ok(self.tasks.len() as u64)
     }
 
+    async fn count_distinct_labels(&self) -> Result<u64, StoreError> {
+        Ok(self.labels.len() as u64)
+    }
+
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         self.actors

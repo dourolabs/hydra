@@ -1038,6 +1038,26 @@ impl PostgresStoreV2 {
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
         })
     }
+
+    async fn count_distinct_notifications(&self) -> Result<u64, StoreError> {
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_NOTIFICATIONS}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(count as u64)
+    }
+
+    async fn count_distinct_messages(&self) -> Result<u64, StoreError> {
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_MESSAGES_V2}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(count as u64)
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -2355,6 +2375,15 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(count as u64)
     }
 
+    async fn count_distinct_labels(&self) -> Result<u64, StoreError> {
+        let count =
+            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(DISTINCT id) FROM {TABLE_LABELS}"))
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+        Ok(count as u64)
+    }
+
     // -------------------------------------------------------------------------
     // Actor methods
     // -------------------------------------------------------------------------
@@ -3434,12 +3463,7 @@ impl Store for PostgresStoreV2 {
         &self,
         notification: Notification,
     ) -> Result<NotificationId, StoreError> {
-        let count =
-            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {TABLE_NOTIFICATIONS}"))
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_sqlx_error)?;
-        let count = u64::try_from(count).unwrap_or(0);
+        let count = self.count_distinct_notifications().await?;
         let id = NotificationId::new_for_count(count);
         self.insert_notification_row(&id, &notification).await?;
         Ok(id)
@@ -3499,13 +3523,7 @@ impl Store for PostgresStoreV2 {
         message: Message,
         actor: &ActorRef,
     ) -> Result<(MessageId, VersionNumber), StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_MESSAGES_V2}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        let count = u64::try_from(count).unwrap_or(0);
+        let count = self.count_distinct_messages().await?;
         let id = MessageId::new_for_count(count);
         let actor_json = actor_to_json(actor);
         self.insert_message(&id, 1, &message, Some(&actor_json))
@@ -3693,11 +3711,7 @@ impl Store for PostgresStoreV2 {
             return Err(StoreError::LabelAlreadyExists(label.name.clone()));
         }
 
-        let count = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {TABLE_LABELS}"))
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-        let count = u64::try_from(count).unwrap_or(0);
+        let count = self.count_distinct_labels().await?;
         let id = LabelId::new_for_count(count);
 
         let sql = format!(

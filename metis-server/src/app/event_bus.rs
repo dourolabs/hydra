@@ -1348,6 +1348,10 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.count_distinct_tasks().await
     }
 
+    async fn count_distinct_labels(&self) -> Result<u64, StoreError> {
+        self.inner.count_distinct_labels().await
+    }
+
     // ---- Actor (read-only) ----
 
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
