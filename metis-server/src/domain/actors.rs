@@ -158,7 +158,7 @@ impl Actor {
         &self,
         state: &AppState,
     ) -> Result<GithubTokenResponse, ApiError> {
-        get_github_token_for_user(state, &self.creator, &self.actor_id).await
+        get_github_token_for_user(state, &self.creator).await
     }
 }
 
@@ -166,13 +166,9 @@ impl Actor {
 ///
 /// Tokens are read from the encrypted `user_secrets` store. Refreshed tokens
 /// are written back to `user_secrets`.
-///
-/// The `actor_id` is only used to record which actor triggered a token refresh
-/// in the audit trail — it is not required for fetching the token itself.
 pub async fn get_github_token_for_user(
     state: &AppState,
     username: &Username,
-    _actor_id: &ActorId,
 ) -> Result<GithubTokenResponse, ApiError> {
     info!(username = %username, "get_github_token_for_user invoked");
 
