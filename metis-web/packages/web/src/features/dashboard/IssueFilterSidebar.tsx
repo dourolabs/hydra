@@ -92,7 +92,6 @@ function LabelFilterItem({ lp, isActive, onSelect }: LabelFilterItemProps) {
   const keyboardClickProps = useKeyboardClick(handleClick);
   return (
     <li
-      key={lp.labelId}
       className={`${styles.item} ${isActive ? styles.active : ""}`}
       onClick={handleClick}
       {...keyboardClickProps}
