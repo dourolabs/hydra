@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        actors::{Actor, ActorRef},
+        actors::{Actor, ActorRef, store_github_token_secrets},
         issues::{Issue, IssueStatus, IssueType},
         jobs::{BundleSpec, Task},
         task_status::Status,
@@ -78,15 +78,10 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
 
     let handles = test_state_with_github_urls(server.base_url(), server.base_url());
     let username = Username::from("creator");
-    let user = User::new(
-        username.clone(),
-        101,
-        "task-token".to_string(),
-        "refresh-token".to_string(),
-        false,
-    );
+    let user = User::new(username.clone(), 101, String::new(), String::new(), false);
 
     handles.store.add_user(user, &ActorRef::test()).await?;
+    store_github_token_secrets(&handles.state, &username, "task-token", "refresh-token").await;
     let (issue_id, _) = handles
         .store
         .add_issue(
@@ -202,12 +197,13 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     let user = User {
         username: username.clone(),
         github_user_id: 101,
-        github_token: "expired-token".to_string(),
-        github_refresh_token: "refresh-token".to_string(),
+        github_token: String::new(),
+        github_refresh_token: String::new(),
         deleted: false,
     };
 
     handles.store.add_user(user, &ActorRef::test()).await?;
+    store_github_token_secrets(&handles.state, &username, "expired-token", "refresh-token").await;
     let (issue_id, _) = handles
         .store
         .add_issue(
@@ -261,9 +257,6 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     let body: GithubTokenResponse = response.json().await?;
     assert_eq!(body.github_token, "new-token");
 
-    let updated = handles.store.get_user(&username, false).await?;
-    assert_eq!(updated.item.github_token, "new-token");
-    assert_eq!(updated.item.github_refresh_token, "new-refresh");
     refresh_mock.assert();
 
     Ok(())
@@ -297,12 +290,13 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
     let user = User {
         username: username.clone(),
         github_user_id: 101,
-        github_token: "expired-token".to_string(),
-        github_refresh_token: "bad-refresh".to_string(),
+        github_token: String::new(),
+        github_refresh_token: String::new(),
         deleted: false,
     };
 
     handles.store.add_user(user, &ActorRef::test()).await?;
+    store_github_token_secrets(&handles.state, &username, "expired-token", "bad-refresh").await;
     let (issue_id, _) = handles
         .store
         .add_issue(
