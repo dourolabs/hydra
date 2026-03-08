@@ -3,6 +3,6 @@ import type { Username } from "./Username";
 
 export type User = {
   username: Username;
-  github_user_id: bigint;
+  github_user_id?: bigint;
   deleted?: boolean;
 };

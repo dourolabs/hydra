@@ -402,7 +402,7 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
     }
 
     let user = User::new(
-        username, 0, // no GitHub user ID for PAT-based local mode
+        username, None, // no GitHub user ID for PAT-based local mode
         false,
     );
     match store.add_user(user.clone(), &system_actor).await {

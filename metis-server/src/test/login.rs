@@ -51,7 +51,7 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
 
     let user = check_store.get_user(&Username::from("octo"), false).await?;
     assert_eq!(user.item.username.as_str(), "octo");
-    assert_eq!(user.item.github_user_id, 42);
+    assert_eq!(user.item.github_user_id, Some(42));
 
     let actors = check_store.list_actors().await?;
     assert!(

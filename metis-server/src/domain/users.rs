@@ -52,13 +52,13 @@ impl Borrow<str> for Username {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct User {
     pub username: Username,
-    pub github_user_id: u64,
+    pub github_user_id: Option<u64>,
     #[serde(default)]
     pub deleted: bool,
 }
 
 impl User {
-    pub fn new(username: Username, github_user_id: u64, deleted: bool) -> Self {
+    pub fn new(username: Username, github_user_id: Option<u64>, deleted: bool) -> Self {
         Self {
             username,
             github_user_id,
@@ -70,11 +70,11 @@ impl User {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserSummary {
     pub username: Username,
-    pub github_user_id: u64,
+    pub github_user_id: Option<u64>,
 }
 
 impl UserSummary {
-    pub fn new(username: Username, github_user_id: u64) -> Self {
+    pub fn new(username: Username, github_user_id: Option<u64>) -> Self {
         Self {
             username,
             github_user_id,

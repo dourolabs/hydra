@@ -310,7 +310,10 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
     let username = Username::from("octo");
     handles
         .store
-        .add_user(User::new(username.clone(), 42, false), &ActorRef::test())
+        .add_user(
+            User::new(username.clone(), Some(42), false),
+            &ActorRef::test(),
+        )
         .await?;
     store_github_token_secrets(&handles.state, &username, "gh-token", "gh-refresh").await;
     let (actor, auth_token) = crate::domain::actors::Actor::new_for_user(username);
@@ -392,7 +395,10 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
     let username = Username::from("octo");
     handles
         .store
-        .add_user(User::new(username.clone(), 42, false), &ActorRef::test())
+        .add_user(
+            User::new(username.clone(), Some(42), false),
+            &ActorRef::test(),
+        )
         .await?;
     store_github_token_secrets(&handles.state, &username, "gh-token", "gh-refresh").await;
     let (actor, auth_token) = crate::domain::actors::Actor::new_for_user(username);
@@ -500,7 +506,10 @@ async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Re
     let username = Username::from("octo");
     handles
         .store
-        .add_user(User::new(username.clone(), 42, false), &ActorRef::test())
+        .add_user(
+            User::new(username.clone(), Some(42), false),
+            &ActorRef::test(),
+        )
         .await?;
     store_github_token_secrets(&handles.state, &username, "gh-token", "gh-refresh").await;
     let (actor, auth_token) = crate::domain::actors::Actor::new_for_user(username);
@@ -580,7 +589,10 @@ async fn create_patch_asset_surfaces_github_bad_size() -> anyhow::Result<()> {
     let username = Username::from("octo");
     handles
         .store
-        .add_user(User::new(username.clone(), 42, false), &ActorRef::test())
+        .add_user(
+            User::new(username.clone(), Some(42), false),
+            &ActorRef::test(),
+        )
         .await?;
     store_github_token_secrets(&handles.state, &username, "gh-token", "gh-refresh").await;
     let (actor, auth_token) = crate::domain::actors::Actor::new_for_user(username);
