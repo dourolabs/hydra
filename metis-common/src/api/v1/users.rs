@@ -57,7 +57,8 @@ impl Borrow<str> for Username {
 #[non_exhaustive]
 pub struct User {
     pub username: Username,
-    pub github_user_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_user_id: Option<u64>,
     pub github_token: String,
     pub github_refresh_token: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -67,7 +68,7 @@ pub struct User {
 impl User {
     pub fn new(
         username: Username,
-        github_user_id: u64,
+        github_user_id: Option<u64>,
         github_token: String,
         github_refresh_token: String,
         deleted: bool,
@@ -88,7 +89,8 @@ impl User {
 #[non_exhaustive]
 pub struct UserSummary {
     pub username: Username,
-    pub github_user_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_user_id: Option<u64>,
 }
 
 impl From<User> for UserSummary {
@@ -101,7 +103,7 @@ impl From<User> for UserSummary {
 }
 
 impl UserSummary {
-    pub fn new(username: Username, github_user_id: u64) -> Self {
+    pub fn new(username: Username, github_user_id: Option<u64>) -> Self {
         Self {
             username,
             github_user_id,

@@ -13,7 +13,7 @@ async fn get_user_returns_user_summary() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let user = User::new(
         Username::from("testuser"),
-        12345,
+        Some(12345),
         "gh-token".to_string(),
         "gh-refresh".to_string(),
         false,
@@ -32,7 +32,7 @@ async fn get_user_returns_user_summary() -> anyhow::Result<()> {
 
     let body: UserSummary = response.json().await?;
     assert_eq!(body.username.as_str(), "testuser");
-    assert_eq!(body.github_user_id, 12345);
+    assert_eq!(body.github_user_id, Some(12345));
 
     Ok(())
 }
@@ -58,7 +58,7 @@ async fn get_user_does_not_expose_tokens() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let user = User::new(
         Username::from("tokenuser"),
-        99999,
+        Some(99999),
         "secret-gh-token".to_string(),
         "secret-gh-refresh".to_string(),
         false,
@@ -102,7 +102,7 @@ async fn get_user_me_resolves_to_authenticated_user() -> anyhow::Result<()> {
 
     let user = User::new(
         username.clone(),
-        77777,
+        Some(77777),
         "gh-token".to_string(),
         "gh-refresh".to_string(),
         false,
@@ -121,7 +121,7 @@ async fn get_user_me_resolves_to_authenticated_user() -> anyhow::Result<()> {
 
     let body: UserSummary = response.json().await?;
     assert_eq!(body.username.as_str(), username.as_str());
-    assert_eq!(body.github_user_id, 77777);
+    assert_eq!(body.github_user_id, Some(77777));
 
     Ok(())
 }

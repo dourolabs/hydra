@@ -646,7 +646,7 @@ async fn migrate_users_internal(pool: &PgStorePool) -> Result<u64> {
                 .payload
                 .get("github_user_id")
                 .and_then(|v| v.as_i64())
-                .unwrap_or(0);
+                .filter(|&id| id != 0);
             let github_token = row
                 .payload
                 .get("github_token")

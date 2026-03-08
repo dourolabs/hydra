@@ -230,7 +230,7 @@ mod tests {
         let username = Username::from("octo");
         let user = User::new(
             username.clone(),
-            42,
+            Some(42),
             "token-123".to_string(),
             "refresh-123".to_string(),
             false,
@@ -360,7 +360,7 @@ mod tests {
         let username = Username::from("octo");
         let user = User::new(
             username.clone(),
-            42,
+            Some(42),
             "token-456".to_string(),
             "refresh-456".to_string(),
             false,

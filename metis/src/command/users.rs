@@ -86,7 +86,10 @@ async fn show_user_info(client: &dyn MetisClientInterface, username: Option<Stri
 
     let mut stdout = io::stdout().lock();
     writeln!(stdout, "username: {}", user_info.username)?;
-    writeln!(stdout, "github_user_id: {}", user_info.github_user_id)?;
+    match user_info.github_user_id {
+        Some(id) => writeln!(stdout, "github_user_id: {id}")?,
+        None => writeln!(stdout, "github_user_id: N/A")?,
+    }
 
     Ok(())
 }
@@ -152,7 +155,7 @@ mod tests {
     #[tokio::test]
     async fn show_user_info_displays_user_details() -> Result<()> {
         let server = MockServer::start();
-        let user_summary = UserSummary::new(Username::from("testuser"), 12345);
+        let user_summary = UserSummary::new(Username::from("testuser"), Some(12345));
         let user_summary_clone = user_summary.clone();
 
         let mock = server.mock(move |when, then| {
@@ -173,7 +176,7 @@ mod tests {
         let whoami_response = WhoAmIResponse::new(ActorIdentity::User {
             username: Username::from("currentuser"),
         });
-        let user_summary = UserSummary::new(Username::from("currentuser"), 67890);
+        let user_summary = UserSummary::new(Username::from("currentuser"), Some(67890));
         let user_summary_clone = user_summary.clone();
 
         let whoami_mock = server.mock(move |when, then| {

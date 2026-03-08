@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS users_v2 (
     id TEXT NOT NULL,
     version_number INTEGER NOT NULL,
     username TEXT NOT NULL,
-    github_user_id INTEGER NOT NULL,
+    github_user_id INTEGER,
     github_token TEXT,
     github_refresh_token TEXT,
     deleted INTEGER NOT NULL DEFAULT 0,

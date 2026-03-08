@@ -653,7 +653,7 @@ impl TestHarnessBuilder {
         store.add_actor(default_actor, &ActorRef::test()).await?;
         let default_user = User::new(
             Username::from("default"),
-            1,
+            Some(1),
             default_token.clone(),
             "gh-refresh-default".to_string(),
             false,
@@ -673,7 +673,7 @@ impl TestHarnessBuilder {
             store.add_actor(actor, &ActorRef::test()).await?;
             let user = User::new(
                 Username::from(user_name.as_str()),
-                (i + 2) as u64, // github_id, avoid collision with default (1)
+                Some((i + 2) as u64), // github_id, avoid collision with default (1)
                 token.clone(),
                 format!("gh-refresh-{user_name}"),
                 false,

@@ -92,7 +92,7 @@ impl AppState {
 
         let user = User {
             username: username.clone(),
-            github_user_id: github_user.id.into_inner(),
+            github_user_id: Some(github_user.id.into_inner()),
             github_token,
             github_refresh_token,
             deleted: false,
@@ -190,7 +190,7 @@ impl AppState {
         &self,
         username: &Username,
         github_token: String,
-        github_user_id: u64,
+        github_user_id: Option<u64>,
         github_refresh_token: String,
         actor: ActorRef,
     ) -> Result<User, StoreError> {

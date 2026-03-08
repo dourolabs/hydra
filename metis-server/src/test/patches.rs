@@ -313,7 +313,7 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
         .add_user(
             User::new(
                 username.clone(),
-                42,
+                Some(42),
                 "gh-token".to_string(),
                 "gh-refresh".to_string(),
                 false,
@@ -403,7 +403,7 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
         .add_user(
             User::new(
                 username.clone(),
-                42,
+                Some(42),
                 "gh-token".to_string(),
                 "gh-refresh".to_string(),
                 false,
@@ -519,7 +519,7 @@ async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Re
         .add_user(
             User::new(
                 username.clone(),
-                42,
+                Some(42),
                 "gh-token".to_string(),
                 "gh-refresh".to_string(),
                 false,
@@ -607,7 +607,7 @@ async fn create_patch_asset_surfaces_github_bad_size() -> anyhow::Result<()> {
         .add_user(
             User::new(
                 username.clone(),
-                42,
+                Some(42),
                 "gh-token".to_string(),
                 "gh-refresh".to_string(),
                 false,

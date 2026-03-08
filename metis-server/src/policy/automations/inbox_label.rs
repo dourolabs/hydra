@@ -174,7 +174,7 @@ mod tests {
     async fn add_human_user(handles: &test_utils::TestStateHandles, name: &str) {
         let user = User::new(
             Username::from(name),
-            12345,
+            Some(12345),
             String::new(),
             String::new(),
             false,

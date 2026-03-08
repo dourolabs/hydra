@@ -80,7 +80,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
     let username = Username::from("creator");
     let user = User::new(
         username.clone(),
-        101,
+        Some(101),
         "task-token".to_string(),
         "refresh-token".to_string(),
         false,
@@ -201,7 +201,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     let username = Username::from("creator");
     let user = User {
         username: username.clone(),
-        github_user_id: 101,
+        github_user_id: Some(101),
         github_token: "expired-token".to_string(),
         github_refresh_token: "refresh-token".to_string(),
         deleted: false,
@@ -296,7 +296,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
     let username = Username::from("creator");
     let user = User {
         username: username.clone(),
-        github_user_id: 101,
+        github_user_id: Some(101),
         github_token: "expired-token".to_string(),
         github_refresh_token: "bad-refresh".to_string(),
         deleted: false,

@@ -889,7 +889,7 @@ impl PostgresStoreV2 {
             .bind(id)
             .bind(version_number)
             .bind(user.username.as_str())
-            .bind(user.github_user_id as i64)
+            .bind(user.github_user_id.map(|id| id as i64))
             .bind(&user.github_token)
             .bind(&user.github_refresh_token)
             .bind(user.deleted)
@@ -904,7 +904,7 @@ impl PostgresStoreV2 {
     fn row_to_user(&self, row: &UserRow) -> User {
         User::new(
             Username::from(row.username.clone()),
-            row.github_user_id as u64,
+            row.github_user_id.map(|id| id as u64),
             row.github_token.clone().unwrap_or_default(),
             row.github_refresh_token.clone().unwrap_or_default(),
             row.deleted,
@@ -1155,7 +1155,7 @@ struct UserRow {
     id: String,
     version_number: i64,
     username: String,
-    github_user_id: i64,
+    github_user_id: Option<i64>,
     github_token: Option<String>,
     github_refresh_token: Option<String>,
     deleted: bool,
@@ -4314,7 +4314,7 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let user = User {
             username: Username::from("alice"),
-            github_user_id: 101,
+            github_user_id: Some(101),
             github_token: "token".to_string(),
             github_refresh_token: "refresh-token".to_string(),
             deleted: false,
@@ -4335,7 +4335,7 @@ mod tests {
             .update_user(
                 User {
                     username: Username::from("alice"),
-                    github_user_id: 202,
+                    github_user_id: Some(202),
                     github_token: "new-token".to_string(),
                     github_refresh_token: "new-refresh".to_string(),
                     deleted: false,
@@ -4345,7 +4345,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated.item.github_token, "new-token");
-        assert_eq!(updated.item.github_user_id, 202);
+        assert_eq!(updated.item.github_user_id, Some(202));
         assert_eq!(updated.version, 2);
     }
 
@@ -4472,7 +4472,7 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let user = User {
             username: Username::from("roundtrip_user"),
-            github_user_id: 999,
+            github_user_id: Some(999),
             github_token: "tok".to_string(),
             github_refresh_token: "ref".to_string(),
             deleted: false,
