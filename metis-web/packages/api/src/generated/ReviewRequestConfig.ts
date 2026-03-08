@@ -3,4 +3,4 @@
 /**
  * Configuration for a single review request entry.
  */
-export type ReviewRequestConfig = { assignee: string };
+export type ReviewRequestConfig = { assignee: string, };

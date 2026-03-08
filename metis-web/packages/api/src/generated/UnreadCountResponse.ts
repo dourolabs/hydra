@@ -3,4 +3,4 @@
 /**
  * Response containing the count of unread notifications.
  */
-export type UnreadCountResponse = { count: bigint };
+export type UnreadCountResponse = { count: bigint, };

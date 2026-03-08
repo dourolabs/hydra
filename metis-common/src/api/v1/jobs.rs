@@ -29,8 +29,6 @@ pub struct Task {
     pub cpu_limit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub secrets: Option<Vec<String>>,
     #[serde(default = "default_status")]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -59,7 +57,6 @@ impl Task {
         env_vars: HashMap<String, String>,
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
-        secrets: Option<Vec<String>>,
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
@@ -78,7 +75,6 @@ impl Task {
             env_vars,
             cpu_limit,
             memory_limit,
-            secrets,
             status,
             last_message,
             error,
@@ -297,7 +293,7 @@ impl CreateJobResponse {
 /// Lightweight summary of a job/task for list views.
 ///
 /// Excludes `context`, `image`, `model`, `env_vars`, `cpu_limit`,
-/// `memory_limit`, `secrets`, and `last_message`.
+/// `memory_limit`, and `last_message`.
 /// The `prompt` field is truncated to the first 20 characters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -547,7 +543,6 @@ mod tests {
             HashMap::from([("KEY".to_string(), "val".to_string())]),
             Some("500m".to_string()),
             Some("1Gi".to_string()),
-            Some(vec!["secret".to_string()]),
             Status::Running,
             Some("last message text".to_string()),
             None,

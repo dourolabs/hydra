@@ -4111,7 +4111,6 @@ mod tests {
                 HashMap::new(),
                 None,
                 None,
-                None,
                 status,
                 None,
                 error,

@@ -5,12 +5,4 @@ import type { ActorRef } from "./ActorRef";
 import type { MetisId } from "./MetisId";
 import type { JsonValue } from "./serde_json/JsonValue";
 
-export type ActivityLogEntry = {
-  object_id: MetisId;
-  object_kind: ActivityObjectKind;
-  version: bigint;
-  timestamp: string;
-  event: ActivityEvent;
-  object: JsonValue;
-  actor?: ActorRef | null;
-};
+export type ActivityLogEntry = { object_id: MetisId, object_kind: ActivityObjectKind, version: bigint, timestamp: string, event: ActivityEvent, object: JsonValue, actor?: ActorRef | null, };

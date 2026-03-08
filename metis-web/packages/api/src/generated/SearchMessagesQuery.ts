@@ -3,12 +3,4 @@
 /**
  * Query parameters for searching messages.
  */
-export type SearchMessagesQuery = {
-  sender: string | null;
-  recipient: string | null;
-  after: string | null;
-  before: string | null;
-  include_deleted: boolean | null;
-  is_read: boolean | null;
-  limit: number | null;
-};
+export type SearchMessagesQuery = { sender: string | null, recipient: string | null, after: string | null, before: string | null, include_deleted: boolean | null, is_read: boolean | null, limit: number | null, };

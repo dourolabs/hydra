@@ -3,4 +3,4 @@
 /**
  * Query parameters for listing labels.
  */
-export type SearchLabelsQuery = { q: string | null; include_deleted: boolean | null };
+export type SearchLabelsQuery = { q: string | null, include_deleted: boolean | null, };

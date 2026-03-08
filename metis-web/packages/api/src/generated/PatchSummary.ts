@@ -12,17 +12,4 @@ import type { Username } from "./Username";
  *
  * Excludes `diff`, `description`, `reviews[].contents`, and `commit_range`.
  */
-export type PatchSummary = {
-  title: string;
-  status: PatchStatus;
-  is_automatic_backup: boolean;
-  created_by?: TaskId | null;
-  creator: Username;
-  review_summary: ReviewSummary;
-  service_repo_name: RepoName;
-  github?: GithubPr | null;
-  branch_name?: string | null;
-  base_branch?: string | null;
-  deleted?: boolean;
-  labels?: Array<LabelSummary>;
-};
+export type PatchSummary = { title: string, status: PatchStatus, is_automatic_backup: boolean, created_by?: TaskId | null, creator: Username, review_summary: ReviewSummary, service_repo_name: RepoName, github?: GithubPr | null, branch_name?: string | null, base_branch?: string | null, deleted?: boolean, labels?: Array<LabelSummary>, };

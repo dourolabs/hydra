@@ -155,7 +155,6 @@ mod tests {
             HashMap::new(),
             None,
             None,
-            None,
             crate::store::Status::Created,
             None,
             None,

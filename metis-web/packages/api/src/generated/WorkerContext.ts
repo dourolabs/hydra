@@ -2,10 +2,4 @@
 import type { BuildCacheContext } from "./BuildCacheContext";
 import type { Bundle } from "./Bundle";
 
-export type WorkerContext = {
-  request_context: Bundle;
-  prompt: string;
-  model?: string | null;
-  variables: { [key in string]: string };
-  build_cache?: BuildCacheContext | null;
-};
+export type WorkerContext = { request_context: Bundle, prompt: string, model?: string | null, variables: { [key in string]: string }, build_cache?: BuildCacheContext | null, };
