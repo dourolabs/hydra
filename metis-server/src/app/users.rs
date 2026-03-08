@@ -93,8 +93,8 @@ impl AppState {
         let user = User {
             username: username.clone(),
             github_user_id: github_user.id.into_inner(),
-            github_token,
-            github_refresh_token,
+            github_token: String::new(),
+            github_refresh_token: String::new(),
             deleted: false,
         };
 
@@ -103,28 +103,16 @@ impl AppState {
         if let Err(err) = self.store.add_user(user.clone(), login_actor.clone()).await {
             match err {
                 StoreError::UserAlreadyExists(_) => {
-                    self.set_user_github_token(
-                        &user.username,
-                        user.github_token.clone(),
-                        user.github_user_id,
-                        user.github_refresh_token.clone(),
-                        login_actor.clone(),
-                    )
-                    .await
-                    .map_err(|source| LoginError::Store { source })?;
+                    // User already exists — continue to store tokens in
+                    // encrypted user_secrets below.
                 }
                 other => return Err(LoginError::Store { source: other }),
             }
         }
 
         // Store tokens in encrypted user_secrets.
-        store_github_token_secrets(
-            self,
-            &user.username,
-            &user.github_token,
-            &user.github_refresh_token,
-        )
-        .await;
+        store_github_token_secrets(self, &user.username, &github_token, &github_refresh_token)
+            .await;
 
         if let Err(err) = self
             .store
@@ -184,24 +172,6 @@ impl AppState {
     pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
         let store = self.store.as_ref();
         store.get_user(username, false).await.map(|user| user.item)
-    }
-
-    pub async fn set_user_github_token(
-        &self,
-        username: &Username,
-        github_token: String,
-        github_user_id: u64,
-        github_refresh_token: String,
-        actor: ActorRef,
-    ) -> Result<User, StoreError> {
-        let mut user = self.store.get_user(username, false).await?.item;
-        user.github_token = github_token;
-        user.github_user_id = github_user_id;
-        user.github_refresh_token = github_refresh_token;
-        self.store
-            .update_user(user, actor)
-            .await
-            .map(|user| user.item)
     }
 
     /// Migrate existing GitHub tokens from plaintext `users_v2` columns into

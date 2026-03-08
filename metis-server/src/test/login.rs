@@ -52,7 +52,8 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
     let user = check_store.get_user(&Username::from("octo"), false).await?;
     assert_eq!(user.item.username.as_str(), "octo");
     assert_eq!(user.item.github_user_id, 42);
-    assert_eq!(user.item.github_refresh_token, "gh-refresh");
+    // Plaintext token fields are no longer populated; tokens live in user_secrets.
+    assert_eq!(user.item.github_refresh_token, "");
 
     let actors = check_store.list_actors().await?;
     assert!(
@@ -88,7 +89,8 @@ async fn login_persists_refresh_token() -> anyhow::Result<()> {
     assert_eq!(response.status(), StatusCode::OK);
 
     let user = check_store.get_user(&Username::from("octo"), false).await?;
-    assert_eq!(user.item.github_refresh_token, "gh-refresh");
+    // Plaintext token fields are no longer populated; tokens live in user_secrets.
+    assert_eq!(user.item.github_refresh_token, "");
 
     Ok(())
 }

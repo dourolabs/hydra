@@ -5,7 +5,6 @@ use crate::{
         secrets::{SECRET_GITHUB_REFRESH_TOKEN, SECRET_GITHUB_TOKEN},
         users::Username,
     },
-    store::StoreError,
 };
 pub use metis_common::{ActorId, ActorRef, parse_actor_name};
 use metis_common::{IssueId, TaskId, api::v1::ApiError, github::GithubTokenResponse};
@@ -165,40 +164,24 @@ impl Actor {
 
 /// Resolve a GitHub token for the given `username`, refreshing it if expired.
 ///
-/// Tokens are read from encrypted `user_secrets` first, falling back to the
-/// (deprecated) plaintext columns in `users_v2`. Refreshed tokens are always
-/// written back to `user_secrets`.
+/// Tokens are read from the encrypted `user_secrets` store. Refreshed tokens
+/// are written back to `user_secrets`.
 ///
 /// The `actor_id` is only used to record which actor triggered a token refresh
 /// in the audit trail — it is not required for fetching the token itself.
 pub async fn get_github_token_for_user(
     state: &AppState,
     username: &Username,
-    actor_id: &ActorId,
+    _actor_id: &ActorId,
 ) -> Result<GithubTokenResponse, ApiError> {
     info!(username = %username, "get_github_token_for_user invoked");
 
-    let user = state.get_user(username).await.map_err(|err| match err {
-        StoreError::UserNotFound(missing) => {
-            error!(username = %missing, "user not found");
-            ApiError::not_found(format!("user '{missing}' not found"))
-        }
-        other => {
-            error!(username = %username, error = %other, "failed to load user");
-            ApiError::internal(format!("failed to load user '{username}': {other}"))
-        }
-    })?;
+    let secret_manager = &state.secret_manager;
 
-    // Read tokens from user_secrets (encrypted), falling back to users_v2 (plaintext).
     let mut github_token =
-        resolve_secret_or_fallback(state, username, SECRET_GITHUB_TOKEN, &user.github_token).await;
-    let github_refresh_token = resolve_secret_or_fallback(
-        state,
-        username,
-        SECRET_GITHUB_REFRESH_TOKEN,
-        &user.github_refresh_token,
-    )
-    .await;
+        read_user_secret(state, secret_manager, username, SECRET_GITHUB_TOKEN).await?;
+    let github_refresh_token =
+        read_user_secret(state, secret_manager, username, SECRET_GITHUB_REFRESH_TOKEN).await?;
 
     // In local mode (no GitHub App configured), PATs don't support OAuth
     // refresh — just return the token as-is.
@@ -218,31 +201,6 @@ pub async fn get_github_token_for_user(
         )
         .await;
 
-        // Also update users_v2 for backward compatibility during migration.
-        state
-            .set_user_github_token(
-                username,
-                refreshed.access_token.clone(),
-                user.github_user_id,
-                refreshed.refresh_token.clone(),
-                ActorRef::Authenticated {
-                    actor_id: actor_id.clone(),
-                },
-            )
-            .await
-            .map_err(|err| match err {
-                StoreError::UserNotFound(missing) => {
-                    error!(username = %missing, "user not found");
-                    ApiError::not_found(format!("user '{missing}' not found"))
-                }
-                other => {
-                    error!(username = %username, error = %other, "failed to refresh github token");
-                    ApiError::internal(format!(
-                        "failed to refresh github token for '{username}': {other}"
-                    ))
-                }
-            })?;
-
         github_token = refreshed.access_token;
     }
 
@@ -250,39 +208,40 @@ pub async fn get_github_token_for_user(
     Ok(GithubTokenResponse { github_token })
 }
 
-/// Try to read a secret from user_secrets (encrypted). If unavailable, fall back
-/// to the plaintext value from users_v2.
-async fn resolve_secret_or_fallback(
+/// Read a secret from encrypted user_secrets storage.
+async fn read_user_secret(
     state: &AppState,
+    secret_manager: &crate::domain::secrets::SecretManager,
     username: &Username,
     secret_name: &str,
-    fallback: &str,
-) -> String {
-    let secret_manager = &state.secret_manager;
-
+) -> Result<String, ApiError> {
     match state.store().get_user_secret(username, secret_name).await {
         Ok(Some(encrypted)) => match secret_manager.decrypt(&encrypted) {
-            Ok(value) if !value.is_empty() => value,
-            Ok(_) => fallback.to_string(),
+            Ok(value) if !value.is_empty() => Ok(value),
+            Ok(_) => {
+                error!(username = %username, secret = secret_name, "user secret is empty");
+                Err(ApiError::not_found(format!(
+                    "GitHub token not found for user '{username}'"
+                )))
+            }
             Err(err) => {
-                warn!(
-                    username = %username,
-                    secret = secret_name,
-                    error = %err,
-                    "failed to decrypt user secret, falling back to users_v2"
-                );
-                fallback.to_string()
+                error!(username = %username, secret = secret_name, error = %err, "failed to decrypt user secret");
+                Err(ApiError::internal(format!(
+                    "failed to decrypt secret for user '{username}': {err}"
+                )))
             }
         },
-        Ok(None) => fallback.to_string(),
+        Ok(None) => {
+            error!(username = %username, secret = secret_name, "user secret not found");
+            Err(ApiError::not_found(format!(
+                "GitHub token not found for user '{username}'"
+            )))
+        }
         Err(err) => {
-            warn!(
-                username = %username,
-                secret = secret_name,
-                error = %err,
-                "failed to look up user secret, falling back to users_v2"
-            );
-            fallback.to_string()
+            error!(username = %username, secret = secret_name, error = %err, "failed to look up user secret");
+            Err(ApiError::internal(format!(
+                "failed to look up secret for user '{username}': {err}"
+            )))
         }
     }
 }

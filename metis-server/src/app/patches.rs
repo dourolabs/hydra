@@ -187,7 +187,7 @@ mod tests {
             github_pull_request_response, poll_until, sample_task, start_test_automation_runner,
         },
         domain::{
-            actors::{Actor, ActorRef},
+            actors::{Actor, ActorRef, store_github_token_secrets},
             patches::{GithubPr, Patch, PatchStatus},
             users::{User, Username},
         },
@@ -228,18 +228,13 @@ mod tests {
         let handles = test_state_with_github_api_base_url(github_server.base_url());
         let runner = start_test_automation_runner(&handles.state);
         let username = Username::from("octo");
-        let user = User::new(
-            username.clone(),
-            42,
-            "token-123".to_string(),
-            "refresh-123".to_string(),
-            false,
-        );
+        let user = User::new(username.clone(), 42, String::new(), String::new(), false);
         handles
             .store
             .as_ref()
             .add_user(user, &ActorRef::test())
             .await?;
+        store_github_token_secrets(&handles.state, &username, "token-123", "refresh-123").await;
         let (actor, _auth_token) = Actor::new_for_user(username);
         handles
             .store
@@ -358,18 +353,13 @@ mod tests {
         let handles = test_state_with_github_api_base_url(github_server.base_url());
         let runner = start_test_automation_runner(&handles.state);
         let username = Username::from("octo");
-        let user = User::new(
-            username.clone(),
-            42,
-            "token-456".to_string(),
-            "refresh-456".to_string(),
-            false,
-        );
+        let user = User::new(username.clone(), 42, String::new(), String::new(), false);
         handles
             .store
             .as_ref()
             .add_user(user, &ActorRef::test())
             .await?;
+        store_github_token_secrets(&handles.state, &username, "token-456", "refresh-456").await;
         let (actor, _auth_token) = Actor::new_for_user(username);
         handles
             .store
