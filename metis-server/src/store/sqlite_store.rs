@@ -1094,16 +1094,6 @@ impl SqliteStore {
         Ok(())
     }
 
-    async fn count_distinct_notifications(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_NOTIFICATIONS}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
     // ---- Message helpers ----
 
     fn row_to_message(&self, row: &MessageRow) -> Result<Message, StoreError> {
@@ -1166,16 +1156,6 @@ impl SqliteStore {
         .map_err(map_sqlx_error)?;
 
         Ok(())
-    }
-
-    async fn count_distinct_messages(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_MESSAGES_V2}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
     }
 }
 
@@ -3229,8 +3209,7 @@ impl Store for SqliteStore {
         &self,
         notification: Notification,
     ) -> Result<NotificationId, StoreError> {
-        let count = self.count_distinct_notifications().await?;
-        let id = NotificationId::new_for_count(count);
+        let id = NotificationId::new();
         self.insert_notification_row(&id, &notification).await?;
         Ok(id)
     }
@@ -3285,8 +3264,7 @@ impl Store for SqliteStore {
         message: Message,
         actor: &ActorRef,
     ) -> Result<(MessageId, VersionNumber), StoreError> {
-        let count = self.count_distinct_messages().await?;
-        let id = MessageId::new_for_count(count);
+        let id = MessageId::new();
         let actor_json = actor_to_json_string(actor);
         self.insert_message_row(&id, 1, &message, Some(&actor_json))
             .await?;
@@ -6099,25 +6077,6 @@ mod tests {
         query.include_deleted = Some(true);
         let results_with_deleted = store.list_messages(&query).await.unwrap();
         assert_eq!(results_with_deleted.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn count_distinct_messages_counts_correctly() {
-        let store = create_test_store().await;
-        assert_eq!(store.count_distinct_messages().await.unwrap(), 0);
-
-        let (id, _) = store
-            .add_message(sample_message(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_messages().await.unwrap(), 1);
-
-        // Updating should not increase count
-        store
-            .update_message(&id, sample_message(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_messages().await.unwrap(), 1);
     }
 
     // ---- User secret tests ----
