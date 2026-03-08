@@ -5,22 +5,4 @@ import type { Status } from "./Status";
 import type { TaskError } from "./TaskError";
 import type { Username } from "./Username";
 
-export type Task = {
-  prompt: string;
-  context: BundleSpec;
-  spawned_from?: IssueId | null;
-  creator: Username;
-  image?: string | null;
-  model?: string | null;
-  env_vars?: { [key in string]: string };
-  cpu_limit?: string | null;
-  memory_limit?: string | null;
-  secrets?: Array<string> | null;
-  status: Status;
-  last_message?: string | null;
-  error?: TaskError | null;
-  deleted?: boolean;
-  creation_time?: string | null;
-  start_time?: string | null;
-  end_time?: string | null;
-};
+export type Task = { prompt: string, context: BundleSpec, spawned_from?: IssueId | null, creator: Username, image?: string | null, model?: string | null, env_vars?: { [key in string]: string }, cpu_limit?: string | null, memory_limit?: string | null, status: Status, last_message?: string | null, error?: TaskError | null, deleted?: boolean, creation_time?: string | null, start_time?: string | null, end_time?: string | null, };

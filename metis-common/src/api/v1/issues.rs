@@ -508,8 +508,6 @@ pub struct JobSettings {
     pub cpu_limit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub memory_limit: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub secrets: Option<Vec<String>>,
 }
 
 impl JobSettings {
@@ -546,9 +544,6 @@ impl JobSettings {
         }
         if self.memory_limit.is_none() {
             self.memory_limit = other.memory_limit.take();
-        }
-        if self.secrets.is_none() {
-            self.secrets = other.secrets.take();
         }
     }
 }
@@ -1019,7 +1014,6 @@ mod tests {
             max_retries: Some(3),
             cpu_limit: Some("500m".to_string()),
             memory_limit: Some("1Gi".to_string()),
-            secrets: Some(vec!["my-secret".to_string()]),
         };
         let todos = vec![
             TodoItem {

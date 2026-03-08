@@ -3,10 +3,4 @@
 /**
  * Query parameters for listing notifications.
  */
-export type ListNotificationsQuery = {
-  recipient: string | null;
-  is_read: boolean | null;
-  before: string | null;
-  after: string | null;
-  limit: number | null;
-};
+export type ListNotificationsQuery = { recipient: string | null, is_read: boolean | null, before: string | null, after: string | null, limit: number | null, };

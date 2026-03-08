@@ -637,7 +637,6 @@ mod tests {
             env_vars: Default::default(),
             cpu_limit: None,
             memory_limit: None,
-            secrets: None,
             status: crate::store::Status::Created,
             last_message: None,
             error: None,

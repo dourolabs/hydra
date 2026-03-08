@@ -180,6 +180,7 @@ struct TaskRow {
     status: String,
     last_message: Option<String>,
     error: Option<String>,
+    #[allow(dead_code)]
     secrets: Option<String>,
     creator: Option<String>,
     deleted: bool,
@@ -790,15 +791,7 @@ impl SqliteStore {
                 })
             })
             .transpose()?;
-        let secrets_json = task
-            .secrets
-            .as_ref()
-            .map(|s| {
-                serde_json::to_string(s).map_err(|err| {
-                    StoreError::Internal(format!("failed to serialize secrets: {err}"))
-                })
-            })
-            .transpose()?;
+        let secrets_json: Option<String> = None;
         let status_str = super::status_to_db_str(task.status);
 
         if let Some(ts) = created_at {
@@ -875,15 +868,6 @@ impl SqliteStore {
                 })
             })
             .transpose()?;
-        let secrets: Option<Vec<String>> = row
-            .secrets
-            .as_ref()
-            .map(|s| {
-                serde_json::from_str(s).map_err(|err| {
-                    StoreError::Internal(format!("failed to deserialize secrets: {err}"))
-                })
-            })
-            .transpose()?;
         let spawned_from = row
             .spawned_from
             .as_ref()
@@ -917,7 +901,6 @@ impl SqliteStore {
             env_vars,
             cpu_limit: row.cpu_limit.clone(),
             memory_limit: row.memory_limit.clone(),
-            secrets,
             status,
             last_message: row.last_message.clone(),
             error,
@@ -4867,7 +4850,6 @@ mod tests {
             HashMap::new(),
             None,
             None,
-            None,
             Status::Created,
             None,
             None,
@@ -5148,7 +5130,6 @@ mod tests {
             HashMap::from([("KEY".to_string(), "VALUE".to_string())]),
             Some("2".to_string()),
             Some("4Gi".to_string()),
-            Some(vec!["secret1".to_string(), "secret2".to_string()]),
             Status::Pending,
             Some("last msg".to_string()),
             Some(TaskError::JobEngineError {

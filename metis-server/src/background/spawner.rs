@@ -113,7 +113,6 @@ impl AgentQueue {
             env_vars,
             job_settings.cpu_limit.clone(),
             job_settings.memory_limit.clone(),
-            job_settings.secrets.clone(),
             Status::Created,
             None,
             None,
@@ -548,7 +547,6 @@ mod tests {
             env_vars,
             None,
             None,
-            None,
             Status::Created,
             None,
             None,
@@ -949,7 +947,6 @@ mod tests {
                         max_retries: None,
                         cpu_limit: None,
                         memory_limit: None,
-                        secrets: None,
                     },
                     todo_list: Vec::new(),
                     dependencies: vec![],
@@ -980,7 +977,6 @@ mod tests {
                         max_retries: None,
                         cpu_limit: None,
                         memory_limit: None,
-                        secrets: None,
                     },
                     todo_list: Vec::new(),
                     dependencies: vec![],
@@ -1037,7 +1033,6 @@ mod tests {
                         max_retries: Some(1),
                         cpu_limit: None,
                         memory_limit: None,
-                        secrets: None,
                     },
                     todo_list: Vec::new(),
                     dependencies: vec![],
@@ -1101,7 +1096,7 @@ mod tests {
                     ]),
                     cpu_limit: None,
                     memory_limit: None,
-                    secrets: None,
+
                     status: Status::Created,
                     last_message: None,
                     error: None,
@@ -1185,7 +1180,7 @@ mod tests {
                     ]),
                     cpu_limit: None,
                     memory_limit: None,
-                    secrets: None,
+
                     status: Status::Created,
                     last_message: None,
                     error: None,
@@ -1550,7 +1545,6 @@ mod tests {
                         max_retries: None,
                         cpu_limit: None,
                         memory_limit: None,
-                        secrets: None,
                     },
                     todo_list: Vec::new(),
                     dependencies: vec![],
@@ -1588,99 +1582,6 @@ mod tests {
                 .map(|value| value.as_str()),
             Some(issue_id.as_ref())
         );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn spawner_passes_secrets_from_job_settings() -> anyhow::Result<()> {
-        let (repo_name, repository) = repository();
-        let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
-        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
-        let secrets = vec!["db-secret".to_string(), "api-key".to_string()];
-        handles
-            .store
-            .add_issue(
-                Issue {
-                    issue_type: IssueType::Task,
-                    title: String::new(),
-                    description: "Issue with secrets".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
-                        repo_name: Some(repo_name.clone()),
-                        remote_url: None,
-                        image: Some("worker:latest".to_string()),
-                        model: None,
-                        branch: None,
-                        max_retries: None,
-                        cpu_limit: None,
-                        memory_limit: None,
-                        secrets: Some(secrets.clone()),
-                    },
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                    deleted: false,
-                },
-                &ActorRef::test(),
-            )
-            .await?;
-        let queue = queue("agent-a");
-
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-
-        let task = &tasks[0];
-        assert_eq!(task.secrets, Some(secrets));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn spawner_handles_none_secrets() -> anyhow::Result<()> {
-        let (repo_name, repository) = repository();
-        let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
-        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
-        handles
-            .store
-            .add_issue(
-                Issue {
-                    issue_type: IssueType::Task,
-                    title: String::new(),
-                    description: "Issue without secrets".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
-                        repo_name: Some(repo_name.clone()),
-                        remote_url: None,
-                        image: Some("worker:latest".to_string()),
-                        model: None,
-                        branch: None,
-                        max_retries: None,
-                        cpu_limit: None,
-                        memory_limit: None,
-                        secrets: None,
-                    },
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                    deleted: false,
-                },
-                &ActorRef::test(),
-            )
-            .await?;
-        let queue = queue("agent-a");
-
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-
-        let task = &tasks[0];
-        assert!(task.secrets.is_none());
 
         Ok(())
     }

@@ -152,7 +152,6 @@ impl AppState {
             env_vars,
             cpu_limit,
             memory_limit,
-            None,
             Status::Created,
             None,
             None,
@@ -390,7 +389,6 @@ impl AppState {
                 memory_limit,
                 cpu_request,
                 memory_request,
-                resolved.secrets.as_deref(),
             )
             .await
         {

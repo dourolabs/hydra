@@ -26,8 +26,6 @@ pub struct Task {
     pub cpu_limit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub secrets: Option<Vec<String>>,
     #[serde(default = "default_task_status")]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,7 +48,6 @@ impl Task {
         env_vars: HashMap<String, String>,
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
-        secrets: Option<Vec<String>>,
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
@@ -65,7 +62,6 @@ impl Task {
             env_vars,
             cpu_limit,
             memory_limit,
-            secrets,
             status,
             last_message,
             error,
@@ -182,7 +178,6 @@ impl From<api::jobs::Task> for Task {
             env_vars: value.env_vars,
             cpu_limit: value.cpu_limit,
             memory_limit: value.memory_limit,
-            secrets: value.secrets,
             status: value.status.into(),
             last_message: value.last_message,
             error: value.error.map(Into::into),
@@ -203,7 +198,6 @@ impl From<Task> for api::jobs::Task {
             value.env_vars,
             value.cpu_limit,
             value.memory_limit,
-            value.secrets,
             value.status.into(),
             value.last_message,
             value.error.map(Into::into),
@@ -217,12 +211,9 @@ impl From<Task> for api::jobs::Task {
 
 #[cfg(test)]
 mod tests {
-    use super::{BundleSpec, Task};
-    use crate::domain::task_status::Status;
-    use crate::domain::users::Username;
+    use super::BundleSpec;
     use metis_common::RepoName;
     use metis_common::api::v1 as api;
-    use std::collections::HashMap;
     use std::str::FromStr;
 
     #[test]
@@ -237,57 +228,5 @@ mod tests {
         let round_trip: BundleSpec = api_spec.into();
 
         assert_eq!(round_trip, domain);
-    }
-
-    #[test]
-    fn task_roundtrip_preserves_secrets() {
-        let secrets = Some(vec!["db-secret".to_string(), "api-key".to_string()]);
-        let domain_task = Task::new(
-            "test prompt".to_string(),
-            BundleSpec::None,
-            None,
-            Username::from("test-creator"),
-            Some("worker:latest".to_string()),
-            Some("gpt-4o".to_string()),
-            HashMap::new(),
-            Some("400m".to_string()),
-            Some("768Mi".to_string()),
-            secrets.clone(),
-            Status::Created,
-            None,
-            None,
-        );
-
-        let api_task: api::jobs::Task = domain_task.clone().into();
-        let round_trip: Task = api_task.into();
-
-        assert_eq!(round_trip.secrets, secrets);
-        assert_eq!(round_trip.prompt, domain_task.prompt);
-        assert_eq!(round_trip.image, domain_task.image);
-        assert_eq!(round_trip.model, domain_task.model);
-    }
-
-    #[test]
-    fn task_roundtrip_preserves_empty_secrets() {
-        let domain_task = Task::new(
-            "test prompt".to_string(),
-            BundleSpec::None,
-            None,
-            Username::from("test-creator"),
-            None,
-            None,
-            HashMap::new(),
-            None,
-            None,
-            None,
-            Status::Created,
-            None,
-            None,
-        );
-
-        let api_task: api::jobs::Task = domain_task.clone().into();
-        let round_trip: Task = api_task.into();
-
-        assert_eq!(round_trip.secrets, None);
     }
 }

@@ -2,10 +2,4 @@
 import type { DocumentPath } from "./DocumentPath";
 import type { TaskId } from "./TaskId";
 
-export type Document = {
-  title: string;
-  body_markdown: string;
-  path?: DocumentPath | null;
-  created_by?: TaskId | null;
-  deleted?: boolean;
-};
+export type Document = { title: string, body_markdown: string, path?: DocumentPath | null, created_by?: TaskId | null, deleted?: boolean, };

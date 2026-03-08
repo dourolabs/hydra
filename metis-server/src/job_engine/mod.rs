@@ -95,7 +95,6 @@ pub trait JobEngine: Send + Sync {
     /// * `memory_limit` - Memory limit for the job container
     /// * `cpu_request` - CPU request for the job container
     /// * `memory_request` - Memory request for the job container
-    /// * `secrets` - Kubernetes secret names to mount as envFrom sources
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if creation fails
@@ -110,7 +109,6 @@ pub trait JobEngine: Send + Sync {
         memory_limit: String,
         cpu_request: String,
         memory_request: String,
-        secrets: Option<&[String]>,
     ) -> Result<(), JobEngineError>;
 
     /// Lists all jobs matching the given label selector.
