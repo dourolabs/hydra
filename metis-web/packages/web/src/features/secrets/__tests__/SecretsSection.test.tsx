@@ -235,7 +235,7 @@ describe("SecretsSection", () => {
     fireEvent.click(screen.getByText("+ Add Secret"));
 
     const nameInput = screen.getByPlaceholderText("SECRET_NAME") as HTMLInputElement;
-    // Type a name starting with underscore (invalid — will be stripped to empty by the onChange handler)
+    // Type a name starting with a digit (invalid — must start with [A-Z])
     fireEvent.change(nameInput, { target: { value: "1BAD" } });
 
     // The component uppercases and strips invalid chars, but the validation

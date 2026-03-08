@@ -135,7 +135,7 @@ function makePatchItem(): WorkItem {
         status: "Open",
         is_automatic_backup: false,
         creator: "alice",
-        review_summary: { approved: false, reviewer_count: 0, comment_count: 0 },
+        review_summary: { count: 0, approved: false },
         service_repo_name: "test-repo",
       },
     },
@@ -154,6 +154,28 @@ function makeRunningJob(): JobSummaryRecord {
       start_time: new Date(Date.now() - 5000).toISOString(),
     },
   };
+}
+
+function makeDocumentItem(): WorkItem {
+  return {
+    kind: "document",
+    id: "d-test1",
+    lastUpdated: "2026-01-01T00:00:00Z",
+    isTerminal: false,
+    sourceIssueId: "i-test1",
+    data: {
+      document_id: "d-test1",
+      version: 1n,
+      timestamp: "2026-01-01T00:00:00Z",
+      creation_time: "2026-01-01T00:00:00Z",
+      document: {
+        title: "Design Doc",
+        path: "designs/my-doc.md",
+        deleted: false,
+        labels: [],
+      },
+    },
+  } as WorkItem;
 }
 
 // --- Tests ---
@@ -287,5 +309,16 @@ describe("ItemRow", () => {
     }
     render(<ItemRow item={item} />);
     expect(screen.getByText("50% complete")).toBeDefined();
+  });
+
+  it("renders document title and navigates to document path", () => {
+    render(<ItemRow item={makeDocumentItem()} />);
+    expect(screen.getByText("Design Doc")).toBeDefined();
+    const { container } = render(<ItemRow item={makeDocumentItem()} />);
+    const li = container.querySelector("li")!;
+    fireEvent.click(li);
+    expect(mockNavigate).toHaveBeenCalledWith(
+      expect.stringContaining("/documents/d-test1"),
+    );
   });
 });
