@@ -654,7 +654,7 @@ impl Default for WorkerSchedulerConfig {
     }
 }
 
-pub(crate) fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
+pub fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
     let path = path.as_ref();
     match path.to_str() {
         Some(raw) if raw.starts_with('~') => PathBuf::from(shellexpand::tilde(raw).into_owned()),

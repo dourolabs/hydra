@@ -261,9 +261,13 @@ pub async fn run_with_state(
 }
 
 pub async fn run() -> anyhow::Result<()> {
+    run_with_config_path(None).await
+}
+
+pub async fn run_with_config_path(config_path: Option<PathBuf>) -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let config_path = config_path();
+    let config_path = config_path.unwrap_or_else(config_path_from_env);
     let app_config = AppConfig::load(&config_path)?;
     let service_state = ServiceState::default();
 
@@ -380,7 +384,7 @@ pub async fn run() -> anyhow::Result<()> {
 }
 
 /// Create a default user actor for local auth mode and write the auth token
-/// to the well-known token file so the CLI can discover it.
+/// to the CLI's config.toml so the CLI can discover it.
 pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
     let username = Username::from(
         config
@@ -417,43 +421,91 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
         Err(err) => return Err(err.into()),
     }
 
-    write_local_auth_token(&auth_token)?;
+    write_cli_config_token(&auth_token)?;
 
     info!("local auth configured");
     Ok(())
 }
 
-/// Write the auth token to the well-known file for CLI discovery.
-fn write_local_auth_token(auth_token: &str) -> anyhow::Result<()> {
-    use metis_common::constants::LOCAL_AUTH_TOKEN_FILE;
+/// Write the auth token into the CLI's config.toml so the CLI can authenticate
+/// without a separate token file or fallback logic.
+fn write_cli_config_token(auth_token: &str) -> anyhow::Result<()> {
+    use metis_common::constants::DEFAULT_CLI_CONFIG_PATH;
 
-    let path = config::expand_path(LOCAL_AUTH_TOKEN_FILE);
+    let server_url = "http://localhost:8080";
+    let path = config::expand_path(DEFAULT_CLI_CONFIG_PATH);
+
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| {
             format!(
-                "failed to create directory for auth token '{}'",
+                "failed to create CLI config directory '{}'",
                 parent.display()
             )
         })?;
     }
-    std::fs::write(&path, auth_token)
-        .with_context(|| format!("failed to write auth token to '{}'", path.display()))?;
 
-    // Restrict file permissions to owner-only on Unix.
+    // If the config already exists, try to update the token in place.
+    if path.exists() {
+        let contents = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read CLI config '{}'", path.display()))?;
+        if let Ok(mut parsed) = toml::from_str::<toml::Value>(&contents) {
+            if let Some(servers) = parsed.get_mut("servers").and_then(|v| v.as_array_mut()) {
+                let mut found = false;
+                for server in servers.iter_mut() {
+                    if let Some(url) = server.get("url").and_then(|v| v.as_str()) {
+                        if url.trim_end_matches('/') == server_url {
+                            server.as_table_mut().unwrap().insert(
+                                "auth_token".into(),
+                                toml::Value::String(auth_token.into()),
+                            );
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if !found {
+                    let mut entry = toml::map::Map::new();
+                    entry.insert("url".into(), toml::Value::String(server_url.into()));
+                    entry.insert("auth_token".into(), toml::Value::String(auth_token.into()));
+                    entry.insert("default".into(), toml::Value::Boolean(servers.is_empty()));
+                    servers.push(toml::Value::Table(entry));
+                }
+                let output =
+                    toml::to_string_pretty(&parsed).context("failed to serialize CLI config")?;
+                std::fs::write(&path, output)
+                    .with_context(|| format!("failed to write CLI config '{}'", path.display()))?;
+                set_config_permissions(&path)?;
+                info!(path = %path.display(), "updated CLI config with auth token");
+                return Ok(());
+            }
+        }
+    }
+
+    // No existing config or unparseable — write a fresh one.
+    let config_contents = format!(
+        "[[servers]]\nurl = \"{server_url}\"\nauth_token = \"{auth_token}\"\ndefault = true\n"
+    );
+    std::fs::write(&path, &config_contents)
+        .with_context(|| format!("failed to write CLI config '{}'", path.display()))?;
+    set_config_permissions(&path)?;
+    info!(path = %path.display(), "wrote CLI config with auth token");
+    Ok(())
+}
+
+/// Restrict file permissions to owner-only on Unix.
+fn set_config_permissions(_path: &std::path::Path) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).with_context(
+        std::fs::set_permissions(_path, std::fs::Permissions::from_mode(0o600)).with_context(
             || {
                 format!(
-                    "failed to set permissions on auth token file '{}'",
-                    path.display()
+                    "failed to set permissions on config file '{}'",
+                    _path.display()
                 )
             },
         )?;
     }
-
-    info!(path = %path.display(), "wrote local auth token");
     Ok(())
 }
 
@@ -462,7 +514,7 @@ async fn health_check() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok" }))
 }
 
-pub fn config_path() -> PathBuf {
+pub fn config_path_from_env() -> PathBuf {
     std::env::var(ENV_METIS_CONFIG)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("config.yaml"))
