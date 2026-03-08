@@ -2890,16 +2890,13 @@ impl Store for SqliteStore {
         issue: Issue,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.get_issue(id, true).await?;
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
 
         let latest_version = self
             .fetch_latest_version_number(TABLE_ISSUES_V2, id.as_ref())
             .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("issue '{id}' was missing during update"))
-            })?;
+            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
         let next_version = latest_version.checked_add(1).ok_or_else(|| {
             StoreError::Internal(format!("version number overflow for issue '{id}'"))
         })?;
@@ -2938,14 +2935,10 @@ impl Store for SqliteStore {
         patch: Patch,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.get_patch(id, true).await?;
-
         let latest_version = self
             .fetch_latest_version_number(TABLE_PATCHES_V2, id.as_ref())
             .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("patch '{id}' was missing during update"))
-            })?;
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
         let next_version = latest_version.checked_add(1).ok_or_else(|| {
             StoreError::Internal(format!("version number overflow for patch '{id}'"))
         })?;
@@ -2985,14 +2978,10 @@ impl Store for SqliteStore {
         document: Document,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.get_document(id, true).await?;
-
         let latest_version = self
             .fetch_latest_version_number(TABLE_DOCUMENTS_V2, id.as_ref())
             .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("document '{id}' was missing during update"))
-            })?;
+            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
         let next_version = latest_version.checked_add(1).ok_or_else(|| {
             StoreError::Internal(format!("version number overflow for document '{id}'"))
         })?;
@@ -3039,8 +3028,6 @@ impl Store for SqliteStore {
         task: Task,
         actor: &ActorRef,
     ) -> Result<Versioned<Task>, StoreError> {
-        self.get_task(metis_id, true).await?;
-
         if let Some(issue_id) = task.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
         }
@@ -3048,9 +3035,7 @@ impl Store for SqliteStore {
         let latest_version = self
             .fetch_latest_version_number(TABLE_TASKS_V2, metis_id.as_ref())
             .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("task '{metis_id}' was missing during update"))
-            })?;
+            .ok_or_else(|| StoreError::TaskNotFound(metis_id.clone()))?;
         let next_version = latest_version.checked_add(1).ok_or_else(|| {
             StoreError::Internal(format!("version number overflow for task '{metis_id}'"))
         })?;
@@ -3277,14 +3262,10 @@ impl Store for SqliteStore {
         message: Message,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.get_message(id).await?;
-
         let latest_version = self
             .fetch_latest_version_number(TABLE_MESSAGES_V2, id.as_ref())
             .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("message '{id}' was missing during update"))
-            })?;
+            .ok_or_else(|| StoreError::MessageNotFound(id.clone()))?;
         let next_version = latest_version.checked_add(1).ok_or_else(|| {
             StoreError::Internal(format!("version number overflow for message '{id}'"))
         })?;
