@@ -651,7 +651,7 @@ impl TestHarnessBuilder {
         let (default_actor, default_token) =
             Actor::new_for_task(TaskId::new(), Username::from("default").into());
         store.add_actor(default_actor, &ActorRef::test()).await?;
-        let default_user = User::new(Username::from("default"), 1, false);
+        let default_user = User::new(Username::from("default"), Some(1), false);
         store
             .add_user(default_user.into(), &ActorRef::test())
             .await?;
@@ -667,7 +667,7 @@ impl TestHarnessBuilder {
             store.add_actor(actor, &ActorRef::test()).await?;
             let user = User::new(
                 Username::from(user_name.as_str()),
-                (i + 2) as u64, // github_id, avoid collision with default (1)
+                Some((i + 2) as u64), // github_id, avoid collision with default (1)
                 false,
             );
             store.add_user(user.into(), &ActorRef::test()).await?;

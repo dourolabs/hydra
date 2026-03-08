@@ -3593,7 +3593,7 @@ mod tests {
             .add_user(
                 User {
                     username: username.clone(),
-                    github_user_id: 101,
+                    github_user_id: Some(101),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -3605,7 +3605,7 @@ mod tests {
             .update_user(
                 User {
                     username: username.clone(),
-                    github_user_id: 202,
+                    github_user_id: Some(202),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -3613,11 +3613,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(updated.item.github_user_id, 202);
+        assert_eq!(updated.item.github_user_id, Some(202));
         assert_eq!(updated.version, 2);
 
         let user = store.get_user(&username, false).await.unwrap();
-        assert_eq!(user.item.github_user_id, 202);
+        assert_eq!(user.item.github_user_id, Some(202));
         assert_eq!(user.version, 2);
     }
 
@@ -3627,7 +3627,7 @@ mod tests {
         let username = Username::from("alice");
         let user = User {
             username: username.clone(),
-            github_user_id: 101,
+            github_user_id: Some(101),
             deleted: false,
         };
         store.add_user(user, &ActorRef::test()).await.unwrap();

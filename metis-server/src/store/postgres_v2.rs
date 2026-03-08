@@ -889,7 +889,7 @@ impl PostgresStoreV2 {
             .bind(id)
             .bind(version_number)
             .bind(user.username.as_str())
-            .bind(user.github_user_id as i64)
+            .bind(user.github_user_id.map(|id| id as i64))
             .bind(user.deleted)
             .bind(actor)
             .execute(&self.pool)
@@ -902,7 +902,7 @@ impl PostgresStoreV2 {
     fn row_to_user(&self, row: &UserRow) -> User {
         User::new(
             Username::from(row.username.clone()),
-            row.github_user_id as u64,
+            row.github_user_id.map(|id| id as u64),
             row.deleted,
         )
     }
@@ -1151,7 +1151,7 @@ struct UserRow {
     id: String,
     version_number: i64,
     username: String,
-    github_user_id: i64,
+    github_user_id: Option<i64>,
     deleted: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
@@ -4308,7 +4308,7 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let user = User {
             username: Username::from("alice"),
-            github_user_id: 101,
+            github_user_id: Some(101),
             deleted: false,
         };
         store
@@ -4327,14 +4327,14 @@ mod tests {
             .update_user(
                 User {
                     username: Username::from("alice"),
-                    github_user_id: 202,
+                    github_user_id: Some(202),
                     deleted: false,
                 },
                 &ActorRef::test(),
             )
             .await
             .unwrap();
-        assert_eq!(updated.item.github_user_id, 202);
+        assert_eq!(updated.item.github_user_id, Some(202));
         assert_eq!(updated.version, 2);
     }
 
@@ -4461,7 +4461,7 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let user = User {
             username: Username::from("roundtrip_user"),
-            github_user_id: 999,
+            github_user_id: Some(999),
             deleted: false,
         };
 

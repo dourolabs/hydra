@@ -92,7 +92,7 @@ impl AppState {
 
         let user = User {
             username: username.clone(),
-            github_user_id: github_user.id.into_inner(),
+            github_user_id: Some(github_user.id.into_inner()),
             deleted: false,
         };
 

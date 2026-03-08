@@ -2469,7 +2469,7 @@ mod tests {
         let server = MockServer::start();
         let username = "testuser";
         let expected_auth_header = format!("Bearer {TEST_METIS_TOKEN}");
-        let user_summary = UserSummary::new(Username::from(username), 12345);
+        let user_summary = UserSummary::new(Username::from(username), Some(12345));
         let user_summary_clone = user_summary.clone();
 
         let mock = server.mock(move |when, then| {
@@ -2487,7 +2487,7 @@ mod tests {
         mock.assert();
         assert_eq!(response, user_summary);
         assert_eq!(response.username.as_str(), username);
-        assert_eq!(response.github_user_id, 12345);
+        assert_eq!(response.github_user_id, Some(12345));
 
         Ok(())
     }
