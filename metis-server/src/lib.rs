@@ -379,7 +379,8 @@ pub async fn run() -> anyhow::Result<()> {
     run_with_state(state, listener).await
 }
 
-/// Create a default user actor for local auth mode.
+/// Create a default user actor for local auth mode and write the auth token
+/// to the well-known token file so the CLI can discover it.
 pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
     let username = Username::from(
         config
@@ -387,7 +388,7 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
             .local_username()
             .context("setup_local_auth called without local auth config")?,
     );
-    let (actor, _auth_token) = Actor::new_for_user(username.clone());
+    let (actor, auth_token) = Actor::new_for_user(username.clone());
     let system_actor = ActorRef::System {
         worker_name: "local-auth-setup".into(),
         on_behalf_of: None,
@@ -416,7 +417,43 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
         Err(err) => return Err(err.into()),
     }
 
+    write_local_auth_token(&auth_token)?;
+
     info!("local auth configured");
+    Ok(())
+}
+
+/// Write the auth token to the well-known file for CLI discovery.
+fn write_local_auth_token(auth_token: &str) -> anyhow::Result<()> {
+    use metis_common::constants::LOCAL_AUTH_TOKEN_FILE;
+
+    let path = config::expand_path(LOCAL_AUTH_TOKEN_FILE);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create directory for auth token '{}'",
+                parent.display()
+            )
+        })?;
+    }
+    std::fs::write(&path, auth_token)
+        .with_context(|| format!("failed to write auth token to '{}'", path.display()))?;
+
+    // Restrict file permissions to owner-only on Unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).with_context(
+            || {
+                format!(
+                    "failed to set permissions on auth token file '{}'",
+                    path.display()
+                )
+            },
+        )?;
+    }
+
+    info!(path = %path.display(), "wrote local auth token");
     Ok(())
 }
 

@@ -14,7 +14,9 @@ use metis::{
     config::{self, AppConfig},
     constants, github_device_flow,
 };
-use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN};
+use metis_common::constants::{
+    ENV_BROWSER, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN, LOCAL_AUTH_TOKEN_FILE,
+};
 
 #[derive(Parser)]
 #[command(
@@ -185,6 +187,17 @@ async fn resolve_client(
 
     if let Some(token) = app_config.auth_token_for_url(server_url)? {
         return MetisClient::new(server_url, token.to_string());
+    }
+
+    // Fall back to the well-known local auth token file written by the server.
+    let token_path = config::expand_path(LOCAL_AUTH_TOKEN_FILE);
+    if token_path.exists() {
+        if let Ok(contents) = std::fs::read_to_string(&token_path) {
+            let token = contents.trim().to_string();
+            if !token.is_empty() {
+                return MetisClient::new(server_url, token);
+            }
+        }
     }
 
     github_device_flow::login_with_github_device_flow(unauth_client, config_path, server_url).await
