@@ -124,7 +124,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
         };
 
-        let token = get_github_token_for_user(ctx.app_state, &creator, &actor_id)
+        let token = get_github_token_for_user(ctx.app_state, &creator)
             .await
             .map_err(|e| {
                 AutomationError::Other(anyhow::anyhow!(
