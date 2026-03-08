@@ -1094,12 +1094,13 @@ impl SqliteStore {
         Ok(())
     }
 
-    async fn count_notifications(&self) -> Result<u64, StoreError> {
-        let count =
-            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {TABLE_NOTIFICATIONS}"))
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_sqlx_error)?;
+    async fn count_distinct_notifications(&self) -> Result<u64, StoreError> {
+        let count = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(DISTINCT id) FROM {TABLE_NOTIFICATIONS}"
+        ))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
         Ok(count as u64)
     }
 
@@ -3281,7 +3282,7 @@ impl Store for SqliteStore {
         &self,
         notification: Notification,
     ) -> Result<NotificationId, StoreError> {
-        let count = self.count_notifications().await?;
+        let count = self.count_distinct_notifications().await?;
         let id = NotificationId::new_for_count(count);
         self.insert_notification_row(&id, &notification).await?;
         Ok(id)
