@@ -29,6 +29,10 @@ auth_mode: "github"
 # Required scopes: repo (full control of private repositories).
 # github_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
+# Optional username for the local actor (auth_mode: local only).
+# Defaults to "local" if omitted, producing actor name "u-local".
+# username: "myname"
+
 job:
   # Container image the worker Pod will execute.
   # TODO: figure out how to tag this properly in kind x_x
