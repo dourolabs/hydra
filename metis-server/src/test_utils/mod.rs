@@ -1,8 +1,9 @@
 use crate::{
     app::{AppState, Repository, ServiceState},
     config::{
-        AppConfig, BackgroundSection, BuildCacheSection, DatabaseSection, GithubAppSection,
-        JobSection, KubernetesSection, MetisSection, SchedulerSection, WorkerSchedulerConfig,
+        AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, DatabaseSection,
+        GithubAppSection, JobSection, KubernetesSection, MetisSection, SchedulerSection,
+        WorkerSchedulerConfig,
     },
     domain::{
         actors::{Actor, ActorRef},
@@ -76,16 +77,16 @@ pub fn test_app_config() -> AppConfig {
             memory_request: "1Gi".to_string(),
         },
         database: DatabaseSection::default(),
-        github_app: Some(GithubAppSection {
-            app_id: 1,
-            client_id: "client-id".to_string(),
-            client_secret: "client-secret".to_string(),
-            private_key: "private-key".to_string(),
-            api_base_url: "https://api.github.com".to_string(),
-            oauth_base_url: "https://github.com".to_string(),
-        }),
-        auth_mode: crate::config::AuthMode::Github,
-        github_token: None,
+        auth: AuthConfig::Github {
+            github_app: GithubAppSection {
+                app_id: 1,
+                client_id: "client-id".to_string(),
+                client_secret: "client-secret".to_string(),
+                private_key: "private-key".to_string(),
+                api_base_url: "https://api.github.com".to_string(),
+                oauth_base_url: "https://github.com".to_string(),
+            },
+        },
         background: BackgroundSection {
             scheduler: test_scheduler_section(),
             ..BackgroundSection::default()

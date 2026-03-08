@@ -12,8 +12,8 @@ use std::sync::Arc;
 #[tokio::test]
 async fn github_app_client_id_returns_configured_value() -> anyhow::Result<()> {
     let mut config = test_app_config();
-    if let Some(ref mut gh) = config.github_app {
-        gh.client_id = "client-123".to_string();
+    if let crate::config::AuthConfig::Github { ref mut github_app } = config.auth {
+        github_app.client_id = "client-123".to_string();
     }
 
     let store = Arc::new(MemoryStore::new());

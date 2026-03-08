@@ -202,7 +202,7 @@ pub async fn get_github_token_for_user(
 
     // In local mode (no GitHub App configured), PATs don't support OAuth
     // refresh — just return the token as-is.
-    let Some(github_app) = state.config.github_app.as_ref() else {
+    let Some(github_app) = state.config.auth.github_app() else {
         info!(username = %username, "get_github_token_for_user completed (local mode, no refresh)");
         return Ok(GithubTokenResponse { github_token });
     };

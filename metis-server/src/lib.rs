@@ -18,7 +18,7 @@ mod test;
 
 use crate::app::{AppState, ServiceState};
 use crate::background::start_background_scheduler;
-use crate::config::{AppConfig, AuthMode, GithubAppSection, build_kube_client};
+use crate::config::{AppConfig, GithubAppSection, build_kube_client};
 use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::secrets::SecretManager;
 use crate::domain::users::{User, Username};
@@ -264,9 +264,9 @@ pub async fn run() -> anyhow::Result<()> {
     let app_config = AppConfig::load(&config_path)?;
     let service_state = ServiceState::default();
 
-    info!(auth_mode = %app_config.auth_mode, "starting server");
+    info!(auth_mode = %app_config.auth, "starting server");
 
-    let github_app = match app_config.github_app.as_ref() {
+    let github_app = match app_config.auth.github_app() {
         Some(gh) => build_github_app_client(gh)?,
         None => None,
     };
@@ -304,10 +304,9 @@ pub async fn run() -> anyhow::Result<()> {
         None => Arc::new(MemoryStore::new()),
     };
 
-    // In local auth mode, create a default user actor and write its token.
-    if app_config.auth_mode == AuthMode::Local {
-        let token_path = crate::config::expand_path(DEFAULT_AUTH_TOKEN_PATH);
-        setup_local_auth(&app_config, store.as_ref(), &token_path).await?;
+    // In local auth mode, create a default user actor.
+    if app_config.auth.is_local() {
+        setup_local_auth(&app_config, store.as_ref()).await?;
     }
 
     // Create job engine
@@ -350,23 +349,19 @@ pub async fn run() -> anyhow::Result<()> {
 /// Default username for the local single-player actor.
 const LOCAL_ACTOR_USERNAME: &str = "local";
 
-/// The well-known path where the CLI reads its auth token. The server writes
-/// the local-mode token here so the CLI "just works" without a separate path.
-const DEFAULT_AUTH_TOKEN_PATH: &str = "~/.local/share/metis/auth-token";
-
-/// Create a default user actor for local auth mode and write its token to the
-/// standard CLI auth-token path so the CLI picks it up automatically.
+/// Create a default user actor for local auth mode.
 ///
-/// When the config provides a `github_token`, a User record is also created
-/// (or updated) so that GitHub API consumers (PR sync, patch assets, etc.)
-/// can function without the full GitHub App OAuth flow.
-pub(crate) async fn setup_local_auth(
-    config: &AppConfig,
-    store: &dyn Store,
-    token_path: &std::path::Path,
-) -> anyhow::Result<()> {
+/// The `github_token` from the `AuthConfig::Local` variant is stored as the
+/// local user's GitHub token so that GitHub API consumers (PR sync, patch
+/// assets, etc.) can function without the full GitHub App OAuth flow.
+pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
+    let github_token = config
+        .auth
+        .github_token()
+        .context("setup_local_auth called without local auth config")?;
+
     let username = Username::from(LOCAL_ACTOR_USERNAME);
-    let (actor, auth_token) = Actor::new_for_user(username.clone());
+    let (actor, _auth_token) = Actor::new_for_user(username.clone());
     let system_actor = ActorRef::System {
         worker_name: "local-auth-setup".into(),
         on_behalf_of: None,
@@ -380,53 +375,25 @@ pub(crate) async fn setup_local_auth(
         Err(err) => return Err(err.into()),
     }
 
-    // If a GitHub personal access token is configured, store it as the local
-    // user's GitHub token so existing code paths can find it.
-    if let Some(github_token) = config
-        .github_token
-        .as_deref()
-        .filter(|t| !t.trim().is_empty())
-    {
-        let user = User::new(
-            username,
-            0, // no GitHub user ID for PAT-based local mode
-            github_token.to_string(),
-            String::new(), // PATs don't use refresh tokens
-            false,
-        );
-        match store.add_user(user.clone(), &system_actor).await {
-            Ok(()) => {}
-            Err(StoreError::UserAlreadyExists(_)) => {
-                store
-                    .update_user(user, &system_actor)
-                    .await
-                    .context("failed to update local user with GitHub token")?;
-            }
-            Err(err) => return Err(err.into()),
-        }
-        info!("local user GitHub token configured");
-    }
-
-    if let Some(parent) = token_path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "failed to create directory for local token: {}",
-                parent.display()
-            )
-        })?;
-    }
-    std::fs::write(token_path, &auth_token).with_context(|| {
-        format!(
-            "failed to write local auth token to {}",
-            token_path.display()
-        )
-    })?;
-
-    info!(
-        path = %token_path.display(),
-        "local auth token written"
+    let user = User::new(
+        username,
+        0, // no GitHub user ID for PAT-based local mode
+        github_token.to_string(),
+        String::new(), // PATs don't use refresh tokens
+        false,
     );
+    match store.add_user(user.clone(), &system_actor).await {
+        Ok(()) => {}
+        Err(StoreError::UserAlreadyExists(_)) => {
+            store
+                .update_user(user, &system_actor)
+                .await
+                .context("failed to update local user with GitHub token")?;
+        }
+        Err(err) => return Err(err.into()),
+    }
 
+    info!("local auth configured");
     Ok(())
 }
 

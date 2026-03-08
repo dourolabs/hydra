@@ -592,6 +592,7 @@ job:
   default_image: "x"
 database:
   url: "postgres://localhost/db"
+auth_mode: github
 github_app:
   app_id: 1
   client_id: "c"
@@ -1028,6 +1029,7 @@ job:
 database:
   url: "postgres://localhost/test"
 
+auth_mode: github
 github_app:
   app_id: 1
   client_id: "test"
@@ -1125,6 +1127,7 @@ job:
 database:
   url: "postgres://localhost/test"
 
+auth_mode: github
 github_app:
   app_id: 1
   client_id: "test"

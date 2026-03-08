@@ -13,28 +13,66 @@ use std::{
 
 use crate::policy::config::PolicyConfig;
 
-/// Authentication mode for the server.
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum AuthMode {
+/// Authentication configuration for the server, modeled as a tagged enum so
+/// the type system enforces which fields are required for each mode.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "auth_mode")]
+pub enum AuthConfig {
     /// Local single-player mode: a default user actor is auto-created on
-    /// startup and its token is written to a well-known file path.
-    Local,
+    /// startup. Requires a GitHub personal access token (PAT) so GitHub API
+    /// consumers (PR sync, patch assets, etc.) can function.
+    #[serde(rename = "local")]
+    Local {
+        /// GitHub personal access token. Required scopes: `repo`.
+        github_token: String,
+    },
     /// GitHub OAuth mode: users authenticate via the GitHub device flow.
-    Github,
+    /// Requires the `github_app` section in the config.
+    #[serde(rename = "github")]
+    Github { github_app: GithubAppSection },
 }
 
-impl Default for AuthMode {
+impl Default for AuthConfig {
     fn default() -> Self {
-        Self::Local
+        // Cannot provide a sensible default for local mode (github_token is
+        // mandatory), so default to Github with an empty GithubAppSection that
+        // will fail validation. In practice this path is only hit by serde when
+        // the `auth` key is omitted from the config file, and `validate()` will
+        // catch it.
+        Self::Local {
+            github_token: String::new(),
+        }
     }
 }
 
-impl fmt::Display for AuthMode {
+impl fmt::Display for AuthConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Local => write!(f, "local"),
-            Self::Github => write!(f, "github"),
+            Self::Local { .. } => write!(f, "local"),
+            Self::Github { .. } => write!(f, "github"),
+        }
+    }
+}
+
+impl AuthConfig {
+    /// Returns `true` if the server is running in local single-player mode.
+    pub fn is_local(&self) -> bool {
+        matches!(self, Self::Local { .. })
+    }
+
+    /// Returns the GitHub App configuration, if this is GitHub auth mode.
+    pub fn github_app(&self) -> Option<&GithubAppSection> {
+        match self {
+            Self::Github { github_app } => Some(github_app),
+            Self::Local { .. } => None,
+        }
+    }
+
+    /// Returns the GitHub personal access token for local mode.
+    pub fn github_token(&self) -> Option<&str> {
+        match self {
+            Self::Local { github_token } => Some(github_token.as_str()),
+            Self::Github { .. } => None,
         }
     }
 }
@@ -47,18 +85,8 @@ pub struct AppConfig {
     pub kubernetes: KubernetesSection,
     #[serde(default)]
     pub database: DatabaseSection,
-    #[serde(default)]
-    pub github_app: Option<GithubAppSection>,
-    #[serde(default)]
-    pub auth_mode: AuthMode,
-    /// Optional GitHub personal access token for local mode. When set, this
-    /// token is stored for the local user so that GitHub API consumers (PR sync,
-    /// patch assets, etc.) can function without the full GitHub App OAuth flow.
-    ///
-    /// Required GitHub token scopes: `repo` (full control of private
-    /// repositories).
-    #[serde(default)]
-    pub github_token: Option<String>,
+    #[serde(default, flatten)]
+    pub auth: AuthConfig,
     #[serde(default)]
     pub background: BackgroundSection,
     #[serde(default)]
@@ -88,22 +116,16 @@ impl AppConfig {
 
     fn validate(&self) -> Result<()> {
         self.metis.validate()?;
-        if self.auth_mode == AuthMode::Github {
-            ensure!(
-                self.github_app.is_some(),
-                "github_app section is required when auth_mode is 'github'"
-            );
-        }
-        if self.auth_mode == AuthMode::Local {
-            ensure!(
-                self.github_token
-                    .as_ref()
-                    .is_some_and(|t| !t.trim().is_empty()),
-                "github_token is required when auth_mode is 'local'"
-            );
-        }
-        if let Some(ref github_app) = self.github_app {
-            github_app.validate()?;
+        match &self.auth {
+            AuthConfig::Local { github_token } => {
+                ensure!(
+                    non_empty(github_token).is_some(),
+                    "github_token is required when auth_mode is 'local'"
+                );
+            }
+            AuthConfig::Github { github_app } => {
+                github_app.validate()?;
+            }
         }
         self.background.validate()?;
         self.build_cache.validate()?;
@@ -114,10 +136,10 @@ impl AppConfig {
     ///
     /// In GitHub mode this comes from the `github_app` section; in local mode it
     /// falls back to the public GitHub API. Downstream consumers should call
-    /// this instead of reaching into `github_app` directly.
+    /// this instead of reaching into `auth` directly.
     pub fn github_api_base_url(&self) -> &str {
-        self.github_app
-            .as_ref()
+        self.auth
+            .github_app()
             .map(|gh| gh.api_base_url())
             .unwrap_or("https://api.github.com")
     }
@@ -726,6 +748,8 @@ mod tests {
 metis:
   METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
 
+auth_mode: github
+
 job:
   default_image: "metis-worker:latest"
 
@@ -793,6 +817,8 @@ metis:
   METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
   allowed_orgs: [" ", ""]
 
+auth_mode: github
+
 job:
   default_image: "metis-worker:latest"
   cpu_limit: "500m"
@@ -830,6 +856,8 @@ github_app:
 metis:
   allowed_orgs: []
 
+auth_mode: github
+
 job:
   default_image: "metis-worker:latest"
 
@@ -861,6 +889,8 @@ github_app:
             r#"
 metis:
   METIS_SECRET_ENCRYPTION_KEY: "not-valid-base64!!!"
+
+auth_mode: github
 
 job:
   default_image: "metis-worker:latest"
@@ -897,6 +927,8 @@ github_app:
                 r#"
 metis:
   METIS_SECRET_ENCRYPTION_KEY: "{short_key}"
+
+auth_mode: github
 
 job:
   default_image: "metis-worker:latest"
@@ -942,8 +974,8 @@ job:
         )?;
 
         let config = AppConfig::load(&path)?;
-        assert_eq!(config.auth_mode, AuthMode::Local);
-        assert!(config.github_app.is_none());
+        assert!(config.auth.is_local());
+        assert!(config.auth.github_app().is_none());
 
         Ok(())
     }
@@ -959,6 +991,7 @@ job:
 metis:
   METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
 
+auth_mode: local
 github_token: "ghp_test_token"
 
 job:
@@ -968,7 +1001,7 @@ job:
         )?;
 
         let config = AppConfig::load(&path)?;
-        assert_eq!(config.auth_mode, AuthMode::Local);
+        assert!(config.auth.is_local());
 
         Ok(())
     }
@@ -993,10 +1026,7 @@ job:
         )?;
 
         let error = AppConfig::load(&path).expect_err("expected missing github_app");
-        assert!(error_chain_contains(
-            &error,
-            "github_app section is required when auth_mode is 'github'"
-        ));
+        assert!(error_chain_contains(&error, "missing field `github_app`"));
 
         Ok(())
     }
@@ -1021,10 +1051,7 @@ job:
         )?;
 
         let error = AppConfig::load(&path).expect_err("expected missing github_token");
-        assert!(error_chain_contains(
-            &error,
-            "github_token is required when auth_mode is 'local'"
-        ));
+        assert!(error_chain_contains(&error, "missing field `github_token`"));
 
         Ok(())
     }

@@ -50,9 +50,9 @@ pub fn test_state_with_github_urls_and_allowed_orgs(
     allowed_orgs: Vec<String>,
 ) -> TestStateHandles {
     let mut config = test_app_config();
-    if let Some(ref mut gh) = config.github_app {
-        gh.api_base_url = api_base_url;
-        gh.oauth_base_url = oauth_base_url;
+    if let crate::config::AuthConfig::Github { ref mut github_app } = config.auth {
+        github_app.api_base_url = api_base_url;
+        github_app.oauth_base_url = oauth_base_url;
     }
     config.metis.allowed_orgs = allowed_orgs;
 
