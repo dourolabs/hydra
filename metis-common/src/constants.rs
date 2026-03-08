@@ -12,3 +12,9 @@ pub const ENV_METIS_ISSUE_ID: &str = "METIS_ISSUE_ID";
 pub const ENV_METIS_TOKEN: &str = "METIS_TOKEN";
 pub const ENV_METIS_DOCUMENTS_DIR: &str = "METIS_DOCUMENTS_DIR";
 pub const ENV_BROWSER: &str = "BROWSER";
+
+/// Default data directory for local Metis data (SQLite DB, auth tokens, etc.).
+pub const METIS_DATA_DIR: &str = "~/.local/share/metis";
+
+/// Well-known path where the server writes the local auth token for CLI discovery.
+pub const LOCAL_AUTH_TOKEN_FILE: &str = "~/.local/share/metis/local-auth-token";
