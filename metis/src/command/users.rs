@@ -91,7 +91,7 @@ async fn show_user_info(client: &dyn MetisClientInterface, username: Option<Stri
     Ok(())
 }
 
-pub async fn run_secrets(client: &dyn MetisClientInterface, command: SecretsCommand) -> Result<()> {
+async fn run_secrets(client: &dyn MetisClientInterface, command: SecretsCommand) -> Result<()> {
     match command {
         SecretsCommand::List => {
             let response = client

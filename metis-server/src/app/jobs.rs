@@ -222,15 +222,14 @@ impl AppState {
 
     /// Loads all user secrets and injects them as env vars, then falls back to config
     /// values for system secrets (OPENAI_API_KEY, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN)
-    /// not already set. Sets METIS_AVAILABLE_SECRETS with the names of all injected secrets.
+    /// not already set.
     pub(crate) async fn resolve_secrets_into_env_vars(
         &self,
         creator: &Username,
         env_vars: &mut HashMap<String, String>,
     ) {
         use metis_common::constants::{
-            ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_AVAILABLE_SECRETS,
-            ENV_OPENAI_API_KEY,
+            ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
         };
 
         // 1. Load ALL user secrets and inject them as env vars.
@@ -246,14 +245,11 @@ impl AppState {
             }
         };
 
-        let mut injected_names: Vec<String> = Vec::new();
-
         for secret_name in &user_secret_names {
             match self.store.get_user_secret(creator, secret_name).await {
                 Ok(Some(encrypted)) => match self.secret_manager.decrypt(&encrypted) {
                     Ok(value) if !value.trim().is_empty() => {
                         env_vars.insert(secret_name.clone(), value);
-                        injected_names.push(secret_name.clone());
                     }
                     Ok(_) => {}
                     Err(err) => {
@@ -304,17 +300,8 @@ impl AppState {
 
             if let Some(value) = global_value {
                 env_vars.insert(secret_name.to_string(), value);
-                injected_names.push(secret_name.to_string());
             }
         }
-
-        // 3. Set METIS_AVAILABLE_SECRETS with comma-separated list of injected secret names.
-        injected_names.sort();
-        injected_names.dedup();
-        env_vars.insert(
-            ENV_METIS_AVAILABLE_SECRETS.to_string(),
-            injected_names.join(","),
-        );
     }
 
     pub async fn start_pending_task(&self, task_id: TaskId, actor: ActorRef) {
