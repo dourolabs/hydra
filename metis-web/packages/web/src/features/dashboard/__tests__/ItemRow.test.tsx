@@ -312,9 +312,8 @@ describe("ItemRow", () => {
   });
 
   it("renders document title and navigates to document path", () => {
-    render(<ItemRow item={makeDocumentItem()} />);
-    expect(screen.getByText("Design Doc")).toBeDefined();
     const { container } = render(<ItemRow item={makeDocumentItem()} />);
+    expect(screen.getByText("Design Doc")).toBeDefined();
     const li = container.querySelector("li")!;
     fireEvent.click(li);
     expect(mockNavigate).toHaveBeenCalledWith(
