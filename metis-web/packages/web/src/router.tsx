@@ -1,18 +1,11 @@
 import { createBrowserRouter } from "react-router-dom";
 import { AppLayout } from "./layout/AppLayout";
-import { LoginPage } from "./pages/LoginPage";
-import { DashboardPage } from "./pages/DashboardPage";
-import { DocumentsPage } from "./pages/DocumentsPage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { IssueDetailPage } from "./pages/IssueDetailPage";
-import { JobLogPage } from "./pages/JobLogPage";
-import { PatchDetailPage } from "./pages/PatchDetailPage";
-import { DocumentDetailPage } from "./pages/DocumentDetailPage";
 
 export const router = createBrowserRouter([
   {
     path: "/login",
-    element: <LoginPage />,
+    lazy: () =>
+      import("./pages/LoginPage").then((m) => ({ Component: m.LoginPage })),
   },
   {
     path: "/",
@@ -20,31 +13,52 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <DashboardPage />,
+        lazy: () =>
+          import("./pages/DashboardPage").then((m) => ({
+            Component: m.DashboardPage,
+          })),
       },
       {
         path: "issues/:issueId",
-        element: <IssueDetailPage />,
+        lazy: () =>
+          import("./pages/IssueDetailPage").then((m) => ({
+            Component: m.IssueDetailPage,
+          })),
       },
       {
         path: "issues/:issueId/jobs/:jobId/logs",
-        element: <JobLogPage />,
+        lazy: () =>
+          import("./pages/JobLogPage").then((m) => ({
+            Component: m.JobLogPage,
+          })),
       },
       {
         path: "documents",
-        element: <DocumentsPage />,
+        lazy: () =>
+          import("./pages/DocumentsPage").then((m) => ({
+            Component: m.DocumentsPage,
+          })),
       },
       {
         path: "documents/:documentId",
-        element: <DocumentDetailPage />,
+        lazy: () =>
+          import("./pages/DocumentDetailPage").then((m) => ({
+            Component: m.DocumentDetailPage,
+          })),
       },
       {
         path: "patches/:patchId",
-        element: <PatchDetailPage />,
+        lazy: () =>
+          import("./pages/PatchDetailPage").then((m) => ({
+            Component: m.PatchDetailPage,
+          })),
       },
       {
         path: "settings",
-        element: <SettingsPage />,
+        lazy: () =>
+          import("./pages/SettingsPage").then((m) => ({
+            Component: m.SettingsPage,
+          })),
       },
     ],
   },
