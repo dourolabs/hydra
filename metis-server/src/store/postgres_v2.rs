@@ -882,16 +882,14 @@ impl PostgresStoreV2 {
         })?;
 
         let query = format!(
-            "INSERT INTO {TABLE_USERS_V2} (id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+            "INSERT INTO {TABLE_USERS_V2} (id, version_number, username, github_user_id, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6)"
         );
         sqlx::query(&query)
             .bind(id)
             .bind(version_number)
             .bind(user.username.as_str())
             .bind(user.github_user_id as i64)
-            .bind(&user.github_token)
-            .bind(&user.github_refresh_token)
             .bind(user.deleted)
             .bind(actor)
             .execute(&self.pool)
@@ -905,8 +903,6 @@ impl PostgresStoreV2 {
         User::new(
             Username::from(row.username.clone()),
             row.github_user_id as u64,
-            row.github_token.clone().unwrap_or_default(),
-            row.github_refresh_token.clone().unwrap_or_default(),
             row.deleted,
         )
     }
@@ -917,7 +913,7 @@ impl PostgresStoreV2 {
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         // Build query with filtering on latest version of each user
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor, created_at, updated_at
+            "SELECT DISTINCT ON (id) id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              ORDER BY id, version_number DESC"
         );
@@ -1156,8 +1152,6 @@ struct UserRow {
     version_number: i64,
     username: String,
     github_user_id: i64,
-    github_token: Option<String>,
-    github_refresh_token: Option<String>,
     deleted: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
@@ -2393,7 +2387,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<User>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -3263,7 +3257,7 @@ impl Store for PostgresStoreV2 {
     async fn add_user(&self, user: User, actor: &ActorRef) -> Result<(), StoreError> {
         // Check if user already exists by fetching the latest version
         let query = format!(
-            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -3339,7 +3333,7 @@ impl Store for PostgresStoreV2 {
 
         // Fetch and return the updated user
         let query = format!(
-            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -4315,8 +4309,6 @@ mod tests {
         let user = User {
             username: Username::from("alice"),
             github_user_id: 101,
-            github_token: "token".to_string(),
-            github_refresh_token: "refresh-token".to_string(),
             deleted: false,
         };
         store
@@ -4336,15 +4328,12 @@ mod tests {
                 User {
                     username: Username::from("alice"),
                     github_user_id: 202,
-                    github_token: "new-token".to_string(),
-                    github_refresh_token: "new-refresh".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),
             )
             .await
             .unwrap();
-        assert_eq!(updated.item.github_token, "new-token");
         assert_eq!(updated.item.github_user_id, 202);
         assert_eq!(updated.version, 2);
     }
@@ -4473,8 +4462,6 @@ mod tests {
         let user = User {
             username: Username::from("roundtrip_user"),
             github_user_id: 999,
-            github_token: "tok".to_string(),
-            github_refresh_token: "ref".to_string(),
             deleted: false,
         };
 

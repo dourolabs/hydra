@@ -78,7 +78,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
 
     let handles = test_state_with_github_urls(server.base_url(), server.base_url());
     let username = Username::from("creator");
-    let user = User::new(username.clone(), 101, String::new(), String::new(), false);
+    let user = User::new(username.clone(), 101, false);
 
     handles.store.add_user(user, &ActorRef::test()).await?;
     store_github_token_secrets(&handles.state, &username, "task-token", "refresh-token").await;
@@ -197,8 +197,6 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     let user = User {
         username: username.clone(),
         github_user_id: 101,
-        github_token: String::new(),
-        github_refresh_token: String::new(),
         deleted: false,
     };
 
@@ -290,8 +288,6 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
     let user = User {
         username: username.clone(),
         github_user_id: 101,
-        github_token: String::new(),
-        github_refresh_token: String::new(),
         deleted: false,
     };
 

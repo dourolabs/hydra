@@ -647,29 +647,16 @@ async fn migrate_users_internal(pool: &PgStorePool) -> Result<u64> {
                 .get("github_user_id")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
-            let github_token = row
-                .payload
-                .get("github_token")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let github_refresh_token = row
-                .payload
-                .get("github_refresh_token")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-
             sqlx::query(&format!(
                 "INSERT INTO {V2_TABLE_USERS}
-                 (id, version_number, username, github_user_id, github_token, github_refresh_token, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 (id, version_number, username, github_user_id, created_at)
+                 VALUES ($1, $2, $3, $4, $5)
                  ON CONFLICT (id, version_number) DO NOTHING"
             ))
             .bind(&row.id)
             .bind(row.version_number)
             .bind(username)
             .bind(github_user_id)
-            .bind(github_token)
-            .bind(github_refresh_token)
             .bind(row.created_at)
             .execute(pool)
             .await

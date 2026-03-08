@@ -3594,8 +3594,6 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: 101,
-                    github_token: "old-token".to_string(),
-                    github_refresh_token: "old-refresh".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -3608,8 +3606,6 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: 202,
-                    github_token: "new-token".to_string(),
-                    github_refresh_token: "new-refresh".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -3617,15 +3613,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(updated.item.github_token, "new-token");
         assert_eq!(updated.item.github_user_id, 202);
-        assert_eq!(updated.item.github_refresh_token, "new-refresh");
         assert_eq!(updated.version, 2);
 
         let user = store.get_user(&username, false).await.unwrap();
-        assert_eq!(user.item.github_token, "new-token");
         assert_eq!(user.item.github_user_id, 202);
-        assert_eq!(user.item.github_refresh_token, "new-refresh");
         assert_eq!(user.version, 2);
     }
 
@@ -3636,8 +3628,6 @@ mod tests {
         let user = User {
             username: username.clone(),
             github_user_id: 101,
-            github_token: "token".to_string(),
-            github_refresh_token: "refresh".to_string(),
             deleted: false,
         };
         store.add_user(user, &ActorRef::test()).await.unwrap();

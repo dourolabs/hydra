@@ -53,25 +53,15 @@ impl Borrow<str> for Username {
 pub struct User {
     pub username: Username,
     pub github_user_id: u64,
-    pub github_token: String,
-    pub github_refresh_token: String,
     #[serde(default)]
     pub deleted: bool,
 }
 
 impl User {
-    pub fn new(
-        username: Username,
-        github_user_id: u64,
-        github_token: String,
-        github_refresh_token: String,
-        deleted: bool,
-    ) -> Self {
+    pub fn new(username: Username, github_user_id: u64, deleted: bool) -> Self {
         Self {
             username,
             github_user_id,
-            github_token,
-            github_refresh_token,
             deleted,
         }
     }
@@ -118,8 +108,6 @@ impl From<api::users::User> for User {
         User {
             username: value.username.into(),
             github_user_id: value.github_user_id,
-            github_token: value.github_token,
-            github_refresh_token: value.github_refresh_token,
             deleted: value.deleted,
         }
     }
@@ -127,13 +115,7 @@ impl From<api::users::User> for User {
 
 impl From<User> for api::users::User {
     fn from(value: User) -> Self {
-        api::users::User::new(
-            value.username.into(),
-            value.github_user_id,
-            value.github_token,
-            value.github_refresh_token,
-            value.deleted,
-        )
+        api::users::User::new(value.username.into(), value.github_user_id, value.deleted)
     }
 }
 
