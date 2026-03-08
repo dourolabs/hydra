@@ -225,7 +225,8 @@
 
 /* Show archive reveal only during active swipe or commit animation */
 .rowSwipeable:has(.swiping) .archiveReveal,
-.rowSwipeable:has(.swipeCommit) .archiveReveal {
+.rowSwipeable:has(.swipeCommit) .archiveReveal,
+.rowSwipeable:has(.swipeSnapBack) .archiveReveal {
   visibility: visible;
 }
 
