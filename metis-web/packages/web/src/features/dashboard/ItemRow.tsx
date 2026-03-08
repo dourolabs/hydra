@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Avatar, Badge } from "@metis/ui";
+import { Avatar, Badge, useKeyboardClick } from "@metis/ui";
 import type { JobSummaryRecord, LabelSummary } from "@metis/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./useTransitiveWorkItems";
@@ -134,15 +134,7 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
     navigate(`${paths[item.kind]}?${params.toString()}`);
   }, [navigate, item, filterRootId]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        handleClick();
-      }
-    },
-    [handleClick],
-  );
+  const keyboardClickProps = useKeyboardClick(handleClick);
 
   // Title
   let title: string;
@@ -349,9 +341,7 @@ export function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inb
       ref={rowRef}
       className={rowClasses.join(" ")}
       onClick={handleClick}
-      onKeyDown={handleKeyDown}
-      role="button"
-      tabIndex={0}
+      {...keyboardClickProps}
     >
       {showArchive ? (
         <>
