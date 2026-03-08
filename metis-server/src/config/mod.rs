@@ -34,11 +34,9 @@ pub enum AuthConfig {
 
 impl Default for AuthConfig {
     fn default() -> Self {
-        // Cannot provide a sensible default for local mode (github_token is
-        // mandatory), so default to Github with an empty GithubAppSection that
-        // will fail validation. In practice this path is only hit by serde when
-        // the `auth` key is omitted from the config file, and `validate()` will
-        // catch it.
+        // Default to local mode with an empty github_token. In practice this
+        // path is only hit by serde when the `auth` key is omitted from the
+        // config file, and `validate()` will catch the empty token.
         Self::Local {
             github_token: String::new(),
         }
@@ -981,29 +979,11 @@ job:
     }
 
     #[test]
-    fn config_defaults_auth_mode_to_local() -> anyhow::Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.yaml");
-        fs::write(
-            &path,
-            format!(
-                r#"
-metis:
-  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
-
-auth_mode: local
-github_token: "ghp_test_token"
-
-job:
-  default_image: "metis-worker:latest"
-"#
-            ),
-        )?;
-
-        let config = AppConfig::load(&path)?;
-        assert!(config.auth.is_local());
-
-        Ok(())
+    fn config_defaults_auth_mode_to_local() {
+        // AuthConfig::default() is used by serde when the `auth` key is
+        // omitted from the config file. Verify it returns the Local variant.
+        let auth = AuthConfig::default();
+        assert!(auth.is_local());
     }
 
     #[test]
