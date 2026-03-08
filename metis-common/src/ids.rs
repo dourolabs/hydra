@@ -2,9 +2,9 @@ use rand::distributions::{Distribution, Uniform};
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{fmt, str::FromStr};
 
-pub const MIN_RANDOM_LEN: usize = 4;
+const MIN_RANDOM_LEN: usize = 4;
 const DEFAULT_RANDOM_LEN: usize = 6;
-pub const MAX_RANDOM_LEN: usize = 12;
+const MAX_RANDOM_LEN: usize = 12;
 const ISSUE_PREFIX: &str = "i-";
 const MESSAGE_PREFIX: &str = "m-";
 const PATCH_PREFIX: &str = "p-";
@@ -161,11 +161,6 @@ impl IssueId {
         Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
     }
 
-    pub fn new_for_count(count: u64) -> Self {
-        let len = compute_random_len(count);
-        Self::generate(len).expect("computed random length should always be valid")
-    }
-
     pub const fn prefix() -> &'static str {
         ISSUE_PREFIX
     }
@@ -198,11 +193,6 @@ impl PatchId {
 
     pub fn new() -> Self {
         Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
-    }
-
-    pub fn new_for_count(count: u64) -> Self {
-        let len = compute_random_len(count);
-        Self::generate(len).expect("computed random length should always be valid")
     }
 
     pub const fn prefix() -> &'static str {
@@ -239,11 +229,6 @@ impl DocumentId {
         Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
     }
 
-    pub fn new_for_count(count: u64) -> Self {
-        let len = compute_random_len(count);
-        Self::generate(len).expect("computed random length should always be valid")
-    }
-
     pub const fn prefix() -> &'static str {
         DOCUMENT_PREFIX
     }
@@ -276,11 +261,6 @@ impl MessageId {
 
     pub fn new() -> Self {
         Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
-    }
-
-    pub fn new_for_count(count: u64) -> Self {
-        let len = compute_random_len(count);
-        Self::generate(len).expect("computed random length should always be valid")
     }
 
     pub const fn prefix() -> &'static str {
@@ -317,11 +297,6 @@ impl TaskId {
         Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
     }
 
-    pub fn new_for_count(count: u64) -> Self {
-        let len = compute_random_len(count);
-        Self::generate(len).expect("computed random length should always be valid")
-    }
-
     pub const fn prefix() -> &'static str {
         TASK_PREFIX
     }
@@ -356,11 +331,6 @@ impl NotificationId {
         Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
     }
 
-    pub fn new_for_count(count: u64) -> Self {
-        let len = compute_random_len(count);
-        Self::generate(len).expect("computed random length should always be valid")
-    }
-
     pub const fn prefix() -> &'static str {
         NOTIFICATION_PREFIX
     }
@@ -393,11 +363,6 @@ impl LabelId {
 
     pub fn new() -> Self {
         Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
-    }
-
-    pub fn new_for_count(count: u64) -> Self {
-        let len = compute_random_len(count);
-        Self::generate(len).expect("computed random length should always be valid")
     }
 
     pub const fn prefix() -> &'static str {
@@ -803,27 +768,6 @@ impl FromStr for LabelId {
     }
 }
 
-/// Computes the minimum random suffix length needed for the given object count,
-/// keeping collision probability safely low using birthday-bound math.
-///
-/// We want `26^len > count^2 * SAFETY_MARGIN` to ensure negligible collision
-/// probability. The result is clamped to `[MIN_RANDOM_LEN, MAX_RANDOM_LEN]`.
-pub fn compute_random_len(object_count: u64) -> usize {
-    if object_count <= 1 {
-        return MIN_RANDOM_LEN;
-    }
-
-    // Birthday bound: P(collision) ≈ n^2 / (2 * 26^len)
-    // We want P < 1e-6, so 26^len > n^2 * 500_000
-    // Using f64 logarithms: len > (2*log26(n) + log26(500_000))
-    let log26 = (26.0_f64).ln();
-    let n = object_count as f64;
-    let threshold = 2.0 * n.ln() / log26 + (500_000.0_f64).ln() / log26;
-    let len = (threshold.ceil()) as usize;
-
-    len.clamp(MIN_RANDOM_LEN, MAX_RANDOM_LEN)
-}
-
 fn validate_random_length(len: usize) -> Result<(), MetisIdError> {
     if (MIN_RANDOM_LEN..=MAX_RANDOM_LEN).contains(&len) {
         Ok(())
@@ -942,82 +886,5 @@ mod tests {
             MetisIdError::InvalidPrefix(_) => {}
             other => panic!("unexpected error: {other:?}"),
         }
-    }
-
-    #[test]
-    fn compute_random_len_returns_min_for_zero() {
-        assert_eq!(compute_random_len(0), MIN_RANDOM_LEN);
-    }
-
-    #[test]
-    fn compute_random_len_returns_min_for_one() {
-        assert_eq!(compute_random_len(1), MIN_RANDOM_LEN);
-    }
-
-    #[test]
-    fn compute_random_len_returns_min_for_small_counts() {
-        // For small counts (e.g., 10), MIN_RANDOM_LEN=4 gives 26^4=456K
-        // which is >> 10^2 * 500K = 50M... actually 456K < 50M, so len=5 expected.
-        // Let's just verify it's >= MIN_RANDOM_LEN
-        let len = compute_random_len(10);
-        assert!(len >= MIN_RANDOM_LEN);
-        assert!(len <= MAX_RANDOM_LEN);
-    }
-
-    #[test]
-    fn compute_random_len_grows_with_count() {
-        let len_small = compute_random_len(10);
-        let len_medium = compute_random_len(10_000);
-        let len_large = compute_random_len(1_000_000);
-        assert!(
-            len_large >= len_medium,
-            "len_large={len_large} should be >= len_medium={len_medium}"
-        );
-        assert!(
-            len_medium >= len_small,
-            "len_medium={len_medium} should be >= len_small={len_small}"
-        );
-    }
-
-    #[test]
-    fn compute_random_len_caps_at_max() {
-        let len = compute_random_len(u64::MAX);
-        assert_eq!(len, MAX_RANDOM_LEN);
-    }
-
-    #[test]
-    fn compute_random_len_maintains_birthday_bound() {
-        // For any count, 26^len should be >> count^2 (birthday bound)
-        for &count in &[0u64, 1, 10, 100, 1_000, 10_000, 100_000, 1_000_000] {
-            let len = compute_random_len(count);
-            if count > 1 {
-                let space = 26.0_f64.powi(len as i32);
-                let n = count as f64;
-                // Birthday bound: P ≈ n^2 / (2*space), we want P < 1e-6
-                // So space > n^2 * 500_000
-                assert!(
-                    space > n * n,
-                    "at count={count}, len={len}, 26^{len}={space} should be > {count}^2={}",
-                    count * count
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn new_for_count_generates_valid_ids() {
-        let issue = IssueId::new_for_count(0);
-        assert!(issue.as_ref().starts_with(IssueId::prefix()));
-        // With count=0, suffix should be MIN_RANDOM_LEN
-        assert_eq!(
-            issue.as_ref().len(),
-            IssueId::prefix().len() + MIN_RANDOM_LEN
-        );
-
-        let patch = PatchId::new_for_count(100_000);
-        assert!(patch.as_ref().starts_with(PatchId::prefix()));
-        let suffix_len = patch.as_ref().len() - PatchId::prefix().len();
-        assert!(suffix_len >= MIN_RANDOM_LEN);
-        assert!(suffix_len <= MAX_RANDOM_LEN);
     }
 }

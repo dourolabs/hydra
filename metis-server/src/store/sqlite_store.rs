@@ -1983,55 +1983,6 @@ impl ReadOnlyStore for SqliteStore {
         Ok(result)
     }
 
-    async fn count_distinct_issues(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_ISSUES_V2}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
-    async fn count_distinct_patches(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_PATCHES_V2}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
-    async fn count_distinct_documents(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_DOCUMENTS_V2}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
-    async fn count_distinct_tasks(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_TASKS_V2}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
-    async fn count_distinct_labels(&self) -> Result<u64, StoreError> {
-        let count =
-            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(DISTINCT id) FROM {TABLE_LABELS}"))
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         let row = sqlx::query_as::<_, ActorRow>(
@@ -2515,8 +2466,7 @@ impl Store for SqliteStore {
     ) -> Result<(IssueId, VersionNumber), StoreError> {
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
-        let count = self.count_distinct_issues().await?;
-        let id = IssueId::new_for_count(count);
+        let id = IssueId::new();
         let actor_json = actor_to_json_string(actor);
         self.insert_issue(&id, 1, &issue, Some(&actor_json)).await?;
         Ok((id, 1))
@@ -2564,8 +2514,7 @@ impl Store for SqliteStore {
         patch: Patch,
         actor: &ActorRef,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
-        let count = self.count_distinct_patches().await?;
-        let id = PatchId::new_for_count(count);
+        let id = PatchId::new();
         let actor_json = actor_to_json_string(actor);
         self.insert_patch(&id, 1, &patch, Some(&actor_json)).await?;
         Ok((id, 1))
@@ -2611,8 +2560,7 @@ impl Store for SqliteStore {
         document: Document,
         actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        let count = self.count_distinct_documents().await?;
-        let id = DocumentId::new_for_count(count);
+        let id = DocumentId::new();
         let actor_json = actor_to_json_string(actor);
         self.insert_document(&id, 1, &document, Some(&actor_json))
             .await?;
@@ -2660,8 +2608,7 @@ impl Store for SqliteStore {
         creation_time: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let count = self.count_distinct_tasks().await?;
-        let id = TaskId::new_for_count(count);
+        let id = TaskId::new();
 
         if let Some(issue_id) = task.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
@@ -3029,8 +2976,7 @@ impl Store for SqliteStore {
             return Err(StoreError::LabelAlreadyExists(label.name.clone()));
         }
 
-        let count = self.count_distinct_labels().await?;
-        let id = LabelId::new_for_count(count);
+        let id = LabelId::new();
 
         let sql = format!(
             "INSERT INTO {TABLE_LABELS} (id, name, color, deleted, recurse, hidden, created_at, updated_at) \
@@ -3964,44 +3910,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn count_distinct_issues_increments() {
-        let store = create_test_store().await;
-
-        assert_eq!(store.count_distinct_issues().await.unwrap(), 0);
-
-        store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_issues().await.unwrap(), 1);
-
-        store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_issues().await.unwrap(), 2);
-    }
-
-    #[tokio::test]
-    async fn count_distinct_labels_increments() {
-        let store = create_test_store().await;
-
-        assert_eq!(store.count_distinct_labels().await.unwrap(), 0);
-
-        store
-            .add_label(sample_label("bug", "#ff0000"))
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_labels().await.unwrap(), 1);
-
-        store
-            .add_label(sample_label("feature", "#00ff00"))
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_labels().await.unwrap(), 2);
-    }
-
-    #[tokio::test]
     async fn list_issues_filters_by_status() {
         let store = create_test_store().await;
 
@@ -4232,30 +4140,6 @@ mod tests {
 
         let issue_ids = store.get_issues_for_patch(&patch_id).await.unwrap();
         assert_eq!(issue_ids, vec![issue_id]);
-    }
-
-    #[tokio::test]
-    async fn count_distinct_patches_counts_correctly() {
-        let store = create_test_store().await;
-        assert_eq!(store.count_distinct_patches().await.unwrap(), 0);
-
-        let (id, _) = store
-            .add_patch(sample_patch(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_patches().await.unwrap(), 1);
-
-        store
-            .update_patch(&id, sample_patch(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_patches().await.unwrap(), 1);
-
-        store
-            .add_patch(sample_patch(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_patches().await.unwrap(), 2);
     }
 
     #[tokio::test]
@@ -4516,32 +4400,6 @@ mod tests {
 
         let err = store.get_document(&doc_id, false).await.unwrap_err();
         assert!(matches!(err, StoreError::DocumentNotFound(_)));
-    }
-
-    #[tokio::test]
-    async fn count_distinct_documents_counts_correctly() {
-        let store = create_test_store().await;
-        assert_eq!(store.count_distinct_documents().await.unwrap(), 0);
-
-        let (id, _) = store
-            .add_document(sample_document(None, None), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_documents().await.unwrap(), 1);
-
-        let mut updated = sample_document(None, None);
-        updated.body_markdown = "v2".to_string();
-        store
-            .update_document(&id, updated, &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_documents().await.unwrap(), 1);
-
-        store
-            .add_document(sample_document(None, None), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_documents().await.unwrap(), 2);
     }
 
     #[tokio::test]
@@ -4841,34 +4699,6 @@ mod tests {
         // Missing task should be silently omitted
         assert!(!logs.contains_key(&missing_id));
         assert_eq!(logs.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn count_distinct_tasks_counts_correctly() {
-        let store = create_test_store().await;
-        assert_eq!(store.count_distinct_tasks().await.unwrap(), 0);
-
-        let (id, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_tasks().await.unwrap(), 1);
-
-        // Updating the same task shouldn't increase the count
-        let mut updated = spawn_task();
-        updated.prompt = "v2".to_string();
-        store
-            .update_task(&id, updated, &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_tasks().await.unwrap(), 1);
-
-        // Adding another task should increase the count
-        store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(store.count_distinct_tasks().await.unwrap(), 2);
     }
 
     #[tokio::test]
