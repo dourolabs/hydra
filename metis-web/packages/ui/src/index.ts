@@ -54,3 +54,6 @@ export type { JobStatusIndicatorProps, JobSummary, JobStatus } from "./component
 
 export { DiffViewer } from "./components/DiffViewer";
 export type { DiffViewerProps } from "./components/DiffViewer";
+
+export { ErrorBoundary } from "./components/ErrorBoundary";
+export type { ErrorBoundaryProps } from "./components/ErrorBoundary";

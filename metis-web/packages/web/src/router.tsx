@@ -1,4 +1,5 @@
 import { createBrowserRouter } from "react-router-dom";
+import { ErrorBoundary } from "@metis/ui";
 import { AppLayout } from "./layout/AppLayout";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -20,31 +21,59 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <DashboardPage />,
+        element: (
+          <ErrorBoundary>
+            <DashboardPage />
+          </ErrorBoundary>
+        ),
       },
       {
         path: "issues/:issueId",
-        element: <IssueDetailPage />,
+        element: (
+          <ErrorBoundary>
+            <IssueDetailPage />
+          </ErrorBoundary>
+        ),
       },
       {
         path: "issues/:issueId/jobs/:jobId/logs",
-        element: <JobLogPage />,
+        element: (
+          <ErrorBoundary>
+            <JobLogPage />
+          </ErrorBoundary>
+        ),
       },
       {
         path: "documents",
-        element: <DocumentsPage />,
+        element: (
+          <ErrorBoundary>
+            <DocumentsPage />
+          </ErrorBoundary>
+        ),
       },
       {
         path: "documents/:documentId",
-        element: <DocumentDetailPage />,
+        element: (
+          <ErrorBoundary>
+            <DocumentDetailPage />
+          </ErrorBoundary>
+        ),
       },
       {
         path: "patches/:patchId",
-        element: <PatchDetailPage />,
+        element: (
+          <ErrorBoundary>
+            <PatchDetailPage />
+          </ErrorBoundary>
+        ),
       },
       {
         path: "settings",
-        element: <SettingsPage />,
+        element: (
+          <ErrorBoundary>
+            <SettingsPage />
+          </ErrorBoundary>
+        ),
       },
     ],
   },
