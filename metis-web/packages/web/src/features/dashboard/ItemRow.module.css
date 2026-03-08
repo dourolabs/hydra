@@ -220,6 +220,13 @@
   font-weight: 500;
   pointer-events: none;
   user-select: none;
+  visibility: hidden;
+}
+
+/* Show archive reveal only during active swipe or commit animation */
+.rowSwipeable:has(.swiping) .archiveReveal,
+.rowSwipeable:has(.swipeCommit) .archiveReveal {
+  visibility: visible;
 }
 
 .archiveRevealIcon {
