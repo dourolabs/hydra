@@ -614,4 +614,53 @@ mod tests {
         assert_eq!(summary_record.task.prompt, "record test");
         assert_eq!(summary_record.actor, None);
     }
+
+    #[test]
+    fn job_summary_truncates_long_error_reason() {
+        let long_reason = "e".repeat(200);
+        let mut task = make_test_task("prompt");
+        task.error = Some(TaskError::JobEngineError {
+            reason: long_reason,
+        });
+        let summary = JobSummary::from(&task);
+        let error = summary.error.unwrap();
+        match error {
+            TaskError::JobEngineError { reason } => {
+                assert_eq!(reason.chars().count(), 103);
+                assert!(reason.ends_with("..."));
+                assert_eq!(&reason[..100], &"e".repeat(100));
+            }
+            _ => panic!("expected JobEngineError"),
+        }
+    }
+
+    #[test]
+    fn job_summary_preserves_short_error_reason() {
+        let short_reason = "something went wrong".to_string();
+        let mut task = make_test_task("prompt");
+        task.error = Some(TaskError::JobEngineError {
+            reason: short_reason.clone(),
+        });
+        let summary = JobSummary::from(&task);
+        let error = summary.error.unwrap();
+        match error {
+            TaskError::JobEngineError { reason } => {
+                assert_eq!(reason, short_reason);
+            }
+            _ => panic!("expected JobEngineError"),
+        }
+    }
+
+    #[test]
+    fn job_summary_record_omits_actor() {
+        let task = make_test_task("actor test");
+        let task_id = crate::TaskId::new();
+        let actor = ActorRef::System {
+            worker_name: "worker-1".to_string(),
+            on_behalf_of: None,
+        };
+        let record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task, Some(actor));
+        let summary_record = JobSummaryRecord::from(&record);
+        assert_eq!(summary_record.actor, None);
+    }
 }
