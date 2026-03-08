@@ -336,21 +336,6 @@ pub trait ReadOnlyStore: Send + Sync {
         ids: &[TaskId],
     ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError>;
 
-    /// Returns the number of distinct issues in the store.
-    async fn count_distinct_issues(&self) -> Result<u64, StoreError>;
-
-    /// Returns the number of distinct patches in the store.
-    async fn count_distinct_patches(&self) -> Result<u64, StoreError>;
-
-    /// Returns the number of distinct documents in the store.
-    async fn count_distinct_documents(&self) -> Result<u64, StoreError>;
-
-    /// Returns the number of distinct tasks in the store.
-    async fn count_distinct_tasks(&self) -> Result<u64, StoreError>;
-
-    /// Returns the number of distinct labels in the store.
-    async fn count_distinct_labels(&self) -> Result<u64, StoreError>;
-
     /// Gets an actor by its canonical name.
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError>;
 

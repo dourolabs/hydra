@@ -1330,28 +1330,6 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_status_logs(ids).await
     }
 
-    // ---- Counts (read-only) ----
-
-    async fn count_distinct_issues(&self) -> Result<u64, StoreError> {
-        self.inner.count_distinct_issues().await
-    }
-
-    async fn count_distinct_patches(&self) -> Result<u64, StoreError> {
-        self.inner.count_distinct_patches().await
-    }
-
-    async fn count_distinct_documents(&self) -> Result<u64, StoreError> {
-        self.inner.count_distinct_documents().await
-    }
-
-    async fn count_distinct_tasks(&self) -> Result<u64, StoreError> {
-        self.inner.count_distinct_tasks().await
-    }
-
-    async fn count_distinct_labels(&self) -> Result<u64, StoreError> {
-        self.inner.count_distinct_labels().await
-    }
-
     // ---- Actor (read-only) ----
 
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {

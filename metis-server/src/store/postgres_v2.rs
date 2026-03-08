@@ -1038,26 +1038,6 @@ impl PostgresStoreV2 {
             creator: Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR)),
         })
     }
-
-    async fn count_distinct_notifications(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_NOTIFICATIONS}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
-    async fn count_distinct_messages(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_MESSAGES_V2}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
 }
 
 // -----------------------------------------------------------------------------
@@ -2332,59 +2312,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     // -------------------------------------------------------------------------
-    // Count methods
-    // -------------------------------------------------------------------------
-
-    async fn count_distinct_issues(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_ISSUES_V2}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
-    async fn count_distinct_patches(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_PATCHES_V2}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
-    async fn count_distinct_documents(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_DOCUMENTS_V2}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
-    async fn count_distinct_tasks(&self) -> Result<u64, StoreError> {
-        let count = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(DISTINCT id) FROM {TABLE_TASKS_V2}"
-        ))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
-    async fn count_distinct_labels(&self) -> Result<u64, StoreError> {
-        let count =
-            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(DISTINCT id) FROM {TABLE_LABELS}"))
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_sqlx_error)?;
-        Ok(count as u64)
-    }
-
-    // -------------------------------------------------------------------------
     // Actor methods
     // -------------------------------------------------------------------------
 
@@ -3073,8 +3000,7 @@ impl Store for PostgresStoreV2 {
     ) -> Result<(IssueId, VersionNumber), StoreError> {
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
-        let count = self.count_distinct_issues().await?;
-        let id = IssueId::new_for_count(count);
+        let id = IssueId::new();
         let actor_json = actor_to_json(actor);
         self.insert_issue(&id, 1, &issue, Some(&actor_json)).await?;
         Ok((id, 1))
@@ -3126,8 +3052,7 @@ impl Store for PostgresStoreV2 {
         patch: Patch,
         actor: &ActorRef,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
-        let count = self.count_distinct_patches().await?;
-        let id = PatchId::new_for_count(count);
+        let id = PatchId::new();
         let actor_json = actor_to_json(actor);
         self.insert_patch(&id, 1, &patch, Some(&actor_json)).await?;
         Ok((id, 1))
@@ -3177,8 +3102,7 @@ impl Store for PostgresStoreV2 {
         document: Document,
         actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        let count = self.count_distinct_documents().await?;
-        let id = DocumentId::new_for_count(count);
+        let id = DocumentId::new();
         let actor_json = actor_to_json(actor);
         self.insert_document(&id, 1, &document, Some(&actor_json))
             .await?;
@@ -3230,8 +3154,7 @@ impl Store for PostgresStoreV2 {
         _creation_time: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let count = self.count_distinct_tasks().await?;
-        let id = TaskId::new_for_count(count);
+        let id = TaskId::new();
 
         if let Some(issue_id) = task.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
@@ -3463,8 +3386,7 @@ impl Store for PostgresStoreV2 {
         &self,
         notification: Notification,
     ) -> Result<NotificationId, StoreError> {
-        let count = self.count_distinct_notifications().await?;
-        let id = NotificationId::new_for_count(count);
+        let id = NotificationId::new();
         self.insert_notification_row(&id, &notification).await?;
         Ok(id)
     }
@@ -3523,8 +3445,7 @@ impl Store for PostgresStoreV2 {
         message: Message,
         actor: &ActorRef,
     ) -> Result<(MessageId, VersionNumber), StoreError> {
-        let count = self.count_distinct_messages().await?;
-        let id = MessageId::new_for_count(count);
+        let id = MessageId::new();
         let actor_json = actor_to_json(actor);
         self.insert_message(&id, 1, &message, Some(&actor_json))
             .await?;
@@ -3711,8 +3632,7 @@ impl Store for PostgresStoreV2 {
             return Err(StoreError::LabelAlreadyExists(label.name.clone()));
         }
 
-        let count = self.count_distinct_labels().await?;
-        let id = LabelId::new_for_count(count);
+        let id = LabelId::new();
 
         let sql = format!(
             "INSERT INTO {TABLE_LABELS} (id, name, color, deleted, recurse, hidden, created_at, updated_at) \

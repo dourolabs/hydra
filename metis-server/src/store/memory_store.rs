@@ -851,26 +851,6 @@ impl ReadOnlyStore for MemoryStore {
         Ok(result)
     }
 
-    async fn count_distinct_issues(&self) -> Result<u64, StoreError> {
-        Ok(self.issues.len() as u64)
-    }
-
-    async fn count_distinct_patches(&self) -> Result<u64, StoreError> {
-        Ok(self.patches.len() as u64)
-    }
-
-    async fn count_distinct_documents(&self) -> Result<u64, StoreError> {
-        Ok(self.documents.len() as u64)
-    }
-
-    async fn count_distinct_tasks(&self) -> Result<u64, StoreError> {
-        Ok(self.tasks.len() as u64)
-    }
-
-    async fn count_distinct_labels(&self) -> Result<u64, StoreError> {
-        Ok(self.labels.len() as u64)
-    }
-
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         self.actors
@@ -1296,16 +1276,7 @@ impl Store for MemoryStore {
         issue: Issue,
         actor: &ActorRef,
     ) -> Result<(IssueId, VersionNumber), StoreError> {
-        let count = self.issues.len() as u64;
-        let mut len = metis_common::ids::compute_random_len(count);
-        let id = loop {
-            let candidate =
-                IssueId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
-            if !self.issues.contains_key(&candidate) {
-                break candidate;
-            }
-            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
-        };
+        let id = IssueId::new();
         let new_dependencies = issue.dependencies.clone();
         let new_patches = issue.patches.clone();
 
@@ -1377,16 +1348,7 @@ impl Store for MemoryStore {
         patch: Patch,
         actor: &ActorRef,
     ) -> Result<(PatchId, VersionNumber), StoreError> {
-        let count = self.patches.len() as u64;
-        let mut len = metis_common::ids::compute_random_len(count);
-        let id = loop {
-            let candidate =
-                PatchId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
-            if !self.patches.contains_key(&candidate) {
-                break candidate;
-            }
-            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
-        };
+        let id = PatchId::new();
         self.patches.insert(
             id.clone(),
             vec![Self::versioned_now_with_actor(patch, 1, actor)],
@@ -1425,16 +1387,7 @@ impl Store for MemoryStore {
         document: Document,
         actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        let count = self.documents.len() as u64;
-        let mut len = metis_common::ids::compute_random_len(count);
-        let id = loop {
-            let candidate =
-                DocumentId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
-            if !self.documents.contains_key(&candidate) {
-                break candidate;
-            }
-            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
-        };
+        let id = DocumentId::new();
         let path = document.path.clone();
         self.documents.insert(
             id.clone(),
@@ -1490,16 +1443,7 @@ impl Store for MemoryStore {
         creation_time: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let count = self.tasks.len() as u64;
-        let mut len = metis_common::ids::compute_random_len(count);
-        let id = loop {
-            let candidate =
-                TaskId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
-            if !self.tasks.contains_key(&candidate) {
-                break candidate;
-            }
-            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
-        };
+        let id = TaskId::new();
         let spawned_from = task.spawned_from.clone();
 
         self.tasks.insert(
@@ -1642,16 +1586,7 @@ impl Store for MemoryStore {
         &self,
         notification: Notification,
     ) -> Result<NotificationId, StoreError> {
-        let count = self.notifications.len() as u64;
-        let mut len = metis_common::ids::compute_random_len(count);
-        let id = loop {
-            let candidate =
-                NotificationId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
-            if !self.notifications.contains_key(&candidate) {
-                break candidate;
-            }
-            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
-        };
+        let id = NotificationId::new();
 
         self.notifications.insert(id.clone(), notification);
         Ok(id)
@@ -1699,16 +1634,7 @@ impl Store for MemoryStore {
         message: Message,
         actor: &ActorRef,
     ) -> Result<(MessageId, VersionNumber), StoreError> {
-        let count = self.messages.len() as u64;
-        let mut len = metis_common::ids::compute_random_len(count);
-        let id = loop {
-            let candidate =
-                MessageId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
-            if !self.messages.contains_key(&candidate) {
-                break candidate;
-            }
-            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
-        };
+        let id = MessageId::new();
 
         self.messages.insert(
             id.clone(),
@@ -1792,16 +1718,7 @@ impl Store for MemoryStore {
             return Err(StoreError::LabelAlreadyExists(label.name.clone()));
         }
 
-        let count = self.labels.len() as u64;
-        let mut len = metis_common::ids::compute_random_len(count);
-        let id = loop {
-            let candidate =
-                LabelId::generate(len).map_err(|e| StoreError::Internal(e.to_string()))?;
-            if !self.labels.contains_key(&candidate) {
-                break candidate;
-            }
-            len = (len + 1).min(metis_common::ids::MAX_RANDOM_LEN);
-        };
+        let id = LabelId::new();
 
         self.labels.insert(id.clone(), label);
         Ok(id)

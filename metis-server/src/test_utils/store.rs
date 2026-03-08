@@ -174,26 +174,6 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
-    async fn count_distinct_issues(&self) -> Result<u64, StoreError> {
-        fail()
-    }
-
-    async fn count_distinct_patches(&self) -> Result<u64, StoreError> {
-        fail()
-    }
-
-    async fn count_distinct_documents(&self) -> Result<u64, StoreError> {
-        fail()
-    }
-
-    async fn count_distinct_tasks(&self) -> Result<u64, StoreError> {
-        fail()
-    }
-
-    async fn count_distinct_labels(&self) -> Result<u64, StoreError> {
-        fail()
-    }
-
     async fn get_actor(&self, _name: &str) -> Result<Versioned<Actor>, StoreError> {
         crate::store::validate_actor_name(_name)?;
         fail()
