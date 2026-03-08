@@ -58,3 +58,6 @@ export type { DiffViewerProps } from "./components/DiffViewer";
 // Hooks
 export { useKeyboardClick } from "./hooks/useKeyboardClick";
 export type { KeyboardClickProps } from "./hooks/useKeyboardClick";
+
+export { ErrorBoundary } from "./components/ErrorBoundary";
+export type { ErrorBoundaryProps } from "./components/ErrorBoundary";
