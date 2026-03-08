@@ -25,9 +25,9 @@ metis:
 # Default: local
 auth_mode: "github"
 
-# Optional GitHub personal access token for local mode. When set, this token
-# is stored for the local user so that GitHub API consumers (PR sync, patch
-# assets, etc.) can function without the full GitHub App OAuth flow.
+# GitHub personal access token — required when auth_mode is "local".
+# This token is used by GitHub API consumers (PR sync, patch assets, etc.)
+# so they can function without the full GitHub App OAuth flow.
 # Required scopes: repo (full control of private repositories).
 # github_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 

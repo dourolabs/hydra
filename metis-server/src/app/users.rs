@@ -49,15 +49,8 @@ impl AppState {
         github_refresh_token: String,
         login_actor: ActorRef,
     ) -> Result<(User, Actor, String), LoginError> {
-        let github_app = self
-            .config
-            .github_app
-            .as_ref()
-            .ok_or_else(|| LoginError::Store {
-                source: StoreError::Internal("GitHub app not configured".to_string()),
-            })?;
         let github_client = Octocrab::builder()
-            .base_uri(github_app.api_base_url().to_string())
+            .base_uri(self.config.github_api_base_url().to_string())
             .map_err(|err| LoginError::Store {
                 source: StoreError::Internal(format!("failed to parse github api base url: {err}")),
             })?

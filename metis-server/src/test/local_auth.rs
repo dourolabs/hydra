@@ -14,6 +14,7 @@ async fn setup_local_auth_creates_actor_and_writes_token() -> anyhow::Result<()>
 
     let mut config = test_app_config();
     config.auth_mode = AuthMode::Local;
+    config.github_token = Some("ghp_test_token".to_string());
 
     let store = Arc::new(MemoryStore::new());
     setup_local_auth(&config, store.as_ref(), &token_path).await?;
@@ -41,6 +42,7 @@ async fn setup_local_auth_is_idempotent() -> anyhow::Result<()> {
 
     let mut config = test_app_config();
     config.auth_mode = AuthMode::Local;
+    config.github_token = Some("ghp_test_token".to_string());
 
     let store = Arc::new(MemoryStore::new());
 

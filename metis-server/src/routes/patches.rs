@@ -306,12 +306,7 @@ pub async fn create_patch_asset(
 
     let token = actor.get_github_token(&state).await?;
     let asset_name = resolve_asset_name(&query, &headers, &patch_id);
-    let github_app = state
-        .config
-        .github_app
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("GitHub app not configured"))?;
-    let upload_url = build_upload_url(github_app.api_base_url(), github, &asset_name)?;
+    let upload_url = build_upload_url(state.config.github_api_base_url(), github, &asset_name)?;
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())

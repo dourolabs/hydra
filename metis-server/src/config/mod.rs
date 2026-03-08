@@ -94,12 +94,32 @@ impl AppConfig {
                 "github_app section is required when auth_mode is 'github'"
             );
         }
+        if self.auth_mode == AuthMode::Local {
+            ensure!(
+                self.github_token
+                    .as_ref()
+                    .is_some_and(|t| !t.trim().is_empty()),
+                "github_token is required when auth_mode is 'local'"
+            );
+        }
         if let Some(ref github_app) = self.github_app {
             github_app.validate()?;
         }
         self.background.validate()?;
         self.build_cache.validate()?;
         self.validate_policies()
+    }
+
+    /// Return the GitHub API base URL regardless of auth mode.
+    ///
+    /// In GitHub mode this comes from the `github_app` section; in local mode it
+    /// falls back to the public GitHub API. Downstream consumers should call
+    /// this instead of reaching into `github_app` directly.
+    pub fn github_api_base_url(&self) -> &str {
+        self.github_app
+            .as_ref()
+            .map(|gh| gh.api_base_url())
+            .unwrap_or("https://api.github.com")
     }
 
     fn validate_policies(&self) -> Result<()> {
@@ -735,6 +755,8 @@ metis:
   METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
   allowed_orgs: []
 
+auth_mode: github
+
 job:
   default_image: "metis-worker:latest"
   cpu_limit: "500m"
@@ -911,6 +933,7 @@ metis:
   METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
 
 auth_mode: local
+github_token: "ghp_test_token"
 
 job:
   default_image: "metis-worker:latest"
@@ -935,6 +958,8 @@ job:
                 r#"
 metis:
   METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+
+github_token: "ghp_test_token"
 
 job:
   default_image: "metis-worker:latest"
@@ -971,6 +996,34 @@ job:
         assert!(error_chain_contains(
             &error,
             "github_app section is required when auth_mode is 'github'"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_rejects_local_mode_without_github_token() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+metis:
+  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+
+auth_mode: local
+
+job:
+  default_image: "metis-worker:latest"
+"#
+            ),
+        )?;
+
+        let error = AppConfig::load(&path).expect_err("expected missing github_token");
+        assert!(error_chain_contains(
+            &error,
+            "github_token is required when auth_mode is 'local'"
         ));
 
         Ok(())
