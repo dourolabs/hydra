@@ -17,17 +17,53 @@ metis:
   # Leave empty or omit to allow all organizations.
   allowed_orgs: []
 
+# Storage backend: "sqlite" (default), "postgres", or "memory".
+# Each backend carries its own configuration fields.
+#
+# SQLite (default for single-player mode):
+storage_backend: "sqlite"
+sqlite_path: "metis.db"
+#
+# PostgreSQL (for production / multi-player mode):
+# storage_backend: "postgres"
+# database:
+#   url: "postgres://metis:metis@localhost:5432/metis"
+#   max_connections: 5
+#   min_connections: 1
+#   connect_timeout_secs: 5
+#   idle_timeout_secs: 300
+#
+# In-memory (for testing):
+# storage_backend: "memory"
+
+# Job engine: "local" (default) or "kubernetes".
+# Each backend carries its own configuration fields.
+#
+# Local Docker (default for single-player mode):
+job_engine: "local"
+#
+# Kubernetes (for production):
+# job_engine: "kubernetes"
+# kubernetes:
+#   in_cluster: false
+#   config_path: "~/.kube/config"
+#   context: "kind-local-dev"
+#   cluster_name: "kind-local-dev"
+#   api_server: ""
+#   # image_pull_secrets:
+#   #   - "ghcr-credentials"
+
 # Authentication mode: "local" or "github".
 # - local: auto-creates a default user actor on startup. Requires github_token
 #   (a personal access token) for GitHub API access. No GitHub OAuth needed.
 # - github: requires the github_app section below for device-flow OAuth.
-auth_mode: "github"
+auth_mode: "local"
 
 # GitHub personal access token — required when auth_mode is "local".
 # This token is used by GitHub API consumers (PR sync, patch assets, etc.)
 # so they can function without the full GitHub App OAuth flow.
 # Required scopes: repo (full control of private repositories).
-# github_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+github_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 # Optional username for the local actor (auth_mode: local only).
 # Defaults to "local" if omitted, producing actor name "u-local".
@@ -35,7 +71,6 @@ auth_mode: "github"
 
 job:
   # Container image the worker Pod will execute.
-  # TODO: figure out how to tag this properly in kind x_x
   default_image: "metis-worker:latest"
   # Default model to use when job settings omit one.
   default_model: "gpt-4o"
@@ -47,21 +82,6 @@ job:
   cpu_request: "500m"
   # Memory request for worker pods (e.g., "1Gi", "512Mi", "2G").
   memory_request: "1Gi"
-
-database:
-  # PostgreSQL connection string. Leave empty to use the in-memory store; environment
-  # variables are not consulted. For Kubernetes via ./scripts/service.sh, point
-  # at the in-cluster service:
-  # url: "postgres://metis:metis@postgres.metis.svc.cluster.local:5432/metis"
-  url: "postgres://metis:metis@localhost:5432/metis"
-  # Maximum number of pooled connections (minimum defaults to 1).
-  max_connections: 5
-  # Minimum number of pooled connections to keep open.
-  min_connections: 1
-  # Timeout (seconds) when acquiring a database connection.
-  connect_timeout_secs: 5
-  # Idle timeout (seconds) before reclaiming a connection; set to 0 to disable.
-  idle_timeout_secs: 300
 
 build_cache:
   # Optional build cache storage configuration for worker runs.
@@ -197,24 +217,3 @@ background:
 #   #
 #   # Default (no params): creates a single MergeRequest issue with no assignee.
 
-kubernetes:
-  # Set to true when the server runs inside a Kubernetes cluster and should use
-  # its mounted ServiceAccount credentials.
-  in_cluster: false
-
-  # Path to the kubeconfig file with cluster credentials (used when in_cluster = false).
-  config_path: "~/.kube/config"
-
-  # Context within the kubeconfig to select (kubectl config get-contexts).
-  context: "kind-local-dev"
-
-  # Friendly cluster name; purely informational for tooling.
-  cluster_name: "kind-local-dev"
-
-  # Optional explicit API server endpoint; leave blank to use kubeconfig default.
-  api_server: ""
-
-  # Optional imagePullSecret configured via 1Password operator for pulling images.
-  # Leave blank to omit imagePullSecrets from the worker pod spec.
-  # image_pull_secrets:
-  #   - "ghcr-credentials"

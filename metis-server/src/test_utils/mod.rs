@@ -1,8 +1,8 @@
 use crate::{
     app::{AppState, Repository, ServiceState},
     config::{
-        AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, DatabaseSection,
-        GithubAppSection, JobSection, KubernetesSection, MetisSection, SchedulerSection,
+        AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, GithubAppSection,
+        JobEngineConfig, JobSection, MetisSection, SchedulerSection, StorageConfig,
         WorkerSchedulerConfig,
     },
     domain::{
@@ -67,7 +67,6 @@ impl Drop for TestServer {
 pub fn test_app_config() -> AppConfig {
     AppConfig {
         metis: MetisSection::default(),
-        kubernetes: KubernetesSection::default(),
         job: JobSection {
             default_image: "metis-worker:latest".to_string(),
             default_model: None,
@@ -76,7 +75,8 @@ pub fn test_app_config() -> AppConfig {
             cpu_request: "500m".to_string(),
             memory_request: "1Gi".to_string(),
         },
-        database: DatabaseSection::default(),
+        storage: StorageConfig::default(),
+        job_engine: JobEngineConfig::default(),
         auth: AuthConfig::Github {
             github_app: GithubAppSection {
                 app_id: 1,

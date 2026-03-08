@@ -5,13 +5,86 @@ pub use kube::build_kube_client;
 use anyhow::{Context, Result, ensure};
 use metis_common::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 use octocrab::models::AppId;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::{
     fmt, fs,
     path::{Path, PathBuf},
 };
 
 use crate::policy::config::PolicyConfig;
+
+/// Storage backend configuration, modeled as a tagged enum so the type system
+/// enforces which fields are required for each backend.
+///
+/// Uses `#[serde(tag = "storage_backend")]` so the discriminator lives in the
+/// same mapping as the variant fields (flat YAML layout). A custom
+/// `Deserialize` impl on `AppConfig` applies the default when the tag is absent.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "storage_backend")]
+pub enum StorageConfig {
+    /// SQLite file-based storage (default for single-player mode).
+    #[serde(rename = "sqlite")]
+    Sqlite {
+        #[serde(default = "default_sqlite_path")]
+        sqlite_path: String,
+    },
+    /// PostgreSQL (for production / multi-player mode).
+    #[serde(rename = "postgres")]
+    Postgres { database: DatabaseSection },
+    /// In-memory store (for testing).
+    #[serde(rename = "memory")]
+    Memory,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self::Sqlite {
+            sqlite_path: default_sqlite_path(),
+        }
+    }
+}
+
+impl fmt::Display for StorageConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Sqlite { .. } => write!(f, "sqlite"),
+            Self::Postgres { .. } => write!(f, "postgres"),
+            Self::Memory => write!(f, "memory"),
+        }
+    }
+}
+
+/// Job engine configuration, modeled as a tagged enum so the type system
+/// enforces which fields are required for each backend.
+///
+/// Uses `#[serde(tag = "job_engine")]` so the discriminator lives in the
+/// same mapping as the variant fields (flat YAML layout). A custom
+/// `Deserialize` impl on `AppConfig` applies the default when the tag is absent.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "job_engine")]
+pub enum JobEngineConfig {
+    /// Local Docker-based job execution (default for single-player mode).
+    #[serde(rename = "local")]
+    Local,
+    /// Kubernetes-based job execution (for production / multi-player mode).
+    #[serde(rename = "kubernetes")]
+    Kubernetes { kubernetes: KubernetesSection },
+}
+
+impl Default for JobEngineConfig {
+    fn default() -> Self {
+        Self::Local
+    }
+}
+
+impl fmt::Display for JobEngineConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Local => write!(f, "local"),
+            Self::Kubernetes { .. } => write!(f, "kubernetes"),
+        }
+    }
+}
 
 /// Authentication configuration for the server, modeled as a tagged enum so
 /// the type system enforces which fields are required for each mode.
@@ -90,24 +163,66 @@ impl AuthConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct AppConfig {
+/// Raw intermediate struct for deserializing `AppConfig` from YAML.
+///
+/// `StorageConfig` and `JobEngineConfig` are `Option`-wrapped because
+/// `#[serde(flatten, default)]` with internally-tagged enums doesn't apply
+/// the `Default` when the tag field is absent. Wrapping them as `Option`
+/// lets serde succeed (returning `None`) and then `AppConfig`'s
+/// `Deserialize` impl applies the defaults.
+///
+/// `AuthConfig` stays non-optional so that serde propagates errors for
+/// missing required variant fields (e.g., `github_token` for local mode).
+#[derive(Debug, Deserialize)]
+struct RawAppConfig {
     pub metis: MetisSection,
     pub job: JobSection,
-    #[serde(default)]
-    pub kubernetes: KubernetesSection,
-    #[serde(default)]
-    pub database: DatabaseSection,
+    #[serde(default, flatten)]
+    pub storage: Option<StorageConfig>,
+    #[serde(default, flatten)]
+    pub job_engine: Option<JobEngineConfig>,
     #[serde(default, flatten)]
     pub auth: AuthConfig,
     #[serde(default)]
     pub background: BackgroundSection,
     #[serde(default)]
     pub build_cache: BuildCacheSection,
-    /// Optional policy engine configuration. When absent, all built-in
-    /// policies are enabled with default parameters.
     #[serde(default)]
     pub policies: Option<PolicyConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AppConfig {
+    pub metis: MetisSection,
+    pub job: JobSection,
+    pub storage: StorageConfig,
+    pub job_engine: JobEngineConfig,
+    pub auth: AuthConfig,
+    pub background: BackgroundSection,
+    pub build_cache: BuildCacheSection,
+    /// Optional policy engine configuration. When absent, all built-in
+    /// policies are enabled with default parameters.
+    pub policies: Option<PolicyConfig>,
+}
+
+impl<'de> Deserialize<'de> for AppConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawAppConfig::deserialize(deserializer)?;
+
+        Ok(Self {
+            metis: raw.metis,
+            job: raw.job,
+            storage: raw.storage.unwrap_or_default(),
+            job_engine: raw.job_engine.unwrap_or_default(),
+            auth: raw.auth,
+            background: raw.background,
+            build_cache: raw.build_cache,
+            policies: raw.policies,
+        })
+    }
 }
 
 impl AppConfig {
@@ -553,6 +668,10 @@ pub(crate) fn non_empty(value: &str) -> Option<&str> {
     } else {
         Some(value.trim())
     }
+}
+
+fn default_sqlite_path() -> String {
+    "metis.db".to_string()
 }
 
 fn default_namespace() -> String {

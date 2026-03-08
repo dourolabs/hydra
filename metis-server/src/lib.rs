@@ -18,14 +18,17 @@ mod test;
 
 use crate::app::{AppState, ServiceState};
 use crate::background::start_background_scheduler;
-use crate::config::{AppConfig, GithubAppSection, build_kube_client};
+use crate::config::{
+    AppConfig, GithubAppSection, JobEngineConfig, StorageConfig, build_kube_client,
+};
 use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::secrets::SecretManager;
 use crate::domain::users::{User, Username};
-use crate::job_engine::KubernetesJobEngine;
+use crate::job_engine::{KubernetesJobEngine, LocalDockerJobEngine};
 use crate::store::{
     MemoryStore, Store, StoreError, migration,
     postgres_v2::{self, PostgresStoreV2},
+    sqlite_store::SqliteStore,
 };
 use anyhow::Context;
 use axum::{
@@ -264,28 +267,40 @@ pub async fn run() -> anyhow::Result<()> {
     let app_config = AppConfig::load(&config_path)?;
     let service_state = ServiceState::default();
 
-    info!(auth_mode = %app_config.auth, "starting server");
+    info!(
+        auth_mode = %app_config.auth,
+        storage = %app_config.storage,
+        job_engine = %app_config.job_engine,
+        "starting server"
+    );
 
     let github_app = match app_config.auth.github_app() {
         Some(gh) => build_github_app_client(gh)?,
         None => None,
     };
 
-    // Build Kubernetes client
-    let kube_client = build_kube_client(&app_config.kubernetes).await?;
+    // Initialize store based on configured storage backend
+    let store: Arc<dyn Store> = match &app_config.storage {
+        StorageConfig::Sqlite { sqlite_path } => {
+            let db_url = format!("sqlite:{sqlite_path}?mode=rwc");
+            let pool = SqliteStore::init_pool(&db_url)
+                .await
+                .context("failed to initialize SQLite pool")?;
+            SqliteStore::run_migrations(&pool)
+                .await
+                .context("failed to run SQLite migrations")?;
+            info!(path = %sqlite_path, "connected to SQLite and applied migrations");
+            Arc::new(SqliteStore::new(pool))
+        }
+        StorageConfig::Postgres { database } => {
+            let postgres_pool = postgres_v2::init_pool(database)
+                .await?
+                .context("database.url is required for postgres storage backend")?;
+            postgres_v2::run_migrations(&postgres_pool).await?;
+            info!("connected to Postgres and applied migrations");
 
-    let postgres_pool = postgres_v2::init_pool(&app_config.database).await?;
-    if let Some(pool) = &postgres_pool {
-        postgres_v2::run_migrations(pool).await?;
-        info!("connected to Postgres and applied migrations");
-    } else {
-        info!("no Postgres database configured; using in-memory store");
-    }
-
-    let store: Arc<dyn Store> = match postgres_pool.clone() {
-        Some(pool) => {
             // Run migration from v1 to v2 in case there is unmigrated data
-            let migration_result = migration::migrate_v1_to_v2(&pool).await?;
+            let migration_result = migration::migrate_v1_to_v2(&postgres_pool).await?;
             if migration_result.total() > 0 {
                 info!(
                     total = migration_result.total(),
@@ -299,9 +314,12 @@ pub async fn run() -> anyhow::Result<()> {
                     "migrated data from v1 to v2 tables"
                 );
             }
-            Arc::new(PostgresStoreV2::new(pool))
+            Arc::new(PostgresStoreV2::new(postgres_pool))
         }
-        None => Arc::new(MemoryStore::new()),
+        StorageConfig::Memory => {
+            info!("using in-memory store");
+            Arc::new(MemoryStore::new())
+        }
     };
 
     // In local auth mode, create a default user actor.
@@ -309,12 +327,27 @@ pub async fn run() -> anyhow::Result<()> {
         setup_local_auth(&app_config, store.as_ref()).await?;
     }
 
-    // Create job engine
-    let job_engine = KubernetesJobEngine {
-        namespace: app_config.metis.namespace.clone(),
-        server_hostname: app_config.metis.server_hostname.clone(),
-        client: kube_client,
-        image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
+    // Create job engine based on configured backend
+    let job_engine: Arc<dyn crate::job_engine::JobEngine> = match &app_config.job_engine {
+        JobEngineConfig::Local => {
+            let server_url = "http://host.docker.internal:8080".to_string();
+            let engine = LocalDockerJobEngine::new(server_url)
+                .await
+                .context("failed to initialize local Docker job engine")?;
+            info!("using local Docker job engine");
+            Arc::new(engine)
+        }
+        JobEngineConfig::Kubernetes { kubernetes } => {
+            let kube_client = build_kube_client(kubernetes).await?;
+            let engine = KubernetesJobEngine {
+                namespace: app_config.metis.namespace.clone(),
+                server_hostname: app_config.metis.server_hostname.clone(),
+                client: kube_client,
+                image_pull_secrets: kubernetes.image_pull_secrets.clone(),
+            };
+            info!("using Kubernetes job engine");
+            Arc::new(engine)
+        }
     };
 
     // Initialize SecretManager from config (mandatory)
@@ -329,7 +362,7 @@ pub async fn run() -> anyhow::Result<()> {
         github_app,
         Arc::new(service_state),
         store,
-        Arc::new(job_engine),
+        job_engine,
         secret_manager,
     );
 
