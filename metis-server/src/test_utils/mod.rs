@@ -2,8 +2,8 @@ use crate::{
     app::{AppState, Repository, ServiceState},
     config::{
         AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, DatabaseSection,
-        GithubAppSection, JobSection, KubernetesSection, MetisSection, SchedulerSection,
-        WorkerSchedulerConfig,
+        GithubAppSection, JobEngineBackend, JobSection, KubernetesSection, MetisSection,
+        SchedulerSection, StorageBackend, WorkerSchedulerConfig,
     },
     domain::{
         actors::{Actor, ActorRef},
@@ -93,6 +93,9 @@ pub fn test_app_config() -> AppConfig {
         },
         build_cache: BuildCacheSection::default(),
         policies: None,
+        storage_backend: StorageBackend::default(),
+        job_engine: JobEngineBackend::default(),
+        sqlite_path: "metis.db".to_string(),
     }
 }
 

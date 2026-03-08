@@ -13,6 +13,49 @@ use std::{
 
 use crate::policy::config::PolicyConfig;
 
+/// Storage backend to use for persistence.
+#[derive(Debug, Deserialize, Clone, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackend {
+    /// SQLite file-based storage (default for single-player mode).
+    #[default]
+    Sqlite,
+    /// PostgreSQL (for production / multi-player mode).
+    Postgres,
+    /// In-memory store (for testing).
+    Memory,
+}
+
+impl fmt::Display for StorageBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Sqlite => write!(f, "sqlite"),
+            Self::Postgres => write!(f, "postgres"),
+            Self::Memory => write!(f, "memory"),
+        }
+    }
+}
+
+/// Job engine backend to use for running jobs.
+#[derive(Debug, Deserialize, Clone, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum JobEngineBackend {
+    /// Local Docker-based job execution (default for single-player mode).
+    #[default]
+    Local,
+    /// Kubernetes-based job execution (for production / multi-player mode).
+    Kubernetes,
+}
+
+impl fmt::Display for JobEngineBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Local => write!(f, "local"),
+            Self::Kubernetes => write!(f, "kubernetes"),
+        }
+    }
+}
+
 /// Authentication configuration for the server, modeled as a tagged enum so
 /// the type system enforces which fields are required for each mode.
 #[derive(Debug, Deserialize, Clone)]
@@ -82,6 +125,10 @@ pub struct AppConfig {
     pub metis: MetisSection,
     pub job: JobSection,
     #[serde(default)]
+    pub storage_backend: StorageBackend,
+    #[serde(default)]
+    pub job_engine: JobEngineBackend,
+    #[serde(default)]
     pub kubernetes: KubernetesSection,
     #[serde(default)]
     pub database: DatabaseSection,
@@ -95,6 +142,10 @@ pub struct AppConfig {
     /// policies are enabled with default parameters.
     #[serde(default)]
     pub policies: Option<PolicyConfig>,
+    /// Path to the SQLite database file. Only used when `storage_backend` is
+    /// `sqlite`. Defaults to `metis.db` in the current directory.
+    #[serde(default = "default_sqlite_path")]
+    pub sqlite_path: String,
 }
 
 impl AppConfig {
@@ -126,6 +177,12 @@ impl AppConfig {
             AuthConfig::Github { github_app } => {
                 github_app.validate()?;
             }
+        }
+        if self.storage_backend == StorageBackend::Postgres {
+            ensure!(
+                self.database.database_url().is_some(),
+                "database.url is required when storage_backend is 'postgres'"
+            );
         }
         self.background.validate()?;
         self.build_cache.validate()?;
@@ -540,6 +597,10 @@ pub(crate) fn non_empty(value: &str) -> Option<&str> {
     } else {
         Some(value.trim())
     }
+}
+
+fn default_sqlite_path() -> String {
+    "metis.db".to_string()
 }
 
 fn default_namespace() -> String {
