@@ -298,7 +298,7 @@ impl CreateJobResponse {
 ///
 /// Excludes `context`, `image`, `model`, `env_vars`, `cpu_limit`,
 /// `memory_limit`, `secrets`, and `last_message`.
-/// The `prompt` field is truncated to the first 100 characters.
+/// The `prompt` field is truncated to the first 20 characters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -324,17 +324,32 @@ pub struct JobSummary {
 
 impl From<&Task> for JobSummary {
     fn from(task: &Task) -> Self {
-        let prompt = if task.prompt.len() > 100 {
-            task.prompt.chars().take(100).collect()
+        let prompt = if task.prompt.chars().count() > 20 {
+            let mut s: String = task.prompt.chars().take(20).collect();
+            s.push_str("...");
+            s
         } else {
             task.prompt.clone()
         };
+        let error = task.error.as_ref().map(|e| match e {
+            TaskError::JobEngineError { reason } => {
+                if reason.chars().count() > 100 {
+                    let truncated: String = reason.chars().take(100).collect();
+                    TaskError::JobEngineError {
+                        reason: truncated + "...",
+                    }
+                } else {
+                    e.clone()
+                }
+            }
+            _ => e.clone(),
+        });
         JobSummary {
             prompt,
             spawned_from: task.spawned_from.clone(),
             creator: task.creator.clone(),
             status: task.status,
-            error: task.error.clone(),
+            error,
             deleted: task.deleted,
             creation_time: task.creation_time,
             start_time: task.start_time,
@@ -364,7 +379,7 @@ impl From<&JobVersionRecord> for JobSummaryRecord {
             version: record.version,
             timestamp: record.timestamp,
             task: JobSummary::from(&record.task),
-            actor: record.actor.clone(),
+            actor: None,
         }
     }
 }
@@ -548,8 +563,7 @@ mod tests {
         let long_prompt = "x".repeat(500);
         let task = make_test_task(&long_prompt);
         let summary = JobSummary::from(&task);
-        assert_eq!(summary.prompt.len(), 100);
-        assert!(summary.prompt.chars().all(|c| c == 'x'));
+        assert_eq!(summary.prompt, format!("{}...", "x".repeat(20)));
     }
 
     #[test]
