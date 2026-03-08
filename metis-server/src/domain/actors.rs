@@ -176,12 +176,9 @@ pub async fn get_github_token_for_user(
 ) -> Result<GithubTokenResponse, ApiError> {
     info!(username = %username, "get_github_token_for_user invoked");
 
-    let secret_manager = &state.secret_manager;
-
-    let mut github_token =
-        read_user_secret(state, secret_manager, username, SECRET_GITHUB_TOKEN).await?;
+    let mut github_token = read_user_secret(state, username, SECRET_GITHUB_TOKEN).await?;
     let github_refresh_token =
-        read_user_secret(state, secret_manager, username, SECRET_GITHUB_REFRESH_TOKEN).await?;
+        read_user_secret(state, username, SECRET_GITHUB_REFRESH_TOKEN).await?;
 
     // In local mode (no GitHub App configured), PATs don't support OAuth
     // refresh — just return the token as-is.
@@ -211,12 +208,11 @@ pub async fn get_github_token_for_user(
 /// Read a secret from encrypted user_secrets storage.
 async fn read_user_secret(
     state: &AppState,
-    secret_manager: &crate::domain::secrets::SecretManager,
     username: &Username,
     secret_name: &str,
 ) -> Result<String, ApiError> {
     match state.store().get_user_secret(username, secret_name).await {
-        Ok(Some(encrypted)) => match secret_manager.decrypt(&encrypted) {
+        Ok(Some(encrypted)) => match state.secret_manager.decrypt(&encrypted) {
             Ok(value) if !value.is_empty() => Ok(value),
             Ok(_) => {
                 error!(username = %username, secret = secret_name, "user secret is empty");
