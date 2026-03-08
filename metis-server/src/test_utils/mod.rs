@@ -69,6 +69,7 @@ pub fn test_app_config() -> AppConfig {
         metis: MetisSection::default(),
         kubernetes: KubernetesSection::default(),
         job: JobSection {
+            engine: crate::config::JobEngineType::default(),
             default_image: "metis-worker:latest".to_string(),
             default_model: None,
             cpu_limit: "500m".to_string(),

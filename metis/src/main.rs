@@ -130,12 +130,21 @@ enum Commands {
         #[arg(long = "full-auto")]
         full_auto: bool,
     },
+    /// Initialize a local Metis environment (server config, start server, configure CLI).
+    Init(command::init::InitArgs),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config_path = resolve_config_path(&cli);
+
+    // Handle `init` before resolving a server connection — there may be no
+    // server yet.
+    if let Some(Commands::Init(ref args)) = cli.command {
+        return command::init::run(args, &config_path).await;
+    }
+
     let app_config = load_app_config(&config_path)?;
     let server_url = resolve_server_url(&cli, &app_config)?;
     let unauth_client = MetisClientUnauthenticated::new(&server_url)?;
@@ -219,6 +228,7 @@ async fn dispatch(
             model,
             full_auto,
         } => command::chat::run(server_url, prompt, model, full_auto, context).await?,
+        Commands::Init(_) => unreachable!("init is handled before dispatch"),
     }
 
     Ok(())

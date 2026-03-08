@@ -18,14 +18,17 @@ mod test;
 
 use crate::app::{AppState, ServiceState};
 use crate::background::start_background_scheduler;
-use crate::config::{AppConfig, GithubAppSection, build_kube_client};
+use crate::config::{
+    AppConfig, GithubAppSection, JobEngineType, StorageBackend, build_kube_client,
+};
 use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::secrets::SecretManager;
 use crate::domain::users::{User, Username};
-use crate::job_engine::KubernetesJobEngine;
+use crate::job_engine::{JobEngine, KubernetesJobEngine, LocalDockerJobEngine};
 use crate::store::{
     MemoryStore, Store, StoreError, migration,
     postgres_v2::{self, PostgresStoreV2},
+    sqlite_store::SqliteStore,
 };
 use anyhow::Context;
 use axum::{
@@ -271,37 +274,51 @@ pub async fn run() -> anyhow::Result<()> {
         None => None,
     };
 
-    // Build Kubernetes client
-    let kube_client = build_kube_client(&app_config.kubernetes).await?;
-
-    let postgres_pool = postgres_v2::init_pool(&app_config.database).await?;
-    if let Some(pool) = &postgres_pool {
-        postgres_v2::run_migrations(pool).await?;
-        info!("connected to Postgres and applied migrations");
-    } else {
-        info!("no Postgres database configured; using in-memory store");
-    }
-
-    let store: Arc<dyn Store> = match postgres_pool.clone() {
-        Some(pool) => {
-            // Run migration from v1 to v2 in case there is unmigrated data
-            let migration_result = migration::migrate_v1_to_v2(&pool).await?;
-            if migration_result.total() > 0 {
-                info!(
-                    total = migration_result.total(),
-                    issues = migration_result.issues_migrated,
-                    patches = migration_result.patches_migrated,
-                    tasks = migration_result.tasks_migrated,
-                    users = migration_result.users_migrated,
-                    actors = migration_result.actors_migrated,
-                    repositories = migration_result.repositories_migrated,
-                    documents = migration_result.documents_migrated,
-                    "migrated data from v1 to v2 tables"
-                );
+    // Initialize store based on configured backend.
+    let store: Arc<dyn Store> = match app_config.database.backend {
+        StorageBackend::Postgres => {
+            let postgres_pool = postgres_v2::init_pool(&app_config.database).await?;
+            match postgres_pool {
+                Some(pool) => {
+                    postgres_v2::run_migrations(&pool).await?;
+                    info!("connected to Postgres and applied migrations");
+                    let migration_result = migration::migrate_v1_to_v2(&pool).await?;
+                    if migration_result.total() > 0 {
+                        info!(
+                            total = migration_result.total(),
+                            issues = migration_result.issues_migrated,
+                            patches = migration_result.patches_migrated,
+                            tasks = migration_result.tasks_migrated,
+                            users = migration_result.users_migrated,
+                            actors = migration_result.actors_migrated,
+                            repositories = migration_result.repositories_migrated,
+                            documents = migration_result.documents_migrated,
+                            "migrated data from v1 to v2 tables"
+                        );
+                    }
+                    Arc::new(PostgresStoreV2::new(pool))
+                }
+                None => {
+                    anyhow::bail!("database.backend is 'postgres' but database.url is not set");
+                }
             }
-            Arc::new(PostgresStoreV2::new(pool))
         }
-        None => Arc::new(MemoryStore::new()),
+        StorageBackend::Sqlite => {
+            let db_url = app_config
+                .database
+                .url
+                .as_deref()
+                .filter(|u| !u.trim().is_empty())
+                .context("database.backend is 'sqlite' but database.url is not set")?;
+            let pool = SqliteStore::init_pool(db_url).await?;
+            SqliteStore::run_migrations(&pool).await?;
+            info!(url = db_url, "connected to SQLite and applied migrations");
+            Arc::new(SqliteStore::new(pool))
+        }
+        StorageBackend::Memory => {
+            info!("using in-memory store");
+            Arc::new(MemoryStore::new())
+        }
     };
 
     // In local auth mode, create a default user actor.
@@ -309,12 +326,30 @@ pub async fn run() -> anyhow::Result<()> {
         setup_local_auth(&app_config, store.as_ref()).await?;
     }
 
-    // Create job engine
-    let job_engine = KubernetesJobEngine {
-        namespace: app_config.metis.namespace.clone(),
-        server_hostname: app_config.metis.server_hostname.clone(),
-        client: kube_client,
-        image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
+    // Create job engine based on config.
+    let job_engine: Arc<dyn JobEngine> = match app_config.job.engine {
+        JobEngineType::Kubernetes => {
+            let kube_client = build_kube_client(&app_config.kubernetes).await?;
+            Arc::new(KubernetesJobEngine {
+                namespace: app_config.metis.namespace.clone(),
+                server_hostname: app_config.metis.server_hostname.clone(),
+                client: kube_client,
+                image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
+            })
+        }
+        JobEngineType::Docker => {
+            let server_url = format!("http://{}:8080", app_config.metis.server_hostname.as_str());
+            let server_url = if server_url == "http://:8080" {
+                "http://localhost:8080".to_string()
+            } else {
+                server_url
+            };
+            Arc::new(
+                LocalDockerJobEngine::new(server_url)
+                    .await
+                    .context("failed to initialize Docker job engine")?,
+            )
+        }
     };
 
     // Initialize SecretManager from config (mandatory)
@@ -329,7 +364,7 @@ pub async fn run() -> anyhow::Result<()> {
         github_app,
         Arc::new(service_state),
         store,
-        Arc::new(job_engine),
+        job_engine,
         secret_manager,
     );
 
@@ -354,6 +389,9 @@ const LOCAL_ACTOR_USERNAME: &str = "local";
 /// The `github_token` from the `AuthConfig::Local` variant is stored as the
 /// local user's GitHub token so that GitHub API consumers (PR sync, patch
 /// assets, etc.) can function without the full GitHub App OAuth flow.
+///
+/// The generated auth token is written to [`LOCAL_AUTH_TOKEN_FILE`] so the CLI
+/// can pick it up automatically.
 pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
     let github_token = config
         .auth
@@ -361,7 +399,7 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
         .context("setup_local_auth called without local auth config")?;
 
     let username = Username::from(LOCAL_ACTOR_USERNAME);
-    let (actor, _auth_token) = Actor::new_for_user(username.clone());
+    let (actor, auth_token) = Actor::new_for_user(username.clone());
     let system_actor = ActorRef::System {
         worker_name: "local-auth-setup".into(),
         on_behalf_of: None,
@@ -393,7 +431,33 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
         Err(err) => return Err(err.into()),
     }
 
+    // Persist the auth token so the CLI can read it.
+    write_local_auth_token(&auth_token)?;
+
     info!("local auth configured");
+    Ok(())
+}
+
+/// Write the local auth token to a well-known file so the CLI can discover it.
+fn write_local_auth_token(token: &str) -> anyhow::Result<()> {
+    let token_path = crate::config::expand_path(metis_common::constants::LOCAL_AUTH_TOKEN_FILE);
+    if let Some(parent) = token_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory '{}'", parent.display()))?;
+    }
+    std::fs::write(&token_path, token).with_context(|| {
+        format!(
+            "failed to write local auth token to '{}'",
+            token_path.display()
+        )
+    })?;
+    // Restrict permissions to owner-only on Unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    info!(path = %token_path.display(), "wrote local auth token");
     Ok(())
 }
 

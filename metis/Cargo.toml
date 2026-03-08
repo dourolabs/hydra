@@ -45,6 +45,8 @@ thiserror = "1.0"
 unicode-width = "0.1.14"
 octocrab = "0.49"
 openssl-sys = { workspace = true }
+getrandom = "0.2"
+base64 = "0.22"
 
 [dev-dependencies]
 httpmock = "0.7"

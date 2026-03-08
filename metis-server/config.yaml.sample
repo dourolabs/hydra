@@ -30,6 +30,9 @@ auth_mode: "github"
 # github_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 job:
+  # Job execution engine: "kubernetes" (default) or "docker" (local).
+  # Use "docker" for single-player mode with a local Docker daemon.
+  engine: kubernetes
   # Container image the worker Pod will execute.
   # TODO: figure out how to tag this properly in kind x_x
   default_image: "metis-worker:latest"
@@ -45,6 +48,9 @@ job:
   memory_request: "1Gi"
 
 database:
+  # Storage backend: "memory" (default), "postgres", or "sqlite".
+  # Use "sqlite" for single-player mode with persistent local storage.
+  # backend: postgres
   # PostgreSQL connection string. Leave empty to use the in-memory store; environment
   # variables are not consulted. For Kubernetes via ./scripts/service.sh, point
   # at the in-cluster service:

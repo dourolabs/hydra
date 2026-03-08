@@ -301,8 +301,20 @@ impl BuildCacheSection {
     }
 }
 
+/// Which job execution backend the server uses.
+#[derive(Debug, Deserialize, Clone, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum JobEngineType {
+    #[default]
+    Kubernetes,
+    Docker,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct JobSection {
+    /// Job engine backend: `kubernetes` (default) or `docker` (local).
+    #[serde(default)]
+    pub engine: JobEngineType,
     #[serde(default)]
     pub default_image: String,
     #[serde(default)]
@@ -317,8 +329,24 @@ pub struct JobSection {
     pub memory_request: String,
 }
 
+/// Which storage backend the server uses.
+#[derive(Debug, Deserialize, Clone, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackend {
+    /// Use PostgreSQL (requires `url`).
+    Postgres,
+    /// Use SQLite (requires `url` with a file path).
+    Sqlite,
+    /// Use an ephemeral in-memory store.
+    #[default]
+    Memory,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct DatabaseSection {
+    /// Storage backend: `memory` (default), `postgres`, or `sqlite`.
+    #[serde(default)]
+    pub backend: StorageBackend,
     #[serde(default)]
     pub url: Option<String>,
     #[serde(default = "default_min_connections")]
@@ -348,6 +376,7 @@ impl DatabaseSection {
 impl Default for DatabaseSection {
     fn default() -> Self {
         Self {
+            backend: StorageBackend::default(),
             url: None,
             min_connections: default_min_connections(),
             max_connections: default_max_connections(),
