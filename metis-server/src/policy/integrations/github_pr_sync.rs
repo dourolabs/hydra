@@ -133,7 +133,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             })?;
 
         let client = Octocrab::builder()
-            .base_uri(ctx.app_state.config.github_app.api_base_url().to_string())
+            .base_uri(ctx.app_state.config.github_api_base_url().to_string())
             .map_err(|e| {
                 AutomationError::Other(anyhow::anyhow!(
                     "github_pr_sync: failed to build octocrab client: {e}"

@@ -19,10 +19,12 @@ mod test;
 use crate::app::{AppState, ServiceState};
 use crate::background::start_background_scheduler;
 use crate::config::{AppConfig, GithubAppSection, build_kube_client};
+use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::secrets::SecretManager;
+use crate::domain::users::{User, Username};
 use crate::job_engine::KubernetesJobEngine;
 use crate::store::{
-    MemoryStore, Store, migration,
+    MemoryStore, Store, StoreError, migration,
     postgres_v2::{self, PostgresStoreV2},
 };
 use anyhow::Context;
@@ -261,7 +263,13 @@ pub async fn run() -> anyhow::Result<()> {
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
     let service_state = ServiceState::default();
-    let github_app = build_github_app_client(&app_config.github_app)?;
+
+    info!(auth_mode = %app_config.auth, "starting server");
+
+    let github_app = match app_config.auth.github_app() {
+        Some(gh) => build_github_app_client(gh)?,
+        None => None,
+    };
 
     // Build Kubernetes client
     let kube_client = build_kube_client(&app_config.kubernetes).await?;
@@ -295,6 +303,11 @@ pub async fn run() -> anyhow::Result<()> {
         }
         None => Arc::new(MemoryStore::new()),
     };
+
+    // In local auth mode, create a default user actor.
+    if app_config.auth.is_local() {
+        setup_local_auth(&app_config, store.as_ref()).await?;
+    }
 
     // Create job engine
     let job_engine = KubernetesJobEngine {
@@ -331,6 +344,57 @@ pub async fn run() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 
     run_with_state(state, listener).await
+}
+
+/// Default username for the local single-player actor.
+const LOCAL_ACTOR_USERNAME: &str = "local";
+
+/// Create a default user actor for local auth mode.
+///
+/// The `github_token` from the `AuthConfig::Local` variant is stored as the
+/// local user's GitHub token so that GitHub API consumers (PR sync, patch
+/// assets, etc.) can function without the full GitHub App OAuth flow.
+pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
+    let github_token = config
+        .auth
+        .github_token()
+        .context("setup_local_auth called without local auth config")?;
+
+    let username = Username::from(LOCAL_ACTOR_USERNAME);
+    let (actor, _auth_token) = Actor::new_for_user(username.clone());
+    let system_actor = ActorRef::System {
+        worker_name: "local-auth-setup".into(),
+        on_behalf_of: None,
+    };
+
+    match store.add_actor(actor.clone(), &system_actor).await {
+        Ok(()) => {}
+        Err(StoreError::ActorAlreadyExists(_)) => {
+            store.update_actor(actor.clone(), &system_actor).await?;
+        }
+        Err(err) => return Err(err.into()),
+    }
+
+    let user = User::new(
+        username,
+        0, // no GitHub user ID for PAT-based local mode
+        github_token.to_string(),
+        String::new(), // PATs don't use refresh tokens
+        false,
+    );
+    match store.add_user(user.clone(), &system_actor).await {
+        Ok(()) => {}
+        Err(StoreError::UserAlreadyExists(_)) => {
+            store
+                .update_user(user, &system_actor)
+                .await
+                .context("failed to update local user with GitHub token")?;
+        }
+        Err(err) => return Err(err.into()),
+    }
+
+    info!("local auth configured");
+    Ok(())
 }
 
 async fn health_check() -> Json<serde_json::Value> {

@@ -200,9 +200,14 @@ pub async fn get_github_token_for_user(
     )
     .await;
 
-    if !github_token_is_valid(&state.config.github_app, &github_token).await? {
-        let refreshed =
-            refresh_github_token(&state.config.github_app, &github_refresh_token).await?;
+    // In local mode (no GitHub App configured), PATs don't support OAuth
+    // refresh — just return the token as-is.
+    let Some(github_app) = state.config.auth.github_app() else {
+        info!(username = %username, "get_github_token_for_user completed (local mode, no refresh)");
+        return Ok(GithubTokenResponse { github_token });
+    };
+    if !github_token_is_valid(github_app, &github_token).await? {
+        let refreshed = refresh_github_token(github_app, &github_refresh_token).await?;
 
         // Write refreshed tokens to user_secrets (encrypted).
         store_github_token_secrets(

@@ -17,6 +17,18 @@ metis:
   # Leave empty or omit to allow all organizations.
   allowed_orgs: []
 
+# Authentication mode: "local" or "github".
+# - local: auto-creates a default user actor on startup. Requires github_token
+#   (a personal access token) for GitHub API access. No GitHub OAuth needed.
+# - github: requires the github_app section below for device-flow OAuth.
+auth_mode: "github"
+
+# GitHub personal access token — required when auth_mode is "local".
+# This token is used by GitHub API consumers (PR sync, patch assets, etc.)
+# so they can function without the full GitHub App OAuth flow.
+# Required scopes: repo (full control of private repositories).
+# github_token: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
 job:
   # Container image the worker Pod will execute.
   # TODO: figure out how to tag this properly in kind x_x
@@ -80,7 +92,7 @@ build_cache:
 
 github_app:
   # GitHub App configuration for device flow and API access.
-  # All fields are required; use the values from your GitHub App settings.
+  # Required when auth_mode is "github"; optional (can be omitted) in "local" mode.
   app_id: 1
   # OAuth client_id for device flow (public).
   client_id: "replace-with-client-id"

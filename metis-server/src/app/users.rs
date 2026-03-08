@@ -50,7 +50,7 @@ impl AppState {
         login_actor: ActorRef,
     ) -> Result<(User, Actor, String), LoginError> {
         let github_client = Octocrab::builder()
-            .base_uri(self.config.github_app.api_base_url().to_string())
+            .base_uri(self.config.github_api_base_url().to_string())
             .map_err(|err| LoginError::Store {
                 source: StoreError::Internal(format!("failed to parse github api base url: {err}")),
             })?
