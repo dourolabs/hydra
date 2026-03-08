@@ -646,7 +646,8 @@ async fn migrate_users_internal(pool: &PgStorePool) -> Result<u64> {
                 .payload
                 .get("github_user_id")
                 .and_then(|v| v.as_i64())
-                .unwrap_or(0);
+                .filter(|&id| id != 0);
+
             sqlx::query(&format!(
                 "INSERT INTO {V2_TABLE_USERS}
                  (id, version_number, username, github_user_id, created_at)

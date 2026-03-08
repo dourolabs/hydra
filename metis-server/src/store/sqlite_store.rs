@@ -90,7 +90,7 @@ struct UserRow {
     id: String,
     version_number: i64,
     username: String,
-    github_user_id: i64,
+    github_user_id: Option<i64>,
     deleted: bool,
     actor: Option<String>,
     created_at: String,
@@ -474,7 +474,7 @@ impl SqliteStore {
         .bind(id)
         .bind(version_number)
         .bind(user.username.as_str())
-        .bind(user.github_user_id as i64)
+        .bind(user.github_user_id.map(|id| id as i64))
         .bind(user.deleted)
         .bind(actor)
         .execute(&self.pool)
@@ -487,7 +487,7 @@ impl SqliteStore {
     fn row_to_user(&self, row: &UserRow) -> User {
         User::new(
             Username::from(row.username.clone()),
-            row.github_user_id as u64,
+            row.github_user_id.map(|id| id as u64),
             row.deleted,
         )
     }
@@ -3942,7 +3942,7 @@ mod tests {
             .add_user(
                 User {
                     username: username.clone(),
-                    github_user_id: 101,
+                    github_user_id: Some(101),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -3952,7 +3952,7 @@ mod tests {
 
         let fetched = store.get_user(&username, false).await.unwrap();
         assert_eq!(fetched.item.username, username);
-        assert_eq!(fetched.item.github_user_id, 101);
+        assert_eq!(fetched.item.github_user_id, Some(101));
         assert_eq!(fetched.version, 1);
 
         let users = store
@@ -3972,7 +3972,7 @@ mod tests {
             .add_user(
                 User {
                     username: username.clone(),
-                    github_user_id: 101,
+                    github_user_id: Some(101),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -3984,7 +3984,7 @@ mod tests {
             .update_user(
                 User {
                     username: username.clone(),
-                    github_user_id: 202,
+                    github_user_id: Some(202),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -3992,11 +3992,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(updated.item.github_user_id, 202);
+        assert_eq!(updated.item.github_user_id, Some(202));
         assert_eq!(updated.version, 2);
 
         let user = store.get_user(&username, false).await.unwrap();
-        assert_eq!(user.item.github_user_id, 202);
+        assert_eq!(user.item.github_user_id, Some(202));
         assert_eq!(user.version, 2);
     }
 
@@ -4006,7 +4006,7 @@ mod tests {
         let username = Username::from("alice");
         let user = User {
             username: username.clone(),
-            github_user_id: 101,
+            github_user_id: Some(101),
             deleted: false,
         };
         store.add_user(user, &ActorRef::test()).await.unwrap();
@@ -4036,7 +4036,7 @@ mod tests {
             .add_user(
                 User {
                     username: username.clone(),
-                    github_user_id: 101,
+                    github_user_id: Some(101),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -4048,7 +4048,7 @@ mod tests {
             .add_user(
                 User {
                     username: username.clone(),
-                    github_user_id: 202,
+                    github_user_id: Some(202),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -4071,7 +4071,7 @@ mod tests {
             .add_user(
                 User {
                     username: username.clone(),
-                    github_user_id: 101,
+                    github_user_id: Some(101),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -4088,7 +4088,7 @@ mod tests {
             .add_user(
                 User {
                     username: username.clone(),
-                    github_user_id: 303,
+                    github_user_id: Some(303),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -4098,7 +4098,7 @@ mod tests {
 
         let fetched = store.get_user(&username, false).await.unwrap();
         assert!(!fetched.item.deleted);
-        assert_eq!(fetched.item.github_user_id, 303);
+        assert_eq!(fetched.item.github_user_id, Some(303));
         assert_eq!(fetched.version, 3);
     }
 
@@ -4112,7 +4112,7 @@ mod tests {
             .add_user(
                 User {
                     username: alice.clone(),
-                    github_user_id: 101,
+                    github_user_id: Some(101),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -4124,7 +4124,7 @@ mod tests {
             .add_user(
                 User {
                     username: bob.clone(),
-                    github_user_id: 202,
+                    github_user_id: Some(202),
                     deleted: false,
                 },
                 &ActorRef::test(),

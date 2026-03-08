@@ -11,7 +11,7 @@ use reqwest::StatusCode;
 #[tokio::test]
 async fn get_user_returns_user_summary() -> anyhow::Result<()> {
     let handles = test_state_handles();
-    let user = User::new(Username::from("testuser"), 12345, false);
+    let user = User::new(Username::from("testuser"), Some(12345), false);
     handles.store.add_user(user, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
@@ -26,7 +26,7 @@ async fn get_user_returns_user_summary() -> anyhow::Result<()> {
 
     let body: UserSummary = response.json().await?;
     assert_eq!(body.username.as_str(), "testuser");
-    assert_eq!(body.github_user_id, 12345);
+    assert_eq!(body.github_user_id, Some(12345));
 
     Ok(())
 }
@@ -50,7 +50,7 @@ async fn get_user_returns_404_for_unknown_user() -> anyhow::Result<()> {
 #[tokio::test]
 async fn get_user_does_not_expose_tokens() -> anyhow::Result<()> {
     let handles = test_state_handles();
-    let user = User::new(Username::from("tokenuser"), 99999, false);
+    let user = User::new(Username::from("tokenuser"), Some(99999), false);
     handles.store.add_user(user, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
@@ -84,7 +84,7 @@ async fn get_user_me_resolves_to_authenticated_user() -> anyhow::Result<()> {
     let actor = test_actor();
     let username = actor.creator.clone();
 
-    let user = User::new(username.clone(), 77777, false);
+    let user = User::new(username.clone(), Some(77777), false);
     handles.store.add_user(user, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
@@ -99,7 +99,7 @@ async fn get_user_me_resolves_to_authenticated_user() -> anyhow::Result<()> {
 
     let body: UserSummary = response.json().await?;
     assert_eq!(body.username.as_str(), username.as_str());
-    assert_eq!(body.github_user_id, 77777);
+    assert_eq!(body.github_user_id, Some(77777));
 
     Ok(())
 }
