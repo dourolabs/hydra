@@ -25,6 +25,10 @@ pub enum AuthConfig {
     Local {
         /// GitHub personal access token. Required scopes: `repo`.
         github_token: String,
+        /// Optional username for the local actor. Defaults to `"local"` when
+        /// omitted, producing actor name `u-local`.
+        #[serde(default)]
+        username: Option<String>,
     },
     /// GitHub OAuth mode: users authenticate via the GitHub device flow.
     /// Requires the `github_app` section in the config.
@@ -39,6 +43,7 @@ impl Default for AuthConfig {
         // config file, and `validate()` will catch the empty token.
         Self::Local {
             github_token: String::new(),
+            username: None,
         }
     }
 }
@@ -69,7 +74,17 @@ impl AuthConfig {
     /// Returns the GitHub personal access token for local mode.
     pub fn github_token(&self) -> Option<&str> {
         match self {
-            Self::Local { github_token } => Some(github_token.as_str()),
+            Self::Local { github_token, .. } => Some(github_token.as_str()),
+            Self::Github { .. } => None,
+        }
+    }
+
+    /// Returns the local username, defaulting to `"local"` when unset.
+    ///
+    /// Returns `None` for GitHub auth mode.
+    pub fn local_username(&self) -> Option<&str> {
+        match self {
+            Self::Local { username, .. } => Some(username.as_deref().unwrap_or("local")),
             Self::Github { .. } => None,
         }
     }
@@ -115,7 +130,7 @@ impl AppConfig {
     fn validate(&self) -> Result<()> {
         self.metis.validate()?;
         match &self.auth {
-            AuthConfig::Local { github_token } => {
+            AuthConfig::Local { github_token, .. } => {
                 ensure!(
                     non_empty(github_token).is_some(),
                     "github_token is required when auth_mode is 'local'"
@@ -1007,6 +1022,92 @@ job:
 
         let error = AppConfig::load(&path).expect_err("expected missing github_app");
         assert!(error_chain_contains(&error, "missing field `github_app`"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_local_mode_defaults_username_to_local() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+metis:
+  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+
+auth_mode: local
+github_token: "ghp_test_token"
+
+job:
+  default_image: "metis-worker:latest"
+"#
+            ),
+        )?;
+
+        let config = AppConfig::load(&path)?;
+        assert_eq!(config.auth.local_username(), Some("local"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_local_mode_accepts_custom_username() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+metis:
+  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+
+auth_mode: local
+github_token: "ghp_test_token"
+username: "alice"
+
+job:
+  default_image: "metis-worker:latest"
+"#
+            ),
+        )?;
+
+        let config = AppConfig::load(&path)?;
+        assert_eq!(config.auth.local_username(), Some("alice"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_github_mode_local_username_returns_none() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+metis:
+  METIS_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+
+auth_mode: github
+
+job:
+  default_image: "metis-worker:latest"
+
+github_app:
+  app_id: 1
+  client_id: "client-id"
+  client_secret: "client-secret"
+  api_base_url: "https://api.github.com"
+  oauth_base_url: "https://github.com"
+  private_key: "private-key"
+"#
+            ),
+        )?;
+
+        let config = AppConfig::load(&path)?;
+        assert_eq!(config.auth.local_username(), None);
 
         Ok(())
     }

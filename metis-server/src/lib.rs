@@ -346,9 +346,6 @@ pub async fn run() -> anyhow::Result<()> {
     run_with_state(state, listener).await
 }
 
-/// Default username for the local single-player actor.
-const LOCAL_ACTOR_USERNAME: &str = "local";
-
 /// Create a default user actor for local auth mode.
 ///
 /// The `github_token` from the `AuthConfig::Local` variant is stored as the
@@ -360,7 +357,12 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
         .github_token()
         .context("setup_local_auth called without local auth config")?;
 
-    let username = Username::from(LOCAL_ACTOR_USERNAME);
+    let username = Username::from(
+        config
+            .auth
+            .local_username()
+            .context("setup_local_auth called without local auth config")?,
+    );
     let (actor, _auth_token) = Actor::new_for_user(username.clone());
     let system_actor = ActorRef::System {
         worker_name: "local-auth-setup".into(),
