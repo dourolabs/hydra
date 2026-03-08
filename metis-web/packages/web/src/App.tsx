@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Spinner } from "@metis/ui";
@@ -22,7 +23,9 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ToastProvider>
-          <RouterProvider router={router} fallbackElement={<Spinner />} />
+          <Suspense fallback={<Spinner />}>
+            <RouterProvider router={router} />
+          </Suspense>
         </ToastProvider>
       </AuthProvider>
     </QueryClientProvider>
