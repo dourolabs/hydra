@@ -17,6 +17,9 @@ interface IssueLabelEditorProps {
 export function IssueLabelEditor({ issueId, labels }: IssueLabelEditorProps) {
   const [editing, setEditing] = useState(false);
   const [selectedNames, setSelectedNames] = useState<string[]>([]);
+  const [newLabelColors, setNewLabelColors] = useState<Map<string, string>>(
+    new Map(),
+  );
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const { data: allLabels } = useLabels();
@@ -25,6 +28,7 @@ export function IssueLabelEditor({ issueId, labels }: IssueLabelEditorProps) {
 
   const startEditing = useCallback(() => {
     setSelectedNames(visibleLabels.map((l) => l.name));
+    setNewLabelColors(new Map());
     setEditing(true);
   }, [visibleLabels]);
 
@@ -51,13 +55,17 @@ export function IssueLabelEditor({ issueId, labels }: IssueLabelEditorProps) {
         if (existing) {
           await apiClient.addLabelToObject(existing.label_id, issueId, true);
         } else {
-          const created = await apiClient.createLabel({ label: { name } });
+          const color = newLabelColors.get(name);
+          const created = await apiClient.createLabel({
+            label: color ? { name, color } : { name },
+          });
           await apiClient.addLabelToObject(created.label_id, issueId, true);
         }
       }
     },
     onSuccess: () => {
       setEditing(false);
+      setNewLabelColors(new Map());
       queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
       queryClient.invalidateQueries({ queryKey: ["labels"] });
     },
@@ -74,7 +82,12 @@ export function IssueLabelEditor({ issueId, labels }: IssueLabelEditorProps) {
   if (editing) {
     return (
       <div className={styles.editor}>
-        <LabelPicker selectedNames={selectedNames} onChange={setSelectedNames} />
+        <LabelPicker
+          selectedNames={selectedNames}
+          onChange={setSelectedNames}
+          newLabelColors={newLabelColors}
+          onNewLabelColorsChange={setNewLabelColors}
+        />
         <div className={styles.editorActions}>
           <Button
             variant="secondary"
