@@ -235,16 +235,9 @@ describe("SecretsSection", () => {
     fireEvent.click(screen.getByText("+ Add Secret"));
 
     const nameInput = screen.getByPlaceholderText("SECRET_NAME") as HTMLInputElement;
-    // Type a name starting with a digit (invalid — must start with [A-Z])
     fireEvent.change(nameInput, { target: { value: "1BAD" } });
 
-    // The component uppercases and strips invalid chars, but the validation
-    // check runs on the filtered value — "1BAD" becomes "1BAD" which doesn't match ^[A-Z]
-    // Actually, the onChange strips non [A-Z0-9_] and uppercases, so "1BAD" -> "1BAD"
-    // Wait, digits are kept. "1BAD" starts with digit, invalid.
-    // The input handler does: newName = value.toUpperCase().replace(/[^A-Z0-9_]/g, "")
-    // "1BAD" -> "1BAD" (already uppercase, no invalid chars)
-    // validateSecretName("1BAD") -> fails because doesn't match ^[A-Z]
+    expect(screen.getByText("Must be 1-128 chars, start with uppercase letter, only uppercase letters/digits/underscores")).toBeDefined();
   });
 
   it("validates METIS_ prefix is reserved", () => {
