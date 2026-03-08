@@ -91,8 +91,6 @@ struct UserRow {
     version_number: i64,
     username: String,
     github_user_id: i64,
-    github_token: Option<String>,
-    github_refresh_token: Option<String>,
     deleted: bool,
     actor: Option<String>,
     created_at: String,
@@ -470,15 +468,13 @@ impl SqliteStore {
         })?;
 
         sqlx::query(
-            "INSERT INTO users_v2 (id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+            "INSERT INTO users_v2 (id, version_number, username, github_user_id, deleted, actor)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )
         .bind(id)
         .bind(version_number)
         .bind(user.username.as_str())
         .bind(user.github_user_id as i64)
-        .bind(&user.github_token)
-        .bind(&user.github_refresh_token)
         .bind(user.deleted)
         .bind(actor)
         .execute(&self.pool)
@@ -492,8 +488,6 @@ impl SqliteStore {
         User::new(
             Username::from(row.username.clone()),
             row.github_user_id as u64,
-            row.github_token.clone().unwrap_or_default(),
-            row.github_refresh_token.clone().unwrap_or_default(),
             row.deleted,
         )
     }
@@ -2260,7 +2254,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<User>, StoreError> {
         let row = sqlx::query_as::<_, UserRow>(
-            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
              FROM users_v2
              WHERE id = ?1
              ORDER BY version_number DESC
@@ -2299,7 +2293,7 @@ impl ReadOnlyStore for SqliteStore {
         let include_deleted = query.include_deleted.unwrap_or(false);
 
         let rows = sqlx::query_as::<_, UserRow>(
-            "SELECT u.id, u.version_number, u.username, u.github_user_id, u.github_token, u.github_refresh_token, u.deleted, u.actor, u.created_at, u.updated_at
+            "SELECT u.id, u.version_number, u.username, u.github_user_id, u.deleted, u.actor, u.created_at, u.updated_at
              FROM users_v2 u
              INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM users_v2 GROUP BY id) latest
              ON u.id = latest.id AND u.version_number = latest.max_vn
@@ -3108,7 +3102,7 @@ impl Store for SqliteStore {
 
     async fn add_user(&self, user: User, actor: &ActorRef) -> Result<(), StoreError> {
         let existing = sqlx::query_as::<_, UserRow>(
-            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
              FROM users_v2
              WHERE id = ?1
              ORDER BY version_number DESC
@@ -3949,8 +3943,6 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: 101,
-                    github_token: "token".to_string(),
-                    github_refresh_token: "refresh".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -3981,8 +3973,6 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: 101,
-                    github_token: "old-token".to_string(),
-                    github_refresh_token: "old-refresh".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -3995,8 +3985,6 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: 202,
-                    github_token: "new-token".to_string(),
-                    github_refresh_token: "new-refresh".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -4004,15 +3992,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(updated.item.github_token, "new-token");
         assert_eq!(updated.item.github_user_id, 202);
-        assert_eq!(updated.item.github_refresh_token, "new-refresh");
         assert_eq!(updated.version, 2);
 
         let user = store.get_user(&username, false).await.unwrap();
-        assert_eq!(user.item.github_token, "new-token");
         assert_eq!(user.item.github_user_id, 202);
-        assert_eq!(user.item.github_refresh_token, "new-refresh");
         assert_eq!(user.version, 2);
     }
 
@@ -4023,8 +4007,6 @@ mod tests {
         let user = User {
             username: username.clone(),
             github_user_id: 101,
-            github_token: "token".to_string(),
-            github_refresh_token: "refresh".to_string(),
             deleted: false,
         };
         store.add_user(user, &ActorRef::test()).await.unwrap();
@@ -4055,8 +4037,6 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: 101,
-                    github_token: "token".to_string(),
-                    github_refresh_token: "refresh".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -4069,8 +4049,6 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: 202,
-                    github_token: "token2".to_string(),
-                    github_refresh_token: "refresh2".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -4094,8 +4072,6 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: 101,
-                    github_token: "token".to_string(),
-                    github_refresh_token: "refresh".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -4113,8 +4089,6 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: 303,
-                    github_token: "new-token".to_string(),
-                    github_refresh_token: "new-refresh".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -4139,8 +4113,6 @@ mod tests {
                 User {
                     username: alice.clone(),
                     github_user_id: 101,
-                    github_token: "t1".to_string(),
-                    github_refresh_token: "r1".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),
@@ -4153,8 +4125,6 @@ mod tests {
                 User {
                     username: bob.clone(),
                     github_user_id: 202,
-                    github_token: "t2".to_string(),
-                    github_refresh_token: "r2".to_string(),
                     deleted: false,
                 },
                 &ActorRef::test(),

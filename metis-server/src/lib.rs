@@ -333,11 +333,6 @@ pub async fn run() -> anyhow::Result<()> {
         secret_manager,
     );
 
-    // Migrate existing GitHub tokens from plaintext users_v2 columns to
-    // encrypted user_secrets storage. Idempotent — already-migrated users are
-    // skipped.
-    state.migrate_github_tokens_to_secrets().await;
-
     // Ensure the 'inbox' label exists (recurse=false, hidden=true).
     state.ensure_inbox_label().await;
 
@@ -347,16 +342,7 @@ pub async fn run() -> anyhow::Result<()> {
 }
 
 /// Create a default user actor for local auth mode.
-///
-/// The `github_token` from the `AuthConfig::Local` variant is stored as the
-/// local user's GitHub token so that GitHub API consumers (PR sync, patch
-/// assets, etc.) can function without the full GitHub App OAuth flow.
 pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
-    let github_token = config
-        .auth
-        .github_token()
-        .context("setup_local_auth called without local auth config")?;
-
     let username = Username::from(
         config
             .auth
@@ -378,10 +364,7 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
     }
 
     let user = User::new(
-        username,
-        0, // no GitHub user ID for PAT-based local mode
-        github_token.to_string(),
-        String::new(), // PATs don't use refresh tokens
+        username, 0, // no GitHub user ID for PAT-based local mode
         false,
     );
     match store.add_user(user.clone(), &system_actor).await {

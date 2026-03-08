@@ -228,7 +228,7 @@ mod tests {
         let handles = test_state_with_github_api_base_url(github_server.base_url());
         let runner = start_test_automation_runner(&handles.state);
         let username = Username::from("octo");
-        let user = User::new(username.clone(), 42, String::new(), String::new(), false);
+        let user = User::new(username.clone(), 42, false);
         handles
             .store
             .as_ref()
@@ -353,7 +353,7 @@ mod tests {
         let handles = test_state_with_github_api_base_url(github_server.base_url());
         let runner = start_test_automation_runner(&handles.state);
         let username = Username::from("octo");
-        let user = User::new(username.clone(), 42, String::new(), String::new(), false);
+        let user = User::new(username.clone(), 42, false);
         handles
             .store
             .as_ref()

@@ -93,8 +93,6 @@ impl AppState {
         let user = User {
             username: username.clone(),
             github_user_id: github_user.id.into_inner(),
-            github_token: String::new(),
-            github_refresh_token: String::new(),
             deleted: false,
         };
 
@@ -172,94 +170,6 @@ impl AppState {
     pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
         let store = self.store.as_ref();
         store.get_user(username, false).await.map(|user| user.item)
-    }
-
-    /// Migrate existing GitHub tokens from plaintext `users_v2` columns into
-    /// encrypted `user_secrets` storage.
-    ///
-    /// For each user that has a non-empty `github_token` but no corresponding
-    /// `GITHUB_TOKEN` entry in `user_secrets`, encrypt and store both the access
-    /// and refresh tokens. This is idempotent — users who already have secrets
-    /// are skipped.
-    pub async fn migrate_github_tokens_to_secrets(&self) {
-        use crate::domain::secrets::{SECRET_GITHUB_REFRESH_TOKEN, SECRET_GITHUB_TOKEN};
-        use metis_common::api::v1::users::SearchUsersQuery;
-        use tracing::{info, warn};
-
-        let secret_manager = &self.secret_manager;
-
-        let users = match self.store.list_users(&SearchUsersQuery::default()).await {
-            Ok(users) => users,
-            Err(err) => {
-                warn!(error = %err, "failed to list users for github token migration");
-                return;
-            }
-        };
-
-        let mut migrated = 0u64;
-        for (username, versioned) in &users {
-            let user = &versioned.item;
-            if user.github_token.is_empty() {
-                continue;
-            }
-
-            // Skip users who already have a GITHUB_TOKEN secret.
-            match self
-                .store
-                .get_user_secret(username, SECRET_GITHUB_TOKEN)
-                .await
-            {
-                Ok(Some(_)) => continue,
-                Ok(None) => {}
-                Err(err) => {
-                    warn!(
-                        username = %username,
-                        error = %err,
-                        "failed to check existing secret during migration"
-                    );
-                    continue;
-                }
-            }
-
-            for (secret_name, value) in [
-                (SECRET_GITHUB_TOKEN, user.github_token.as_str()),
-                (
-                    SECRET_GITHUB_REFRESH_TOKEN,
-                    user.github_refresh_token.as_str(),
-                ),
-            ] {
-                if value.is_empty() {
-                    continue;
-                }
-                match secret_manager.encrypt(value) {
-                    Ok(encrypted) => {
-                        if let Err(err) = self
-                            .store
-                            .set_user_secret(username, secret_name, &encrypted)
-                            .await
-                        {
-                            warn!(
-                                username = %username,
-                                secret = secret_name,
-                                error = %err,
-                                "failed to migrate github token to user_secrets"
-                            );
-                        }
-                    }
-                    Err(err) => {
-                        warn!(
-                            username = %username,
-                            secret = secret_name,
-                            error = %err,
-                            "failed to encrypt github token during migration"
-                        );
-                    }
-                }
-            }
-            migrated += 1;
-        }
-
-        info!(migrated_users = migrated, "github token migration complete");
     }
 }
 

@@ -57,11 +57,10 @@ async fn setup_local_auth_stores_github_pat() -> anyhow::Result<()> {
     let store = Arc::new(MemoryStore::new());
     setup_local_auth(&config, store.as_ref()).await?;
 
-    // User should exist with the GitHub token.
+    // User should exist.
     let username = Username::from("local");
     let user = store.as_ref().get_user(&username, false).await?;
-    assert_eq!(user.item.github_token, "ghp_test_pat_token_123");
-    assert!(user.item.github_refresh_token.is_empty());
+    assert_eq!(user.item.username, username);
 
     Ok(())
 }
@@ -84,7 +83,7 @@ async fn setup_local_auth_uses_custom_username() -> anyhow::Result<()> {
     // User should also be stored under the custom username.
     let username = Username::from("alice");
     let user = store.as_ref().get_user(&username, false).await?;
-    assert_eq!(user.item.github_token, "ghp_test_token");
+    assert_eq!(user.item.username, username);
 
     Ok(())
 }

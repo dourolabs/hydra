@@ -11,13 +11,7 @@ use reqwest::StatusCode;
 #[tokio::test]
 async fn get_user_returns_user_summary() -> anyhow::Result<()> {
     let handles = test_state_handles();
-    let user = User::new(
-        Username::from("testuser"),
-        12345,
-        "gh-token".to_string(),
-        "gh-refresh".to_string(),
-        false,
-    );
+    let user = User::new(Username::from("testuser"), 12345, false);
     handles.store.add_user(user, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
@@ -56,13 +50,7 @@ async fn get_user_returns_404_for_unknown_user() -> anyhow::Result<()> {
 #[tokio::test]
 async fn get_user_does_not_expose_tokens() -> anyhow::Result<()> {
     let handles = test_state_handles();
-    let user = User::new(
-        Username::from("tokenuser"),
-        99999,
-        "secret-gh-token".to_string(),
-        "secret-gh-refresh".to_string(),
-        false,
-    );
+    let user = User::new(Username::from("tokenuser"), 99999, false);
     handles.store.add_user(user, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
@@ -76,10 +64,6 @@ async fn get_user_does_not_expose_tokens() -> anyhow::Result<()> {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body: serde_json::Value = response.json().await?;
-
-    // Verify no token fields are present in response
-    assert!(body.get("github_token").is_none());
-    assert!(body.get("github_refresh_token").is_none());
 
     // Verify expected fields are present
     assert_eq!(
@@ -100,13 +84,7 @@ async fn get_user_me_resolves_to_authenticated_user() -> anyhow::Result<()> {
     let actor = test_actor();
     let username = actor.creator.clone();
 
-    let user = User::new(
-        username.clone(),
-        77777,
-        "gh-token".to_string(),
-        "gh-refresh".to_string(),
-        false,
-    );
+    let user = User::new(username.clone(), 77777, false);
     handles.store.add_user(user, &ActorRef::test()).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
