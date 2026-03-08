@@ -220,11 +220,9 @@ impl AppState {
         Ok(SetJobStatusResponse::new(job_id, status.as_status()))
     }
 
-    /// Resolves per-user secrets with global fallback, injecting them into `env_vars`.
-    ///
-    /// For each API key (OPENAI_API_KEY, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN):
-    /// 1. Check user_secrets for the task creator (requires SecretManager)
-    /// 2. Fall back to the config file value
+    /// Loads all user secrets and injects them as env vars, then falls back to config
+    /// values for system secrets (OPENAI_API_KEY, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN)
+    /// not already set.
     pub(crate) async fn resolve_secrets_into_env_vars(
         &self,
         creator: &Username,
@@ -234,7 +232,49 @@ impl AppState {
             ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
         };
 
-        let secret_entries: [(&str, Option<&str>); 3] = [
+        // 1. Load ALL user secrets and inject them as env vars.
+        let user_secret_names = match self.store.list_user_secret_names(creator).await {
+            Ok(names) => names,
+            Err(err) => {
+                warn!(
+                    username = %creator,
+                    error = %err,
+                    "failed to list user secret names"
+                );
+                Vec::new()
+            }
+        };
+
+        for secret_name in &user_secret_names {
+            match self.store.get_user_secret(creator, secret_name).await {
+                Ok(Some(encrypted)) => match self.secret_manager.decrypt(&encrypted) {
+                    Ok(value) if !value.trim().is_empty() => {
+                        env_vars.insert(secret_name.clone(), value);
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        warn!(
+                            username = %creator,
+                            secret = %secret_name,
+                            error = %err,
+                            "failed to decrypt user secret, skipping"
+                        );
+                    }
+                },
+                Ok(None) => {}
+                Err(err) => {
+                    warn!(
+                        username = %creator,
+                        secret = %secret_name,
+                        error = %err,
+                        "failed to look up user secret, skipping"
+                    );
+                }
+            }
+        }
+
+        // 2. For system secrets not already set by user secrets, fall back to config.
+        let system_entries: [(&str, Option<&str>); 3] = [
             (
                 ENV_OPENAI_API_KEY,
                 self.config.metis.openai_api_key.as_deref(),
@@ -249,36 +289,11 @@ impl AppState {
             ),
         ];
 
-        for (secret_name, config_fallback) in secret_entries {
-            // 1. Try user-specific secret
-            match self.store.get_user_secret(creator, secret_name).await {
-                Ok(Some(encrypted)) => match self.secret_manager.decrypt(&encrypted) {
-                    Ok(value) if !value.trim().is_empty() => {
-                        env_vars.insert(secret_name.to_string(), value);
-                        continue;
-                    }
-                    Ok(_) => {}
-                    Err(err) => {
-                        warn!(
-                            username = %creator,
-                            secret = secret_name,
-                            error = %err,
-                            "failed to decrypt user secret, falling back to global config"
-                        );
-                    }
-                },
-                Ok(None) => {}
-                Err(err) => {
-                    warn!(
-                        username = %creator,
-                        secret = secret_name,
-                        error = %err,
-                        "failed to look up user secret, falling back to global config"
-                    );
-                }
+        for (secret_name, config_fallback) in system_entries {
+            if env_vars.contains_key(secret_name) {
+                continue;
             }
 
-            // 2. Fall back to config file value
             let global_value = config_fallback
                 .map(str::to_string)
                 .filter(|v| !v.trim().is_empty());
