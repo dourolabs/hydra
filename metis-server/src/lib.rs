@@ -330,7 +330,12 @@ pub async fn run() -> anyhow::Result<()> {
     // Create job engine based on configured backend
     let job_engine: Arc<dyn crate::job_engine::JobEngine> = match &app_config.job_engine {
         JobEngineConfig::Local => {
-            let server_url = "http://host.docker.internal:8080".to_string();
+            let hostname = app_config.metis.server_hostname.trim();
+            let server_url = if hostname.is_empty() {
+                "http://host.docker.internal:8080".to_string()
+            } else {
+                format!("http://{hostname}")
+            };
             let engine = LocalDockerJobEngine::new(server_url)
                 .await
                 .context("failed to initialize local Docker job engine")?;
