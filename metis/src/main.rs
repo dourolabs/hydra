@@ -1,10 +1,9 @@
 use std::{
-    fs,
     io::ErrorKind,
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use metis::{
     client::{MetisClient, MetisClientInterface, MetisClientUnauthenticated},
@@ -36,15 +35,6 @@ struct Cli {
         global = true
     )]
     server_url: Option<String>,
-
-    /// Path to the auth token file (defaults to ~/.local/share/metis/auth-token).
-    #[arg(
-        long = "token-path",
-        value_name = "PATH",
-        global = true,
-        default_value = constants::DEFAULT_AUTH_TOKEN_PATH
-    )]
-    token_path: String,
 
     /// Auth token value (also via env var).
     #[arg(
@@ -149,16 +139,8 @@ async fn main() -> Result<()> {
     let app_config = load_app_config(&config_path)?;
     let server_url = resolve_server_url(&cli, &app_config)?;
     let unauth_client = MetisClientUnauthenticated::new(&server_url)?;
-    let token_path = config::expand_path(PathBuf::from(&cli.token_path));
-    let client = resolve_client(
-        &cli,
-        &app_config,
-        &unauth_client,
-        &token_path,
-        &config_path,
-        &server_url,
-    )
-    .await?;
+    let client =
+        resolve_client(&cli, &app_config, &unauth_client, &config_path, &server_url).await?;
     let output_format = resolve_output_format(&client, cli.output_format).await?;
     let context = CommandContext::new(output_format);
 
@@ -189,7 +171,6 @@ async fn resolve_client(
     cli: &Cli,
     app_config: &AppConfig,
     unauth_client: &MetisClientUnauthenticated,
-    token_path: &Path,
     config_path: &Path,
     server_url: &str,
 ) -> Result<MetisClient> {
@@ -200,10 +181,6 @@ async fn resolve_client(
         .filter(|token| !token.is_empty())
     {
         return MetisClient::new(server_url, token.to_string());
-    }
-
-    if let Some(token) = read_token_from_path(token_path)? {
-        return MetisClient::new(server_url, token);
     }
 
     if let Some(token) = app_config.auth_token_for_url(server_url)? {
@@ -279,31 +256,13 @@ fn resolve_server_url(cli: &Cli, app_config: &AppConfig) -> Result<String> {
     Ok(app_config.default_server()?.url.clone())
 }
 
-fn read_token_from_path(token_path: &Path) -> Result<Option<String>> {
-    match fs::read_to_string(token_path) {
-        Ok(token) => {
-            let trimmed = token.trim();
-            if trimmed.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(trimmed.to_string()))
-            }
-        }
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(anyhow!(
-            "failed to read auth token from {}: {err}",
-            token_path.display()
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        is_broken_pipe, load_app_config, read_token_from_path, resolve_command, resolve_server_url,
-        Cli, Commands, OutputFormat,
+        is_broken_pipe, load_app_config, resolve_command, resolve_server_url, Cli, Commands,
+        OutputFormat,
     };
-    use crate::constants::{DEFAULT_AUTH_TOKEN_PATH, DEFAULT_SERVER_URL};
+    use crate::constants::DEFAULT_SERVER_URL;
     use clap::Parser;
     use metis::command::agents::AgentsCommand;
     use metis::config::default_app_config;
@@ -314,7 +273,6 @@ mod tests {
         Cli {
             config: None,
             server_url: None,
-            token_path: DEFAULT_AUTH_TOKEN_PATH.to_string(),
             token: None,
             browser: None,
             output_format: OutputFormat::Auto,
@@ -364,35 +322,6 @@ mod tests {
         let config = load_app_config(&config_path).expect("config should load from file");
         let server_url = config.default_server().expect("default server");
         assert_eq!(server_url.url, "http://127.0.0.1:8080");
-    }
-
-    #[test]
-    fn read_token_from_path_returns_none_when_missing() {
-        let temp = tempdir().expect("tempdir");
-        let token_path = temp.path().join("missing-token");
-
-        let token = read_token_from_path(&token_path).expect("read token");
-        assert!(token.is_none());
-    }
-
-    #[test]
-    fn read_token_from_path_returns_none_when_empty() {
-        let temp = tempdir().expect("tempdir");
-        let token_path = temp.path().join("auth-token");
-        fs::write(&token_path, "   \n").expect("write token");
-
-        let token = read_token_from_path(&token_path).expect("read token");
-        assert!(token.is_none());
-    }
-
-    #[test]
-    fn read_token_from_path_trims_contents() {
-        let temp = tempdir().expect("tempdir");
-        let token_path = temp.path().join("auth-token");
-        fs::write(&token_path, "  token-123 \n").expect("write token");
-
-        let token = read_token_from_path(&token_path).expect("read token");
-        assert_eq!(token, Some("token-123".to_string()));
     }
 
     #[test]
