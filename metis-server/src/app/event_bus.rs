@@ -1434,6 +1434,19 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_objects_for_label(label_id).await
     }
 
+    // ---- Object relationships (read-only) ----
+
+    async fn get_relationships(
+        &self,
+        source_id: Option<&MetisId>,
+        target_id: Option<&MetisId>,
+        rel_type: Option<&str>,
+    ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
+        self.inner
+            .get_relationships(source_id, target_id, rel_type)
+            .await
+    }
+
     // ---- User secrets (read-only) ----
 
     async fn get_user_secret(

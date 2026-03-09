@@ -36,6 +36,16 @@ pub mod sqlite_store;
 pub use crate::domain::jobs::Task;
 pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
 
+/// A relationship between two objects in the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectRelationship {
+    pub source_id: MetisId,
+    pub source_kind: String,
+    pub target_id: MetisId,
+    pub target_kind: String,
+    pub rel_type: String,
+}
+
 pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
     match Actor::parse_name(name) {
         Ok(_) => Ok(()),
@@ -446,6 +456,21 @@ pub trait ReadOnlyStore: Send + Sync {
 
     // ---- User secrets (read-only) ----
 
+    // ---- Object relationships (read-only) ----
+
+    /// Returns object relationships matching the given filters.
+    ///
+    /// All provided filters are ANDed together. Pass `None` for any parameter
+    /// to skip that filter.
+    async fn get_relationships(
+        &self,
+        source_id: Option<&MetisId>,
+        target_id: Option<&MetisId>,
+        rel_type: Option<&str>,
+    ) -> Result<Vec<ObjectRelationship>, StoreError>;
+
+    // ---- User secrets (read-only) ----
+
     /// Returns the encrypted value of a user secret, or None if not set.
     async fn get_user_secret(
         &self,
@@ -756,6 +781,26 @@ pub trait Store: ReadOnlyStore {
         &self,
         label_id: &LabelId,
         object_id: &MetisId,
+    ) -> Result<bool, StoreError>;
+
+    // ---- Object relationship mutations ----
+
+    /// Adds a relationship between two objects. Returns `true` if the
+    /// relationship was newly created, `false` if it already existed.
+    async fn add_relationship(
+        &self,
+        source_id: &MetisId,
+        target_id: &MetisId,
+        rel_type: &str,
+    ) -> Result<bool, StoreError>;
+
+    /// Removes a relationship between two objects. Returns `true` if the
+    /// relationship was actually removed, `false` if it did not exist.
+    async fn remove_relationship(
+        &self,
+        source_id: &MetisId,
+        target_id: &MetisId,
+        rel_type: &str,
     ) -> Result<bool, StoreError>;
 
     // ---- User secret mutations ----

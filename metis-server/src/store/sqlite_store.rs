@@ -48,6 +48,7 @@ const TABLE_LABEL_ASSOCIATIONS: &str = "label_associations";
 const TABLE_NOTIFICATIONS: &str = "notifications";
 const TABLE_MESSAGES_V2: &str = "messages_v2";
 const TABLE_USER_SECRETS: &str = "user_secrets";
+const TABLE_OBJECT_RELATIONSHIPS: &str = "object_relationships";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
 
@@ -96,6 +97,15 @@ struct UserRow {
     created_at: String,
     #[allow(dead_code)]
     updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct ObjectRelationshipRow {
+    source_id: String,
+    source_kind: String,
+    target_id: String,
+    target_kind: String,
+    rel_type: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -525,13 +535,16 @@ impl SqliteStore {
         Ok(())
     }
 
-    async fn insert_issue(
-        &self,
+    async fn insert_issue_in_tx<'e, E>(
+        executor: E,
         id: &IssueId,
         version_number: VersionNumber,
         issue: &Issue,
         actor: Option<&str>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), StoreError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+    {
         let version_number = i64::try_from(version_number).map_err(|_| {
             StoreError::Internal(format!("version number overflow for issue '{id}'"))
         })?;
@@ -564,9 +577,60 @@ impl SqliteStore {
         .bind(&patches_json)
         .bind(issue.deleted)
         .bind(actor)
-        .execute(&self.pool)
+        .execute(executor)
         .await
         .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    /// Syncs the object_relationships table for the given issue within a transaction.
+    async fn sync_issue_relationships_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        issue_id: &IssueId,
+        issue: &Issue,
+    ) -> Result<(), StoreError> {
+        // Delete all existing relationships for this issue
+        let delete_sql = format!("DELETE FROM {TABLE_OBJECT_RELATIONSHIPS} WHERE source_id = ?1");
+        sqlx::query(&delete_sql)
+            .bind(issue_id.as_ref())
+            .execute(&mut **tx)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        // Insert dependency relationships
+        for dep in &issue.dependencies {
+            sqlx::query(
+                "INSERT OR IGNORE INTO object_relationships \
+                 (source_id, source_kind, target_id, target_kind, rel_type) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .bind(issue_id.as_ref())
+            .bind("issue")
+            .bind(dep.issue_id.as_ref())
+            .bind("issue")
+            .bind(dep.dependency_type.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        }
+
+        // Insert patch relationships
+        for patch_id in &issue.patches {
+            sqlx::query(
+                "INSERT OR IGNORE INTO object_relationships \
+                 (source_id, source_kind, target_id, target_kind, rel_type) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .bind(issue_id.as_ref())
+            .bind("issue")
+            .bind(patch_id.as_ref())
+            .bind("patch")
+            .bind("has-patch")
+            .execute(&mut **tx)
+            .await
+            .map_err(map_sqlx_error)?;
+        }
 
         Ok(())
     }
@@ -2778,6 +2842,72 @@ impl ReadOnlyStore for SqliteStore {
             .collect()
     }
 
+    // ---- Object relationships (read-only) ----
+
+    async fn get_relationships(
+        &self,
+        source_id: Option<&MetisId>,
+        target_id: Option<&MetisId>,
+        rel_type: Option<&str>,
+    ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
+        let mut conditions = Vec::new();
+        let mut bind_index = 1u32;
+
+        if source_id.is_some() {
+            conditions.push(format!("source_id = ?{bind_index}"));
+            bind_index += 1;
+        }
+        if target_id.is_some() {
+            conditions.push(format!("target_id = ?{bind_index}"));
+            bind_index += 1;
+        }
+        if rel_type.is_some() {
+            conditions.push(format!("rel_type = ?{bind_index}"));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let sql = format!(
+            "SELECT source_id, source_kind, target_id, target_kind, rel_type \
+             FROM {TABLE_OBJECT_RELATIONSHIPS}{where_clause} \
+             ORDER BY created_at"
+        );
+
+        let mut query = sqlx::query_as::<_, ObjectRelationshipRow>(&sql);
+        if let Some(id) = source_id {
+            query = query.bind(id.as_ref());
+        }
+        if let Some(id) = target_id {
+            query = query.bind(id.as_ref());
+        }
+        if let Some(rt) = rel_type {
+            query = query.bind(rt);
+        }
+
+        let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+        let mut result = Vec::with_capacity(rows.len());
+        for r in rows {
+            let source_id: MetisId = r.source_id.parse().map_err(|_| {
+                StoreError::Internal("invalid source_id in object_relationships".to_string())
+            })?;
+            let target_id: MetisId = r.target_id.parse().map_err(|_| {
+                StoreError::Internal("invalid target_id in object_relationships".to_string())
+            })?;
+            result.push(super::ObjectRelationship {
+                source_id,
+                source_kind: r.source_kind,
+                target_id,
+                target_kind: r.target_kind,
+                rel_type: r.rel_type,
+            });
+        }
+        Ok(result)
+    }
+
     async fn get_user_secret(
         &self,
         username: &Username,
@@ -2874,7 +3004,12 @@ impl Store for SqliteStore {
             .await?;
         let id = IssueId::new();
         let actor_json = actor_to_json_string(actor);
-        self.insert_issue(&id, 1, &issue, Some(&actor_json)).await?;
+
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        Self::insert_issue_in_tx(&mut *tx, &id, 1, &issue, Some(&actor_json)).await?;
+        Self::sync_issue_relationships_in_tx(&mut tx, &id, &issue).await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+
         Ok((id, 1))
     }
 
@@ -2896,8 +3031,12 @@ impl Store for SqliteStore {
         })?;
 
         let actor_json = actor_to_json_string(actor);
-        self.insert_issue(id, next_version, &issue, Some(&actor_json))
-            .await?;
+
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        Self::insert_issue_in_tx(&mut *tx, id, next_version, &issue, Some(&actor_json)).await?;
+        Self::sync_issue_relationships_in_tx(&mut tx, id, &issue).await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+
         Ok(next_version)
     }
 
@@ -3512,6 +3651,55 @@ impl Store for SqliteStore {
             .map_err(map_sqlx_error)?;
         Ok(result.rows_affected() > 0)
     }
+
+    // ---- Object relationship mutations ----
+
+    async fn add_relationship(
+        &self,
+        source_id: &MetisId,
+        target_id: &MetisId,
+        rel_type: &str,
+    ) -> Result<bool, StoreError> {
+        let source_kind = super::object_kind_from_id(source_id)?;
+        let target_kind = super::object_kind_from_id(target_id)?;
+        let sql = format!(
+            "INSERT OR IGNORE INTO {TABLE_OBJECT_RELATIONSHIPS} \
+             (source_id, source_kind, target_id, target_kind, rel_type) \
+             VALUES (?1, ?2, ?3, ?4, ?5)"
+        );
+        let result = sqlx::query(&sql)
+            .bind(source_id.as_ref())
+            .bind(source_kind)
+            .bind(target_id.as_ref())
+            .bind(target_kind)
+            .bind(rel_type)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn remove_relationship(
+        &self,
+        source_id: &MetisId,
+        target_id: &MetisId,
+        rel_type: &str,
+    ) -> Result<bool, StoreError> {
+        let sql = format!(
+            "DELETE FROM {TABLE_OBJECT_RELATIONSHIPS} \
+             WHERE source_id = ?1 AND target_id = ?2 AND rel_type = ?3"
+        );
+        let result = sqlx::query(&sql)
+            .bind(source_id.as_ref())
+            .bind(target_id.as_ref())
+            .bind(rel_type)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    // ---- User secret mutations ----
 
     async fn set_user_secret(
         &self,
