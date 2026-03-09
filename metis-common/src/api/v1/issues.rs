@@ -1,4 +1,5 @@
 use super::labels::LabelSummary;
+use super::task_status::Status as TaskStatus;
 use super::users::Username;
 pub use crate::IssueId;
 use crate::{LabelId, PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
@@ -56,6 +57,82 @@ impl FromStr for IssueStatus {
             "rejected" => Ok(IssueStatus::Rejected),
             "failed" => Ok(IssueStatus::Failed),
             other => Err(format!("unsupported issue status '{other}'")),
+        }
+    }
+}
+
+impl IssueStatus {
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            IssueStatus::Closed
+                | IssueStatus::Dropped
+                | IssueStatus::Rejected
+                | IssueStatus::Failed
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum StatusGroup {
+    Active,
+    Completed,
+    #[serde(other)]
+    Unknown,
+}
+
+impl FromStr for StatusGroup {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "active" => Ok(StatusGroup::Active),
+            "completed" => Ok(StatusGroup::Completed),
+            other => Err(format!("unsupported status group '{other}'")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct JobStatusSummary {
+    pub total: u32,
+    pub running: u32,
+    pub failed: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_job_id: Option<TaskId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_job_status: Option<TaskStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_start_time: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_end_time: Option<DateTime<Utc>>,
+}
+
+impl JobStatusSummary {
+    pub fn new(
+        total: u32,
+        running: u32,
+        failed: u32,
+        latest_job_id: Option<TaskId>,
+        latest_job_status: Option<TaskStatus>,
+        latest_start_time: Option<DateTime<Utc>>,
+        latest_end_time: Option<DateTime<Utc>>,
+    ) -> Self {
+        Self {
+            total,
+            running,
+            failed,
+            latest_job_id,
+            latest_job_status,
+            latest_start_time,
+            latest_end_time,
         }
     }
 }
@@ -728,6 +805,12 @@ pub struct SearchIssuesQuery {
     /// When true, each returned issue includes its full descendant subtree.
     #[serde(default)]
     pub include_subtree: bool,
+    /// Filter by status group: `active` (non-terminal) or `completed` (terminal).
+    #[serde(default)]
+    pub status_group: Option<StatusGroup>,
+    /// Comma-separated list of optional includes (e.g., `jobs_summary`).
+    #[serde(default)]
+    pub include: Option<String>,
 }
 
 impl SearchIssuesQuery {
@@ -750,7 +833,16 @@ impl SearchIssuesQuery {
             limit: None,
             cursor: None,
             include_subtree: false,
+            status_group: None,
+            include: None,
         }
+    }
+
+    pub fn wants_jobs_summary(&self) -> bool {
+        self.include
+            .as_deref()
+            .map(|s| s.split(',').any(|part| part.trim() == "jobs_summary"))
+            .unwrap_or(false)
     }
 }
 
@@ -883,6 +975,8 @@ pub struct IssueSummaryRecord {
     pub creation_time: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subtree: Option<Vec<SubtreeIssue>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs_summary: Option<JobStatusSummary>,
 }
 
 impl IssueSummaryRecord {
@@ -905,6 +999,7 @@ impl IssueSummaryRecord {
             actor,
             creation_time,
             subtree: None,
+            jobs_summary: None,
         }
     }
 }
@@ -921,6 +1016,7 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
             actor: record.actor.clone(),
             creation_time: record.creation_time,
             subtree: None,
+            jobs_summary: None,
         }
     }
 }
@@ -1021,6 +1117,8 @@ mod tests {
             limit: None,
             cursor: None,
             include_subtree: false,
+            status_group: None,
+            include: None,
         };
 
         let params = serialize_query_params(&query)
@@ -1047,6 +1145,8 @@ mod tests {
             limit: None,
             cursor: None,
             include_subtree: false,
+            status_group: None,
+            include: None,
         };
 
         let params = serialize_query_params(&query)
@@ -1305,5 +1405,91 @@ mod tests {
         let issue = make_test_issue("");
         let summary = IssueSummary::from(&issue);
         assert_eq!(summary.description, "");
+    }
+
+    #[test]
+    fn issue_status_terminal_classification() {
+        assert!(!IssueStatus::Open.is_terminal());
+        assert!(!IssueStatus::InProgress.is_terminal());
+        assert!(IssueStatus::Closed.is_terminal());
+        assert!(IssueStatus::Dropped.is_terminal());
+        assert!(IssueStatus::Rejected.is_terminal());
+        assert!(IssueStatus::Failed.is_terminal());
+        assert!(!IssueStatus::Unknown.is_terminal());
+    }
+
+    #[test]
+    fn status_group_parses() {
+        assert_eq!(
+            "active".parse::<StatusGroup>().unwrap(),
+            StatusGroup::Active
+        );
+        assert_eq!(
+            "completed".parse::<StatusGroup>().unwrap(),
+            StatusGroup::Completed
+        );
+        assert!("invalid".parse::<StatusGroup>().is_err());
+    }
+
+    #[test]
+    fn status_group_deserializes_from_json() {
+        let val: StatusGroup = serde_json::from_str(r#""active""#).unwrap();
+        assert_eq!(val, StatusGroup::Active);
+        let val: StatusGroup = serde_json::from_str(r#""completed""#).unwrap();
+        assert_eq!(val, StatusGroup::Completed);
+        let val: StatusGroup = serde_json::from_str(r#""other""#).unwrap();
+        assert_eq!(val, StatusGroup::Unknown);
+    }
+
+    #[test]
+    fn wants_jobs_summary_parses_include_param() {
+        let mut query = SearchIssuesQuery::default();
+        assert!(!query.wants_jobs_summary());
+
+        query.include = Some("jobs_summary".to_string());
+        assert!(query.wants_jobs_summary());
+
+        query.include = Some("subtree,jobs_summary".to_string());
+        assert!(query.wants_jobs_summary());
+
+        query.include = Some("subtree".to_string());
+        assert!(!query.wants_jobs_summary());
+
+        query.include = Some("".to_string());
+        assert!(!query.wants_jobs_summary());
+    }
+
+    #[test]
+    fn issue_summary_record_jobs_summary_omitted_when_none() {
+        let issue = make_test_issue("desc");
+        let ts = chrono::Utc::now();
+        let record =
+            IssueVersionRecord::new(issue_id("i-test"), 1, ts, issue, None, ts, Vec::new());
+        let summary_record = IssueSummaryRecord::from(&record);
+        let value = serde_json::to_value(&summary_record).unwrap();
+        assert!(
+            value.get("jobs_summary").is_none(),
+            "jobs_summary should be omitted when None"
+        );
+    }
+
+    #[test]
+    fn job_status_summary_serializes() {
+        use super::super::task_status::Status as TaskStatus;
+        let summary = JobStatusSummary::new(
+            5,
+            2,
+            1,
+            Some("t-abc".parse().unwrap()),
+            Some(TaskStatus::Running),
+            Some(chrono::Utc::now()),
+            None,
+        );
+        let value = serde_json::to_value(&summary).unwrap();
+        assert_eq!(value["total"], 5);
+        assert_eq!(value["running"], 2);
+        assert_eq!(value["failed"], 1);
+        assert_eq!(value["latest_job_status"], "running");
+        assert!(value.get("latest_end_time").is_none());
     }
 }

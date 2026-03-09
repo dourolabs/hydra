@@ -5,4 +5,10 @@ import type { Rgb } from "./Rgb";
 /**
  * A lightweight label representation for embedding in other responses.
  */
-export type LabelSummary = { label_id: LabelId; name: string; color: Rgb; recurse: boolean; hidden: boolean };
+export type LabelSummary = {
+  label_id: LabelId;
+  name: string;
+  color: Rgb;
+  recurse: boolean;
+  hidden: boolean;
+};

@@ -11,7 +11,7 @@ use axum::{
     http::request::Parts,
 };
 use metis_common::{
-    IssueId, MetisId,
+    IssueId, MetisId, TaskId,
     api::v1::{
         ApiError, issues as api_issues,
         issues::SubtreeIssueRow,
@@ -317,6 +317,15 @@ pub async fn list_issues(
         })?;
 
     let eff_limit = effective_limit(query.limit);
+
+    // Optionally compute jobs summary per issue
+    let wants_jobs_summary = query.wants_jobs_summary();
+    let jobs_summary_map: HashMap<IssueId, api_issues::JobStatusSummary> = if wants_jobs_summary {
+        build_jobs_summary_map(&state, &issues).await?
+    } else {
+        HashMap::new()
+    };
+
     let mut filtered: Vec<api_issues::IssueSummaryRecord> = Vec::new();
     for (id, versioned) in issues {
         let object_id = MetisId::from(id.clone());
@@ -324,15 +333,19 @@ pub async fn list_issues(
 
         let api_issue: api_issues::Issue = versioned.item.into();
         let summary = api_issues::IssueSummary::from(&api_issue);
-        filtered.push(api_issues::IssueSummaryRecord::new(
-            id,
+        let mut record = api_issues::IssueSummaryRecord::new(
+            id.clone(),
             versioned.version,
             versioned.timestamp,
             summary,
             versioned.actor,
             versioned.creation_time,
             labels,
-        ));
+        );
+        if wants_jobs_summary {
+            record.jobs_summary = jobs_summary_map.get(&id).cloned();
+        }
+        filtered.push(record);
     }
 
     let next_cursor = compute_next_cursor(
@@ -464,6 +477,102 @@ pub async fn set_todo_item_status(
         todo_list.into_iter().map(Into::into).collect(),
     );
     Ok(Json(response))
+}
+
+/// Build a map of IssueId → JobStatusSummary by fetching tasks for the given issues.
+async fn build_jobs_summary_map(
+    state: &AppState,
+    issues: &[(
+        IssueId,
+        metis_common::Versioned<crate::domain::issues::Issue>,
+    )],
+) -> Result<HashMap<IssueId, api_issues::JobStatusSummary>, ApiError> {
+    use crate::store::Status as DomainStatus;
+    use metis_common::api::v1::task_status::Status as ApiTaskStatus;
+
+    // Collect all issue IDs for which we need task data
+    let issue_ids: Vec<&IssueId> = issues.iter().map(|(id, _)| id).collect();
+    if issue_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    // Batch-fetch tasks: use list_tasks to get all tasks, then filter by spawned_from.
+    // This is a single query that returns all tasks; we filter in memory.
+    let all_tasks = state
+        .list_tasks_with_query(&metis_common::api::v1::jobs::SearchJobsQuery::default())
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to fetch tasks for jobs summary");
+            ApiError::internal(anyhow!("failed to fetch tasks: {err}"))
+        })?;
+
+    // Build per-issue task lists
+    let issue_id_set: std::collections::HashSet<&IssueId> = issue_ids.into_iter().collect();
+    let mut tasks_by_issue: HashMap<IssueId, Vec<(TaskId, &crate::store::Task)>> = HashMap::new();
+
+    // We need to hold the versioned tasks so we can reference them
+    let task_refs: Vec<_> = all_tasks
+        .iter()
+        .filter_map(|(task_id, versioned)| {
+            let spawned_from = versioned.item.spawned_from.as_ref()?;
+            if issue_id_set.contains(spawned_from) {
+                Some((task_id.clone(), spawned_from.clone(), &versioned.item))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (task_id, issue_id, task) in &task_refs {
+        tasks_by_issue
+            .entry(issue_id.clone())
+            .or_default()
+            .push((task_id.clone(), *task));
+    }
+
+    // Compute summary per issue
+    let mut result = HashMap::new();
+    for (issue_id, tasks) in tasks_by_issue {
+        let total = tasks.len() as u32;
+        let running = tasks
+            .iter()
+            .filter(|(_, t)| matches!(t.status, DomainStatus::Running | DomainStatus::Pending))
+            .count() as u32;
+        let failed = tasks
+            .iter()
+            .filter(|(_, t)| t.status == DomainStatus::Failed)
+            .count() as u32;
+
+        // Find the latest job by creation_time (fallback to task_id ordering)
+        let latest = tasks.iter().max_by_key(|(_, t)| t.creation_time);
+
+        let (latest_job_id, latest_job_status, latest_start_time, latest_end_time) =
+            if let Some((tid, task)) = latest {
+                (
+                    Some(tid.clone()),
+                    Some(ApiTaskStatus::from(task.status)),
+                    task.start_time,
+                    task.end_time,
+                )
+            } else {
+                (None, None, None, None)
+            };
+
+        result.insert(
+            issue_id,
+            api_issues::JobStatusSummary::new(
+                total,
+                running,
+                failed,
+                latest_job_id,
+                latest_job_status,
+                latest_start_time,
+                latest_end_time,
+            ),
+        );
+    }
+
+    Ok(result)
 }
 
 fn map_graph_filter_error(err: StoreError) -> ApiError {
