@@ -27,10 +27,11 @@ use crate::domain::users::{User, Username};
 #[cfg(feature = "kubernetes")]
 use crate::job_engine::KubernetesJobEngine;
 use crate::job_engine::LocalDockerJobEngine;
+use crate::store::{MemoryStore, Store, StoreError, sqlite_store::SqliteStore};
+#[cfg(feature = "postgres")]
 use crate::store::{
-    MemoryStore, Store, StoreError, migration,
+    migration,
     postgres_v2::{self, PostgresStoreV2},
-    sqlite_store::SqliteStore,
 };
 use anyhow::Context;
 use axum::{
@@ -295,28 +296,39 @@ pub async fn run() -> anyhow::Result<()> {
             Arc::new(SqliteStore::new(pool))
         }
         StorageConfig::Postgres { database } => {
-            let postgres_pool = postgres_v2::init_pool(database)
-                .await?
-                .context("database.url is required for postgres storage backend")?;
-            postgres_v2::run_migrations(&postgres_pool).await?;
-            info!("connected to Postgres and applied migrations");
+            #[cfg(feature = "postgres")]
+            {
+                let postgres_pool = postgres_v2::init_pool(database)
+                    .await?
+                    .context("database.url is required for postgres storage backend")?;
+                postgres_v2::run_migrations(&postgres_pool).await?;
+                info!("connected to Postgres and applied migrations");
 
-            // Run migration from v1 to v2 in case there is unmigrated data
-            let migration_result = migration::migrate_v1_to_v2(&postgres_pool).await?;
-            if migration_result.total() > 0 {
-                info!(
-                    total = migration_result.total(),
-                    issues = migration_result.issues_migrated,
-                    patches = migration_result.patches_migrated,
-                    tasks = migration_result.tasks_migrated,
-                    users = migration_result.users_migrated,
-                    actors = migration_result.actors_migrated,
-                    repositories = migration_result.repositories_migrated,
-                    documents = migration_result.documents_migrated,
-                    "migrated data from v1 to v2 tables"
+                // Run migration from v1 to v2 in case there is unmigrated data
+                let migration_result = migration::migrate_v1_to_v2(&postgres_pool).await?;
+                if migration_result.total() > 0 {
+                    info!(
+                        total = migration_result.total(),
+                        issues = migration_result.issues_migrated,
+                        patches = migration_result.patches_migrated,
+                        tasks = migration_result.tasks_migrated,
+                        users = migration_result.users_migrated,
+                        actors = migration_result.actors_migrated,
+                        repositories = migration_result.repositories_migrated,
+                        documents = migration_result.documents_migrated,
+                        "migrated data from v1 to v2 tables"
+                    );
+                }
+                Arc::new(PostgresStoreV2::new(postgres_pool))
+            }
+            #[cfg(not(feature = "postgres"))]
+            {
+                let _ = database;
+                anyhow::bail!(
+                    "PostgreSQL storage backend requires the 'postgres' Cargo feature. \
+                     Rebuild with `--features postgres`."
                 );
             }
-            Arc::new(PostgresStoreV2::new(postgres_pool))
         }
         StorageConfig::Memory => {
             info!("using in-memory store");
