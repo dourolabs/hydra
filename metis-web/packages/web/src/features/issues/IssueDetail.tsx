@@ -11,6 +11,8 @@ import { IssueUpdateModal } from "./IssueUpdateModal";
 import { JobList } from "../jobs/JobList";
 import { PatchList } from "../patches/PatchList";
 import { PatchPreview } from "./PatchPreview";
+import { DocumentPreview } from "./DocumentPreview";
+import { extractDocumentPaths } from "../dashboard/useTransitiveWorkItems";
 import { IssueSettings } from "./IssueSettings";
 import { IssueLabelEditor } from "./IssueLabelEditor";
 import styles from "./IssueDetail.module.css";
@@ -56,6 +58,17 @@ export function IssueDetail({ record }: IssueDetailProps) {
         .map((d) => d.issue_id),
     [issue.dependencies],
   );
+
+  const documentPaths = useMemo(() => {
+    const texts = [issue.description, issue.progress].filter(Boolean) as string[];
+    const allPaths = new Set<string>();
+    for (const text of texts) {
+      for (const path of extractDocumentPaths(text)) {
+        allPaths.add(path);
+      }
+    }
+    return Array.from(allPaths);
+  }, [issue.description, issue.progress]);
 
   return (
     <div className={styles.detail}>
@@ -126,6 +139,11 @@ export function IssueDetail({ record }: IssueDetailProps) {
           patchIds={issue.patches ?? []}
           issueId={record.issue_id}
         />
+      )}
+
+      {/* Document Preview */}
+      {documentPaths.length > 0 && (
+        <DocumentPreview paths={documentPaths} />
       )}
 
       {/* Progress */}
