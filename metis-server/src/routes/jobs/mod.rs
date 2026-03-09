@@ -116,8 +116,19 @@ pub async fn list_jobs(
         "list_jobs completed successfully"
     );
 
+    let total_count = if query.count == Some(true) {
+        let count = state.count_tasks(&query).await.map_err(|err| {
+            error!(error = %err, "failed to count tasks");
+            ApiError::internal(format!("Failed to count tasks: {err}"))
+        })?;
+        Some(count)
+    } else {
+        None
+    };
+
     let mut response = v1::jobs::ListJobsResponse::new(summaries);
     response.next_cursor = next_cursor;
+    response.total_count = total_count;
     Ok(Json(response))
 }
 

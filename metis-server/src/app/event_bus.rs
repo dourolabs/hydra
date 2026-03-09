@@ -1282,6 +1282,10 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.list_issues(query).await
     }
 
+    async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
+        self.inner.count_issues(query).await
+    }
+
     async fn search_issue_graph(
         &self,
         filters: &[IssueGraphFilter],
@@ -1324,6 +1328,10 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.list_patches(query).await
     }
 
+    async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
+        self.inner.count_patches(query).await
+    }
+
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         self.inner.get_issues_for_patch(patch_id).await
     }
@@ -1352,6 +1360,10 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.list_documents(query).await
     }
 
+    async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
+        self.inner.count_documents(query).await
+    }
+
     async fn get_documents_by_path(
         &self,
         path_prefix: &str,
@@ -1378,6 +1390,10 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         self.inner.list_tasks(query).await
+    }
+
+    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+        self.inner.count_tasks(query).await
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
@@ -1469,6 +1485,10 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
         self.inner.list_labels(query).await
+    }
+
+    async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError> {
+        self.inner.count_labels(query).await
     }
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {

@@ -81,10 +81,18 @@ pub async fn list_labels(
         |r| r.label_id.as_ref(),
     );
 
+    let total_count = if query.count == Some(true) {
+        let count = state.count_labels(&query).await.map_err(map_store_error)?;
+        Some(count)
+    } else {
+        None
+    };
+
     info!(actor = %actor.name(), count = records.len(), "list_labels completed");
 
     let mut response = ListLabelsResponse::new(records);
     response.next_cursor = next_cursor;
+    response.total_count = total_count;
     Ok(Json(response))
 }
 

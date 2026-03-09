@@ -305,6 +305,9 @@ pub trait ReadOnlyStore: Send + Sync {
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError>;
 
+    /// Counts issues matching the search query, ignoring pagination (cursor/limit).
+    async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError>;
+
     /// Applies dependency graph filters and returns the matching issue IDs.
     ///
     /// Filters are intersected, and any filter referencing a missing issue
@@ -344,6 +347,9 @@ pub trait ReadOnlyStore: Send + Sync {
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError>;
 
+    /// Counts patches matching the search query, ignoring pagination (cursor/limit).
+    async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError>;
+
     /// Lists all issues that reference the provided patch ID.
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError>;
 
@@ -370,6 +376,9 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError>;
+
+    /// Counts documents matching the search query, ignoring pagination (cursor/limit).
+    async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError>;
 
     /// Returns documents that start with the provided path prefix.
     async fn get_documents_by_path(
@@ -412,6 +421,9 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
+
+    /// Counts tasks matching the search query, ignoring pagination (cursor/limit).
+    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError>;
 
     /// Gets the status log for a task by its TaskId.
     ///
@@ -517,6 +529,9 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError>;
+
+    /// Counts labels matching the search query, ignoring pagination (cursor/limit).
+    async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError>;
 
     /// Finds a label by its name (case-insensitive).
     ///

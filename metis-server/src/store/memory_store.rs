@@ -544,6 +544,59 @@ impl ReadOnlyStore for MemoryStore {
         )
     }
 
+    async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let issue_type_filter: Option<IssueType> = query.issue_type.map(Into::into);
+        let status_filter: Option<IssueStatus> = query.status.map(Into::into);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+        let assignee_filter = query
+            .assignee
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+
+        let count = self
+            .issues
+            .iter()
+            .filter_map(|entry| {
+                let latest = Self::latest_versioned(entry.value())?;
+                if !include_deleted && latest.item.deleted {
+                    return None;
+                }
+                let issue_id = entry.key();
+                if !issue_matches(
+                    issue_type_filter,
+                    status_filter,
+                    search_term.as_deref(),
+                    assignee_filter,
+                    issue_id,
+                    &latest.item,
+                ) {
+                    return None;
+                }
+                // Filter by label IDs (AND semantics: issue must have ALL specified labels)
+                if !query.label_ids.is_empty() {
+                    let object_id = MetisId::from(issue_id.clone());
+                    let has_all_labels =
+                        if let Some(issue_labels) = self.object_labels.get(&object_id) {
+                            query.label_ids.iter().all(|lid| issue_labels.contains(lid))
+                        } else {
+                            false
+                        };
+                    if !has_all_labels {
+                        return None;
+                    }
+                }
+                Some(())
+            })
+            .count();
+        Ok(count as u64)
+    }
+
     async fn search_issue_graph(
         &self,
         filters: &[IssueGraphFilter],
@@ -706,6 +759,42 @@ impl ReadOnlyStore for MemoryStore {
         )
     }
 
+    async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+
+        let status_filter: Vec<crate::domain::patches::PatchStatus> =
+            query.status.iter().copied().map(Into::into).collect();
+
+        let count = self
+            .patches
+            .iter()
+            .filter_map(|entry| {
+                let latest = Self::latest_versioned(entry.value())?;
+                if !include_deleted && latest.item.deleted {
+                    return None;
+                }
+                if !status_filter.is_empty() && !status_filter.contains(&latest.item.status) {
+                    return None;
+                }
+                if let Some(ref branch) = query.branch_name {
+                    if latest.item.branch_name.as_deref() != Some(branch.as_str()) {
+                        return None;
+                    }
+                }
+                if !Self::patch_matches(search_term.as_deref(), entry.key(), &latest.item) {
+                    return None;
+                }
+                Some(())
+            })
+            .count();
+        Ok(count as u64)
+    }
+
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         match self.patches.get(patch_id) {
             Some(_) => Ok(self
@@ -815,6 +904,61 @@ impl ReadOnlyStore for MemoryStore {
         )
     }
 
+    async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
+        let mut documents: Vec<(DocumentId, Versioned<Document>)> =
+            if let Some(path) = query.path_prefix.as_deref() {
+                let ids = if query.path_is_exact.unwrap_or(false) {
+                    self.document_ids_with_exact_path(path)
+                } else {
+                    self.document_ids_with_path_prefix(path)
+                };
+                self.documents_from_ids(&ids)
+            } else {
+                self.documents
+                    .iter()
+                    .filter_map(|entry| {
+                        let mut latest = Self::latest_versioned(entry.value())?;
+                        latest.creation_time = entry.value()[0].timestamp;
+                        Some((entry.key().clone(), latest))
+                    })
+                    .collect()
+            };
+
+        // Filter deleted documents unless include_deleted is true
+        if !query.include_deleted.unwrap_or(false) {
+            documents.retain(|(_, versioned)| !versioned.item.deleted);
+        }
+
+        if let Some(created_by) = query.created_by.as_ref() {
+            documents
+                .retain(|(_, versioned)| versioned.item.created_by.as_ref() == Some(created_by));
+        }
+
+        if let Some(search_term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            documents.retain(|(_, versioned)| {
+                versioned.item.title.to_lowercase().contains(&search_term)
+                    || versioned
+                        .item
+                        .body_markdown
+                        .to_lowercase()
+                        .contains(&search_term)
+                    || versioned
+                        .item
+                        .path
+                        .as_deref()
+                        .map(|path| path.to_lowercase().contains(&search_term))
+                        .unwrap_or(false)
+            });
+        }
+
+        Ok(documents.len() as u64)
+    }
+
     async fn get_documents_by_path(
         &self,
         path_prefix: &str,
@@ -909,6 +1053,60 @@ impl ReadOnlyStore for MemoryStore {
             &query.cursor,
             query.limit,
         )
+    }
+
+    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+
+        let count = self
+            .tasks
+            .iter()
+            .filter_map(|entry| {
+                let task_id = entry.key();
+                let latest = Self::latest_versioned(entry.value())?;
+
+                // Filter by deleted status
+                if !include_deleted && latest.item.deleted {
+                    return None;
+                }
+
+                // Filter by spawned_from
+                if let Some(expected_issue) = query.spawned_from.as_ref() {
+                    if latest.item.spawned_from.as_ref() != Some(expected_issue) {
+                        return None;
+                    }
+                }
+
+                // Filter by status
+                if let Some(expected_status) = query.status {
+                    let server_status: Status = expected_status.into();
+                    if latest.item.status != server_status {
+                        return None;
+                    }
+                }
+
+                // Filter by text search (matches task ID, prompt, status - NOT notes)
+                if let Some(term) = search_term.as_deref() {
+                    let matches_id = task_id.as_ref().to_lowercase().contains(term);
+                    let matches_prompt = latest.item.prompt.to_lowercase().contains(term);
+                    let matches_status = format!("{:?}", latest.item.status)
+                        .to_lowercase()
+                        .contains(term);
+
+                    if !matches_id && !matches_prompt && !matches_status {
+                        return None;
+                    }
+                }
+
+                Some(())
+            })
+            .count();
+        Ok(count as u64)
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
@@ -1228,6 +1426,30 @@ impl ReadOnlyStore for MemoryStore {
             results.sort_by(|(_, a), (_, b)| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
             Ok(results)
         }
+    }
+
+    async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+
+        let mut count: u64 = 0;
+        for entry in self.labels.iter() {
+            let label = entry.value();
+
+            if !include_deleted && label.deleted {
+                continue;
+            }
+
+            if let Some(ref q) = query.q {
+                let q_lower = q.to_lowercase();
+                if !label.name.to_lowercase().contains(&q_lower) {
+                    continue;
+                }
+            }
+
+            count += 1;
+        }
+
+        Ok(count)
     }
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {

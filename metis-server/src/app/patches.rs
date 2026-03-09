@@ -99,6 +99,11 @@ impl AppState {
         store.list_patches(query).await
     }
 
+    pub async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
+        let store = self.store.as_ref();
+        store.count_patches(query).await
+    }
+
     pub async fn delete_patch(
         &self,
         patch_id: &PatchId,
