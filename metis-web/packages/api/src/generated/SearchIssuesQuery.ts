@@ -29,4 +29,8 @@ export type SearchIssuesQuery = {
    * When true, include a `JobStatusSummary` per issue in the response.
    */
   include_job_status: boolean | null;
+  /**
+   * When true, include `total_count` in the response.
+   */
+  count: boolean | null;
 };
