@@ -22,13 +22,14 @@ pub use activity_log::{
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
-    agents, documents, events, issues, job_status, jobs, labels, login, logs, merge_queues,
-    notifications, patches, repositories, secrets, task_status, users, whoami,
+    agents, audit_events, documents, events, issues, job_status, jobs, labels, login, logs,
+    merge_queues, notifications, patches, repositories, secrets, task_status, users, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
 pub use ids::{
-    DocumentId, IssueId, LabelId, MessageId, MetisId, MetisIdError, NotificationId, PatchId, TaskId,
+    AuditEventId, DocumentId, IssueId, LabelId, MessageId, MetisId, MetisIdError, NotificationId,
+    PatchId, TaskId,
 };
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use repo_name::{RepoName, RepoNameError};

@@ -4211,6 +4211,24 @@ impl Store for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
         Ok(())
     }
+
+    async fn record_audit_event(
+        &self,
+        _event: crate::ee::audit::AuditEvent,
+    ) -> Result<metis_common::AuditEventId, StoreError> {
+        // Full implementation will be added in the next task.
+        Err(StoreError::Internal(
+            "audit event recording not yet implemented".to_string(),
+        ))
+    }
+
+    async fn list_audit_events(
+        &self,
+        _query: &metis_common::api::v1::audit_events::SearchAuditEventsQuery,
+    ) -> Result<Vec<(metis_common::AuditEventId, crate::ee::audit::AuditEvent)>, StoreError> {
+        // Full implementation will be added in the next task.
+        Ok(Vec::new())
+    }
 }
 
 fn row_to_label(row: &LabelRow) -> Result<Label, StoreError> {

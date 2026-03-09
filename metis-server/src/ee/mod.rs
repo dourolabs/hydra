@@ -1,3 +1,5 @@
+#[cfg(feature = "postgres")]
+pub mod audit;
 #[cfg(feature = "kubernetes")]
 pub mod config;
 #[cfg(feature = "kubernetes")]

@@ -906,6 +906,22 @@ pub trait Store: ReadOnlyStore {
         username: &Username,
         secret_name: &str,
     ) -> Result<(), StoreError>;
+
+    // ---- Audit event mutations (postgres-only) ----
+
+    /// Records an audit event and returns the generated AuditEventId.
+    #[cfg(feature = "postgres")]
+    async fn record_audit_event(
+        &self,
+        event: crate::ee::audit::AuditEvent,
+    ) -> Result<metis_common::AuditEventId, StoreError>;
+
+    /// Lists audit events matching the provided query filters.
+    #[cfg(feature = "postgres")]
+    async fn list_audit_events(
+        &self,
+        query: &metis_common::api::v1::audit_events::SearchAuditEventsQuery,
+    ) -> Result<Vec<(metis_common::AuditEventId, crate::ee::audit::AuditEvent)>, StoreError>;
 }
 
 /// Infers the object kind from a MetisId prefix.

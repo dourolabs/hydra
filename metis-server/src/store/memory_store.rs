@@ -1977,6 +1977,24 @@ impl Store for MemoryStore {
         self.user_secrets.remove(&key);
         Ok(())
     }
+
+    #[cfg(feature = "postgres")]
+    async fn record_audit_event(
+        &self,
+        _event: crate::ee::audit::AuditEvent,
+    ) -> Result<metis_common::AuditEventId, StoreError> {
+        Err(StoreError::Internal(
+            "audit events are not supported by the in-memory store".to_string(),
+        ))
+    }
+
+    #[cfg(feature = "postgres")]
+    async fn list_audit_events(
+        &self,
+        _query: &metis_common::api::v1::audit_events::SearchAuditEventsQuery,
+    ) -> Result<Vec<(metis_common::AuditEventId, crate::ee::audit::AuditEvent)>, StoreError> {
+        Ok(Vec::new())
+    }
 }
 
 /// Helper function to check if an issue matches the provided filter criteria.
