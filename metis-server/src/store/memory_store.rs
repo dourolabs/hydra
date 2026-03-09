@@ -905,58 +905,61 @@ impl ReadOnlyStore for MemoryStore {
     }
 
     async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
-        let mut documents: Vec<(DocumentId, Versioned<Document>)> =
-            if let Some(path) = query.path_prefix.as_deref() {
-                let ids = if query.path_is_exact.unwrap_or(false) {
-                    self.document_ids_with_exact_path(path)
-                } else {
-                    self.document_ids_with_path_prefix(path)
-                };
-                self.documents_from_ids(&ids)
-            } else {
-                self.documents
-                    .iter()
-                    .filter_map(|entry| {
-                        let mut latest = Self::latest_versioned(entry.value())?;
-                        latest.creation_time = entry.value()[0].timestamp;
-                        Some((entry.key().clone(), latest))
-                    })
-                    .collect()
-            };
-
-        // Filter deleted documents unless include_deleted is true
-        if !query.include_deleted.unwrap_or(false) {
-            documents.retain(|(_, versioned)| !versioned.item.deleted);
-        }
-
-        if let Some(created_by) = query.created_by.as_ref() {
-            documents
-                .retain(|(_, versioned)| versioned.item.created_by.as_ref() == Some(created_by));
-        }
-
-        if let Some(search_term) = query
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let search_term = query
             .q
             .as_ref()
             .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
+            .filter(|value| !value.is_empty());
+
+        let doc_ids: Option<HashSet<DocumentId>> = if let Some(path) = query.path_prefix.as_deref()
         {
-            documents.retain(|(_, versioned)| {
-                versioned.item.title.to_lowercase().contains(&search_term)
-                    || versioned
-                        .item
-                        .body_markdown
-                        .to_lowercase()
-                        .contains(&search_term)
-                    || versioned
+            let ids = if query.path_is_exact.unwrap_or(false) {
+                self.document_ids_with_exact_path(path)
+            } else {
+                self.document_ids_with_path_prefix(path)
+            };
+            Some(ids.into_iter().collect())
+        } else {
+            None
+        };
+
+        let count = self
+            .documents
+            .iter()
+            .filter_map(|entry| {
+                if let Some(ref ids) = doc_ids {
+                    if !ids.contains(entry.key()) {
+                        return None;
+                    }
+                }
+                let latest = Self::latest_versioned(entry.value())?;
+                if !include_deleted && latest.item.deleted {
+                    return None;
+                }
+                if let Some(created_by) = query.created_by.as_ref() {
+                    if latest.item.created_by.as_ref() != Some(created_by) {
+                        return None;
+                    }
+                }
+                if let Some(ref term) = search_term {
+                    let matches_title = latest.item.title.to_lowercase().contains(term);
+                    let matches_body = latest.item.body_markdown.to_lowercase().contains(term);
+                    let matches_path = latest
                         .item
                         .path
                         .as_deref()
-                        .map(|path| path.to_lowercase().contains(&search_term))
-                        .unwrap_or(false)
-            });
-        }
+                        .map(|p| p.to_lowercase().contains(term))
+                        .unwrap_or(false);
+                    if !matches_title && !matches_body && !matches_path {
+                        return None;
+                    }
+                }
+                Some(())
+            })
+            .count();
 
-        Ok(documents.len() as u64)
+        Ok(count as u64)
     }
 
     async fn get_documents_by_path(
@@ -6649,5 +6652,214 @@ mod tests {
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.prompt_path, "new/path");
         assert!(!fetched.deleted);
+    }
+
+    // --- count_* method tests ---
+
+    #[tokio::test]
+    async fn count_issues_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        // Create 5 issues: 3 open tasks, 1 open bug, 1 closed task
+        for _ in 0..3 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        }
+        let bug = Issue::new(
+            IssueType::Bug,
+            "Bug Title".to_string(),
+            "a bug".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(bug, &actor).await.unwrap();
+
+        let closed = Issue::new(
+            IssueType::Task,
+            "Closed".to_string(),
+            "closed task".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Closed,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(closed, &actor).await.unwrap();
+
+        // Count all issues
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
+
+        // Count only bugs
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            Some(metis_common::api::v1::issues::IssueType::Bug),
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+
+        // Count only closed
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn count_patches_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..3 {
+            store.add_patch(sample_patch(), &actor).await.unwrap();
+        }
+
+        let query =
+            metis_common::api::v1::patches::SearchPatchesQuery::new(None, None, Vec::new(), None);
+        assert_eq!(store.count_patches(&query).await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn count_documents_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        store
+            .add_document(sample_document(Some("docs/a.md"), None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document(Some("docs/b.md"), None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document(Some("other/c.md"), None), &actor)
+            .await
+            .unwrap();
+
+        // Count all
+        let query = metis_common::api::v1::documents::SearchDocumentsQuery::new(
+            None, None, None, None, None,
+        );
+        assert_eq!(store.count_documents(&query).await.unwrap(), 3);
+
+        // Count with path prefix filter
+        let query = metis_common::api::v1::documents::SearchDocumentsQuery::new(
+            Some("docs/".to_string()),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(store.count_documents(&query).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn count_tasks_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..4 {
+            store
+                .add_task(spawn_task(), Utc::now(), &actor)
+                .await
+                .unwrap();
+        }
+
+        let query = metis_common::api::v1::jobs::SearchJobsQuery::new(None, None, None, None);
+        assert_eq!(store.count_tasks(&query).await.unwrap(), 4);
+    }
+
+    #[tokio::test]
+    async fn count_labels_returns_total_matching() {
+        use crate::domain::labels::Label as DomainLabel;
+        use metis_common::Rgb;
+
+        let store = MemoryStore::new();
+        let default_color: Rgb = "#000000".parse().unwrap();
+
+        store
+            .add_label(DomainLabel::new(
+                "bug".to_string(),
+                default_color.clone(),
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+        store
+            .add_label(DomainLabel::new(
+                "feature".to_string(),
+                default_color.clone(),
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+        store
+            .add_label(DomainLabel::new(
+                "bugfix".to_string(),
+                default_color,
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+
+        // Count all
+        let query = metis_common::api::v1::labels::SearchLabelsQuery::default();
+        assert_eq!(store.count_labels(&query).await.unwrap(), 3);
+
+        // Count with search filter
+        let mut query = metis_common::api::v1::labels::SearchLabelsQuery::default();
+        query.q = Some("bug".to_string());
+        assert_eq!(store.count_labels(&query).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn count_issues_ignores_pagination() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..5 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Count should return 5 even when limit is set
+        let mut query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        query.limit = Some(2);
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
     }
 }

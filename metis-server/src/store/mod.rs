@@ -950,6 +950,7 @@ const PAGINATION_MAX_LIMIT: u32 = 200;
 ///
 /// The `timestamp_col` is the SQL column name used for the timestamp
 /// component of the cursor (e.g. `"created_at"` or `"updated_at"`).
+#[allow(dead_code)]
 pub(crate) fn apply_pagination_sql_pg(
     sql: &mut String,
     predicates: &mut Vec<String>,
