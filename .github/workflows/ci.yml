@@ -39,7 +39,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Lint with clippy
-        run: cargo clippy --workspace --all-targets --no-deps -- -D warnings
+        run: cargo clippy --workspace --all-targets --features enterprise --no-deps -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -79,7 +79,7 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Run tests
-        run: cargo nextest run --workspace --run-ignored all
+        run: cargo nextest run --workspace --features enterprise --run-ignored all
 
   ts-types:
     runs-on: ubuntu-latest

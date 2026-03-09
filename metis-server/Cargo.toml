@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+kubernetes = ["dep:kube", "dep:k8s-openapi"]
+enterprise = ["kubernetes"]
 test-utils = ["dep:httpmock", "dep:openssl"]
 vendored-openssl = [
     "git2/vendored-openssl",
@@ -18,8 +20,8 @@ async-trait = "0.1"
 axum = "0.7"
 base64 = "0.22"
 futures = "0.3"
-k8s-openapi = { version = "0.21.1", features = ["v1_29"] }
-kube = { version = "0.88.1", features = ["runtime"] }
+k8s-openapi = { version = "0.21.1", features = ["v1_29"], optional = true }
+kube = { version = "0.88.1", features = ["runtime"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 shellexpand = "3.1"
