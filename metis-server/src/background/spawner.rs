@@ -1,9 +1,9 @@
 #[cfg(test)]
+use crate::domain::actors::ActorId;
+#[cfg(test)]
 use crate::domain::issues::{IssueDependency, IssueType};
 #[cfg(test)]
 use crate::domain::users::Username;
-#[cfg(test)]
-use crate::domain::actors::ActorId;
 use crate::{
     app::AppState,
     domain::{
