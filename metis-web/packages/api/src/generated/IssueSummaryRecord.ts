@@ -2,6 +2,7 @@
 import type { ActorRef } from "./ActorRef";
 import type { IssueId } from "./IssueId";
 import type { IssueSummary } from "./IssueSummary";
+import type { JobStatusSummary } from "./JobStatusSummary";
 
 /**
  * Summary-level version record for issue list responses.
@@ -13,4 +14,5 @@ export type IssueSummaryRecord = {
   issue: IssueSummary;
   actor?: ActorRef | null;
   creation_time: string;
+  jobs_summary?: JobStatusSummary | null;
 };
