@@ -1,14 +1,14 @@
 use crate::{
     app::{AppState, ServiceState},
-    domain::secrets::SecretManager,
-    domain::users::Username,
-    store::MemoryStore,
+    domain::{actors::ActorRef, jobs::BundleSpec, secrets::SecretManager, users::Username},
+    store::{MemoryStore, Status, Task},
     test::{
         MockJobEngine, TestStateHandles, spawn_test_server_with_state, test_app_config,
         test_client, test_client_without_auth,
     },
 };
-use metis_common::api::v1::secrets::ListSecretsResponse;
+use chrono::Utc;
+use metis_common::api::v1::{self, secrets::ListSecretsResponse};
 use reqwest::StatusCode;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
@@ -602,4 +602,91 @@ async fn resolve_secrets_mixed_filter_only_listed_custom_secrets_appear() {
     assert_eq!(env_vars.get("ALLOWED_SECRET").unwrap(), "allowed-val");
     // Unlisted custom secret absent
     assert!(!env_vars.contains_key("BLOCKED_SECRET"));
+}
+
+// ---- End-to-end integration test: user secret appears in get_job_context ----
+
+#[tokio::test]
+async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
+    let handles = test_state_with_secrets_and_config();
+    let secret_manager = test_secret_manager();
+
+    let creator = Username::from(TEST_USERNAME);
+
+    // Store a user secret for CLAUDE_CODE_OAUTH_TOKEN
+    let encrypted = secret_manager.encrypt("user-oauth-token-value").unwrap();
+    handles
+        .store
+        .set_user_secret(&creator, "CLAUDE_CODE_OAUTH_TOKEN", &encrypted)
+        .await
+        .unwrap();
+
+    // Create a task owned by the test creator
+    let (job_id, _) = handles
+        .store
+        .add_task(
+            Task {
+                prompt: "test prompt".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                creator: creator.clone(),
+                image: Some("test-image:latest".to_string()),
+                model: None,
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+                secrets: None,
+                status: Status::Created,
+                last_message: None,
+                error: None,
+                deleted: false,
+                creation_time: None,
+                start_time: None,
+                end_time: None,
+            },
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+
+    let server = spawn_test_server_with_state(handles.state, handles.store.clone()).await?;
+    let client = test_client();
+
+    // Call get_job_context and verify secrets appear in variables
+    let response = client
+        .get(format!("{}/v1/jobs/{job_id}/context", server.base_url()))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: v1::jobs::WorkerContext = response.json().await?;
+
+    // User's CLAUDE_CODE_OAUTH_TOKEN should override (config has None for this key)
+    assert_eq!(
+        body.variables
+            .get("CLAUDE_CODE_OAUTH_TOKEN")
+            .map(String::as_str),
+        Some("user-oauth-token-value"),
+        "user secret should appear in get_job_context response"
+    );
+
+    // Config fallback keys should also be present
+    assert_eq!(
+        body.variables.get("OPENAI_API_KEY").map(String::as_str),
+        Some("global-openai-key"),
+        "config fallback should be used when no user secret exists"
+    );
+    assert_eq!(
+        body.variables.get("ANTHROPIC_API_KEY").map(String::as_str),
+        Some("global-anthropic-key"),
+        "config fallback should be used when no user secret exists"
+    );
+
+    // METIS_ID should also be set
+    assert_eq!(
+        body.variables.get("METIS_ID").map(String::as_str),
+        Some(job_id.as_ref())
+    );
+
+    Ok(())
 }
