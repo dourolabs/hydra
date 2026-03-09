@@ -16,7 +16,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
-use metis_common::api::v1::pagination::decode_cursor;
+use metis_common::api::v1::pagination::{MAX_LIMIT as PAGINATION_MAX_LIMIT, decode_cursor};
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -925,8 +925,6 @@ pub(crate) fn object_kind_from_id(id: &MetisId) -> Result<ObjectKind, StoreError
         )))
     }
 }
-
-const PAGINATION_MAX_LIMIT: u32 = 200;
 
 /// Appends cursor-based keyset pagination to a SQL query (PostgreSQL dialect).
 ///
