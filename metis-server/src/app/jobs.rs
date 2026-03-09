@@ -227,12 +227,19 @@ impl AppState {
         &self,
         creator: &Username,
         env_vars: &mut HashMap<String, String>,
+        secrets_filter: &Option<Vec<String>>,
     ) {
         use metis_common::constants::{
             ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
         };
 
-        // 1. Load ALL user secrets and inject them as env vars.
+        const AI_MODEL_KEYS: &[&str] = &[
+            ENV_OPENAI_API_KEY,
+            ENV_ANTHROPIC_API_KEY,
+            ENV_CLAUDE_CODE_OAUTH_TOKEN,
+        ];
+
+        // 1. Load user secrets and inject them as env vars, filtered by Task.secrets.
         let user_secret_names = match self.store.list_user_secret_names(creator).await {
             Ok(names) => names,
             Err(err) => {
@@ -246,6 +253,18 @@ impl AppState {
         };
 
         for secret_name in &user_secret_names {
+            // Always inject well-known AI model keys; only inject other secrets
+            // if they appear in the task's secrets filter.
+            let is_ai_key = AI_MODEL_KEYS.contains(&secret_name.as_str());
+            if !is_ai_key {
+                let allowed = secrets_filter
+                    .as_ref()
+                    .is_some_and(|filter| filter.contains(secret_name));
+                if !allowed {
+                    continue;
+                }
+            }
+
             match self.store.get_user_secret(creator, secret_name).await {
                 Ok(Some(encrypted)) => match self.secret_manager.decrypt(&encrypted) {
                     Ok(value) if !value.trim().is_empty() => {
@@ -306,7 +325,7 @@ impl AppState {
 
     pub async fn start_pending_task(&self, task_id: TaskId, actor: ActorRef) {
         let job_config = self.config.job.clone();
-        let (mut resolved, cpu_limit, memory_limit, creator) = {
+        let (mut resolved, cpu_limit, memory_limit, creator, secrets) = {
             let store = self.store.as_ref();
             match store.get_task(&task_id, false).await {
                 Ok(task) => match self.resolve_task(&task.item).await {
@@ -315,6 +334,7 @@ impl AppState {
                         task.item.cpu_limit.clone(),
                         task.item.memory_limit.clone(),
                         task.item.creator.clone(),
+                        task.item.secrets.clone(),
                     ),
                     Err(err) => {
                         warn!(
@@ -337,7 +357,7 @@ impl AppState {
         };
 
         // Resolve per-user secrets with global fallback and inject into env_vars.
-        self.resolve_secrets_into_env_vars(&creator, &mut resolved.env_vars)
+        self.resolve_secrets_into_env_vars(&creator, &mut resolved.env_vars, &secrets)
             .await;
 
         let cpu_limit = cpu_limit.unwrap_or_else(|| job_config.cpu_limit.clone());
