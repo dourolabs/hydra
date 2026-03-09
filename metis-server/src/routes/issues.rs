@@ -2,7 +2,7 @@ use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::issues::TodoItem;
 use crate::{
     app::{AppState, UpdateTodoListError, UpsertIssueError},
-    store::StoreError,
+    store::{StoreError, SubtreeRow},
 };
 use anyhow::anyhow;
 use axum::{
@@ -18,6 +18,7 @@ use metis_common::{
     },
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use tracing::{error, info};
 
 #[derive(Debug, Deserialize)]
@@ -340,6 +341,24 @@ pub async fn list_issues(
         |r| r.issue_id.as_ref(),
     );
 
+    // If include=subtree, fetch and attach subtrees
+    if query.include.subtree {
+        let root_ids: Vec<_> = filtered.iter().map(|r| r.issue_id.clone()).collect();
+        let subtree_rows = state.get_issue_subtrees(&root_ids).await.map_err(|err| {
+            error!(error = %err, "failed to fetch issue subtrees");
+            ApiError::internal(anyhow!("failed to fetch issue subtrees: {err}"))
+        })?;
+        let subtree_map = assemble_subtrees(&root_ids, subtree_rows);
+        for record in &mut filtered {
+            record.subtree = Some(
+                subtree_map
+                    .get(&record.issue_id)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
+    }
+
     let mut response = api_issues::ListIssuesResponse::new(filtered);
     response.next_cursor = next_cursor;
     info!(
@@ -589,4 +608,48 @@ pub async fn delete_issue(
         labels,
     );
     Ok(Json(response))
+}
+
+/// Assembles flat subtree rows into nested tree structures keyed by root issue ID.
+fn assemble_subtrees(
+    root_ids: &[IssueId],
+    rows: Vec<SubtreeRow>,
+) -> HashMap<IssueId, Vec<api_issues::SubtreeIssue>> {
+    // Build a map from parent_id -> list of children rows
+    let mut children_map: HashMap<IssueId, Vec<SubtreeRow>> = HashMap::new();
+    for row in rows {
+        children_map
+            .entry(row.parent_id.clone())
+            .or_default()
+            .push(row);
+    }
+
+    // Recursively build nested SubtreeIssue nodes
+    fn build_children(
+        parent_id: &IssueId,
+        children_map: &HashMap<IssueId, Vec<SubtreeRow>>,
+    ) -> Vec<api_issues::SubtreeIssue> {
+        let Some(children) = children_map.get(parent_id) else {
+            return Vec::new();
+        };
+        children
+            .iter()
+            .map(|row| {
+                api_issues::SubtreeIssue::new(
+                    row.issue_id.clone(),
+                    row.status,
+                    row.has_active_task,
+                    row.assignee.clone(),
+                    row.title.clone(),
+                    build_children(&row.issue_id, children_map),
+                )
+            })
+            .collect()
+    }
+
+    let mut result = HashMap::new();
+    for root_id in root_ids {
+        result.insert(root_id.clone(), build_children(root_id, &children_map));
+    }
+    result
 }

@@ -4,7 +4,7 @@ pub use crate::IssueId;
 use crate::{LabelId, PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
-use std::{fmt, str::FromStr};
+use std::{collections::HashSet, fmt, str::FromStr};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -634,6 +634,43 @@ impl UpsertIssueResponse {
     }
 }
 
+/// Represents the set of optional includes for the issues list endpoint.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IssueIncludes {
+    pub subtree: bool,
+}
+
+impl IssueIncludes {
+    pub fn has_any(&self) -> bool {
+        self.subtree
+    }
+}
+
+fn serialize_issue_includes<S>(includes: &IssueIncludes, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut parts = Vec::new();
+    if includes.subtree {
+        parts.push("subtree");
+    }
+    serializer.serialize_str(&parts.join(","))
+}
+
+fn deserialize_issue_includes<'de, D>(deserializer: D) -> Result<IssueIncludes, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(IssueIncludes::default());
+    }
+    let values: HashSet<&str> = s.split(',').map(|p| p.trim()).collect();
+    Ok(IssueIncludes {
+        subtree: values.contains("subtree"),
+    })
+}
+
 fn serialize_label_ids<S>(ids: &[LabelId], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -725,6 +762,14 @@ pub struct SearchIssuesQuery {
     /// Opaque cursor from a previous response's `next_cursor` field.
     #[serde(default)]
     pub cursor: Option<String>,
+    /// Comma-separated list of optional includes (e.g., "subtree").
+    #[serde(
+        default,
+        serialize_with = "serialize_issue_includes",
+        deserialize_with = "deserialize_issue_includes"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub include: IssueIncludes,
 }
 
 impl SearchIssuesQuery {
@@ -746,6 +791,7 @@ impl SearchIssuesQuery {
             label_ids: Vec::new(),
             limit: None,
             cursor: None,
+            include: IssueIncludes::default(),
         }
     }
 }
@@ -814,6 +860,42 @@ impl From<&Issue> for IssueSummary {
     }
 }
 
+/// A node in the issue subtree, representing a descendant issue with lightweight fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct SubtreeIssue {
+    pub issue_id: IssueId,
+    pub status: IssueStatus,
+    pub has_active_task: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub assignee: Option<String>,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<SubtreeIssue>,
+}
+
+impl SubtreeIssue {
+    pub fn new(
+        issue_id: IssueId,
+        status: IssueStatus,
+        has_active_task: bool,
+        assignee: Option<String>,
+        title: String,
+        children: Vec<SubtreeIssue>,
+    ) -> Self {
+        Self {
+            issue_id,
+            status,
+            has_active_task,
+            assignee,
+            title,
+            children,
+        }
+    }
+}
+
 /// Summary-level version record for issue list responses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -827,6 +909,8 @@ pub struct IssueSummaryRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
     pub creation_time: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtree: Option<Vec<SubtreeIssue>>,
 }
 
 impl IssueSummaryRecord {
@@ -848,6 +932,7 @@ impl IssueSummaryRecord {
             issue,
             actor,
             creation_time,
+            subtree: None,
         }
     }
 }
@@ -863,6 +948,7 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
             issue: summary,
             actor: record.actor.clone(),
             creation_time: record.creation_time,
+            subtree: None,
         }
     }
 }
@@ -962,6 +1048,7 @@ mod tests {
             label_ids: vec![],
             limit: None,
             cursor: None,
+            include: IssueIncludes::default(),
         };
 
         let params = serialize_query_params(&query)
@@ -987,6 +1074,7 @@ mod tests {
             label_ids: vec![],
             limit: None,
             cursor: None,
+            include: IssueIncludes::default(),
         };
 
         let params = serialize_query_params(&query)
@@ -1009,8 +1097,8 @@ mod tests {
         assert_eq!(params.get("labels").map(String::as_str), Some(""));
         assert_eq!(
             params.len(),
-            2,
-            "only the graph and labels keys should exist when no filters are provided"
+            3,
+            "only the graph, labels, and include keys should exist when no filters are provided"
         );
     }
 

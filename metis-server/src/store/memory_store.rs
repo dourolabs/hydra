@@ -606,6 +606,67 @@ impl ReadOnlyStore for MemoryStore {
         }
     }
 
+    async fn get_issue_subtrees(
+        &self,
+        root_ids: &[IssueId],
+    ) -> Result<Vec<super::SubtreeRow>, StoreError> {
+        let mut result = Vec::new();
+        // BFS traversal for each root
+        for root_id in root_ids {
+            let mut queue = std::collections::VecDeque::new();
+            queue.push_back(root_id.clone());
+
+            while let Some(parent_id) = queue.pop_front() {
+                let children = self
+                    .issue_children
+                    .get(&parent_id)
+                    .map(|entry| entry.value().clone())
+                    .unwrap_or_default();
+
+                for child_id in children {
+                    // Get latest version of child issue
+                    if let Some(versions) = self.issues.get(&child_id) {
+                        if let Some(latest) = Self::latest_versioned(versions.value()) {
+                            let status: metis_common::api::v1::issues::IssueStatus =
+                                latest.item.status.into();
+                            let has_active_task = self
+                                .issue_tasks
+                                .get(&child_id)
+                                .map(|task_ids| {
+                                    task_ids.value().iter().any(|tid| {
+                                        self.tasks
+                                            .get(tid)
+                                            .and_then(|versions| {
+                                                Self::latest_versioned(versions.value())
+                                            })
+                                            .is_some_and(|v| {
+                                                matches!(
+                                                    v.item.status,
+                                                    super::Status::Running | super::Status::Pending
+                                                )
+                                            })
+                                    })
+                                })
+                                .unwrap_or(false);
+
+                            result.push(super::SubtreeRow {
+                                issue_id: child_id.clone(),
+                                parent_id: parent_id.clone(),
+                                status,
+                                title: latest.item.title.clone(),
+                                assignee: latest.item.assignee.clone(),
+                                has_active_task,
+                            });
+
+                            queue.push_back(child_id);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         match self.issues.get(issue_id) {
             Some(_) => Ok(self

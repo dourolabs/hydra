@@ -151,6 +151,7 @@ mod ts_export {
         crate::issues::UpsertIssueResponse::export_all(&cfg).expect("UpsertIssueResponse");
         crate::issues::IssueSummary::export_all(&cfg).expect("IssueSummary");
         crate::issues::IssueSummaryRecord::export_all(&cfg).expect("IssueSummaryRecord");
+        crate::issues::SubtreeIssue::export_all(&cfg).expect("SubtreeIssue");
         crate::issues::SearchIssuesQuery::export_all(&cfg).expect("SearchIssuesQuery");
         crate::issues::ListIssuesResponse::export_all(&cfg).expect("ListIssuesResponse");
         crate::issues::ListIssueVersionsResponse::export_all(&cfg)
