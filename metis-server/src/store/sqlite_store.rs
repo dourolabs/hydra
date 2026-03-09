@@ -12,7 +12,6 @@ use crate::domain::{
     patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
     users::{User, Username},
 };
-use crate::store::apply_pagination_sql_sqlite;
 use crate::store::issue_graph::IssueGraphContext;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -20,6 +19,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
+use metis_common::api::v1::pagination::decode_cursor;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -4012,6 +4012,43 @@ impl Store for SqliteStore {
             .map_err(map_sqlx_error)?;
         Ok(())
     }
+}
+
+const PAGINATION_MAX_LIMIT: u32 = 200;
+
+/// Appends cursor-based keyset pagination to a SQL query (SQLite dialect).
+///
+/// Same as `apply_pagination_sql_pg` but uses `?` placeholders.
+fn apply_pagination_sql_sqlite(
+    sql: &mut String,
+    predicates: &mut Vec<String>,
+    bindings: &mut Vec<String>,
+    cursor: &Option<String>,
+    limit: Option<u32>,
+    timestamp_col: &str,
+    id_col: &str,
+) -> Result<Option<u32>, StoreError> {
+    if let Some(cursor_str) = cursor {
+        let decoded = decode_cursor(cursor_str)
+            .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
+        predicates.push(format!("({timestamp_col}, {id_col}) < (?, ?)"));
+        bindings.push(decoded.timestamp.to_rfc3339());
+        bindings.push(decoded.id);
+    }
+
+    if !predicates.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&predicates.join(" AND "));
+    }
+
+    sql.push_str(&format!(" ORDER BY {timestamp_col} DESC, {id_col} DESC"));
+
+    let effective_limit = limit.map(|l| l.min(PAGINATION_MAX_LIMIT));
+    if let Some(limit) = effective_limit {
+        sql.push_str(&format!(" LIMIT {}", limit + 1));
+    }
+
+    Ok(effective_limit)
 }
 
 #[cfg(test)]

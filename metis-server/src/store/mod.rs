@@ -16,7 +16,6 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
-use metis_common::api::v1::pagination::decode_cursor;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -924,124 +923,6 @@ pub(crate) fn object_kind_from_id(id: &MetisId) -> Result<ObjectKind, StoreError
             "unrecognized object id prefix: {s}"
         )))
     }
-}
-
-const PAGINATION_MAX_LIMIT: u32 = 200;
-
-/// Appends cursor-based keyset pagination to a SQL query (PostgreSQL dialect).
-///
-/// Adds the cursor WHERE predicate into `predicates`, and appends
-/// ORDER BY / LIMIT clauses to `sql`. Returns the effective limit if set.
-///
-/// The `timestamp_col` is the SQL column name used for the timestamp
-/// component of the cursor (e.g. `"created_at"` or `"updated_at"`).
-pub(crate) fn apply_pagination_sql_pg(
-    sql: &mut String,
-    predicates: &mut Vec<String>,
-    bindings: &mut Vec<String>,
-    cursor: &Option<String>,
-    limit: Option<u32>,
-    timestamp_col: &str,
-    id_col: &str,
-) -> Result<Option<u32>, StoreError> {
-    if let Some(cursor_str) = cursor {
-        let decoded = decode_cursor(cursor_str)
-            .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
-        let ts_idx = bindings.len() + 1;
-        let id_idx = bindings.len() + 2;
-        predicates.push(format!(
-            "({timestamp_col}, {id_col}) < (${ts_idx}::timestamptz, ${id_idx})"
-        ));
-        bindings.push(decoded.timestamp.to_rfc3339());
-        bindings.push(decoded.id);
-    }
-
-    if !predicates.is_empty() {
-        sql.push_str(" WHERE ");
-        sql.push_str(&predicates.join(" AND "));
-    }
-
-    sql.push_str(&format!(" ORDER BY {timestamp_col} DESC, {id_col} DESC"));
-
-    let effective_limit = limit.map(|l| l.min(PAGINATION_MAX_LIMIT));
-    if let Some(limit) = effective_limit {
-        sql.push_str(&format!(" LIMIT {}", limit + 1));
-    }
-
-    Ok(effective_limit)
-}
-
-/// Appends cursor-based keyset pagination to a SQL query (SQLite dialect).
-///
-/// Same as `apply_pagination_sql_pg` but uses `?` placeholders.
-pub(crate) fn apply_pagination_sql_sqlite(
-    sql: &mut String,
-    predicates: &mut Vec<String>,
-    bindings: &mut Vec<String>,
-    cursor: &Option<String>,
-    limit: Option<u32>,
-    timestamp_col: &str,
-    id_col: &str,
-) -> Result<Option<u32>, StoreError> {
-    if let Some(cursor_str) = cursor {
-        let decoded = decode_cursor(cursor_str)
-            .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
-        predicates.push(format!("({timestamp_col}, {id_col}) < (?, ?)"));
-        bindings.push(decoded.timestamp.to_rfc3339());
-        bindings.push(decoded.id);
-    }
-
-    if !predicates.is_empty() {
-        sql.push_str(" WHERE ");
-        sql.push_str(&predicates.join(" AND "));
-    }
-
-    sql.push_str(&format!(" ORDER BY {timestamp_col} DESC, {id_col} DESC"));
-
-    let effective_limit = limit.map(|l| l.min(PAGINATION_MAX_LIMIT));
-    if let Some(limit) = effective_limit {
-        sql.push_str(&format!(" LIMIT {}", limit + 1));
-    }
-
-    Ok(effective_limit)
-}
-
-/// Applies in-memory cursor-based pagination to a list of items.
-///
-/// Sorts by (timestamp DESC, id DESC), applies cursor filter, then limits results.
-/// Fetches limit+1 items so callers can detect whether a next page exists.
-pub(crate) fn apply_memory_pagination<T>(
-    mut items: Vec<T>,
-    get_timestamp: impl Fn(&T) -> DateTime<Utc>,
-    get_id: impl Fn(&T) -> &str,
-    cursor: &Option<String>,
-    limit: Option<u32>,
-) -> Result<Vec<T>, StoreError> {
-    // Sort by timestamp DESC, id DESC
-    items.sort_by(|a, b| {
-        get_timestamp(b)
-            .cmp(&get_timestamp(a))
-            .then_with(|| get_id(b).cmp(get_id(a)))
-    });
-
-    // Apply cursor filter (keep only items that come after cursor in DESC order)
-    if let Some(cursor_str) = cursor {
-        let decoded = decode_cursor(cursor_str)
-            .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
-        items.retain(|item| {
-            let ts = get_timestamp(item);
-            let id = get_id(item);
-            (ts, id) < (decoded.timestamp, decoded.id.as_str())
-        });
-    }
-
-    // Apply limit (take one extra for next_cursor detection)
-    if let Some(limit) = limit {
-        let effective = (limit.min(PAGINATION_MAX_LIMIT) + 1) as usize;
-        items.truncate(effective);
-    }
-
-    Ok(items)
 }
 
 pub use memory_store::MemoryStore;
