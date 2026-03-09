@@ -22,6 +22,8 @@ pub struct AppState {
     pub job_engine: Arc<dyn JobEngine>,
     pub(crate) policy_engine: Arc<crate::policy::PolicyEngine>,
     pub secret_manager: Arc<SecretManager>,
+    /// Auth token for the local user, set only in local auth mode.
+    pub(crate) local_auth_token: Option<String>,
 }
 
 impl AppState {
@@ -43,7 +45,13 @@ impl AppState {
             job_engine,
             policy_engine: Arc::new(policy_engine),
             secret_manager,
+            local_auth_token: None,
         }
+    }
+
+    /// Set the local auth token (used in local auth mode).
+    pub fn set_local_auth_token(&mut self, token: String) {
+        self.local_auth_token = Some(token);
     }
 
     /// Build the policy engine from config, or fall back to all built-in

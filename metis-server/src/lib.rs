@@ -60,6 +60,7 @@ pub async fn run_with_state(
     let public_routes = Router::new()
         .route("/health", get(health_check))
         .route("/v1/login", post(routes::login::login))
+        .route("/v1/local-auth", get(routes::local_auth::local_auth))
         .route(
             "/v1/github/app/client-id",
             get(routes::github::get_github_app_client_id),
@@ -244,10 +245,15 @@ pub async fn run_with_state(
             routes::auth::require_auth,
         ));
 
-    let app = Router::new()
-        .merge(public_routes)
-        .merge(protected_routes)
-        .with_state(state);
+    #[allow(unused_mut)]
+    let mut app = Router::new().merge(public_routes).merge(protected_routes);
+
+    #[cfg(feature = "bundled-frontend")]
+    {
+        app = app.merge(routes::frontend::router());
+    }
+
+    let app = app.with_state(state);
 
     let addr = listener.local_addr()?;
 
@@ -337,9 +343,11 @@ pub async fn run() -> anyhow::Result<()> {
     };
 
     // In local auth mode, create a default user actor.
-    if app_config.auth.is_local() {
-        setup_local_auth(&app_config, store.as_ref()).await?;
-    }
+    let local_auth_token = if app_config.auth.is_local() {
+        Some(setup_local_auth(&app_config, store.as_ref()).await?)
+    } else {
+        None
+    };
 
     // Create job engine based on configured backend
     let job_engine: Arc<dyn crate::job_engine::JobEngine> = match &app_config.job_engine {
@@ -383,7 +391,7 @@ pub async fn run() -> anyhow::Result<()> {
     );
     info!("secret encryption enabled");
 
-    let state = AppState::new(
+    let mut state = AppState::new(
         Arc::new(app_config),
         github_app,
         Arc::new(service_state),
@@ -391,6 +399,9 @@ pub async fn run() -> anyhow::Result<()> {
         job_engine,
         secret_manager,
     );
+    if let Some(token) = local_auth_token {
+        state.set_local_auth_token(token);
+    }
 
     // Ensure the 'inbox' label exists (recurse=false, hidden=true).
     state.ensure_inbox_label().await;
@@ -400,15 +411,18 @@ pub async fn run() -> anyhow::Result<()> {
     run_with_state(state, listener).await
 }
 
-/// Create a default user actor for local auth mode.
-pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
+/// Create a default user actor for local auth mode and return the auth token.
+pub(crate) async fn setup_local_auth(
+    config: &AppConfig,
+    store: &dyn Store,
+) -> anyhow::Result<String> {
     let username = Username::from(
         config
             .auth
             .local_username()
             .context("setup_local_auth called without local auth config")?,
     );
-    let (actor, _auth_token) = Actor::new_for_user(username.clone());
+    let (actor, auth_token) = Actor::new_for_user(username.clone());
     let system_actor = ActorRef::System {
         worker_name: "local-auth-setup".into(),
         on_behalf_of: None,
@@ -438,7 +452,7 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
     }
 
     info!("local auth configured");
-    Ok(())
+    Ok(auth_token)
 }
 
 async fn health_check() -> Json<serde_json::Value> {
