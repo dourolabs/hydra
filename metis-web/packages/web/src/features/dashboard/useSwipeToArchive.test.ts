@@ -100,6 +100,49 @@ describe("useSwipeToArchive", () => {
     expect(onArchive).not.toHaveBeenCalled();
   });
 
+  it("removes swipeSnapBack class after snap-back transition completes", () => {
+    const onArchive = vi.fn();
+    const ref = { current: el };
+
+    renderHook(() =>
+      useSwipeToArchive(ref, { onArchive, commitThreshold: 200 }),
+    );
+
+    touchStart(el, 200);
+    touchMove(el, 160);
+    touchEnd(el);
+
+    // swipeSnapBack should be present immediately after touch end
+    expect(el.classList.length).toBeGreaterThan(0);
+
+    // Fire transitionend to simulate animation completing
+    const transitionEvent = new Event("transitionend", { bubbles: true });
+    (transitionEvent as unknown as { propertyName: string }).propertyName = "transform";
+    el.dispatchEvent(transitionEvent);
+
+    // swipeSnapBack should be removed after transition
+    expect(el.className).toBe("");
+  });
+
+  it("removes swipeSnapBack class via fallback timeout when transitionend does not fire", () => {
+    const onArchive = vi.fn();
+    const ref = { current: el };
+
+    renderHook(() =>
+      useSwipeToArchive(ref, { onArchive, commitThreshold: 200 }),
+    );
+
+    touchStart(el, 200);
+    touchMove(el, 160);
+    touchEnd(el);
+
+    expect(el.classList.length).toBeGreaterThan(0);
+
+    vi.advanceTimersByTime(250);
+
+    expect(el.className).toBe("");
+  });
+
   it("does not call onArchive on unmount when no swipe was committed", () => {
     const onArchive = vi.fn();
     const ref = { current: el };

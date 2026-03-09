@@ -87,6 +87,26 @@ export function useSwipeToArchive(
       };
     } else {
       el.classList.add(styles.swipeSnapBack);
+
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        clearTimeout(snapBackTimeout);
+        el.removeEventListener("transitionend", onSnapBackEnd);
+        el.classList.remove(styles.swipeSnapBack);
+        cleanupRef.current = null;
+      };
+
+      const onSnapBackEnd = (e: TransitionEvent) => {
+        if (e.propertyName === "transform") {
+          cleanup();
+        }
+      };
+      el.addEventListener("transitionend", onSnapBackEnd);
+      const snapBackTimeout = setTimeout(cleanup, FALLBACK_TIMEOUT_MS);
+
+      cleanupRef.current = cleanup;
     }
   }, [ref, commitThreshold]);
 
