@@ -5926,6 +5926,225 @@ mod tests {
     // ---- Pagination integration tests ----
 
     #[tokio::test]
+    async fn issues_pagination_returns_correct_pages() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        // Create 5 issues with delays for distinct timestamps
+        for _ in 0..5 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Page 1: limit=2, store returns limit+1 items
+        let mut query = SearchIssuesQuery::default();
+        query.limit = Some(2);
+        let page1 = store.list_issues(&query).await.unwrap();
+        assert_eq!(page1.len(), 3);
+
+        let cursor = metis_common::api::v1::pagination::encode_cursor(
+            &page1[1].1.timestamp,
+            page1[1].0.as_ref(),
+        );
+
+        // Page 2: use cursor, limit=2
+        let mut query2 = SearchIssuesQuery::default();
+        query2.limit = Some(2);
+        query2.cursor = Some(cursor);
+        let page2 = store.list_issues(&query2).await.unwrap();
+        assert_eq!(page2.len(), 3);
+
+        let cursor2 = metis_common::api::v1::pagination::encode_cursor(
+            &page2[1].1.timestamp,
+            page2[1].0.as_ref(),
+        );
+
+        // Page 3: only 1 item remaining (no extra = last page)
+        let mut query3 = SearchIssuesQuery::default();
+        query3.limit = Some(2);
+        query3.cursor = Some(cursor2);
+        let page3 = store.list_issues(&query3).await.unwrap();
+        assert_eq!(page3.len(), 1);
+
+        // No overlap: collect all IDs across pages
+        let all_ids: Vec<_> = page1[..2]
+            .iter()
+            .chain(page2[..2].iter())
+            .chain(page3.iter())
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(all_ids.len(), 5);
+        let unique: HashSet<_> = all_ids.iter().collect();
+        assert_eq!(unique.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn issues_pagination_without_limit_returns_all() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..3 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        }
+
+        let results = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn patches_pagination_returns_correct_pages() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..5 {
+            store.add_patch(sample_patch(), &actor).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let mut query = SearchPatchesQuery::default();
+        query.limit = Some(2);
+        let page1 = store.list_patches(&query).await.unwrap();
+        assert_eq!(page1.len(), 3);
+
+        let cursor = metis_common::api::v1::pagination::encode_cursor(
+            &page1[1].1.timestamp,
+            page1[1].0.as_ref(),
+        );
+
+        let mut query2 = SearchPatchesQuery::default();
+        query2.limit = Some(2);
+        query2.cursor = Some(cursor);
+        let page2 = store.list_patches(&query2).await.unwrap();
+        assert_eq!(page2.len(), 3);
+
+        let cursor2 = metis_common::api::v1::pagination::encode_cursor(
+            &page2[1].1.timestamp,
+            page2[1].0.as_ref(),
+        );
+
+        let mut query3 = SearchPatchesQuery::default();
+        query3.limit = Some(2);
+        query3.cursor = Some(cursor2);
+        let page3 = store.list_patches(&query3).await.unwrap();
+        assert_eq!(page3.len(), 1);
+
+        let all_ids: Vec<_> = page1[..2]
+            .iter()
+            .chain(page2[..2].iter())
+            .chain(page3.iter())
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(all_ids.len(), 5);
+        let unique: HashSet<_> = all_ids.iter().collect();
+        assert_eq!(unique.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn documents_pagination_returns_correct_pages() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for i in 0..5 {
+            store
+                .add_document(sample_document(Some(&format!("doc_{i}.md")), None), &actor)
+                .await
+                .unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let mut query = SearchDocumentsQuery::default();
+        query.limit = Some(2);
+        let page1 = store.list_documents(&query).await.unwrap();
+        assert_eq!(page1.len(), 3);
+
+        let cursor = metis_common::api::v1::pagination::encode_cursor(
+            &page1[1].1.timestamp,
+            page1[1].0.as_ref(),
+        );
+
+        let mut query2 = SearchDocumentsQuery::default();
+        query2.limit = Some(2);
+        query2.cursor = Some(cursor);
+        let page2 = store.list_documents(&query2).await.unwrap();
+        assert_eq!(page2.len(), 3);
+
+        let cursor2 = metis_common::api::v1::pagination::encode_cursor(
+            &page2[1].1.timestamp,
+            page2[1].0.as_ref(),
+        );
+
+        let mut query3 = SearchDocumentsQuery::default();
+        query3.limit = Some(2);
+        query3.cursor = Some(cursor2);
+        let page3 = store.list_documents(&query3).await.unwrap();
+        assert_eq!(page3.len(), 1);
+
+        let all_ids: Vec<_> = page1[..2]
+            .iter()
+            .chain(page2[..2].iter())
+            .chain(page3.iter())
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(all_ids.len(), 5);
+        let unique: HashSet<_> = all_ids.iter().collect();
+        assert_eq!(unique.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn jobs_pagination_returns_correct_pages() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..5 {
+            store
+                .add_task(spawn_task(), Utc::now(), &actor)
+                .await
+                .unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let mut query = SearchJobsQuery::default();
+        query.limit = Some(2);
+        let page1 = store.list_tasks(&query).await.unwrap();
+        assert_eq!(page1.len(), 3);
+
+        let cursor = metis_common::api::v1::pagination::encode_cursor(
+            &page1[1].1.timestamp,
+            page1[1].0.as_ref(),
+        );
+
+        let mut query2 = SearchJobsQuery::default();
+        query2.limit = Some(2);
+        query2.cursor = Some(cursor);
+        let page2 = store.list_tasks(&query2).await.unwrap();
+        assert_eq!(page2.len(), 3);
+
+        let cursor2 = metis_common::api::v1::pagination::encode_cursor(
+            &page2[1].1.timestamp,
+            page2[1].0.as_ref(),
+        );
+
+        let mut query3 = SearchJobsQuery::default();
+        query3.limit = Some(2);
+        query3.cursor = Some(cursor2);
+        let page3 = store.list_tasks(&query3).await.unwrap();
+        assert_eq!(page3.len(), 1);
+
+        let all_ids: Vec<_> = page1[..2]
+            .iter()
+            .chain(page2[..2].iter())
+            .chain(page3.iter())
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(all_ids.len(), 5);
+        let unique: HashSet<_> = all_ids.iter().collect();
+        assert_eq!(unique.len(), 5);
+    }
+
+    #[tokio::test]
     async fn labels_pagination_returns_correct_pages() {
         let store = MemoryStore::new();
 

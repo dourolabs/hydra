@@ -7,4 +7,8 @@ export type SearchDocumentsQuery = {
   path_is_exact: boolean | null;
   created_by: TaskId | null;
   include_deleted: boolean | null;
+  /** Maximum number of results to return. When omitted, all results are returned. */
+  limit: number | null;
+  /** Opaque cursor from a previous response's `next_cursor` field. */
+  cursor: string | null;
 };
