@@ -269,7 +269,7 @@ impl ReadOnlyStore for FailingStore {
         &self,
         _source_id: Option<&MetisId>,
         _target_id: Option<&MetisId>,
-        _rel_type: Option<&str>,
+        _rel_type: Option<crate::store::RelationshipType>,
     ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
         fail()
     }
@@ -523,7 +523,7 @@ impl Store for FailingStore {
         &self,
         _source_id: &MetisId,
         _target_id: &MetisId,
-        _rel_type: &str,
+        _rel_type: crate::store::RelationshipType,
     ) -> Result<bool, StoreError> {
         fail()
     }
@@ -532,7 +532,7 @@ impl Store for FailingStore {
         &self,
         _source_id: &MetisId,
         _target_id: &MetisId,
-        _rel_type: &str,
+        _rel_type: crate::store::RelationshipType,
     ) -> Result<bool, StoreError> {
         fail()
     }

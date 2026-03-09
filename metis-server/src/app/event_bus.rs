@@ -1440,7 +1440,7 @@ impl ReadOnlyStore for StoreWithEvents {
         &self,
         source_id: Option<&MetisId>,
         target_id: Option<&MetisId>,
-        rel_type: Option<&str>,
+        rel_type: Option<crate::store::RelationshipType>,
     ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
         self.inner
             .get_relationships(source_id, target_id, rel_type)

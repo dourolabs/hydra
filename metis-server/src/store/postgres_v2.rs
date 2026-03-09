@@ -300,12 +300,13 @@ impl PostgresStoreV2 {
              ON CONFLICT (source_id, rel_type, target_id) DO NOTHING"
         );
         for dep in &issue.dependencies {
+            let rel_type = super::RelationshipType::from(dep.dependency_type);
             sqlx::query(&insert_sql)
                 .bind(issue_id.as_ref())
-                .bind("issue")
+                .bind(super::ObjectKind::Issue.as_str())
                 .bind(dep.issue_id.as_ref())
-                .bind("issue")
-                .bind(dep.dependency_type.as_str())
+                .bind(super::ObjectKind::Issue.as_str())
+                .bind(rel_type.as_str())
                 .execute(&mut **tx)
                 .await
                 .map_err(map_sqlx_error)?;
@@ -315,10 +316,10 @@ impl PostgresStoreV2 {
         for patch_id in &issue.patches {
             sqlx::query(&insert_sql)
                 .bind(issue_id.as_ref())
-                .bind("issue")
+                .bind(super::ObjectKind::Issue.as_str())
                 .bind(patch_id.as_ref())
-                .bind("patch")
-                .bind("has-patch")
+                .bind(super::ObjectKind::Patch.as_str())
+                .bind(super::RelationshipType::HasPatch.as_str())
                 .execute(&mut **tx)
                 .await
                 .map_err(map_sqlx_error)?;
@@ -2955,7 +2956,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         source_id: Option<&MetisId>,
         target_id: Option<&MetisId>,
-        rel_type: Option<&str>,
+        rel_type: Option<super::RelationshipType>,
     ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
         let mut conditions = Vec::new();
         let mut bind_index = 1u32;
@@ -2992,7 +2993,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             query = query.bind(id.as_ref());
         }
         if let Some(rt) = rel_type {
-            query = query.bind(rt);
+            query = query.bind(rt.as_str());
         }
 
         let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
@@ -3004,12 +3005,21 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let target_id: MetisId = r.target_id.parse().map_err(|_| {
                 StoreError::Internal("invalid target_id in object_relationships".to_string())
             })?;
+            let source_kind = super::ObjectKind::from_str(&r.source_kind).map_err(|e| {
+                StoreError::Internal(format!("invalid source_kind in object_relationships: {e}"))
+            })?;
+            let target_kind = super::ObjectKind::from_str(&r.target_kind).map_err(|e| {
+                StoreError::Internal(format!("invalid target_kind in object_relationships: {e}"))
+            })?;
+            let rel_type = super::RelationshipType::from_str(&r.rel_type).map_err(|e| {
+                StoreError::Internal(format!("invalid rel_type in object_relationships: {e}"))
+            })?;
             result.push(super::ObjectRelationship {
                 source_id,
-                source_kind: r.source_kind,
+                source_kind,
                 target_id,
-                target_kind: r.target_kind,
-                rel_type: r.rel_type,
+                target_kind,
+                rel_type,
             });
         }
         Ok(result)
@@ -3845,7 +3855,7 @@ impl Store for PostgresStoreV2 {
         let result = sqlx::query(&sql)
             .bind(label_id.as_ref())
             .bind(object_id.as_ref())
-            .bind(object_kind)
+            .bind(object_kind.as_str())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -3875,7 +3885,7 @@ impl Store for PostgresStoreV2 {
         &self,
         source_id: &MetisId,
         target_id: &MetisId,
-        rel_type: &str,
+        rel_type: super::RelationshipType,
     ) -> Result<bool, StoreError> {
         let source_kind = super::object_kind_from_id(source_id)?;
         let target_kind = super::object_kind_from_id(target_id)?;
@@ -3887,10 +3897,10 @@ impl Store for PostgresStoreV2 {
         );
         let result = sqlx::query(&sql)
             .bind(source_id.as_ref())
-            .bind(source_kind)
+            .bind(source_kind.as_str())
             .bind(target_id.as_ref())
-            .bind(target_kind)
-            .bind(rel_type)
+            .bind(target_kind.as_str())
+            .bind(rel_type.as_str())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -3901,7 +3911,7 @@ impl Store for PostgresStoreV2 {
         &self,
         source_id: &MetisId,
         target_id: &MetisId,
-        rel_type: &str,
+        rel_type: super::RelationshipType,
     ) -> Result<bool, StoreError> {
         let sql = format!(
             "DELETE FROM {TABLE_OBJECT_RELATIONSHIPS} \
@@ -3910,7 +3920,7 @@ impl Store for PostgresStoreV2 {
         let result = sqlx::query(&sql)
             .bind(source_id.as_ref())
             .bind(target_id.as_ref())
-            .bind(rel_type)
+            .bind(rel_type.as_str())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -6099,9 +6109,11 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn object_relationship_round_trip_v2(pool: PgStorePool) {
+        use crate::store::{ObjectKind, RelationshipType};
+
         let store = PostgresStoreV2::new(pool);
 
-        // Create two issues to use as relationship endpoints.
+        // Create three issues to use as relationship endpoints.
         let (issue_a, _) = store
             .add_issue(sample_issue(vec![]), &ActorRef::test())
             .await
@@ -6121,26 +6133,26 @@ mod tests {
 
         // ADD — create relationships
         let created = store
-            .add_relationship(&id_a, &id_b, "child-of")
+            .add_relationship(&id_a, &id_b, RelationshipType::ChildOf)
             .await
             .unwrap();
         assert!(created, "first insert should return true");
 
         let created = store
-            .add_relationship(&id_a, &id_c, "blocked-by")
+            .add_relationship(&id_a, &id_c, RelationshipType::BlockedOn)
             .await
             .unwrap();
         assert!(created);
 
         let created = store
-            .add_relationship(&id_b, &id_c, "child-of")
+            .add_relationship(&id_b, &id_c, RelationshipType::ChildOf)
             .await
             .unwrap();
         assert!(created);
 
         // ADD duplicate — should return false (ON CONFLICT DO NOTHING)
         let created = store
-            .add_relationship(&id_a, &id_b, "child-of")
+            .add_relationship(&id_a, &id_b, RelationshipType::ChildOf)
             .await
             .unwrap();
         assert!(!created, "duplicate insert should return false");
@@ -6153,11 +6165,11 @@ mod tests {
         assert_eq!(rels.len(), 2);
         assert!(
             rels.iter()
-                .any(|r| r.target_id == id_b && r.rel_type == "child-of")
+                .any(|r| r.target_id == id_b && r.rel_type == RelationshipType::ChildOf)
         );
         assert!(
             rels.iter()
-                .any(|r| r.target_id == id_c && r.rel_type == "blocked-by")
+                .any(|r| r.target_id == id_c && r.rel_type == RelationshipType::BlockedOn)
         );
 
         // GET — filter by target_id
@@ -6171,14 +6183,14 @@ mod tests {
 
         // GET — filter by rel_type
         let rels = store
-            .get_relationships(None, None, Some("child-of"))
+            .get_relationships(None, None, Some(RelationshipType::ChildOf))
             .await
             .unwrap();
         assert_eq!(rels.len(), 2);
 
         // GET — filter by source_id + rel_type
         let rels = store
-            .get_relationships(Some(&id_a), None, Some("child-of"))
+            .get_relationships(Some(&id_a), None, Some(RelationshipType::ChildOf))
             .await
             .unwrap();
         assert_eq!(rels.len(), 1);
@@ -6186,26 +6198,26 @@ mod tests {
 
         // GET — filter by source_id + target_id + rel_type (exact match)
         let rels = store
-            .get_relationships(Some(&id_a), Some(&id_b), Some("child-of"))
+            .get_relationships(Some(&id_a), Some(&id_b), Some(RelationshipType::ChildOf))
             .await
             .unwrap();
         assert_eq!(rels.len(), 1);
         assert_eq!(rels[0].source_id, id_a);
         assert_eq!(rels[0].target_id, id_b);
-        assert_eq!(rels[0].rel_type, "child-of");
-        assert_eq!(rels[0].source_kind, "issue");
-        assert_eq!(rels[0].target_kind, "issue");
+        assert_eq!(rels[0].rel_type, RelationshipType::ChildOf);
+        assert_eq!(rels[0].source_kind, ObjectKind::Issue);
+        assert_eq!(rels[0].target_kind, ObjectKind::Issue);
 
         // REMOVE — delete one relationship
         let removed = store
-            .remove_relationship(&id_a, &id_b, "child-of")
+            .remove_relationship(&id_a, &id_b, RelationshipType::ChildOf)
             .await
             .unwrap();
         assert!(removed, "removing existing relationship should return true");
 
         // REMOVE again — should return false
         let removed = store
-            .remove_relationship(&id_a, &id_b, "child-of")
+            .remove_relationship(&id_a, &id_b, RelationshipType::ChildOf)
             .await
             .unwrap();
         assert!(
@@ -6213,21 +6225,21 @@ mod tests {
             "removing non-existent relationship should return false"
         );
 
-        // GET after remove — only two relationships remain
+        // GET after remove — only one relationship remains for id_a
         let rels = store
             .get_relationships(Some(&id_a), None, None)
             .await
             .unwrap();
         assert_eq!(rels.len(), 1);
-        assert_eq!(rels[0].rel_type, "blocked-by");
+        assert_eq!(rels[0].rel_type, RelationshipType::BlockedOn);
 
         // REMOVE remaining relationships
         store
-            .remove_relationship(&id_a, &id_c, "blocked-by")
+            .remove_relationship(&id_a, &id_c, RelationshipType::BlockedOn)
             .await
             .unwrap();
         store
-            .remove_relationship(&id_b, &id_c, "child-of")
+            .remove_relationship(&id_b, &id_c, RelationshipType::ChildOf)
             .await
             .unwrap();
 

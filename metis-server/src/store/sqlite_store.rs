@@ -600,16 +600,17 @@ impl SqliteStore {
 
         // Insert dependency relationships
         for dep in &issue.dependencies {
+            let rel_type = super::RelationshipType::from(dep.dependency_type);
             sqlx::query(
                 "INSERT OR IGNORE INTO object_relationships \
                  (source_id, source_kind, target_id, target_kind, rel_type) \
                  VALUES (?1, ?2, ?3, ?4, ?5)",
             )
             .bind(issue_id.as_ref())
-            .bind("issue")
+            .bind(super::ObjectKind::Issue.as_str())
             .bind(dep.issue_id.as_ref())
-            .bind("issue")
-            .bind(dep.dependency_type.as_str())
+            .bind(super::ObjectKind::Issue.as_str())
+            .bind(rel_type.as_str())
             .execute(&mut **tx)
             .await
             .map_err(map_sqlx_error)?;
@@ -623,10 +624,10 @@ impl SqliteStore {
                  VALUES (?1, ?2, ?3, ?4, ?5)",
             )
             .bind(issue_id.as_ref())
-            .bind("issue")
+            .bind(super::ObjectKind::Issue.as_str())
             .bind(patch_id.as_ref())
-            .bind("patch")
-            .bind("has-patch")
+            .bind(super::ObjectKind::Patch.as_str())
+            .bind(super::RelationshipType::HasPatch.as_str())
             .execute(&mut **tx)
             .await
             .map_err(map_sqlx_error)?;
@@ -2848,7 +2849,7 @@ impl ReadOnlyStore for SqliteStore {
         &self,
         source_id: Option<&MetisId>,
         target_id: Option<&MetisId>,
-        rel_type: Option<&str>,
+        rel_type: Option<super::RelationshipType>,
     ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
         let mut conditions = Vec::new();
         let mut bind_index = 1u32;
@@ -2885,7 +2886,7 @@ impl ReadOnlyStore for SqliteStore {
             query = query.bind(id.as_ref());
         }
         if let Some(rt) = rel_type {
-            query = query.bind(rt);
+            query = query.bind(rt.as_str());
         }
 
         let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
@@ -2897,12 +2898,21 @@ impl ReadOnlyStore for SqliteStore {
             let target_id: MetisId = r.target_id.parse().map_err(|_| {
                 StoreError::Internal("invalid target_id in object_relationships".to_string())
             })?;
+            let source_kind = super::ObjectKind::from_str(&r.source_kind).map_err(|e| {
+                StoreError::Internal(format!("invalid source_kind in object_relationships: {e}"))
+            })?;
+            let target_kind = super::ObjectKind::from_str(&r.target_kind).map_err(|e| {
+                StoreError::Internal(format!("invalid target_kind in object_relationships: {e}"))
+            })?;
+            let rel_type = super::RelationshipType::from_str(&r.rel_type).map_err(|e| {
+                StoreError::Internal(format!("invalid rel_type in object_relationships: {e}"))
+            })?;
             result.push(super::ObjectRelationship {
                 source_id,
-                source_kind: r.source_kind,
+                source_kind,
                 target_id,
-                target_kind: r.target_kind,
-                rel_type: r.rel_type,
+                target_kind,
+                rel_type,
             });
         }
         Ok(result)
@@ -3628,7 +3638,7 @@ impl Store for SqliteStore {
         let result = sqlx::query(&sql)
             .bind(label_id.as_ref())
             .bind(object_id.as_ref())
-            .bind(object_kind)
+            .bind(object_kind.as_str())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -3658,7 +3668,7 @@ impl Store for SqliteStore {
         &self,
         source_id: &MetisId,
         target_id: &MetisId,
-        rel_type: &str,
+        rel_type: super::RelationshipType,
     ) -> Result<bool, StoreError> {
         let source_kind = super::object_kind_from_id(source_id)?;
         let target_kind = super::object_kind_from_id(target_id)?;
@@ -3669,10 +3679,10 @@ impl Store for SqliteStore {
         );
         let result = sqlx::query(&sql)
             .bind(source_id.as_ref())
-            .bind(source_kind)
+            .bind(source_kind.as_str())
             .bind(target_id.as_ref())
-            .bind(target_kind)
-            .bind(rel_type)
+            .bind(target_kind.as_str())
+            .bind(rel_type.as_str())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -3683,7 +3693,7 @@ impl Store for SqliteStore {
         &self,
         source_id: &MetisId,
         target_id: &MetisId,
-        rel_type: &str,
+        rel_type: super::RelationshipType,
     ) -> Result<bool, StoreError> {
         let sql = format!(
             "DELETE FROM {TABLE_OBJECT_RELATIONSHIPS} \
@@ -3692,7 +3702,7 @@ impl Store for SqliteStore {
         let result = sqlx::query(&sql)
             .bind(source_id.as_ref())
             .bind(target_id.as_ref())
-            .bind(rel_type)
+            .bind(rel_type.as_str())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;

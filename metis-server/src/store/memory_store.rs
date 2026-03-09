@@ -76,7 +76,8 @@ pub struct MemoryStore {
     /// Maps (username, secret_name) to encrypted secret value
     user_secrets: DashMap<(Username, String), Vec<u8>>,
     /// Stores object relationships as (source_id, rel_type, target_id) -> ObjectRelationship
-    object_relationships: DashMap<(MetisId, String, MetisId), super::ObjectRelationship>,
+    object_relationships:
+        DashMap<(MetisId, super::RelationshipType, MetisId), super::ObjectRelationship>,
 }
 
 impl MemoryStore {
@@ -277,15 +278,15 @@ impl MemoryStore {
         // Insert dependency relationships
         for dep in &issue.dependencies {
             let target_id = MetisId::from(dep.issue_id.clone());
-            let rel_type = dep.dependency_type.as_str().to_string();
-            let key = (source_id.clone(), rel_type.clone(), target_id.clone());
+            let rel_type = super::RelationshipType::from(dep.dependency_type);
+            let key = (source_id.clone(), rel_type, target_id.clone());
             self.object_relationships.insert(
                 key,
                 super::ObjectRelationship {
                     source_id: source_id.clone(),
-                    source_kind: "issue".to_string(),
+                    source_kind: super::ObjectKind::Issue,
                     target_id,
-                    target_kind: "issue".to_string(),
+                    target_kind: super::ObjectKind::Issue,
                     rel_type,
                 },
             );
@@ -294,15 +295,15 @@ impl MemoryStore {
         // Insert patch relationships
         for patch_id in &issue.patches {
             let target_id = MetisId::from(patch_id.clone());
-            let rel_type = "has-patch".to_string();
-            let key = (source_id.clone(), rel_type.clone(), target_id.clone());
+            let rel_type = super::RelationshipType::HasPatch;
+            let key = (source_id.clone(), rel_type, target_id.clone());
             self.object_relationships.insert(
                 key,
                 super::ObjectRelationship {
                     source_id: source_id.clone(),
-                    source_kind: "issue".to_string(),
+                    source_kind: super::ObjectKind::Issue,
                     target_id,
-                    target_kind: "patch".to_string(),
+                    target_kind: super::ObjectKind::Patch,
                     rel_type,
                 },
             );
@@ -1258,7 +1259,7 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         source_id: Option<&MetisId>,
         target_id: Option<&MetisId>,
-        rel_type: Option<&str>,
+        rel_type: Option<super::RelationshipType>,
     ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
         let results: Vec<super::ObjectRelationship> = self
             .object_relationships
@@ -1884,11 +1885,11 @@ impl Store for MemoryStore {
         &self,
         source_id: &MetisId,
         target_id: &MetisId,
-        rel_type: &str,
+        rel_type: super::RelationshipType,
     ) -> Result<bool, StoreError> {
-        let source_kind = super::object_kind_from_id(source_id)?.to_string();
-        let target_kind = super::object_kind_from_id(target_id)?.to_string();
-        let key = (source_id.clone(), rel_type.to_string(), target_id.clone());
+        let source_kind = super::object_kind_from_id(source_id)?;
+        let target_kind = super::object_kind_from_id(target_id)?;
+        let key = (source_id.clone(), rel_type, target_id.clone());
         if self.object_relationships.contains_key(&key) {
             return Ok(false);
         }
@@ -1899,7 +1900,7 @@ impl Store for MemoryStore {
                 source_kind,
                 target_id: target_id.clone(),
                 target_kind,
-                rel_type: rel_type.to_string(),
+                rel_type,
             },
         );
         Ok(true)
@@ -1909,9 +1910,9 @@ impl Store for MemoryStore {
         &self,
         source_id: &MetisId,
         target_id: &MetisId,
-        rel_type: &str,
+        rel_type: super::RelationshipType,
     ) -> Result<bool, StoreError> {
-        let key = (source_id.clone(), rel_type.to_string(), target_id.clone());
+        let key = (source_id.clone(), rel_type, target_id.clone());
         Ok(self.object_relationships.remove(&key).is_some())
     }
 
