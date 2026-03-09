@@ -121,8 +121,6 @@ struct IssueRow {
     assignee: Option<String>,
     job_settings: String,
     todo_list: String,
-    dependencies: String,
-    patches: String,
     deleted: bool,
     actor: Option<String>,
     created_at: String,
@@ -553,14 +551,10 @@ impl SqliteStore {
             .map_err(|e| StoreError::Internal(format!("failed to serialize job_settings: {e}")))?;
         let todo_list_json = serde_json::to_string(&issue.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
-        let dependencies_json = serde_json::to_string(&issue.dependencies)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize dependencies: {e}")))?;
-        let patches_json = serde_json::to_string(&issue.patches)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize patches: {e}")))?;
 
         sqlx::query(
-            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
+            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"
         )
         .bind(id.as_ref())
         .bind(version_number)
@@ -573,8 +567,6 @@ impl SqliteStore {
         .bind(issue.assignee.as_deref())
         .bind(&job_settings_json)
         .bind(&todo_list_json)
-        .bind(&dependencies_json)
-        .bind(&patches_json)
         .bind(issue.deleted)
         .bind(actor)
         .execute(executor)
@@ -1029,12 +1021,6 @@ impl SqliteStore {
         })?;
         let todo_list: Vec<TodoItem> = serde_json::from_str(&row.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize todo_list: {e}")))?;
-        let dependencies: Vec<IssueDependency> =
-            serde_json::from_str(&row.dependencies).map_err(|e| {
-                StoreError::Internal(format!("failed to deserialize dependencies: {e}"))
-            })?;
-        let patches: Vec<PatchId> = serde_json::from_str(&row.patches)
-            .map_err(|e| StoreError::Internal(format!("failed to deserialize patches: {e}")))?;
 
         Ok(Issue {
             issue_type,
@@ -1046,8 +1032,8 @@ impl SqliteStore {
             assignee: row.assignee.clone(),
             job_settings,
             todo_list,
-            dependencies,
-            patches,
+            dependencies: Vec::new(),
+            patches: Vec::new(),
             deleted: row.deleted,
         })
     }
@@ -1529,7 +1515,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let row = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
@@ -1575,7 +1561,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let rows = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, NULL AS creation_time
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, NULL AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
              ORDER BY version_number"
@@ -1622,7 +1608,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         // SQLite doesn't have DISTINCT ON; use a subquery with MAX(version_number) instead
         let subquery = format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.dependencies, i.patches, i.deleted, i.actor, i.created_at, i.updated_at,
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, i.created_at, i.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time
              FROM {TABLE_ISSUES_V2} i
              INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_ISSUES_V2} GROUP BY id) latest

@@ -47,14 +47,8 @@ pub struct MemoryStore {
     documents: DashMap<DocumentId, Vec<Versioned<Document>>>,
     /// Maps repository names to their configurations
     repositories: DashMap<RepoName, Vec<Versioned<Repository>>>,
-    /// Maps parent issue IDs to their child issue IDs declared via child-of dependencies
-    issue_children: DashMap<IssueId, Vec<IssueId>>,
-    /// Maps blocking issue IDs to the issues that are blocked on them
-    issue_blocked_on: DashMap<IssueId, Vec<IssueId>>,
     /// Maps issue IDs to tasks spawned from them
     issue_tasks: DashMap<IssueId, Vec<TaskId>>,
-    /// Maps patch IDs to the issues that reference them
-    patch_issues: DashMap<PatchId, Vec<IssueId>>,
     /// Maps document paths to the document IDs that live under them
     documents_by_path: DashMap<String, HashSet<DocumentId>>,
     /// Maps usernames to their User data
@@ -89,10 +83,7 @@ impl MemoryStore {
             patches: DashMap::new(),
             documents: DashMap::new(),
             repositories: DashMap::new(),
-            issue_children: DashMap::new(),
-            issue_blocked_on: DashMap::new(),
             issue_tasks: DashMap::new(),
-            patch_issues: DashMap::new(),
             documents_by_path: DashMap::new(),
             users: DashMap::new(),
             actors: DashMap::new(),
@@ -180,84 +171,6 @@ impl MemoryStore {
                             .unwrap_or(false)
                 })
                 .unwrap_or(false)
-    }
-
-    /// Updates issue adjacency indexes to match the provided dependency list.
-    fn apply_issue_dependency_delta(
-        &self,
-        issue_id: &IssueId,
-        previous: &[IssueDependency],
-        updated: &[IssueDependency],
-    ) {
-        for dependency in previous {
-            match dependency.dependency_type {
-                IssueDependencyType::ChildOf => {
-                    if let Some(mut children) = self.issue_children.get_mut(&dependency.issue_id) {
-                        children.retain(|child_id| child_id != issue_id);
-                        if children.is_empty() {
-                            drop(children);
-                            self.issue_children.remove(&dependency.issue_id);
-                        }
-                    }
-                }
-                IssueDependencyType::BlockedOn => {
-                    if let Some(mut blocked) = self.issue_blocked_on.get_mut(&dependency.issue_id) {
-                        blocked.retain(|blocked_id| blocked_id != issue_id);
-                        if blocked.is_empty() {
-                            drop(blocked);
-                            self.issue_blocked_on.remove(&dependency.issue_id);
-                        }
-                    }
-                }
-            }
-        }
-
-        for dependency in updated {
-            match dependency.dependency_type {
-                IssueDependencyType::ChildOf => {
-                    let mut children = self
-                        .issue_children
-                        .entry(dependency.issue_id.clone())
-                        .or_default();
-                    if !children.contains(issue_id) {
-                        children.push(issue_id.clone());
-                    }
-                }
-                IssueDependencyType::BlockedOn => {
-                    let mut blocked = self
-                        .issue_blocked_on
-                        .entry(dependency.issue_id.clone())
-                        .or_default();
-                    if !blocked.contains(issue_id) {
-                        blocked.push(issue_id.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    fn apply_issue_patch_delta(
-        &self,
-        issue_id: &IssueId,
-        previous: &[PatchId],
-        updated: &[PatchId],
-    ) {
-        for patch_id in previous {
-            if let Some(mut issues) = self.patch_issues.get_mut(patch_id) {
-                issues.retain(|existing| existing != issue_id);
-                if issues.is_empty() {
-                    drop(issues);
-                    self.patch_issues.remove(patch_id);
-                }
-            }
-        }
-
-        for patch_id in updated {
-            let mut issues = self.patch_issues.entry(patch_id.clone()).or_default();
-            if !issues.contains(issue_id) {
-                issues.push(issue_id.clone());
-            }
-        }
     }
 
     /// Syncs the object_relationships store for the given issue (delete old + insert new).
@@ -543,36 +456,42 @@ impl ReadOnlyStore for MemoryStore {
             return Ok(HashSet::new());
         }
 
-        let mut forward = HashMap::new();
-        forward.insert(
-            IssueDependencyType::ChildOf,
-            self.issue_children
-                .iter()
-                .map(|entry| (entry.key().clone(), entry.value().clone()))
-                .collect(),
-        );
-        forward.insert(
-            IssueDependencyType::BlockedOn,
-            self.issue_blocked_on
-                .iter()
-                .map(|entry| (entry.key().clone(), entry.value().clone()))
-                .collect(),
-        );
-
+        // Build forward and reverse maps from object_relationships
+        let mut forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
+            HashMap::new();
         let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
             HashMap::new();
-        for entry in self.issues.iter() {
-            let issue_id = entry.key();
-            if let Some(latest) = entry.value().last() {
-                for dependency in &latest.item.dependencies {
-                    reverse
-                        .entry(dependency.dependency_type)
-                        .or_default()
-                        .entry(issue_id.clone())
-                        .or_default()
-                        .push(dependency.issue_id.clone());
-                }
+
+        for entry in self.object_relationships.iter() {
+            let rel = entry.value();
+            if rel.source_kind != super::ObjectKind::Issue
+                || rel.target_kind != super::ObjectKind::Issue
+            {
+                continue;
             }
+            let dep_type = match rel.rel_type {
+                super::RelationshipType::ChildOf => IssueDependencyType::ChildOf,
+                super::RelationshipType::BlockedOn => IssueDependencyType::BlockedOn,
+                _ => continue,
+            };
+            let source_id: IssueId = rel.source_id.to_string().parse().unwrap();
+            let target_id: IssueId = rel.target_id.to_string().parse().unwrap();
+
+            // forward: target -> [sources] (parent -> children, blocker -> blocked)
+            forward
+                .entry(dep_type)
+                .or_default()
+                .entry(target_id.clone())
+                .or_default()
+                .push(source_id.clone());
+
+            // reverse: source -> [targets]
+            reverse
+                .entry(dep_type)
+                .or_default()
+                .entry(source_id)
+                .or_default()
+                .push(target_id);
         }
 
         let context = IssueGraphContext::from_dependency_maps(
@@ -587,25 +506,37 @@ impl ReadOnlyStore for MemoryStore {
     }
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        match self.issues.get(issue_id) {
-            Some(_) => Ok(self
-                .issue_children
-                .get(issue_id)
-                .map(|entry| entry.value().clone())
-                .unwrap_or_default()),
-            None => Err(StoreError::IssueNotFound(issue_id.clone())),
+        if !self.issues.contains_key(issue_id) {
+            return Err(StoreError::IssueNotFound(issue_id.clone()));
         }
+        let target_id = MetisId::from(issue_id.clone());
+        let children: Vec<IssueId> = self
+            .object_relationships
+            .iter()
+            .filter(|entry| {
+                let rel = entry.value();
+                rel.target_id == target_id && rel.rel_type == super::RelationshipType::ChildOf
+            })
+            .filter_map(|entry| entry.value().source_id.to_string().parse().ok())
+            .collect();
+        Ok(children)
     }
 
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        match self.issues.get(issue_id) {
-            Some(_) => Ok(self
-                .issue_blocked_on
-                .get(issue_id)
-                .map(|entry| entry.value().clone())
-                .unwrap_or_default()),
-            None => Err(StoreError::IssueNotFound(issue_id.clone())),
+        if !self.issues.contains_key(issue_id) {
+            return Err(StoreError::IssueNotFound(issue_id.clone()));
         }
+        let target_id = MetisId::from(issue_id.clone());
+        let blocked: Vec<IssueId> = self
+            .object_relationships
+            .iter()
+            .filter(|entry| {
+                let rel = entry.value();
+                rel.target_id == target_id && rel.rel_type == super::RelationshipType::BlockedOn
+            })
+            .filter_map(|entry| entry.value().source_id.to_string().parse().ok())
+            .collect();
+        Ok(blocked)
     }
 
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
@@ -691,14 +622,20 @@ impl ReadOnlyStore for MemoryStore {
     }
 
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
-        match self.patches.get(patch_id) {
-            Some(_) => Ok(self
-                .patch_issues
-                .get(patch_id)
-                .map(|entry| entry.value().clone())
-                .unwrap_or_default()),
-            None => Err(StoreError::PatchNotFound(patch_id.clone())),
+        if !self.patches.contains_key(patch_id) {
+            return Err(StoreError::PatchNotFound(patch_id.clone()));
         }
+        let target_id = MetisId::from(patch_id.clone());
+        let issues: Vec<IssueId> = self
+            .object_relationships
+            .iter()
+            .filter(|entry| {
+                let rel = entry.value();
+                rel.target_id == target_id && rel.rel_type == super::RelationshipType::HasPatch
+            })
+            .filter_map(|entry| entry.value().source_id.to_string().parse().ok())
+            .collect();
+        Ok(issues)
     }
 
     async fn get_document(
@@ -1366,12 +1303,8 @@ impl Store for MemoryStore {
         actor: &ActorRef,
     ) -> Result<(IssueId, VersionNumber), StoreError> {
         let id = IssueId::new();
-        let new_dependencies = issue.dependencies.clone();
-        let new_patches = issue.patches.clone();
 
-        self.validate_dependencies(&new_dependencies)?;
-
-        // Dual-write: sync object_relationships
+        self.validate_dependencies(&issue.dependencies)?;
         self.sync_issue_relationships(&id, &issue);
 
         self.issues.insert(
@@ -1379,12 +1312,6 @@ impl Store for MemoryStore {
             vec![Self::versioned_now_with_actor(issue, 1, actor)],
         );
 
-        if !new_dependencies.is_empty() {
-            self.apply_issue_dependency_delta(&id, &[], &new_dependencies);
-        }
-        if !new_patches.is_empty() {
-            self.apply_issue_patch_delta(&id, &[], &new_patches);
-        }
         Ok((id, 1))
     }
 
@@ -1394,22 +1321,11 @@ impl Store for MemoryStore {
         issue: Issue,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        let (previous_dependencies, previous_patches) = match self.issues.get(id) {
-            Some(entry) => match entry.value().last() {
-                Some(latest) => (
-                    latest.item.dependencies.clone(),
-                    latest.item.patches.clone(),
-                ),
-                None => return Err(StoreError::IssueNotFound(id.clone())),
-            },
-            None => return Err(StoreError::IssueNotFound(id.clone())),
-        };
-        let updated_dependencies = issue.dependencies.clone();
-        let updated_patches = issue.patches.clone();
+        if !self.issues.contains_key(id) {
+            return Err(StoreError::IssueNotFound(id.clone()));
+        }
 
-        self.validate_dependencies(&updated_dependencies)?;
-
-        // Dual-write: sync object_relationships
+        self.validate_dependencies(&issue.dependencies)?;
         self.sync_issue_relationships(id, &issue);
 
         let next_version = if let Some(mut versions) = self.issues.get_mut(id) {
@@ -1420,12 +1336,6 @@ impl Store for MemoryStore {
             return Err(StoreError::IssueNotFound(id.clone()));
         };
 
-        if !previous_dependencies.is_empty() || !updated_dependencies.is_empty() {
-            self.apply_issue_dependency_delta(id, &previous_dependencies, &updated_dependencies);
-        }
-        if !previous_patches.is_empty() || !updated_patches.is_empty() {
-            self.apply_issue_patch_delta(id, &previous_patches, &updated_patches);
-        }
         Ok(next_version)
     }
 
