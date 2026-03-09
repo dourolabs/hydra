@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Spinner, Button, Textarea, MarkdownViewer } from "@metis/ui";
+import { Spinner, Button, Textarea, MarkdownViewer, CopyButton } from "@metis/ui";
 import type { DocumentVersionRecord } from "@metis/api";
 import { apiClient, ApiError } from "../api/client";
 import { useDocument } from "../features/documents/useDocument";
@@ -129,7 +129,13 @@ function DocumentDetail({ record }: DocumentDetailProps) {
         {record.document.path && (
           <div className={styles.metaItem}>
             <span className={styles.metaLabel}>Path</span>
-            <span className={styles.metaValue}>{record.document.path}</span>
+            <span className={styles.metaValue}>
+              {record.document.path}
+              <CopyButton
+                value={record.document.path}
+                onCopied={() => addToast("Copied!", "success")}
+              />
+            </span>
           </div>
         )}
         <div className={styles.metaItem}>
