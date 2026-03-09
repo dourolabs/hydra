@@ -4,9 +4,7 @@ use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
 use super::issue_graph::IssueGraphContext;
-use super::{
-    ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog, apply_memory_pagination,
-};
+use super::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
@@ -24,6 +22,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
+use metis_common::api::v1::pagination::{MAX_LIMIT as PAGINATION_MAX_LIMIT, decode_cursor};
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -2027,6 +2026,45 @@ fn issue_matches(
     }
 
     true
+}
+
+
+/// Applies in-memory cursor-based pagination to a list of items.
+///
+/// Sorts by (timestamp DESC, id DESC), applies cursor filter, then limits results.
+/// Fetches limit+1 items so callers can detect whether a next page exists.
+fn apply_memory_pagination<T>(
+    mut items: Vec<T>,
+    get_timestamp: impl Fn(&T) -> DateTime<Utc>,
+    get_id: impl Fn(&T) -> &str,
+    cursor: &Option<String>,
+    limit: Option<u32>,
+) -> Result<Vec<T>, StoreError> {
+    // Sort by timestamp DESC, id DESC
+    items.sort_by(|a, b| {
+        get_timestamp(b)
+            .cmp(&get_timestamp(a))
+            .then_with(|| get_id(b).cmp(get_id(a)))
+    });
+
+    // Apply cursor filter (keep only items that come after cursor in DESC order)
+    if let Some(cursor_str) = cursor {
+        let decoded = decode_cursor(cursor_str)
+            .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
+        items.retain(|item| {
+            let ts = get_timestamp(item);
+            let id = get_id(item);
+            (ts, id) < (decoded.timestamp, decoded.id.as_str())
+        });
+    }
+
+    // Apply limit (take one extra for next_cursor detection)
+    if let Some(limit) = limit {
+        let effective = (limit.min(PAGINATION_MAX_LIMIT) + 1) as usize;
+        items.truncate(effective);
+    }
+
+    Ok(items)
 }
 
 #[cfg(test)]
