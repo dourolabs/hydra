@@ -25,6 +25,7 @@ pub async fn kill_job(
                 error!(job_id = %job_id, error = %message, "multiple jobs found");
                 ApiError::conflict(message)
             }
+            #[cfg(feature = "kubernetes")]
             JobEngineError::Kubernetes(kube_err) => {
                 error!(job_id = %job_id, error = ?kube_err, "kubernetes error while killing job");
                 ApiError::internal(kube_err)

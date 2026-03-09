@@ -18,13 +18,15 @@ mod test;
 
 use crate::app::{AppState, ServiceState};
 use crate::background::start_background_scheduler;
-use crate::config::{
-    AppConfig, GithubAppSection, JobEngineConfig, StorageConfig, build_kube_client,
-};
+#[cfg(feature = "kubernetes")]
+use crate::config::build_kube_client;
+use crate::config::{AppConfig, GithubAppSection, JobEngineConfig, StorageConfig};
 use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::secrets::SecretManager;
 use crate::domain::users::{User, Username};
-use crate::job_engine::{KubernetesJobEngine, LocalDockerJobEngine};
+#[cfg(feature = "kubernetes")]
+use crate::job_engine::KubernetesJobEngine;
+use crate::job_engine::LocalDockerJobEngine;
 use crate::store::{
     MemoryStore, Store, StoreError, migration,
     postgres_v2::{self, PostgresStoreV2},
@@ -342,6 +344,7 @@ pub async fn run() -> anyhow::Result<()> {
             info!("using local Docker job engine");
             Arc::new(engine)
         }
+        #[cfg(feature = "kubernetes")]
         JobEngineConfig::Kubernetes { kubernetes } => {
             let kube_client = build_kube_client(kubernetes).await?;
             let engine = KubernetesJobEngine {
@@ -352,6 +355,12 @@ pub async fn run() -> anyhow::Result<()> {
             };
             info!("using Kubernetes job engine");
             Arc::new(engine)
+        }
+        #[cfg(not(feature = "kubernetes"))]
+        JobEngineConfig::Kubernetes { .. } => {
+            anyhow::bail!(
+                "Kubernetes job engine requires the 'kubernetes' Cargo feature. Rebuild with --features kubernetes"
+            );
         }
     };
 

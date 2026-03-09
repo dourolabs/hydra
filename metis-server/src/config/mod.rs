@@ -1,5 +1,7 @@
+#[cfg(feature = "kubernetes")]
 pub mod kube;
 
+#[cfg(feature = "kubernetes")]
 pub use kube::build_kube_client;
 
 use anyhow::{Context, Result, ensure};

@@ -4,9 +4,11 @@ use std::collections::HashMap;
 
 use crate::{domain::actors::Actor, store::StoreError};
 
+#[cfg(feature = "kubernetes")]
 mod kubernetes_job_engine;
 mod local_docker_job_engine;
 
+#[cfg(feature = "kubernetes")]
 pub use kubernetes_job_engine::KubernetesJobEngine;
 pub use local_docker_job_engine::LocalDockerJobEngine;
 pub use metis_common::TaskId;
@@ -63,6 +65,7 @@ pub enum JobEngineError {
     MultipleFound(TaskId),
     #[error("Job already exists: {0}")]
     AlreadyExists(TaskId),
+    #[cfg(feature = "kubernetes")]
     #[error("Kubernetes API error: {0}")]
     Kubernetes(#[from] kube::Error),
     #[error("Docker error: {0}")]
