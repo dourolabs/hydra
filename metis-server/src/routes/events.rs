@@ -340,6 +340,9 @@ impl EventFilter {
                     }
                 }
             }
+            EntityId::Relationship => {
+                // Relationship events are not filtered by ID currently.
+            }
         }
 
         true
@@ -356,6 +359,7 @@ enum EntityId<'a> {
     Document(&'a DocumentId),
     Message(&'a MessageId),
     Notification(&'a NotificationId),
+    Relationship,
 }
 
 /// Extracts the entity type category and typed entity ID from a ServerEvent.
@@ -391,6 +395,10 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
         ServerEvent::NotificationCreated {
             notification_id, ..
         } => ("notifications", EntityId::Notification(notification_id)),
+
+        ServerEvent::RelationshipCreated { .. } | ServerEvent::RelationshipRemoved { .. } => {
+            ("relationships", EntityId::Relationship)
+        }
     }
 }
 
@@ -557,6 +565,10 @@ async fn serialize_entity(
                 api_notification,
             );
             serde_json::to_value(response).ok()?
+        }
+        MutationPayload::Relationship { .. } => {
+            // Relationship events don't carry a full entity snapshot.
+            return None;
         }
     };
     Some(value)
@@ -803,6 +815,32 @@ async fn server_event_to_sse(
             "notification",
             notification_id.to_string(),
             *version,
+            *timestamp,
+            payload,
+        ),
+        ServerEvent::RelationshipCreated {
+            source_id,
+            timestamp,
+            payload,
+            ..
+        } => (
+            SseEventType::RelationshipCreated,
+            "relationship",
+            source_id.to_string(),
+            0,
+            *timestamp,
+            payload,
+        ),
+        ServerEvent::RelationshipRemoved {
+            source_id,
+            timestamp,
+            payload,
+            ..
+        } => (
+            SseEventType::RelationshipRemoved,
+            "relationship",
+            source_id.to_string(),
+            0,
             *timestamp,
             payload,
         ),

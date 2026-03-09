@@ -9,7 +9,7 @@ use crate::domain::{
     patches::Patch,
     users::{User, Username},
 };
-use crate::store::{ReadOnlyStore, Store, StoreError, Task, TaskStatusLog};
+use crate::store::{ReadOnlyStore, RelationshipType, Store, StoreError, Task, TaskStatusLog};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
@@ -72,6 +72,12 @@ pub enum MutationPayload {
         new: Notification,
         actor: ActorRef,
     },
+    Relationship {
+        source_id: MetisId,
+        target_id: MetisId,
+        rel_type: RelationshipType,
+        actor: ActorRef,
+    },
 }
 
 impl MutationPayload {
@@ -84,7 +90,8 @@ impl MutationPayload {
             | MutationPayload::Document { actor, .. }
             | MutationPayload::Label { actor, .. }
             | MutationPayload::Message { actor, .. }
-            | MutationPayload::Notification { actor, .. } => actor,
+            | MutationPayload::Notification { actor, .. }
+            | MutationPayload::Relationship { actor, .. } => actor,
         }
     }
 }
@@ -110,6 +117,8 @@ pub enum EventType {
     MessageCreated,
     MessageUpdated,
     NotificationCreated,
+    RelationshipCreated,
+    RelationshipRemoved,
 }
 
 /// Events emitted when server-side entities are mutated.
@@ -245,6 +254,22 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
+    RelationshipCreated {
+        seq: u64,
+        source_id: MetisId,
+        target_id: MetisId,
+        rel_type: RelationshipType,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
+    RelationshipRemoved {
+        seq: u64,
+        source_id: MetisId,
+        target_id: MetisId,
+        rel_type: RelationshipType,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
 }
 
 impl ServerEvent {
@@ -267,7 +292,9 @@ impl ServerEvent {
             | ServerEvent::LabelDeleted { seq, .. }
             | ServerEvent::MessageCreated { seq, .. }
             | ServerEvent::MessageUpdated { seq, .. }
-            | ServerEvent::NotificationCreated { seq, .. } => *seq,
+            | ServerEvent::NotificationCreated { seq, .. }
+            | ServerEvent::RelationshipCreated { seq, .. }
+            | ServerEvent::RelationshipRemoved { seq, .. } => *seq,
         }
     }
 
@@ -290,7 +317,9 @@ impl ServerEvent {
             | ServerEvent::LabelDeleted { payload, .. }
             | ServerEvent::MessageCreated { payload, .. }
             | ServerEvent::MessageUpdated { payload, .. }
-            | ServerEvent::NotificationCreated { payload, .. } => payload,
+            | ServerEvent::NotificationCreated { payload, .. }
+            | ServerEvent::RelationshipCreated { payload, .. }
+            | ServerEvent::RelationshipRemoved { payload, .. } => payload,
         }
     }
 
@@ -314,6 +343,8 @@ impl ServerEvent {
             ServerEvent::MessageCreated { .. } => EventType::MessageCreated,
             ServerEvent::MessageUpdated { .. } => EventType::MessageUpdated,
             ServerEvent::NotificationCreated { .. } => EventType::NotificationCreated,
+            ServerEvent::RelationshipCreated { .. } => EventType::RelationshipCreated,
+            ServerEvent::RelationshipRemoved { .. } => EventType::RelationshipRemoved,
         }
     }
 }
@@ -605,6 +636,40 @@ impl EventBus {
             seq: self.next_seq(),
             notification_id,
             version,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_relationship_created(
+        &self,
+        source_id: MetisId,
+        target_id: MetisId,
+        rel_type: RelationshipType,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::RelationshipCreated {
+            seq: self.next_seq(),
+            source_id,
+            target_id,
+            rel_type,
+            timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_relationship_removed(
+        &self,
+        source_id: MetisId,
+        target_id: MetisId,
+        rel_type: RelationshipType,
+        payload: Arc<MutationPayload>,
+    ) {
+        self.send(ServerEvent::RelationshipRemoved {
+            seq: self.next_seq(),
+            source_id,
+            target_id,
+            rel_type,
             timestamp: Utc::now(),
             payload,
         });
@@ -1115,6 +1180,64 @@ impl StoreWithEvents {
             .await?;
         if changed {
             self.emit_entity_updated_on_label_change(object_id).await;
+        }
+        Ok(changed)
+    }
+
+    // ---- Object relationship mutations ----
+
+    pub async fn add_relationship_with_actor(
+        &self,
+        source_id: &MetisId,
+        target_id: &MetisId,
+        rel_type: RelationshipType,
+        actor: ActorRef,
+    ) -> Result<bool, StoreError> {
+        let changed = self
+            .inner
+            .add_relationship(source_id, target_id, rel_type)
+            .await?;
+        if changed {
+            let payload = Arc::new(MutationPayload::Relationship {
+                source_id: source_id.clone(),
+                target_id: target_id.clone(),
+                rel_type,
+                actor,
+            });
+            self.event_bus.emit_relationship_created(
+                source_id.clone(),
+                target_id.clone(),
+                rel_type,
+                payload,
+            );
+        }
+        Ok(changed)
+    }
+
+    pub async fn remove_relationship_with_actor(
+        &self,
+        source_id: &MetisId,
+        target_id: &MetisId,
+        rel_type: RelationshipType,
+        actor: ActorRef,
+    ) -> Result<bool, StoreError> {
+        let changed = self
+            .inner
+            .remove_relationship(source_id, target_id, rel_type)
+            .await?;
+        if changed {
+            let payload = Arc::new(MutationPayload::Relationship {
+                source_id: source_id.clone(),
+                target_id: target_id.clone(),
+                rel_type,
+                actor,
+            });
+            self.event_bus.emit_relationship_removed(
+                source_id.clone(),
+                target_id.clone(),
+                rel_type,
+                payload,
+            );
         }
         Ok(changed)
     }
@@ -2436,5 +2559,214 @@ mod tests {
 
         // No event should be emitted because the patch doesn't exist
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn add_relationship_with_actor_emits_relationship_created() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue1 = dummy_issue();
+        let (issue_id1, _) = store
+            .add_issue_with_actor(issue1, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap(); // consume IssueCreated
+
+        let issue2 = dummy_issue();
+        let (issue_id2, _) = store
+            .add_issue_with_actor(issue2, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap(); // consume IssueCreated
+
+        let source_id = MetisId::from(issue_id1.clone());
+        let target_id = MetisId::from(issue_id2.clone());
+
+        let changed = store
+            .add_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::ChildOf,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert!(changed);
+
+        let event = rx.recv().await.expect("should receive RelationshipCreated");
+        match &event {
+            ServerEvent::RelationshipCreated {
+                source_id: src,
+                target_id: tgt,
+                rel_type,
+                ..
+            } => {
+                assert_eq!(*src, source_id);
+                assert_eq!(*tgt, target_id);
+                assert_eq!(*rel_type, crate::store::RelationshipType::ChildOf);
+            }
+            other => panic!("expected RelationshipCreated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_relationship_duplicate_does_not_emit_event() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue1 = dummy_issue();
+        let (issue_id1, _) = store
+            .add_issue_with_actor(issue1, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let issue2 = dummy_issue();
+        let (issue_id2, _) = store
+            .add_issue_with_actor(issue2, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let source_id = MetisId::from(issue_id1.clone());
+        let target_id = MetisId::from(issue_id2.clone());
+
+        // First add
+        let changed = store
+            .add_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::ChildOf,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert!(changed);
+        let _ = rx.recv().await.unwrap(); // consume RelationshipCreated
+
+        // Second add (duplicate)
+        let changed = store
+            .add_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::ChildOf,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert!(!changed);
+        assert!(
+            rx.try_recv().is_err(),
+            "no event should be emitted for duplicate add"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_relationship_with_actor_emits_relationship_removed() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue1 = dummy_issue();
+        let (issue_id1, _) = store
+            .add_issue_with_actor(issue1, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let issue2 = dummy_issue();
+        let (issue_id2, _) = store
+            .add_issue_with_actor(issue2, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let source_id = MetisId::from(issue_id1.clone());
+        let target_id = MetisId::from(issue_id2.clone());
+
+        // Add relationship first
+        store
+            .add_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::BlockedOn,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap(); // consume RelationshipCreated
+
+        // Now remove it
+        let changed = store
+            .remove_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::BlockedOn,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert!(changed);
+
+        let event = rx.recv().await.expect("should receive RelationshipRemoved");
+        match &event {
+            ServerEvent::RelationshipRemoved {
+                source_id: src,
+                target_id: tgt,
+                rel_type,
+                ..
+            } => {
+                assert_eq!(*src, source_id);
+                assert_eq!(*tgt, target_id);
+                assert_eq!(*rel_type, crate::store::RelationshipType::BlockedOn);
+            }
+            other => panic!("expected RelationshipRemoved, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn remove_nonexistent_relationship_does_not_emit_event() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue1 = dummy_issue();
+        let (issue_id1, _) = store
+            .add_issue_with_actor(issue1, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let issue2 = dummy_issue();
+        let (issue_id2, _) = store
+            .add_issue_with_actor(issue2, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let source_id = MetisId::from(issue_id1.clone());
+        let target_id = MetisId::from(issue_id2.clone());
+
+        let changed = store
+            .remove_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::ChildOf,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert!(!changed);
+        assert!(
+            rx.try_recv().is_err(),
+            "no event should be emitted for no-op remove"
+        );
     }
 }
