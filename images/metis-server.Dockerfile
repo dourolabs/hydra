@@ -17,12 +17,12 @@ COPY --from=planner /app/recipe.json recipe.json
 
 # Build dependencies - this layer is cached as long as `recipe.json`
 # doesn't change.
-RUN cargo chef cook --recipe-path recipe.json
+RUN cargo chef cook --recipe-path recipe.json --features postgres
 
 # Build the whole project
 COPY . .
 
-RUN cargo build --bin metis-server --release
+RUN cargo build --bin metis-server --release --features postgres
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
