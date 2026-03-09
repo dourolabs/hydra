@@ -72,6 +72,8 @@ pub struct MemoryStore {
     /// Stores object relationships as (source_id, rel_type, target_id) -> ObjectRelationship
     object_relationships:
         DashMap<(MetisId, super::RelationshipType, MetisId), super::ObjectRelationship>,
+    /// Secondary index: target_id -> set of (source_id, rel_type) for O(1) reverse lookups
+    relationships_by_target: DashMap<MetisId, HashSet<(MetisId, super::RelationshipType)>>,
 }
 
 impl MemoryStore {
@@ -95,6 +97,7 @@ impl MemoryStore {
             label_objects: DashMap::new(),
             user_secrets: DashMap::new(),
             object_relationships: DashMap::new(),
+            relationships_by_target: DashMap::new(),
         }
     }
 
@@ -184,8 +187,12 @@ impl MemoryStore {
             .filter(|entry| entry.key().0 == source_id)
             .map(|entry| entry.key().clone())
             .collect();
-        for key in keys_to_remove {
-            self.object_relationships.remove(&key);
+        for key in &keys_to_remove {
+            self.object_relationships.remove(key);
+            // Remove from secondary index
+            if let Some(mut set) = self.relationships_by_target.get_mut(&key.2) {
+                set.remove(&(key.0.clone(), key.1));
+            }
         }
 
         // Insert dependency relationships
@@ -198,11 +205,15 @@ impl MemoryStore {
                 super::ObjectRelationship {
                     source_id: source_id.clone(),
                     source_kind: super::ObjectKind::Issue,
-                    target_id,
+                    target_id: target_id.clone(),
                     target_kind: super::ObjectKind::Issue,
                     rel_type,
                 },
             );
+            self.relationships_by_target
+                .entry(target_id)
+                .or_default()
+                .insert((source_id.clone(), rel_type));
         }
 
         // Insert patch relationships
@@ -215,11 +226,15 @@ impl MemoryStore {
                 super::ObjectRelationship {
                     source_id: source_id.clone(),
                     source_kind: super::ObjectKind::Issue,
-                    target_id,
+                    target_id: target_id.clone(),
                     target_kind: super::ObjectKind::Patch,
                     rel_type,
                 },
             );
+            self.relationships_by_target
+                .entry(target_id)
+                .or_default()
+                .insert((source_id.clone(), rel_type));
         }
     }
 
@@ -511,14 +526,15 @@ impl ReadOnlyStore for MemoryStore {
         }
         let target_id = MetisId::from(issue_id.clone());
         let children: Vec<IssueId> = self
-            .object_relationships
-            .iter()
-            .filter(|entry| {
-                let rel = entry.value();
-                rel.target_id == target_id && rel.rel_type == super::RelationshipType::ChildOf
+            .relationships_by_target
+            .get(&target_id)
+            .map(|set| {
+                set.iter()
+                    .filter(|(_, rt)| *rt == super::RelationshipType::ChildOf)
+                    .filter_map(|(src, _)| src.to_string().parse().ok())
+                    .collect()
             })
-            .filter_map(|entry| entry.value().source_id.to_string().parse().ok())
-            .collect();
+            .unwrap_or_default();
         Ok(children)
     }
 
@@ -528,14 +544,15 @@ impl ReadOnlyStore for MemoryStore {
         }
         let target_id = MetisId::from(issue_id.clone());
         let blocked: Vec<IssueId> = self
-            .object_relationships
-            .iter()
-            .filter(|entry| {
-                let rel = entry.value();
-                rel.target_id == target_id && rel.rel_type == super::RelationshipType::BlockedOn
+            .relationships_by_target
+            .get(&target_id)
+            .map(|set| {
+                set.iter()
+                    .filter(|(_, rt)| *rt == super::RelationshipType::BlockedOn)
+                    .filter_map(|(src, _)| src.to_string().parse().ok())
+                    .collect()
             })
-            .filter_map(|entry| entry.value().source_id.to_string().parse().ok())
-            .collect();
+            .unwrap_or_default();
         Ok(blocked)
     }
 
@@ -627,14 +644,15 @@ impl ReadOnlyStore for MemoryStore {
         }
         let target_id = MetisId::from(patch_id.clone());
         let issues: Vec<IssueId> = self
-            .object_relationships
-            .iter()
-            .filter(|entry| {
-                let rel = entry.value();
-                rel.target_id == target_id && rel.rel_type == super::RelationshipType::HasPatch
+            .relationships_by_target
+            .get(&target_id)
+            .map(|set| {
+                set.iter()
+                    .filter(|(_, rt)| *rt == super::RelationshipType::HasPatch)
+                    .filter_map(|(src, _)| src.to_string().parse().ok())
+                    .collect()
             })
-            .filter_map(|entry| entry.value().source_id.to_string().parse().ok())
-            .collect();
+            .unwrap_or_default();
         Ok(issues)
     }
 
@@ -1813,6 +1831,10 @@ impl Store for MemoryStore {
                 rel_type,
             },
         );
+        self.relationships_by_target
+            .entry(target_id.clone())
+            .or_default()
+            .insert((source_id.clone(), rel_type));
         Ok(true)
     }
 
@@ -1823,7 +1845,13 @@ impl Store for MemoryStore {
         rel_type: super::RelationshipType,
     ) -> Result<bool, StoreError> {
         let key = (source_id.clone(), rel_type, target_id.clone());
-        Ok(self.object_relationships.remove(&key).is_some())
+        let removed = self.object_relationships.remove(&key).is_some();
+        if removed {
+            if let Some(mut set) = self.relationships_by_target.get_mut(target_id) {
+                set.remove(&(source_id.clone(), rel_type));
+            }
+        }
+        Ok(removed)
     }
 
     // ---- User secret mutations ----

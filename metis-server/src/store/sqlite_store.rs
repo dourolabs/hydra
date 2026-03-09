@@ -1599,6 +1599,14 @@ impl ReadOnlyStore for SqliteStore {
             r.creation_time = creation_time.unwrap_or(r.timestamp);
         }
 
+        // Populate relationships for the latest version so it matches get_issue output.
+        // Historical versions intentionally have empty deps/patches (versioned relationships
+        // are out of scope for the object_relationships migration).
+        if let Some(latest) = results.last_mut() {
+            self.populate_issue_relationships(id, &mut latest.item)
+                .await?;
+        }
+
         Ok(results)
     }
 
