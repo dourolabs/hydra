@@ -73,6 +73,10 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn count_issues(&self, _query: &SearchIssuesQuery) -> Result<u64, StoreError> {
+        fail()
+    }
+
     async fn search_issue_graph(
         &self,
         _filters: &[IssueGraphFilter],
@@ -118,6 +122,10 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn count_patches(&self, _query: &SearchPatchesQuery) -> Result<u64, StoreError> {
+        fail()
+    }
+
     async fn get_issues_for_patch(&self, _patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         fail()
     }
@@ -141,6 +149,10 @@ impl ReadOnlyStore for FailingStore {
         &self,
         _query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
+        fail()
+    }
+
+    async fn count_documents(&self, _query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
         fail()
     }
 
@@ -177,6 +189,10 @@ impl ReadOnlyStore for FailingStore {
         std::collections::HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>,
         StoreError,
     > {
+        fail()
+    }
+
+    async fn count_tasks(&self, _query: &SearchJobsQuery) -> Result<u64, StoreError> {
         fail()
     }
 
@@ -257,6 +273,10 @@ impl ReadOnlyStore for FailingStore {
         &self,
         _query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
+        fail()
+    }
+
+    async fn count_labels(&self, _query: &SearchLabelsQuery) -> Result<u64, StoreError> {
         fail()
     }
 

@@ -923,6 +923,11 @@ impl AppState {
         store.get_jobs_summary_for_issues(issue_ids).await
     }
 
+    pub async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+        let store = self.store.as_ref();
+        store.count_tasks(query).await
+    }
+
     pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         let store = self.store.as_ref();
         store.get_status_log(task_id).await
