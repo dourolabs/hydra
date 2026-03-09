@@ -1,4 +1,4 @@
-use super::{KubernetesSection, expand_path, non_empty};
+use crate::config::{KubernetesSection, expand_path, non_empty};
 use anyhow::{Context, Result};
 use kube::{
     Client,

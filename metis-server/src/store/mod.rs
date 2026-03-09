@@ -29,12 +29,12 @@ use metis_common::{
 use std::collections::{HashMap, HashSet};
 use std::{fmt, str::FromStr};
 
-mod issue_graph;
+pub(crate) mod issue_graph;
 mod memory_store;
 #[cfg(feature = "postgres")]
-pub mod migration;
+pub use crate::ee::store::migration;
 #[cfg(feature = "postgres")]
-pub mod postgres_v2;
+pub use crate::ee::store::postgres_v2;
 pub mod sqlite_store;
 
 pub use crate::domain::jobs::Task;
