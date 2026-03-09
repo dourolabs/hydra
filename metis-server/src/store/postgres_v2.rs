@@ -361,6 +361,193 @@ impl PostgresStoreV2 {
         })
     }
 
+    /// Populates Issue.dependencies and Issue.patches from the object_relationships
+    /// table for a single issue.
+    async fn populate_issue_relationships(
+        &self,
+        issue_id: &IssueId,
+        issue: &mut Issue,
+    ) -> Result<(), StoreError> {
+        let sql = format!(
+            "SELECT target_id, rel_type FROM {TABLE_OBJECT_RELATIONSHIPS} \
+             WHERE source_id = $1 AND source_kind = 'issue'"
+        );
+        let rows = sqlx::query_as::<_, (String, String)>(&sql)
+            .bind(issue_id.as_ref())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut dependencies = Vec::new();
+        let mut patches = Vec::new();
+
+        for (target_id, rel_type) in rows {
+            match rel_type.as_str() {
+                "child-of" => {
+                    let id = target_id.parse::<IssueId>().map_err(|err| {
+                        StoreError::Internal(format!(
+                            "invalid issue id in object_relationships: {err}"
+                        ))
+                    })?;
+                    dependencies.push(IssueDependency::new(IssueDependencyType::ChildOf, id));
+                }
+                "blocked-on" => {
+                    let id = target_id.parse::<IssueId>().map_err(|err| {
+                        StoreError::Internal(format!(
+                            "invalid issue id in object_relationships: {err}"
+                        ))
+                    })?;
+                    dependencies.push(IssueDependency::new(IssueDependencyType::BlockedOn, id));
+                }
+                "has-patch" => {
+                    let id = target_id.parse::<PatchId>().map_err(|err| {
+                        StoreError::Internal(format!(
+                            "invalid patch id in object_relationships: {err}"
+                        ))
+                    })?;
+                    patches.push(id);
+                }
+                _ => {}
+            }
+        }
+
+        issue.dependencies = dependencies;
+        issue.patches = patches;
+        Ok(())
+    }
+
+    /// Populates Issue.dependencies and Issue.patches from the object_relationships
+    /// table for a batch of issues.
+    async fn populate_issues_relationships(
+        &self,
+        issues: &mut [(IssueId, Versioned<Issue>)],
+    ) -> Result<(), StoreError> {
+        if issues.is_empty() {
+            return Ok(());
+        }
+
+        let ids: Vec<&str> = issues.iter().map(|(id, _)| id.as_ref()).collect();
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("${i}")).collect();
+        let sql = format!(
+            "SELECT source_id, target_id, rel_type FROM {TABLE_OBJECT_RELATIONSHIPS} \
+             WHERE source_id IN ({}) AND source_kind = 'issue'",
+            placeholders.join(", ")
+        );
+
+        let mut query = sqlx::query_as::<_, (String, String, String)>(&sql);
+        for id in &ids {
+            query = query.bind(*id);
+        }
+
+        let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+
+        let mut deps_map: HashMap<String, Vec<IssueDependency>> = HashMap::new();
+        let mut patches_map: HashMap<String, Vec<PatchId>> = HashMap::new();
+
+        for (source_id, target_id, rel_type) in rows {
+            match rel_type.as_str() {
+                "child-of" => {
+                    if let Ok(id) = target_id.parse::<IssueId>() {
+                        deps_map
+                            .entry(source_id)
+                            .or_default()
+                            .push(IssueDependency::new(IssueDependencyType::ChildOf, id));
+                    }
+                }
+                "blocked-on" => {
+                    if let Ok(id) = target_id.parse::<IssueId>() {
+                        deps_map
+                            .entry(source_id)
+                            .or_default()
+                            .push(IssueDependency::new(IssueDependencyType::BlockedOn, id));
+                    }
+                }
+                "has-patch" => {
+                    if let Ok(id) = target_id.parse::<PatchId>() {
+                        patches_map.entry(source_id).or_default().push(id);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        for (issue_id, versioned) in issues.iter_mut() {
+            let id_str = issue_id.as_ref().to_string();
+            versioned.item.dependencies = deps_map.remove(&id_str).unwrap_or_default();
+            versioned.item.patches = patches_map.remove(&id_str).unwrap_or_default();
+        }
+
+        Ok(())
+    }
+
+    /// Builds an IssueGraphContext from the object_relationships table
+    /// and known issue IDs, avoiding the need to load all issue data.
+    async fn build_issue_graph_from_relationships(&self) -> Result<IssueGraphContext, StoreError> {
+        // Get all known issue IDs
+        let issue_ids_sql =
+            format!("SELECT DISTINCT id FROM {TABLE_ISSUES_V2} WHERE deleted = false");
+        let known_ids: Vec<String> = sqlx::query_scalar(&issue_ids_sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        let known_issues: HashSet<IssueId> = known_ids
+            .into_iter()
+            .filter_map(|id| id.parse::<IssueId>().ok())
+            .collect();
+
+        // Get all issue-to-issue relationships (child-of and blocked-on)
+        let rels_sql = format!(
+            "SELECT source_id, target_id, rel_type FROM {TABLE_OBJECT_RELATIONSHIPS} \
+             WHERE source_kind = 'issue' AND target_kind = 'issue' \
+             AND rel_type IN ('child-of', 'blocked-on')"
+        );
+        let rows = sqlx::query_as::<_, (String, String, String)>(&rels_sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
+            HashMap::new();
+        let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
+            HashMap::new();
+
+        for (source_id, target_id, rel_type) in rows {
+            let Ok(source) = source_id.parse::<IssueId>() else {
+                continue;
+            };
+            let Ok(target) = target_id.parse::<IssueId>() else {
+                continue;
+            };
+            let dep_type = match rel_type.as_str() {
+                "child-of" => IssueDependencyType::ChildOf,
+                "blocked-on" => IssueDependencyType::BlockedOn,
+                _ => continue,
+            };
+
+            // forward: target_id → [source_ids] (same as from_issues builds)
+            forward
+                .entry(dep_type)
+                .or_default()
+                .entry(target.clone())
+                .or_default()
+                .push(source.clone());
+
+            // reverse: source_id → [target_ids]
+            reverse
+                .entry(dep_type)
+                .or_default()
+                .entry(source)
+                .or_default()
+                .push(target);
+        }
+
+        Ok(IssueGraphContext::from_dependency_maps(
+            known_issues,
+            forward,
+            reverse,
+        ))
+    }
+
     // -------------------------------------------------------------------------
     // Patch helpers
     // -------------------------------------------------------------------------
@@ -1449,11 +1636,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 row.id
             ))
         })?;
-        let issue = self.row_to_issue(&row)?;
+        let mut issue = self.row_to_issue(&row)?;
 
         if !include_deleted && issue.deleted {
             return Err(StoreError::IssueNotFound(id.clone()));
         }
+
+        self.populate_issue_relationships(id, &mut issue).await?;
 
         let versioned = Versioned::with_optional_actor(
             issue,
@@ -1646,6 +1835,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
             issues.push((issue_id, versioned));
         }
 
+        self.populate_issues_relationships(&mut issues).await?;
+
         Ok(issues)
     }
 
@@ -1653,51 +1844,50 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         filters: &[IssueGraphFilter],
     ) -> Result<HashSet<IssueId>, StoreError> {
-        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
-        let issue_values: Vec<(IssueId, Issue)> = issues
-            .into_iter()
-            .map(|(id, issue)| (id, issue.item))
-            .collect();
-        let context = IssueGraphContext::from_issues(&issue_values);
+        let context = self.build_issue_graph_from_relationships().await?;
         context.apply_filters(filters)
     }
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
-        Ok(issues
-            .into_iter()
-            .filter_map(|(id, issue)| {
-                issue
-                    .item
-                    .dependencies
-                    .iter()
-                    .any(|dep| {
-                        dep.dependency_type == IssueDependencyType::ChildOf
-                            && dep.issue_id == *issue_id
-                    })
-                    .then_some(id)
+        let sql = format!(
+            "SELECT source_id FROM {TABLE_OBJECT_RELATIONSHIPS} \
+             WHERE target_id = $1 AND rel_type = $2"
+        );
+        let rows = sqlx::query_scalar::<_, String>(&sql)
+            .bind(issue_id.as_ref())
+            .bind(super::RelationshipType::ChildOf.as_str())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        rows.into_iter()
+            .map(|id| {
+                id.parse::<IssueId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid issue id in object_relationships: {err}"))
+                })
             })
-            .collect())
+            .collect()
     }
 
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
-        Ok(issues
-            .into_iter()
-            .filter_map(|(id, issue)| {
-                issue
-                    .item
-                    .dependencies
-                    .iter()
-                    .any(|dep| {
-                        dep.dependency_type == IssueDependencyType::BlockedOn
-                            && dep.issue_id == *issue_id
-                    })
-                    .then_some(id)
+        let sql = format!(
+            "SELECT source_id FROM {TABLE_OBJECT_RELATIONSHIPS} \
+             WHERE target_id = $1 AND rel_type = $2"
+        );
+        let rows = sqlx::query_scalar::<_, String>(&sql)
+            .bind(issue_id.as_ref())
+            .bind(super::RelationshipType::BlockedOn.as_str())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        rows.into_iter()
+            .map(|id| {
+                id.parse::<IssueId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid issue id in object_relationships: {err}"))
+                })
             })
-            .collect())
+            .collect()
     }
 
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
@@ -1924,13 +2114,23 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_patch_exists(patch_id).await?;
-        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
-
-        Ok(issues
-            .into_iter()
-            .filter(|(_, issue)| issue.item.patches.contains(patch_id))
-            .map(|(id, _)| id)
-            .collect())
+        let sql = format!(
+            "SELECT source_id FROM {TABLE_OBJECT_RELATIONSHIPS} \
+             WHERE target_id = $1 AND rel_type = $2"
+        );
+        let rows = sqlx::query_scalar::<_, String>(&sql)
+            .bind(patch_id.as_ref())
+            .bind(super::RelationshipType::HasPatch.as_str())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        rows.into_iter()
+            .map(|id| {
+                id.parse::<IssueId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid issue id in object_relationships: {err}"))
+                })
+            })
+            .collect()
     }
 
     // -------------------------------------------------------------------------
