@@ -927,9 +927,7 @@ async fn handle_sse_event(
         | SseEventType::LabelDeleted
         | SseEventType::MessageCreated
         | SseEventType::MessageUpdated
-        | SseEventType::NotificationCreated
-        | SseEventType::RelationshipCreated
-        | SseEventType::RelationshipRemoved => false,
+        | SseEventType::NotificationCreated => false,
     }
 }
 

@@ -227,9 +227,8 @@ impl NotificationPolicy for WalkUpPolicy {
             MutationPayload::Document { .. }
             | MutationPayload::Label { .. }
             | MutationPayload::Message { .. }
-            | MutationPayload::Notification { .. }
-            | MutationPayload::Relationship { .. } => {
-                // No source issue for documents, labels, messages, notifications, or relationships
+            | MutationPayload::Notification { .. } => {
+                // No source issue for documents, labels, messages, or notifications
                 vec![]
             }
         };
@@ -361,18 +360,6 @@ pub fn generate_summary(event: &ServerEvent) -> String {
             };
             format!("Notification {id} was created: {}", new.summary)
         }
-        MutationPayload::Relationship {
-            source_id,
-            target_id,
-            rel_type,
-            ..
-        } => {
-            let action = match event {
-                ServerEvent::RelationshipCreated { .. } => "added",
-                _ => "removed",
-            };
-            format!("Relationship {rel_type} {action} between {source_id} and {target_id}")
-        }
     }
 }
 
@@ -394,9 +381,6 @@ pub fn event_object_kind(event: &ServerEvent) -> &'static str {
         | ServerEvent::LabelDeleted { .. } => "label",
         ServerEvent::MessageCreated { .. } | ServerEvent::MessageUpdated { .. } => "message",
         ServerEvent::NotificationCreated { .. } => "notification",
-        ServerEvent::RelationshipCreated { .. } | ServerEvent::RelationshipRemoved { .. } => {
-            "relationship"
-        }
     }
 }
 
@@ -423,8 +407,6 @@ pub fn event_object_id(event: &ServerEvent) -> MetisId {
         ServerEvent::NotificationCreated {
             notification_id, ..
         } => notification_id.clone().into(),
-        ServerEvent::RelationshipCreated { source_id, .. }
-        | ServerEvent::RelationshipRemoved { source_id, .. } => source_id.clone(),
     }
 }
 
@@ -448,7 +430,6 @@ pub fn event_version(event: &ServerEvent) -> VersionNumber {
         | ServerEvent::MessageCreated { version, .. }
         | ServerEvent::MessageUpdated { version, .. }
         | ServerEvent::NotificationCreated { version, .. } => *version,
-        ServerEvent::RelationshipCreated { .. } | ServerEvent::RelationshipRemoved { .. } => 0,
     }
 }
 
@@ -471,10 +452,7 @@ pub fn event_type_str(event: &ServerEvent) -> &'static str {
         | ServerEvent::PatchDeleted { .. }
         | ServerEvent::DocumentDeleted { .. }
         | ServerEvent::LabelDeleted { .. } => "deleted",
-        ServerEvent::NotificationCreated { .. } | ServerEvent::RelationshipCreated { .. } => {
-            "created"
-        }
-        ServerEvent::RelationshipRemoved { .. } => "deleted",
+        ServerEvent::NotificationCreated { .. } => "created",
     }
 }
 
@@ -495,8 +473,7 @@ pub fn event_source_issue_id(event: &ServerEvent) -> Option<IssueId> {
         | MutationPayload::Document { .. }
         | MutationPayload::Label { .. }
         | MutationPayload::Message { .. }
-        | MutationPayload::Notification { .. }
-        | MutationPayload::Relationship { .. } => None,
+        | MutationPayload::Notification { .. } => None,
     }
 }
 
