@@ -5541,7 +5541,7 @@ mod tests {
             HashMap::from([("KEY".to_string(), "VALUE".to_string())]),
             Some("2".to_string()),
             Some("4Gi".to_string()),
-            None,
+            Some(vec!["secret1".to_string(), "secret2".to_string()]),
             Status::Pending,
             Some("last msg".to_string()),
             Some(TaskError::JobEngineError {

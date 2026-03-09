@@ -217,9 +217,12 @@ impl From<Task> for api::jobs::Task {
 
 #[cfg(test)]
 mod tests {
-    use super::BundleSpec;
+    use super::{BundleSpec, Task};
+    use crate::domain::task_status::Status;
+    use crate::domain::users::Username;
     use metis_common::RepoName;
     use metis_common::api::v1 as api;
+    use std::collections::HashMap;
     use std::str::FromStr;
 
     #[test]
@@ -234,5 +237,57 @@ mod tests {
         let round_trip: BundleSpec = api_spec.into();
 
         assert_eq!(round_trip, domain);
+    }
+
+    #[test]
+    fn task_roundtrip_preserves_secrets() {
+        let secrets = Some(vec!["db-secret".to_string(), "api-key".to_string()]);
+        let domain_task = Task::new(
+            "test prompt".to_string(),
+            BundleSpec::None,
+            None,
+            Username::from("test-creator"),
+            Some("worker:latest".to_string()),
+            Some("gpt-4o".to_string()),
+            HashMap::new(),
+            Some("400m".to_string()),
+            Some("768Mi".to_string()),
+            secrets.clone(),
+            Status::Created,
+            None,
+            None,
+        );
+
+        let api_task: api::jobs::Task = domain_task.clone().into();
+        let round_trip: Task = api_task.into();
+
+        assert_eq!(round_trip.secrets, secrets);
+        assert_eq!(round_trip.prompt, domain_task.prompt);
+        assert_eq!(round_trip.image, domain_task.image);
+        assert_eq!(round_trip.model, domain_task.model);
+    }
+
+    #[test]
+    fn task_roundtrip_preserves_empty_secrets() {
+        let domain_task = Task::new(
+            "test prompt".to_string(),
+            BundleSpec::None,
+            None,
+            Username::from("test-creator"),
+            None,
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            Status::Created,
+            None,
+            None,
+        );
+
+        let api_task: api::jobs::Task = domain_task.clone().into();
+        let round_trip: Task = api_task.into();
+
+        assert_eq!(round_trip.secrets, None);
     }
 }

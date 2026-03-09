@@ -1925,7 +1925,6 @@ mod tests {
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
-
             status: Status::Created,
             last_message: None,
             error: None,
@@ -1949,7 +1948,6 @@ mod tests {
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
-
             status: Status::Running,
             last_message: Some("doing work".to_string()),
             error: None,

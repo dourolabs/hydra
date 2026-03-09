@@ -841,4 +841,87 @@ mod tests {
 
         assert_eq!(api_filter.to_string(), filter.to_string());
     }
+
+    #[test]
+    fn job_settings_roundtrip_preserves_secrets() {
+        let secrets = Some(vec!["db-secret".to_string(), "api-key".to_string()]);
+        let job_settings = JobSettings {
+            repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
+            remote_url: None,
+            image: Some("worker:latest".to_string()),
+            model: None,
+            branch: None,
+            max_retries: None,
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: secrets.clone(),
+        };
+
+        let api_job_settings: api::issues::JobSettings = job_settings.clone().into();
+        let round_trip: JobSettings = api_job_settings.into();
+
+        assert_eq!(round_trip.secrets, secrets);
+        assert_eq!(round_trip.repo_name, job_settings.repo_name);
+        assert_eq!(round_trip.image, job_settings.image);
+    }
+
+    #[test]
+    fn job_settings_merge_prefers_primary_secrets() {
+        let primary = JobSettings {
+            repo_name: None,
+            remote_url: None,
+            image: None,
+            model: None,
+            branch: None,
+            max_retries: None,
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: Some(vec!["primary-secret".to_string()]),
+        };
+        let secondary = JobSettings {
+            repo_name: None,
+            remote_url: None,
+            image: None,
+            model: None,
+            branch: None,
+            max_retries: None,
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: Some(vec!["secondary-secret".to_string()]),
+        };
+
+        let merged = JobSettings::merge(primary, secondary);
+
+        assert_eq!(merged.secrets, Some(vec!["primary-secret".to_string()]));
+    }
+
+    #[test]
+    fn job_settings_merge_uses_secondary_when_primary_none() {
+        let primary = JobSettings {
+            repo_name: None,
+            remote_url: None,
+            image: None,
+            model: None,
+            branch: None,
+            max_retries: None,
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+        };
+        let secondary = JobSettings {
+            repo_name: None,
+            remote_url: None,
+            image: None,
+            model: None,
+            branch: None,
+            max_retries: None,
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: Some(vec!["secondary-secret".to_string()]),
+        };
+
+        let merged = JobSettings::merge(primary, secondary);
+
+        assert_eq!(merged.secrets, Some(vec!["secondary-secret".to_string()]));
+    }
 }
