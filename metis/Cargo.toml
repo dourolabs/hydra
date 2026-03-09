@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"
+base64 = "0.22"
 async-trait = "0.1"
 bytes = "1.6"
 clap = { version = "4.5", features = ["derive", "env"] }
@@ -26,7 +27,7 @@ tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "process", 
 toml = "0.8"
 metis-common = { path = "../metis-common" }
 metis-build-cache = { path = "../metis-build-cache" }
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "blocking"] }
 rpassword = "5"
 tempfile = "3.13"
 textwrap = { version = "0.16", features = ["terminal_size"] }
