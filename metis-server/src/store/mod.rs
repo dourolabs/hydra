@@ -13,7 +13,7 @@ use crate::domain::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
-use metis_common::api::v1::issues::SearchIssuesQuery;
+use metis_common::api::v1::issues::{IssueStatus, SearchIssuesQuery};
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::pagination::decode_cursor;
@@ -133,6 +133,17 @@ pub struct ObjectRelationship {
     pub target_id: MetisId,
     pub target_kind: ObjectKind,
     pub rel_type: RelationshipType,
+}
+
+/// A flat row from a subtree query, representing one descendant issue and its parent.
+#[derive(Debug, Clone)]
+pub struct SubtreeRow {
+    pub issue_id: IssueId,
+    pub parent_id: IssueId,
+    pub status: IssueStatus,
+    pub title: String,
+    pub assignee: Option<String>,
+    pub has_active_task: bool,
 }
 
 pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
@@ -316,6 +327,13 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
+
+    /// Returns the full descendant subtree (as flat rows) for each of the given root issue IDs.
+    ///
+    /// Each row represents a descendant issue with its immediate parent in the tree.
+    /// The caller assembles the flat rows into a nested tree structure.
+    async fn get_issue_subtrees(&self, root_ids: &[IssueId])
+    -> Result<Vec<SubtreeRow>, StoreError>;
 
     /// Lists all issues that are blocked on the provided issue.
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
