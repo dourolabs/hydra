@@ -1,7 +1,7 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 
-const MAX_LIMIT: u32 = 200;
+pub const MAX_LIMIT: u32 = 200;
 
 /// Decoded cursor containing the keyset pagination position.
 #[derive(Debug, Clone)]
