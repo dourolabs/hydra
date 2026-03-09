@@ -1,26 +1,39 @@
 use super::common::{patch_diff, service_repo_name};
+#[cfg(feature = "github")]
 use crate::{
     domain::{
         actors::{ActorRef, store_github_token_secrets},
-        patches::{GithubPr, Patch, PatchStatus},
-        users::{User, Username},
+        patches::GithubPr,
+        users::User,
     },
     test_utils::{
-        github_user_response, spawn_test_server, spawn_test_server_with_state, test_client,
-        test_state_with_github_api_base_url,
+        github_user_response, spawn_test_server_with_state, test_state_with_github_api_base_url,
     },
 };
+use crate::{
+    domain::{
+        patches::{Patch, PatchStatus},
+        users::Username,
+    },
+    test_utils::{spawn_test_server, test_client},
+};
+#[cfg(feature = "github")]
 use httpmock::prelude::HttpMockRequest;
+#[cfg(feature = "github")]
 use httpmock::{Method::GET, Method::POST, MockServer};
+#[cfg(feature = "github")]
+use metis_common::api::v1::patches::CreatePatchAssetResponse;
 use metis_common::{
     PatchId,
     api::v1::patches::{
-        CreatePatchAssetResponse, ListPatchVersionsResponse, ListPatchesResponse,
-        PatchVersionRecord, SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
+        ListPatchVersionsResponse, ListPatchesResponse, PatchVersionRecord, SearchPatchesQuery,
+        UpsertPatchRequest, UpsertPatchResponse,
     },
 };
+#[cfg(feature = "github")]
 use reqwest::Client;
 use reqwest::StatusCode;
+#[cfg(feature = "github")]
 use serde_json::json;
 
 #[tokio::test]
@@ -287,6 +300,7 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "github")]
 #[tokio::test]
 async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
     let github_server = MockServer::start_async().await;
@@ -372,6 +386,7 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "github")]
 #[tokio::test]
 async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
     let github_server = MockServer::start_async().await;
@@ -461,6 +476,7 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "github")]
 #[tokio::test]
 async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Result<()> {
     let github_server = MockServer::start_async().await;
@@ -569,6 +585,7 @@ async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Re
     Ok(())
 }
 
+#[cfg(feature = "github")]
 #[tokio::test]
 async fn create_patch_asset_surfaces_github_bad_size() -> anyhow::Result<()> {
     let github_server = MockServer::start_async().await;
@@ -697,6 +714,7 @@ async fn create_patch_asset_errors_without_github_pr() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "github")]
 fn client_with_token(auth_token: String) -> Client {
     let mut headers = reqwest::header::HeaderMap::new();
     let auth_value = format!("Bearer {auth_token}");

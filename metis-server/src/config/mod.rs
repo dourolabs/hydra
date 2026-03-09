@@ -4,6 +4,7 @@ pub use kube::build_kube_client;
 
 use anyhow::{Context, Result, ensure};
 use metis_common::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
+#[cfg(feature = "github")]
 use octocrab::models::AppId;
 use serde::{Deserialize, Deserializer};
 use std::{
@@ -252,6 +253,16 @@ impl AppConfig {
                 );
             }
             AuthConfig::Github { github_app } => {
+                #[cfg(not(feature = "github"))]
+                {
+                    let _ = github_app;
+                    anyhow::bail!(
+                        "auth_mode 'github' requires the 'github' Cargo feature, \
+                         but this binary was compiled without it. \
+                         Rebuild with `--features github` or use auth_mode 'local'."
+                    );
+                }
+                #[cfg(feature = "github")]
                 github_app.validate()?;
             }
         }
@@ -526,7 +537,9 @@ pub struct GithubAppSection {
     pub oauth_base_url: String,
 }
 
+#[cfg_attr(not(feature = "github"), allow(dead_code))]
 impl GithubAppSection {
+    #[cfg(feature = "github")]
     pub fn app_id(&self) -> AppId {
         AppId(self.app_id)
     }
@@ -848,6 +861,7 @@ mod tests {
         assert_eq!(database.database_url(), None);
     }
 
+    #[cfg(feature = "github")]
     #[test]
     fn github_app_section_rejects_blank_client_id() {
         let github_app = GithubAppSection {
@@ -869,6 +883,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "github")]
     #[test]
     fn config_requires_github_app_private_key() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
@@ -899,6 +914,7 @@ github_app:
         Ok(())
     }
 
+    #[cfg(feature = "github")]
     #[test]
     fn config_allows_empty_allowed_orgs() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
@@ -937,6 +953,7 @@ github_app:
         Ok(())
     }
 
+    #[cfg(feature = "github")]
     #[test]
     fn config_rejects_blank_allowed_orgs() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
@@ -978,6 +995,7 @@ github_app:
         Ok(())
     }
 
+    #[cfg(feature = "github")]
     #[test]
     fn config_rejects_missing_secret_encryption_key() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
@@ -1012,6 +1030,7 @@ github_app:
         Ok(())
     }
 
+    #[cfg(feature = "github")]
     #[test]
     fn config_rejects_invalid_base64_secret_encryption_key() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
@@ -1046,6 +1065,7 @@ github_app:
         Ok(())
     }
 
+    #[cfg(feature = "github")]
     #[test]
     fn config_rejects_wrong_length_secret_encryption_key() -> anyhow::Result<()> {
         use base64::Engine;
@@ -1120,6 +1140,7 @@ job:
         assert!(auth.is_local());
     }
 
+    #[cfg(feature = "github")]
     #[test]
     fn config_rejects_github_mode_without_github_app() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
@@ -1198,6 +1219,7 @@ job:
         Ok(())
     }
 
+    #[cfg(feature = "github")]
     #[test]
     fn config_github_mode_local_username_returns_none() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;

@@ -5,10 +5,12 @@ pub mod agents;
 pub mod auth;
 pub mod documents;
 pub mod events;
+#[cfg(feature = "github")]
 pub mod github;
 pub mod issues;
 pub mod jobs;
 pub mod labels;
+#[cfg(feature = "github")]
 pub mod login;
 pub mod merge_queues;
 pub mod messages;

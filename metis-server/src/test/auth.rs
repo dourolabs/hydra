@@ -26,6 +26,15 @@ async fn public_routes_accept_requests_without_auth() -> anyhow::Result<()> {
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
+    Ok(())
+}
+
+#[cfg(feature = "github")]
+#[tokio::test]
+async fn github_public_routes_accept_requests_without_auth() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client_without_auth();
+
     let response = client
         .get(format!("{}/v1/github/app/client-id", server.base_url()))
         .send()

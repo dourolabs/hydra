@@ -166,6 +166,7 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_automation("sync_review_request_issues", |params| {
         Ok(Box::new(SyncReviewRequestIssuesAutomation::new(params)?))
     });
+    #[cfg(feature = "github")]
     registry.register_automation("github_pr_sync", |params| {
         Ok(Box::new(
             super::integrations::github_pr_sync::GithubPrSyncAutomation::new(params)?,

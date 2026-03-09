@@ -38,7 +38,9 @@ pub use metis_common::repositories::{Repository, RepositoryRecord};
 pub use notifications::NotificationError;
 pub use patches::UpsertPatchError;
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
+#[cfg(feature = "github")]
 pub use users::LoginError;
+#[cfg(feature = "github")]
 pub(crate) use users::WORKER_NAME_LOGIN;
 
 #[derive(Debug, Clone)]

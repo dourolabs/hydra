@@ -1,136 +1,154 @@
 use crate::{
     domain::{
-        actors::{Actor, ActorRef, store_github_token_secrets},
-        users::{User, UserSummary, Username},
+        actors::{Actor, ActorRef},
+        users::Username,
     },
     store::{ReadOnlyStore, StoreError},
 };
-use metis_common::{TaskId, api::v1 as api};
-use octocrab::Octocrab;
-use serde::Deserialize;
-use thiserror::Error;
+use metis_common::TaskId;
 
 use super::app_state::AppState;
 
+#[cfg(feature = "github")]
 pub(crate) const WORKER_NAME_LOGIN: &str = "login";
 
-#[derive(Debug, Error)]
-pub enum LoginError {
-    #[error("invalid github token: {0}")]
-    InvalidGithubToken(String),
-    #[error("github user '{username}' is not in an allowed organization")]
-    ForbiddenGithubOrg { username: String },
-    #[error("login store operation failed")]
-    Store {
-        #[source]
-        source: StoreError,
-    },
-}
+#[cfg(feature = "github")]
+mod github_login {
+    use super::*;
+    use crate::domain::{
+        actors::store_github_token_secrets,
+        users::{User, UserSummary},
+    };
+    use metis_common::api::v1 as api;
+    use octocrab::Octocrab;
+    use serde::Deserialize;
+    use thiserror::Error;
 
-impl AppState {
-    pub async fn login_with_github_token(
-        &self,
-        github_token: String,
-        github_refresh_token: String,
-        actor: ActorRef,
-    ) -> Result<api::login::LoginResponse, LoginError> {
-        let (user, _actor, login_token) = self
-            .create_actor_for_github_token(github_token, github_refresh_token, actor)
-            .await?;
-
-        let user_summary: api::users::UserSummary = UserSummary::from(user).into();
-
-        Ok(api::login::LoginResponse::new(login_token, user_summary))
+    #[derive(Debug, Error)]
+    pub enum LoginError {
+        #[error("invalid github token: {0}")]
+        InvalidGithubToken(String),
+        #[error("github user '{username}' is not in an allowed organization")]
+        ForbiddenGithubOrg { username: String },
+        #[error("login store operation failed")]
+        Store {
+            #[source]
+            source: StoreError,
+        },
     }
 
-    async fn create_actor_for_github_token(
-        &self,
-        github_token: String,
-        github_refresh_token: String,
-        login_actor: ActorRef,
-    ) -> Result<(User, Actor, String), LoginError> {
-        let github_client = Octocrab::builder()
-            .base_uri(self.config.github_api_base_url().to_string())
-            .map_err(|err| LoginError::Store {
-                source: StoreError::Internal(format!("failed to parse github api base url: {err}")),
-            })?
-            .personal_token(github_token.clone())
-            .build()
-            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+    impl AppState {
+        pub async fn login_with_github_token(
+            &self,
+            github_token: String,
+            github_refresh_token: String,
+            actor: ActorRef,
+        ) -> Result<api::login::LoginResponse, LoginError> {
+            let (user, _actor, login_token) = self
+                .create_actor_for_github_token(github_token, github_refresh_token, actor)
+                .await?;
 
-        let github_user = github_client
-            .current()
-            .user()
-            .await
-            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
-        let username = Username::from(github_user.login);
+            let user_summary: api::users::UserSummary = UserSummary::from(user).into();
 
-        let allowed_orgs = &self.config.metis.allowed_orgs;
-        if !allowed_orgs.is_empty() {
-            #[derive(Deserialize)]
-            struct GithubOrg {
-                login: String,
-            }
+            Ok(api::login::LoginResponse::new(login_token, user_summary))
+        }
 
-            let orgs: Vec<GithubOrg> = github_client
-                .get("/user/orgs", None::<&()>)
-                .await
+        async fn create_actor_for_github_token(
+            &self,
+            github_token: String,
+            github_refresh_token: String,
+            login_actor: ActorRef,
+        ) -> Result<(User, Actor, String), LoginError> {
+            let github_client = Octocrab::builder()
+                .base_uri(self.config.github_api_base_url().to_string())
+                .map_err(|err| LoginError::Store {
+                    source: StoreError::Internal(format!(
+                        "failed to parse github api base url: {err}"
+                    )),
+                })?
+                .personal_token(github_token.clone())
+                .build()
                 .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
 
-            let is_allowed = orgs.iter().any(|org| {
-                allowed_orgs
-                    .iter()
-                    .any(|allowed| org.login.eq_ignore_ascii_case(allowed))
-            });
+            let github_user = github_client
+                .current()
+                .user()
+                .await
+                .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+            let username = Username::from(github_user.login);
 
-            if !is_allowed {
-                return Err(LoginError::ForbiddenGithubOrg {
-                    username: username.to_string(),
+            let allowed_orgs = &self.config.metis.allowed_orgs;
+            if !allowed_orgs.is_empty() {
+                #[derive(Deserialize)]
+                struct GithubOrg {
+                    login: String,
+                }
+
+                let orgs: Vec<GithubOrg> = github_client
+                    .get("/user/orgs", None::<&()>)
+                    .await
+                    .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+
+                let is_allowed = orgs.iter().any(|org| {
+                    allowed_orgs
+                        .iter()
+                        .any(|allowed| org.login.eq_ignore_ascii_case(allowed))
                 });
-            }
-        }
 
-        let user = User {
-            username: username.clone(),
-            github_user_id: Some(github_user.id.into_inner()),
-            deleted: false,
-        };
-
-        let (actor, auth_token) = Actor::new_for_user(username);
-
-        if let Err(err) = self.store.add_user(user.clone(), login_actor.clone()).await {
-            match err {
-                StoreError::UserAlreadyExists(_) => {
-                    // User already exists — continue to store tokens in
-                    // encrypted user_secrets below.
+                if !is_allowed {
+                    return Err(LoginError::ForbiddenGithubOrg {
+                        username: username.to_string(),
+                    });
                 }
-                other => return Err(LoginError::Store { source: other }),
             }
-        }
 
-        // Store tokens in encrypted user_secrets.
-        store_github_token_secrets(self, &user.username, &github_token, &github_refresh_token)
-            .await;
+            let user = User {
+                username: username.clone(),
+                github_user_id: Some(github_user.id.into_inner()),
+                deleted: false,
+            };
 
-        if let Err(err) = self
-            .store
-            .add_actor(actor.clone(), login_actor.clone())
-            .await
-        {
-            match err {
-                StoreError::ActorAlreadyExists(_) => {
-                    self.store
-                        .update_actor(actor.clone(), login_actor)
-                        .await
-                        .map_err(|source| LoginError::Store { source })?;
+            let (actor, auth_token) = Actor::new_for_user(username);
+
+            if let Err(err) = self.store.add_user(user.clone(), login_actor.clone()).await {
+                match err {
+                    StoreError::UserAlreadyExists(_) => {
+                        // User already exists — continue to store tokens in
+                        // encrypted user_secrets below.
+                    }
+                    other => return Err(LoginError::Store { source: other }),
                 }
-                other => return Err(LoginError::Store { source: other }),
             }
-        }
 
-        Ok((user, actor, auth_token))
+            // Store tokens in encrypted user_secrets.
+            store_github_token_secrets(self, &user.username, &github_token, &github_refresh_token)
+                .await;
+
+            if let Err(err) = self
+                .store
+                .add_actor(actor.clone(), login_actor.clone())
+                .await
+            {
+                match err {
+                    StoreError::ActorAlreadyExists(_) => {
+                        self.store
+                            .update_actor(actor.clone(), login_actor)
+                            .await
+                            .map_err(|source| LoginError::Store { source })?;
+                    }
+                    other => return Err(LoginError::Store { source: other }),
+                }
+            }
+
+            Ok((user, actor, auth_token))
+        }
     }
+}
 
+#[cfg(feature = "github")]
+pub use github_login::LoginError;
+
+impl AppState {
     pub(crate) async fn create_actor_for_job(
         &self,
         task_id: TaskId,
@@ -167,13 +185,16 @@ impl AppState {
         store.get_actor(name).await.map(|actor| actor.item)
     }
 
-    pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
+    pub async fn get_user(
+        &self,
+        username: &Username,
+    ) -> Result<crate::domain::users::User, StoreError> {
         let store = self.store.as_ref();
         store.get_user(username, false).await.map(|user| user.item)
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "github"))]
 mod tests {
     use super::LoginError;
     use crate::{

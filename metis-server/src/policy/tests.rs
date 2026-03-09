@@ -582,6 +582,7 @@ fn policy_config_default_is_empty() {
 /// Exact structure from config.yaml: policies with automations list and
 /// params for patch_workflow. Ensures merge_request.assignee
 /// is deserialized and passed through to the automation.
+#[cfg(feature = "github")]
 #[test]
 fn policy_config_deserializes_patch_workflow_params_under_policies_section() {
     let yaml_str = r#"
@@ -826,7 +827,7 @@ async fn check_update_job_passes_when_allowed() {
 // ---------------------------------------------------------------------------
 
 /// Test 1: Default config (no `[policies]` section) reproduces all current
-/// behavior exactly — all 5 restrictions and 7 automations are active.
+/// behavior exactly — all 5 restrictions and all automations are active.
 #[test]
 fn default_config_enables_all_builtin_policies() {
     let registry = registry::build_default_registry();
@@ -835,9 +836,26 @@ fn default_config_enables_all_builtin_policies() {
     let engine = crate::app::AppState::build_policy_engine(None);
 
     assert_eq!(engine.restriction_count(), 5);
-    assert_eq!(engine.automation_count(), 8);
+
+    #[cfg(feature = "github")]
+    let expected_automations = 8;
+    #[cfg(not(feature = "github"))]
+    let expected_automations = 7;
+    assert_eq!(engine.automation_count(), expected_automations);
 
     // Also verify that an explicit config listing all policies gives the same counts
+    let mut automations = vec![
+        PolicyEntry::Name("cascade_issue_status".to_string()),
+        PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
+        PolicyEntry::Name("close_merge_request_issues".to_string()),
+        PolicyEntry::Name("sync_review_request_issues".to_string()),
+        PolicyEntry::Name("patch_workflow".to_string()),
+        PolicyEntry::Name("notification_generation".to_string()),
+        PolicyEntry::Name("inbox_label".to_string()),
+    ];
+    #[cfg(feature = "github")]
+    automations.push(PolicyEntry::Name("github_pr_sync".to_string()));
+
     let all_config = PolicyConfig {
         global: PolicyList {
             restrictions: vec![
@@ -847,21 +865,12 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("running_job_validation".to_string()),
                 PolicyEntry::Name("require_creator".to_string()),
             ],
-            automations: vec![
-                PolicyEntry::Name("cascade_issue_status".to_string()),
-                PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
-                PolicyEntry::Name("close_merge_request_issues".to_string()),
-                PolicyEntry::Name("sync_review_request_issues".to_string()),
-                PolicyEntry::Name("patch_workflow".to_string()),
-                PolicyEntry::Name("github_pr_sync".to_string()),
-                PolicyEntry::Name("notification_generation".to_string()),
-                PolicyEntry::Name("inbox_label".to_string()),
-            ],
+            automations,
         },
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 5);
-    assert_eq!(explicit_engine.automation_count(), 8);
+    assert_eq!(explicit_engine.automation_count(), expected_automations);
 }
 
 /// Test 2: Disabling a specific restriction allows the previously-blocked
@@ -910,13 +919,17 @@ async fn disabling_restriction_allows_blocked_operation() {
                 // require_creator is intentionally omitted
                 PolicyEntry::Name("running_job_validation".to_string()),
             ],
-            automations: vec![
-                PolicyEntry::Name("cascade_issue_status".to_string()),
-                PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
-                PolicyEntry::Name("close_merge_request_issues".to_string()),
-                PolicyEntry::Name("patch_workflow".to_string()),
-                PolicyEntry::Name("github_pr_sync".to_string()),
-            ],
+            automations: {
+                let mut a = vec![
+                    PolicyEntry::Name("cascade_issue_status".to_string()),
+                    PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
+                    PolicyEntry::Name("close_merge_request_issues".to_string()),
+                    PolicyEntry::Name("patch_workflow".to_string()),
+                ];
+                #[cfg(feature = "github")]
+                a.push(PolicyEntry::Name("github_pr_sync".to_string()));
+                a
+            },
         },
     };
 
@@ -1015,6 +1028,7 @@ fn invalid_params_produce_error_during_validation() {
 }
 
 /// Test: YAML deserialization of a full config with policies section works.
+#[cfg(feature = "github")]
 #[test]
 fn full_yaml_config_with_policies_deserializes() {
     let yaml_str = r#"
@@ -1114,6 +1128,7 @@ async fn restriction_can_read_actor_from_context() {
 }
 
 /// Test: Config without policies section deserializes with policies = None.
+#[cfg(feature = "github")]
 #[test]
 fn config_without_policies_deserializes_as_none() {
     let yaml_str = r#"
