@@ -3,15 +3,4 @@
 /**
  * Query parameters for listing labels.
  */
-export type SearchLabelsQuery = {
-  q: string | null;
-  include_deleted: boolean | null;
-  /**
-   * Maximum number of results to return. When omitted, all results are returned.
-   */
-  limit: number | null;
-  /**
-   * Opaque cursor from a previous response's `next_cursor` field.
-   */
-  cursor: string | null;
-};
+export type SearchLabelsQuery = { q: string | null; include_deleted: boolean | null; limit: number | null; cursor: string | null };

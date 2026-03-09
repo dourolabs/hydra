@@ -6598,4 +6598,73 @@ mod tests {
         let rels = store.get_relationships(None, None, None).await.unwrap();
         assert!(rels.is_empty());
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_issue_subtrees_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Create a parent issue with two children, one grandchild
+        let (parent_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child_a, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (child_b, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (grandchild, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    child_a.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Query subtrees for parent
+        let rows = store
+            .get_issue_subtrees(&[parent_id.clone()])
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+        let ids: HashSet<_> = rows.iter().map(|r| r.issue_id.clone()).collect();
+        assert!(ids.contains(&child_a));
+        assert!(ids.contains(&child_b));
+        assert!(ids.contains(&grandchild));
+
+        // Check parent linkage
+        let gc_row = rows.iter().find(|r| r.issue_id == grandchild).unwrap();
+        assert_eq!(gc_row.parent_id, child_a);
+
+        // Empty root_ids returns nothing
+        let empty = store.get_issue_subtrees(&[]).await.unwrap();
+        assert!(empty.is_empty());
+
+        // Issue with no children returns empty
+        let (leaf, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let leaf_rows = store.get_issue_subtrees(&[leaf]).await.unwrap();
+        assert!(leaf_rows.is_empty());
+    }
 }

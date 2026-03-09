@@ -653,3 +653,102 @@ fn assemble_subtrees(
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use metis_common::api::v1::issues::IssueStatus;
+
+    fn row(issue: &IssueId, parent: &IssueId, title: &str) -> SubtreeRow {
+        SubtreeRow {
+            issue_id: issue.clone(),
+            parent_id: parent.clone(),
+            status: IssueStatus::Open,
+            title: title.to_string(),
+            assignee: None,
+            has_active_task: false,
+        }
+    }
+
+    #[test]
+    fn assemble_subtrees_empty_rows() {
+        let root = IssueId::new();
+        let result = assemble_subtrees(&[root.clone()], vec![]);
+        assert_eq!(result[&root].len(), 0);
+    }
+
+    #[test]
+    fn assemble_subtrees_single_child() {
+        let root = IssueId::new();
+        let child = IssueId::new();
+        let rows = vec![row(&child, &root, "child")];
+        let result = assemble_subtrees(&[root.clone()], rows);
+        assert_eq!(result[&root].len(), 1);
+        assert_eq!(result[&root][0].issue_id, child);
+        assert!(result[&root][0].children.is_empty());
+    }
+
+    #[test]
+    fn assemble_subtrees_multiple_levels() {
+        let root = IssueId::new();
+        let child = IssueId::new();
+        let grandchild = IssueId::new();
+        let rows = vec![
+            row(&child, &root, "child"),
+            row(&grandchild, &child, "grandchild"),
+        ];
+        let result = assemble_subtrees(&[root.clone()], rows);
+        assert_eq!(result[&root].len(), 1);
+        assert_eq!(result[&root][0].children.len(), 1);
+        assert_eq!(result[&root][0].children[0].issue_id, grandchild);
+    }
+
+    #[test]
+    fn assemble_subtrees_multiple_roots() {
+        let root_a = IssueId::new();
+        let root_b = IssueId::new();
+        let child_a = IssueId::new();
+        let child_b = IssueId::new();
+        let rows = vec![
+            row(&child_a, &root_a, "child_a"),
+            row(&child_b, &root_b, "child_b"),
+        ];
+        let result = assemble_subtrees(&[root_a.clone(), root_b.clone()], rows);
+        assert_eq!(result[&root_a].len(), 1);
+        assert_eq!(result[&root_a][0].issue_id, child_a);
+        assert_eq!(result[&root_b].len(), 1);
+        assert_eq!(result[&root_b][0].issue_id, child_b);
+    }
+
+    #[test]
+    fn assemble_subtrees_preserves_has_active_task() {
+        let root = IssueId::new();
+        let child = IssueId::new();
+        let rows = vec![SubtreeRow {
+            issue_id: child.clone(),
+            parent_id: root.clone(),
+            status: IssueStatus::InProgress,
+            title: "active child".to_string(),
+            assignee: Some("alice".to_string()),
+            has_active_task: true,
+        }];
+        let result = assemble_subtrees(&[root.clone()], rows);
+        assert!(result[&root][0].has_active_task);
+        assert_eq!(result[&root][0].assignee, Some("alice".to_string()));
+        assert_eq!(result[&root][0].status, IssueStatus::InProgress);
+    }
+
+    #[test]
+    fn assemble_subtrees_root_with_no_children() {
+        let root_with_children = IssueId::new();
+        let root_without = IssueId::new();
+        let child = IssueId::new();
+        let rows = vec![row(&child, &root_with_children, "child")];
+        let result = assemble_subtrees(
+            &[root_with_children.clone(), root_without.clone()],
+            rows,
+        );
+        assert_eq!(result[&root_with_children].len(), 1);
+        assert_eq!(result[&root_without].len(), 0);
+    }
+}

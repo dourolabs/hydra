@@ -6702,4 +6702,134 @@ mod tests {
         let bob_names = store.list_user_secret_names(&bob).await.unwrap();
         assert_eq!(bob_names, vec!["key_b"]);
     }
+
+    // ---- Subtree tests ----
+
+    #[tokio::test]
+    async fn get_issue_subtrees_empty_for_no_children() {
+        let store = create_test_store().await;
+        let (root_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let rows = store.get_issue_subtrees(&[root_id]).await.unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_returns_direct_children() {
+        let store = create_test_store().await;
+        let (parent_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child_id, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let rows = store.get_issue_subtrees(&[parent_id.clone()]).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].issue_id, child_id);
+        assert_eq!(rows[0].parent_id, parent_id);
+        assert_eq!(rows[0].title, "Test Title");
+        assert!(!rows[0].has_active_task);
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_returns_transitive_descendants() {
+        let store = create_test_store().await;
+        let (root, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    root.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (grandchild, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    child.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let rows = store.get_issue_subtrees(&[root.clone()]).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        let ids: Vec<_> = rows.iter().map(|r| r.issue_id.clone()).collect();
+        assert!(ids.contains(&child));
+        assert!(ids.contains(&grandchild));
+
+        // Check parent linkage
+        let child_row = rows.iter().find(|r| r.issue_id == child).unwrap();
+        assert_eq!(child_row.parent_id, root);
+        let gc_row = rows.iter().find(|r| r.issue_id == grandchild).unwrap();
+        assert_eq!(gc_row.parent_id, child);
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_multiple_roots() {
+        let store = create_test_store().await;
+        let (root_a, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (root_b, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child_a, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    root_a.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (child_b, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    root_b.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let rows = store
+            .get_issue_subtrees(&[root_a.clone(), root_b.clone()])
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        let ids: Vec<_> = rows.iter().map(|r| r.issue_id.clone()).collect();
+        assert!(ids.contains(&child_a));
+        assert!(ids.contains(&child_b));
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_empty_root_ids() {
+        let store = create_test_store().await;
+        let rows = store.get_issue_subtrees(&[]).await.unwrap();
+        assert!(rows.is_empty());
+    }
 }
