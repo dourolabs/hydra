@@ -30,7 +30,9 @@ use std::{fmt, str::FromStr};
 
 mod issue_graph;
 mod memory_store;
+#[cfg(feature = "postgres")]
 pub mod migration;
+#[cfg(feature = "postgres")]
 pub mod postgres_v2;
 pub mod sqlite_store;
 

@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+postgres = ["sqlx/postgres"]
+enterprise = ["postgres"]
 test-utils = ["dep:httpmock", "dep:openssl"]
 vendored-openssl = [
     "git2/vendored-openssl",
@@ -42,7 +44,6 @@ mime = "0.3"
 jsonwebtoken = { version = "10", default-features = false, features = ["use_pem"] }
 sqlx = { version = "0.7", default-features = false, features = [
     "runtime-tokio-rustls",
-    "postgres",
     "sqlite",
     "macros",
     "chrono",
