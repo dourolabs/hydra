@@ -16,7 +16,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
-use metis_common::api::v1::pagination::decode_cursor;
+use metis_common::api::v1::pagination::DecodedCursor;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -945,7 +945,7 @@ pub(crate) fn apply_pagination_sql_pg(
     id_col: &str,
 ) -> Result<Option<u32>, StoreError> {
     if let Some(cursor_str) = cursor {
-        let decoded = decode_cursor(cursor_str)
+        let decoded = DecodedCursor::decode(cursor_str)
             .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
         let ts_idx = bindings.len() + 1;
         let id_idx = bindings.len() + 2;
@@ -984,7 +984,7 @@ pub(crate) fn apply_pagination_sql_sqlite(
     id_col: &str,
 ) -> Result<Option<u32>, StoreError> {
     if let Some(cursor_str) = cursor {
-        let decoded = decode_cursor(cursor_str)
+        let decoded = DecodedCursor::decode(cursor_str)
             .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
         predicates.push(format!("({timestamp_col}, {id_col}) < (?, ?)"));
         bindings.push(decoded.timestamp.to_rfc3339());
@@ -1026,7 +1026,7 @@ pub(crate) fn apply_memory_pagination<T>(
 
     // Apply cursor filter (keep only items that come after cursor in DESC order)
     if let Some(cursor_str) = cursor {
-        let decoded = decode_cursor(cursor_str)
+        let decoded = DecodedCursor::decode(cursor_str)
             .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
         items.retain(|item| {
             let ts = get_timestamp(item);

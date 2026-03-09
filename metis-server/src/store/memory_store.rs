@@ -5947,10 +5947,11 @@ mod tests {
         let page1 = store.list_issues(&query).await.unwrap();
         assert_eq!(page1.len(), 3);
 
-        let cursor = metis_common::api::v1::pagination::encode_cursor(
-            &page1[1].1.timestamp,
-            page1[1].0.as_ref(),
-        );
+        let cursor = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page1[1].1.timestamp,
+            id: page1[1].0.to_string(),
+        }
+        .encode();
 
         // Page 2: use cursor, limit=2
         let mut query2 = SearchIssuesQuery::default();
@@ -5959,10 +5960,11 @@ mod tests {
         let page2 = store.list_issues(&query2).await.unwrap();
         assert_eq!(page2.len(), 3);
 
-        let cursor2 = metis_common::api::v1::pagination::encode_cursor(
-            &page2[1].1.timestamp,
-            page2[1].0.as_ref(),
-        );
+        let cursor2 = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page2[1].1.timestamp,
+            id: page2[1].0.to_string(),
+        }
+        .encode();
 
         // Page 3: only 1 item remaining (no extra = last page)
         let mut query3 = SearchIssuesQuery::default();
@@ -6014,10 +6016,11 @@ mod tests {
         let page1 = store.list_patches(&query).await.unwrap();
         assert_eq!(page1.len(), 3);
 
-        let cursor = metis_common::api::v1::pagination::encode_cursor(
-            &page1[1].1.timestamp,
-            page1[1].0.as_ref(),
-        );
+        let cursor = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page1[1].1.timestamp,
+            id: page1[1].0.to_string(),
+        }
+        .encode();
 
         let mut query2 = SearchPatchesQuery::default();
         query2.limit = Some(2);
@@ -6025,10 +6028,11 @@ mod tests {
         let page2 = store.list_patches(&query2).await.unwrap();
         assert_eq!(page2.len(), 3);
 
-        let cursor2 = metis_common::api::v1::pagination::encode_cursor(
-            &page2[1].1.timestamp,
-            page2[1].0.as_ref(),
-        );
+        let cursor2 = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page2[1].1.timestamp,
+            id: page2[1].0.to_string(),
+        }
+        .encode();
 
         let mut query3 = SearchPatchesQuery::default();
         query3.limit = Some(2);
@@ -6065,10 +6069,11 @@ mod tests {
         let page1 = store.list_documents(&query).await.unwrap();
         assert_eq!(page1.len(), 3);
 
-        let cursor = metis_common::api::v1::pagination::encode_cursor(
-            &page1[1].1.timestamp,
-            page1[1].0.as_ref(),
-        );
+        let cursor = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page1[1].1.timestamp,
+            id: page1[1].0.to_string(),
+        }
+        .encode();
 
         let mut query2 = SearchDocumentsQuery::default();
         query2.limit = Some(2);
@@ -6076,10 +6081,11 @@ mod tests {
         let page2 = store.list_documents(&query2).await.unwrap();
         assert_eq!(page2.len(), 3);
 
-        let cursor2 = metis_common::api::v1::pagination::encode_cursor(
-            &page2[1].1.timestamp,
-            page2[1].0.as_ref(),
-        );
+        let cursor2 = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page2[1].1.timestamp,
+            id: page2[1].0.to_string(),
+        }
+        .encode();
 
         let mut query3 = SearchDocumentsQuery::default();
         query3.limit = Some(2);
@@ -6116,10 +6122,11 @@ mod tests {
         let page1 = store.list_tasks(&query).await.unwrap();
         assert_eq!(page1.len(), 3);
 
-        let cursor = metis_common::api::v1::pagination::encode_cursor(
-            &page1[1].1.timestamp,
-            page1[1].0.as_ref(),
-        );
+        let cursor = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page1[1].1.timestamp,
+            id: page1[1].0.to_string(),
+        }
+        .encode();
 
         let mut query2 = SearchJobsQuery::default();
         query2.limit = Some(2);
@@ -6127,10 +6134,11 @@ mod tests {
         let page2 = store.list_tasks(&query2).await.unwrap();
         assert_eq!(page2.len(), 3);
 
-        let cursor2 = metis_common::api::v1::pagination::encode_cursor(
-            &page2[1].1.timestamp,
-            page2[1].0.as_ref(),
-        );
+        let cursor2 = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page2[1].1.timestamp,
+            id: page2[1].0.to_string(),
+        }
+        .encode();
 
         let mut query3 = SearchJobsQuery::default();
         query3.limit = Some(2);
@@ -6170,10 +6178,11 @@ mod tests {
         assert_eq!(page1.len(), 3);
 
         // Simulate what the route handler does: truncate to limit and encode cursor
-        let cursor = metis_common::api::v1::pagination::encode_cursor(
-            &page1[1].1.updated_at,
-            page1[1].0.as_ref(),
-        );
+        let cursor = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page1[1].1.updated_at,
+            id: page1[1].0.to_string(),
+        }
+        .encode();
 
         // Page 2: use cursor, limit=2
         let mut query2 = SearchLabelsQuery::default();
@@ -6182,10 +6191,11 @@ mod tests {
         let page2 = store.list_labels(&query2).await.unwrap();
         assert_eq!(page2.len(), 3);
 
-        let cursor2 = metis_common::api::v1::pagination::encode_cursor(
-            &page2[1].1.updated_at,
-            page2[1].0.as_ref(),
-        );
+        let cursor2 = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page2[1].1.updated_at,
+            id: page2[1].0.to_string(),
+        }
+        .encode();
 
         // Page 3: use cursor2, limit=2
         let mut query3 = SearchLabelsQuery::default();
