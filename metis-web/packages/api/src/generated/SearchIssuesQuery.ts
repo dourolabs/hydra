@@ -13,8 +13,16 @@ export type SearchIssuesQuery = {
    * Filter issues by label IDs (comma-separated in query string).
    */
   labels: string;
-  /** Maximum number of results to return. When omitted, all results are returned. */
+  /**
+   * Maximum number of results to return. When omitted, all results are returned.
+   */
   limit: number | null;
-  /** Opaque cursor from a previous response's `next_cursor` field. */
+  /**
+   * Opaque cursor from a previous response's `next_cursor` field.
+   */
   cursor: string | null;
+  /**
+   * Comma-separated list of optional includes (e.g., "subtree").
+   */
+  include: string;
 };

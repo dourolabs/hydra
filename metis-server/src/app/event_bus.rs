@@ -1295,6 +1295,13 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_issue_children(issue_id).await
     }
 
+    async fn get_issue_subtrees(
+        &self,
+        root_ids: &[IssueId],
+    ) -> Result<Vec<crate::store::SubtreeRow>, StoreError> {
+        self.inner.get_issue_subtrees(root_ids).await
+    }
+
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.inner.get_issue_blocked_on(issue_id).await
     }
