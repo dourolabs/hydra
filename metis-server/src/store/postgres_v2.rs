@@ -4029,6 +4029,7 @@ mod tests {
         },
         test_utils::test_state_with_store,
     };
+    use chrono::Timelike;
     use metis_common::{
         PatchId, RepoName, TaskId, VersionNumber, Versioned,
         repositories::{
@@ -4036,7 +4037,6 @@ mod tests {
             SearchRepositoriesQuery,
         },
     };
-    use chrono::Timelike;
     use std::{collections::HashSet, str::FromStr, sync::Arc};
 
     fn assert_versioned<T: std::fmt::Debug + PartialEq>(
@@ -4174,8 +4174,12 @@ mod tests {
             Some("last message".to_string()),
             None,
         );
-        task.start_time = Some(truncate_to_micros(Utc::now() - chrono::Duration::minutes(10)));
-        task.end_time = Some(truncate_to_micros(Utc::now() - chrono::Duration::minutes(5)));
+        task.start_time = Some(truncate_to_micros(
+            Utc::now() - chrono::Duration::minutes(10),
+        ));
+        task.end_time = Some(truncate_to_micros(
+            Utc::now() - chrono::Duration::minutes(5),
+        ));
         task
     }
 
