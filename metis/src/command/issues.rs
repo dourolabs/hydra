@@ -147,6 +147,10 @@ pub enum IssueCommands {
         #[arg(long = "max-retries", value_name = "MAX_RETRIES")]
         max_retries: Option<u32>,
 
+        /// User secrets to pass to jobs (comma-separated).
+        #[arg(long, value_name = "SECRETS", value_delimiter = ',')]
+        secrets: Vec<String>,
+
         /// Comma-separated label names to assign (creates labels if they don't exist).
         #[arg(long = "labels", value_name = "LABEL_NAME", value_delimiter = ',')]
         labels: Vec<String>,
@@ -245,6 +249,19 @@ pub enum IssueCommands {
             conflicts_with = "clear_job_settings"
         )]
         max_retries: Option<u32>,
+
+        /// User secrets to pass to jobs (comma-separated).
+        #[arg(
+            long,
+            value_name = "SECRETS",
+            value_delimiter = ',',
+            conflicts_with_all = ["clear_job_settings", "clear_secrets"]
+        )]
+        secrets: Vec<String>,
+
+        /// Remove secrets from job settings.
+        #[arg(long, conflicts_with = "clear_job_settings")]
+        clear_secrets: bool,
 
         /// Remove all job settings from the issue.
         #[arg(long)]
@@ -398,6 +415,7 @@ pub async fn run(
             model,
             branch,
             max_retries,
+            secrets,
             labels,
         } => {
             let creator = resolve_creator_username(client).await?;
@@ -418,6 +436,7 @@ pub async fn run(
                 model,
                 branch,
                 max_retries,
+                secrets,
                 current_issue_id,
                 labels,
             )
@@ -444,6 +463,8 @@ pub async fn run(
             model,
             branch,
             max_retries,
+            secrets,
+            clear_secrets,
             clear_job_settings,
             add_labels,
             remove_labels,
@@ -468,6 +489,8 @@ pub async fn run(
             model,
             branch,
             max_retries,
+            secrets,
+            clear_secrets,
             clear_job_settings,
             add_labels,
             remove_labels,
@@ -1103,6 +1126,8 @@ fn resolve_job_settings(
     model: Option<String>,
     branch: Option<String>,
     max_retries: Option<u32>,
+    secrets: Vec<String>,
+    clear_secrets: bool,
     clear_job_settings: bool,
 ) -> Result<(JobSettings, bool)> {
     if clear_job_settings {
@@ -1164,6 +1189,24 @@ fn resolve_job_settings(
         changed = true;
     }
 
+    if clear_secrets {
+        job_settings.secrets = None;
+        changed = true;
+    } else if !secrets.is_empty() {
+        let validated: Vec<String> = secrets
+            .into_iter()
+            .map(|s| {
+                let trimmed = s.trim().to_string();
+                if trimmed.is_empty() {
+                    bail!("--secrets values must not be empty.");
+                }
+                Ok(trimmed)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        job_settings.secrets = Some(validated);
+        changed = true;
+    }
+
     if changed {
         Ok((job_settings, true))
     } else {
@@ -1191,6 +1234,7 @@ async fn resolve_inherited_job_settings(
     job_settings.image = current.image;
     job_settings.model = current.model;
     job_settings.branch = current.branch;
+    job_settings.secrets = current.secrets;
 
     Ok(job_settings)
 }
@@ -1212,6 +1256,7 @@ async fn create_issue(
     model: Option<String>,
     branch: Option<String>,
     max_retries: Option<u32>,
+    secrets: Vec<String>,
     current_issue_id: Option<IssueId>,
     labels: Vec<String>,
 ) -> Result<IssueVersionRecord> {
@@ -1245,6 +1290,8 @@ async fn create_issue(
         model,
         branch,
         max_retries,
+        secrets,
+        false,
         false,
     )?;
     let job_settings =
@@ -1311,6 +1358,8 @@ async fn update_issue(
     model: Option<String>,
     branch: Option<String>,
     max_retries: Option<u32>,
+    secrets: Vec<String>,
+    clear_secrets: bool,
     clear_job_settings: bool,
     add_labels: Vec<String>,
     remove_labels: Vec<String>,
@@ -1368,7 +1417,9 @@ async fn update_issue(
         || image.is_some()
         || model.is_some()
         || branch.is_some()
-        || max_retries.is_some();
+        || max_retries.is_some()
+        || !secrets.is_empty()
+        || clear_secrets;
 
     let labels_requested = !add_labels.is_empty() || !remove_labels.is_empty();
 
@@ -1399,6 +1450,8 @@ async fn update_issue(
         model,
         branch,
         max_retries,
+        secrets,
+        clear_secrets,
         clear_job_settings,
     )?;
     let job_settings = if job_settings_changed {
@@ -2804,6 +2857,7 @@ mod tests {
             None,
             None,
             None,
+            Vec::new(),
             None,
             Vec::new(),
         )
@@ -2867,6 +2921,7 @@ mod tests {
             None,
             Some("feature/job-settings".into()),
             Some(4),
+            Vec::new(),
             None,
             Vec::new(),
         )
@@ -2957,6 +3012,7 @@ mod tests {
             None,
             None,
             None,
+            Vec::new(),
             Some(current_issue_id),
             Vec::new(),
         )
@@ -3055,6 +3111,7 @@ mod tests {
             None,
             Some("override-branch".into()),
             None,
+            Vec::new(),
             Some(current_issue_id),
             Vec::new(),
         )
@@ -3088,6 +3145,7 @@ mod tests {
             None,
             None,
             None,
+            Vec::new(),
             None,
             Vec::new(),
         )
@@ -3116,6 +3174,7 @@ mod tests {
             None,
             None,
             None,
+            Vec::new(),
             None,
             Vec::new(),
         )
@@ -3264,6 +3323,8 @@ mod tests {
             None,
             Some("main".into()),
             Some(5),
+            Vec::new(),
+            false,
             false,
             Vec::new(),
             Vec::new(),
@@ -3358,6 +3419,8 @@ mod tests {
             None,
             None,
             None,
+            Vec::new(),
+            false,
             false,
             Vec::new(),
             Vec::new(),
@@ -3456,6 +3519,8 @@ mod tests {
             None,
             None,
             None,
+            Vec::new(),
+            false,
             true,
             Vec::new(),
             Vec::new(),
@@ -3896,6 +3961,7 @@ mod tests {
             None,
             None,
             HashMap::new(),
+            None,
             None,
             None,
             Status::Created,

@@ -1850,6 +1850,7 @@ mod tests {
             env_vars: std::collections::HashMap::new(),
             cpu_limit: None,
             memory_limit: None,
+            secrets: None,
 
             status: Status::Created,
             last_message: None,
@@ -1873,6 +1874,7 @@ mod tests {
             env_vars: std::collections::HashMap::new(),
             cpu_limit: None,
             memory_limit: None,
+            secrets: None,
 
             status: Status::Running,
             last_message: Some("doing work".to_string()),

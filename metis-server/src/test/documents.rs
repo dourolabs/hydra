@@ -31,6 +31,7 @@ fn sample_task(status: Status) -> Task {
         HashMap::new(),
         None,
         None,
+        None,
         status,
         None,
         None,

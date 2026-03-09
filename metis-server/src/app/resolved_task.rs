@@ -8,6 +8,7 @@ pub struct ResolvedTask {
     pub context: ResolvedBundle,
     pub image: String,
     pub env_vars: HashMap<String, String>,
+    pub secrets: Option<Vec<String>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -29,6 +30,7 @@ impl AppState {
             context,
             image,
             env_vars: task.env_vars.clone(),
+            secrets: task.secrets.clone(),
         })
     }
 
