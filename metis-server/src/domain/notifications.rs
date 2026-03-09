@@ -642,6 +642,9 @@ mod tests {
             last_message: None,
             error: None,
             deleted: false,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
         };
 
         let payload = Arc::new(MutationPayload::Job {

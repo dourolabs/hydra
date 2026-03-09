@@ -1,5 +1,6 @@
 use super::task_status::{Status, TaskError};
 use super::users::Username;
+use chrono::{DateTime, Utc};
 use metis_common::api::v1 as api;
 use metis_common::{IssueId, RepoName};
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,12 @@ pub struct Task {
     pub error: Option<TaskError>,
     #[serde(default)]
     pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_time: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<DateTime<Utc>>,
 }
 
 impl Task {
@@ -70,6 +77,9 @@ impl Task {
             last_message,
             error,
             deleted: false,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
         }
     }
 }
@@ -187,6 +197,9 @@ impl From<api::jobs::Task> for Task {
             last_message: value.last_message,
             error: value.error.map(Into::into),
             deleted: value.deleted,
+            creation_time: value.creation_time,
+            start_time: value.start_time,
+            end_time: value.end_time,
         }
     }
 }
@@ -208,9 +221,9 @@ impl From<Task> for api::jobs::Task {
             value.last_message,
             value.error.map(Into::into),
             value.deleted,
-            None,
-            None,
-            None,
+            value.creation_time,
+            value.start_time,
+            value.end_time,
         )
     }
 }

@@ -1536,13 +1536,14 @@ impl Store for MemoryStore {
 
     async fn add_task(
         &self,
-        task: Task,
+        mut task: Task,
         creation_time: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
         let spawned_from = task.spawned_from.clone();
 
+        task.creation_time = Some(creation_time);
         self.tasks.insert(
             id.clone(),
             vec![Self::versioned_at_with_actor(task, 1, creation_time, actor)],
@@ -3073,13 +3074,17 @@ mod tests {
         let store = MemoryStore::new();
 
         let task = spawn_task();
+        let now = Utc::now();
         let (task_id, _) = store
-            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .add_task(task.clone(), now, &ActorRef::test())
             .await
             .unwrap();
 
         let fetched = store.get_task(&task_id, false).await.unwrap();
-        assert_versioned(&fetched, &task, 1);
+        // add_task sets creation_time on the stored task
+        let mut expected = task.clone();
+        expected.creation_time = Some(now);
+        assert_versioned(&fetched, &expected, 1);
         assert_eq!(
             store.get_task(&task_id, false).await.unwrap().item.status,
             Status::Created

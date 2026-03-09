@@ -528,8 +528,8 @@ impl PostgresStoreV2 {
         };
 
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -549,6 +549,9 @@ impl PostgresStoreV2 {
             .bind(task.deleted)
             .bind(actor)
             .bind(&secrets_json)
+            .bind(task.creation_time)
+            .bind(task.start_time)
+            .bind(task.end_time)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -617,6 +620,9 @@ impl PostgresStoreV2 {
             last_message: row.last_message.clone(),
             error,
             deleted: row.deleted,
+            creation_time: row.creation_time,
+            start_time: row.start_time,
+            end_time: row.end_time,
         })
     }
 
@@ -1177,6 +1183,12 @@ struct TaskRow {
     updated_at: DateTime<Utc>,
     creator: Option<String>,
     secrets: Option<Value>,
+    #[sqlx(default)]
+    creation_time: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    start_time: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    end_time: Option<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2143,7 +2155,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Task>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -2177,7 +2189,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2221,7 +2233,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each task, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets \
+            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time \
              FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
@@ -3293,8 +3305,8 @@ impl Store for PostgresStoreV2 {
 
     async fn add_task(
         &self,
-        task: Task,
-        _creation_time: DateTime<Utc>,
+        mut task: Task,
+        creation_time: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
@@ -3303,6 +3315,7 @@ impl Store for PostgresStoreV2 {
             self.ensure_issue_exists(issue_id).await?;
         }
 
+        task.creation_time = Some(creation_time);
         let actor_json = actor_to_json(actor);
         self.insert_task(&id, 1, &task, Some(&actor_json)).await?;
         Ok((id, 1))
