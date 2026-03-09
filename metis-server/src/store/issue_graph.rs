@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::StoreError;
 use crate::domain::issues::{
-    Issue, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide, IssueGraphWildcard,
+    IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide, IssueGraphWildcard,
 };
 use metis_common::IssueId;
 
@@ -13,37 +13,6 @@ pub(crate) struct IssueGraphContext {
 }
 
 impl IssueGraphContext {
-    pub(crate) fn from_issues(issues: &[(IssueId, Issue)]) -> Self {
-        let mut forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
-            HashMap::new();
-        let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
-            HashMap::new();
-
-        for (issue_id, issue) in issues {
-            for dependency in &issue.dependencies {
-                forward
-                    .entry(dependency.dependency_type)
-                    .or_default()
-                    .entry(dependency.issue_id.clone())
-                    .or_default()
-                    .push(issue_id.clone());
-
-                reverse
-                    .entry(dependency.dependency_type)
-                    .or_default()
-                    .entry(issue_id.clone())
-                    .or_default()
-                    .push(dependency.issue_id.clone());
-            }
-        }
-
-        Self {
-            known_issues: issues.iter().map(|(id, _)| id.clone()).collect(),
-            forward,
-            reverse,
-        }
-    }
-
     pub(crate) fn from_dependency_maps(
         known_issues: HashSet<IssueId>,
         forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
