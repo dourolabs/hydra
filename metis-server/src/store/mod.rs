@@ -26,6 +26,7 @@ use metis_common::{
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use std::collections::{HashMap, HashSet};
+use std::{fmt, str::FromStr};
 
 mod issue_graph;
 mod memory_store;
@@ -35,6 +36,101 @@ pub mod sqlite_store;
 
 pub use crate::domain::jobs::Task;
 pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
+
+/// The kind of object participating in a relationship.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ObjectKind {
+    Issue,
+    Patch,
+    Document,
+}
+
+impl ObjectKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ObjectKind::Issue => "issue",
+            ObjectKind::Patch => "patch",
+            ObjectKind::Document => "document",
+        }
+    }
+}
+
+impl fmt::Display for ObjectKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ObjectKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let value = s.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "issue" => Ok(ObjectKind::Issue),
+            "patch" => Ok(ObjectKind::Patch),
+            "document" => Ok(ObjectKind::Document),
+            other => Err(format!("unsupported object kind '{other}'")),
+        }
+    }
+}
+
+/// The type of relationship between two objects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RelationshipType {
+    ChildOf,
+    BlockedOn,
+    HasPatch,
+}
+
+impl RelationshipType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RelationshipType::ChildOf => "child-of",
+            RelationshipType::BlockedOn => "blocked-on",
+            RelationshipType::HasPatch => "has-patch",
+        }
+    }
+}
+
+impl fmt::Display for RelationshipType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for RelationshipType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let value = s.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "child-of" | "childof" | "child_of" => Ok(RelationshipType::ChildOf),
+            "blocked-on" | "blockedon" | "blocked_on" => Ok(RelationshipType::BlockedOn),
+            "has-patch" | "haspatch" | "has_patch" => Ok(RelationshipType::HasPatch),
+            other => Err(format!("unsupported relationship type '{other}'")),
+        }
+    }
+}
+
+impl From<crate::domain::issues::IssueDependencyType> for RelationshipType {
+    fn from(dep: crate::domain::issues::IssueDependencyType) -> Self {
+        match dep {
+            crate::domain::issues::IssueDependencyType::ChildOf => RelationshipType::ChildOf,
+            crate::domain::issues::IssueDependencyType::BlockedOn => RelationshipType::BlockedOn,
+        }
+    }
+}
+
+/// A relationship between two objects in the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectRelationship {
+    pub source_id: MetisId,
+    pub source_kind: ObjectKind,
+    pub target_id: MetisId,
+    pub target_kind: ObjectKind,
+    pub rel_type: RelationshipType,
+}
 
 pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
     match Actor::parse_name(name) {
@@ -444,6 +540,19 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Returns all object IDs associated with the given label.
     async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError>;
 
+    // ---- Object relationships (read-only) ----
+
+    /// Returns object relationships matching the given filters.
+    ///
+    /// All provided filters are ANDed together. Pass `None` for any parameter
+    /// to skip that filter.
+    async fn get_relationships(
+        &self,
+        source_id: Option<&MetisId>,
+        target_id: Option<&MetisId>,
+        rel_type: Option<RelationshipType>,
+    ) -> Result<Vec<ObjectRelationship>, StoreError>;
+
     // ---- User secrets (read-only) ----
 
     /// Returns the encrypted value of a user secret, or None if not set.
@@ -758,6 +867,26 @@ pub trait Store: ReadOnlyStore {
         object_id: &MetisId,
     ) -> Result<bool, StoreError>;
 
+    // ---- Object relationship mutations ----
+
+    /// Adds a relationship between two objects. Returns `true` if the
+    /// relationship was newly created, `false` if it already existed.
+    async fn add_relationship(
+        &self,
+        source_id: &MetisId,
+        target_id: &MetisId,
+        rel_type: RelationshipType,
+    ) -> Result<bool, StoreError>;
+
+    /// Removes a relationship between two objects. Returns `true` if the
+    /// relationship was actually removed, `false` if it did not exist.
+    async fn remove_relationship(
+        &self,
+        source_id: &MetisId,
+        target_id: &MetisId,
+        rel_type: RelationshipType,
+    ) -> Result<bool, StoreError>;
+
     // ---- User secret mutations ----
 
     /// Sets (upserts) an encrypted secret for a user.
@@ -776,17 +905,17 @@ pub trait Store: ReadOnlyStore {
     ) -> Result<(), StoreError>;
 }
 
-/// Infers the object kind string from a MetisId prefix.
+/// Infers the object kind from a MetisId prefix.
 ///
 /// Returns an error if the ID does not match a known object kind.
-pub(crate) fn object_kind_from_id(id: &MetisId) -> Result<&'static str, StoreError> {
+pub(crate) fn object_kind_from_id(id: &MetisId) -> Result<ObjectKind, StoreError> {
     let s: &str = id.as_ref();
     if s.starts_with(IssueId::prefix()) {
-        Ok("issue")
+        Ok(ObjectKind::Issue)
     } else if s.starts_with(PatchId::prefix()) {
-        Ok("patch")
+        Ok(ObjectKind::Patch)
     } else if s.starts_with(DocumentId::prefix()) {
-        Ok("document")
+        Ok(ObjectKind::Document)
     } else {
         Err(StoreError::Internal(format!(
             "unrecognized object id prefix: {s}"

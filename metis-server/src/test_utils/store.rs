@@ -265,6 +265,15 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn get_relationships(
+        &self,
+        _source_id: Option<&MetisId>,
+        _target_id: Option<&MetisId>,
+        _rel_type: Option<crate::store::RelationshipType>,
+    ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
+        fail()
+    }
+
     async fn get_user_secret(
         &self,
         _username: &Username,
@@ -506,6 +515,24 @@ impl Store for FailingStore {
         &self,
         _label_id: &LabelId,
         _object_id: &MetisId,
+    ) -> Result<bool, StoreError> {
+        fail()
+    }
+
+    async fn add_relationship(
+        &self,
+        _source_id: &MetisId,
+        _target_id: &MetisId,
+        _rel_type: crate::store::RelationshipType,
+    ) -> Result<bool, StoreError> {
+        fail()
+    }
+
+    async fn remove_relationship(
+        &self,
+        _source_id: &MetisId,
+        _target_id: &MetisId,
+        _rel_type: crate::store::RelationshipType,
     ) -> Result<bool, StoreError> {
         fail()
     }
