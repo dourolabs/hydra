@@ -340,8 +340,38 @@ pub async fn list_issues(
         |r| r.issue_id.as_ref(),
     );
 
+    // Compute total_count when count=true
+    let total_count = if query.count == Some(true) {
+        if graph_matches.is_some() {
+            // When graph filters are active, we need to fetch all matching issues
+            // (without pagination) and apply the graph filter to get the correct count.
+            let mut count_query = query.clone();
+            count_query.limit = None;
+            count_query.cursor = None;
+            let all_issues = state
+                .list_issues_with_query(&count_query)
+                .await
+                .map_err(|err| map_issue_error(err, None))?;
+            let graph_allowed = graph_matches.as_ref().unwrap();
+            let count = all_issues
+                .iter()
+                .filter(|(id, _)| graph_allowed.contains(id))
+                .count() as u64;
+            Some(count)
+        } else {
+            let count = state
+                .count_issues(&query)
+                .await
+                .map_err(|err| map_issue_error(err, None))?;
+            Some(count)
+        }
+    } else {
+        None
+    };
+
     let mut response = api_issues::ListIssuesResponse::new(filtered);
     response.next_cursor = next_cursor;
+    response.total_count = total_count;
     info!(
         issue_type = ?query.issue_type,
         status = ?query.status,

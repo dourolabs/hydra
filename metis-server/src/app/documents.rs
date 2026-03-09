@@ -151,6 +151,11 @@ impl AppState {
         store.list_documents(query).await
     }
 
+    pub async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
+        let store = self.store.as_ref();
+        store.count_documents(query).await
+    }
+
     pub async fn delete_document(
         &self,
         document_id: &DocumentId,

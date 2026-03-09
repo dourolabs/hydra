@@ -97,6 +97,9 @@ pub struct SearchDocumentsQuery {
     /// Opaque cursor from a previous response's `next_cursor` field.
     #[serde(default)]
     pub cursor: Option<String>,
+    /// When true, include `total_count` in the response.
+    #[serde(default)]
+    pub count: Option<bool>,
 }
 
 impl SearchDocumentsQuery {
@@ -115,6 +118,7 @@ impl SearchDocumentsQuery {
             include_deleted,
             limit: None,
             cursor: None,
+            count: None,
         }
     }
 
@@ -257,6 +261,8 @@ pub struct ListDocumentsResponse {
     pub documents: Vec<DocumentSummaryRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<u64>,
 }
 
 impl ListDocumentsResponse {
@@ -264,6 +270,7 @@ impl ListDocumentsResponse {
         Self {
             documents,
             next_cursor: None,
+            total_count: None,
         }
     }
 }
@@ -313,6 +320,7 @@ mod tests {
             include_deleted: None,
             limit: None,
             cursor: None,
+            count: None,
         };
 
         let params = serialize_query_params(&query)

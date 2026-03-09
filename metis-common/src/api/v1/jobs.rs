@@ -392,6 +392,8 @@ pub struct ListJobsResponse {
     pub jobs: Vec<JobSummaryRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<u64>,
 }
 
 impl ListJobsResponse {
@@ -399,6 +401,7 @@ impl ListJobsResponse {
         Self {
             jobs,
             next_cursor: None,
+            total_count: None,
         }
     }
 }
@@ -453,6 +456,9 @@ pub struct SearchJobsQuery {
     /// Opaque cursor from a previous response's `next_cursor` field.
     #[serde(default)]
     pub cursor: Option<String>,
+    /// When true, include `total_count` in the response.
+    #[serde(default)]
+    pub count: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -483,6 +489,7 @@ impl SearchJobsQuery {
             status,
             limit: None,
             cursor: None,
+            count: None,
         }
     }
 }
@@ -518,6 +525,7 @@ mod tests {
             status: None,
             limit: None,
             cursor: None,
+            count: None,
         };
 
         let params = serialize_query_params(&query)
