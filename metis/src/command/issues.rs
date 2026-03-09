@@ -147,7 +147,7 @@ pub enum IssueCommands {
         #[arg(long = "max-retries", value_name = "MAX_RETRIES")]
         max_retries: Option<u32>,
 
-        /// Kubernetes secrets to use for job settings (comma-separated).
+        /// User secrets to pass to jobs (comma-separated).
         #[arg(long, value_name = "SECRETS", value_delimiter = ',')]
         secrets: Vec<String>,
 
@@ -250,7 +250,7 @@ pub enum IssueCommands {
         )]
         max_retries: Option<u32>,
 
-        /// Kubernetes secrets to use for job settings (comma-separated).
+        /// User secrets to pass to jobs (comma-separated).
         #[arg(
             long,
             value_name = "SECRETS",

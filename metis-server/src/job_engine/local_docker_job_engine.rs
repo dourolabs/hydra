@@ -232,7 +232,6 @@ impl JobEngine for LocalDockerJobEngine {
         memory_limit: String,
         _cpu_request: String,
         _memory_request: String,
-        _secrets: Option<&[String]>,
     ) -> Result<(), JobEngineError> {
         if self.containers.contains_key(metis_id) {
             return Err(JobEngineError::AlreadyExists(metis_id.clone()));
