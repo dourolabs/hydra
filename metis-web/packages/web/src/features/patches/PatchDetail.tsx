@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, DiffViewer, MarkdownViewer, Panel, Tabs } from "@metis/ui";
+import { Avatar, Badge, CopyButton, DiffViewer, MarkdownViewer, Panel, Tabs } from "@metis/ui";
 import type { PatchVersionRecord } from "@metis/api";
 import { normalizePatchStatus, normalizeCiState } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
+import { useToast } from "../toast/useToast";
 import { PatchActivity } from "./PatchActivity";
 import styles from "./PatchDetail.module.css";
 
@@ -21,6 +22,7 @@ const TABS = [
 
 export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
   const [activeTab, setActiveTab] = useState("diff");
+  const { addToast } = useToast();
   const { patch } = record;
 
   return (
@@ -36,7 +38,13 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
         {patch.branch_name && (
           <div className={styles.metaItem}>
             <span className={styles.metaLabel}>Branch</span>
-            <span className={styles.metaValueMono}>{patch.branch_name}</span>
+            <span className={styles.metaValueMono}>
+              {patch.branch_name}
+              <CopyButton
+                value={patch.branch_name}
+                onCopied={() => addToast("Copied!", "success")}
+              />
+            </span>
           </div>
         )}
         {patch.base_branch && (

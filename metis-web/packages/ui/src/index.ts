@@ -55,6 +55,9 @@ export type { JobStatusIndicatorProps, JobSummary, JobStatus } from "./component
 export { DiffViewer } from "./components/DiffViewer";
 export type { DiffViewerProps } from "./components/DiffViewer";
 
+export { CopyButton } from "./components/CopyButton";
+export type { CopyButtonProps } from "./components/CopyButton";
+
 // Hooks
 export { useKeyboardClick } from "./hooks/useKeyboardClick";
 export type { KeyboardClickProps } from "./hooks/useKeyboardClick";
