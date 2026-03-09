@@ -4151,7 +4151,7 @@ mod tests {
 
     /// Task with every optional field set so serialization round-trip can assert full equality.
     fn sample_task_all_fields() -> Task {
-        Task::new(
+        let mut task = Task::new(
             "full prompt".to_string(),
             BundleSpec::None,
             None,
@@ -4165,7 +4165,10 @@ mod tests {
             Status::Created,
             Some("last message".to_string()),
             None,
-        )
+        );
+        task.start_time = Some(Utc::now() - chrono::Duration::minutes(10));
+        task.end_time = Some(Utc::now() - chrono::Duration::minutes(5));
+        task
     }
 
     /// Patch with every optional field set so serialization round-trip can assert full equality.
@@ -4573,14 +4576,18 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let task = sample_task_all_fields();
 
+        let now = Utc::now();
         let (task_id, _) = store
-            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .add_task(task.clone(), now, &ActorRef::test())
             .await
             .unwrap();
 
         let fetched = store.get_task(&task_id, false).await.unwrap();
+        // add_task sets creation_time on the stored task
+        let mut expected = task.clone();
+        expected.creation_time = Some(now);
         assert_eq!(
-            fetched.item, task,
+            fetched.item, expected,
             "Task must round-trip all fields (creator, secrets, image, model, etc.)"
         );
     }
