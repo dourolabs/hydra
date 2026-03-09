@@ -9,7 +9,7 @@ import type { Username } from "./Username";
  *
  * Excludes `context`, `image`, `model`, `env_vars`, `cpu_limit`,
  * `memory_limit`, `secrets`, and `last_message`.
- * The `prompt` field is truncated to the first 100 characters.
+ * The `prompt` field is truncated to the first 20 characters.
  */
 export type JobSummary = {
   prompt: string;

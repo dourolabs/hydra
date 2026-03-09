@@ -1737,6 +1737,37 @@ impl ReadOnlyStore for PostgresStoreV2 {
             bindings.push(status.as_str().to_string());
         }
 
+        // Filter by status group (active = non-terminal, completed = terminal)
+        if let Some(status_group) = query.status_group.as_ref() {
+            use metis_common::api::v1::issues::StatusGroup;
+            let terminal = ["closed", "dropped", "rejected", "failed"];
+            match status_group {
+                StatusGroup::Active => {
+                    let placeholders: Vec<String> = terminal
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+                        .collect();
+                    predicates.push(format!("status NOT IN ({})", placeholders.join(", ")));
+                    for s in &terminal {
+                        bindings.push(s.to_string());
+                    }
+                }
+                StatusGroup::Completed => {
+                    let placeholders: Vec<String> = terminal
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+                        .collect();
+                    predicates.push(format!("status IN ({})", placeholders.join(", ")));
+                    for s in &terminal {
+                        bindings.push(s.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // Filter by assignee (case-insensitive)
         if let Some(assignee) = query
             .assignee

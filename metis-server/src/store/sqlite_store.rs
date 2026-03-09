@@ -1674,6 +1674,37 @@ impl ReadOnlyStore for SqliteStore {
             predicates.push(format!("status = ?{}", bindings.len()));
         }
 
+        // Filter by status group (active = non-terminal, completed = terminal)
+        if let Some(status_group) = query.status_group.as_ref() {
+            use metis_common::api::v1::issues::StatusGroup;
+            let terminal = ["closed", "dropped", "rejected", "failed"];
+            match status_group {
+                StatusGroup::Active => {
+                    let placeholders: Vec<String> = terminal
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| {
+                            bindings.push(terminal[i].to_string());
+                            format!("?{}", bindings.len())
+                        })
+                        .collect();
+                    predicates.push(format!("status NOT IN ({})", placeholders.join(", ")));
+                }
+                StatusGroup::Completed => {
+                    let placeholders: Vec<String> = terminal
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| {
+                            bindings.push(terminal[i].to_string());
+                            format!("?{}", bindings.len())
+                        })
+                        .collect();
+                    predicates.push(format!("status IN ({})", placeholders.join(", ")));
+                }
+                _ => {}
+            }
+        }
+
         if let Some(assignee) = query
             .assignee
             .as_ref()

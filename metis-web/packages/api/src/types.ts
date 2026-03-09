@@ -51,6 +51,7 @@ export type { IssueSummaryRecord } from "./generated/IssueSummaryRecord";
 export type { IssueType } from "./generated/IssueType";
 export type { IssueVersionRecord } from "./generated/IssueVersionRecord";
 export type { JobSettings } from "./generated/JobSettings";
+export type { JobStatusSummary } from "./generated/JobStatusSummary";
 export type { JobStatusUpdate } from "./generated/JobStatusUpdate";
 export type { JobSummary } from "./generated/JobSummary";
 export type { JobSummaryRecord } from "./generated/JobSummaryRecord";
@@ -113,6 +114,7 @@ export type { SetTodoItemStatusRequest } from "./generated/SetTodoItemStatusRequ
 export type { SnapshotEventData } from "./generated/SnapshotEventData";
 export type { SseEventType } from "./generated/SseEventType";
 export type { Status } from "./generated/Status";
+export type { StatusGroup } from "./generated/StatusGroup";
 export type { Task } from "./generated/Task";
 export type { TaskError } from "./generated/TaskError";
 export type { TaskId } from "./generated/TaskId";
