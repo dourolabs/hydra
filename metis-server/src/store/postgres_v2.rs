@@ -2834,15 +2834,23 @@ impl ReadOnlyStore for PostgresStoreV2 {
             bindings.push(format!("%{}%", q.to_lowercase()));
         }
 
-        apply_pagination_sql_pg(
-            &mut sql,
-            &mut predicates,
-            &mut bindings,
-            &query.cursor,
-            query.limit,
-            "updated_at",
-            "id",
-        )?;
+        if query.limit.is_some() || query.cursor.is_some() {
+            apply_pagination_sql_pg(
+                &mut sql,
+                &mut predicates,
+                &mut bindings,
+                &query.cursor,
+                query.limit,
+                "updated_at",
+                "id",
+            )?;
+        } else {
+            if !predicates.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&predicates.join(" AND "));
+            }
+            sql.push_str(" ORDER BY name");
+        }
 
         let mut qb = sqlx::query_as::<_, LabelRow>(&sql);
         for value in &bindings {

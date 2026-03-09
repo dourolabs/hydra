@@ -2728,15 +2728,23 @@ impl ReadOnlyStore for SqliteStore {
              FROM {TABLE_LABELS}"
         );
 
-        apply_pagination_sql_sqlite(
-            &mut sql,
-            &mut predicates,
-            &mut bindings,
-            &query.cursor,
-            query.limit,
-            "updated_at",
-            "id",
-        )?;
+        if query.limit.is_some() || query.cursor.is_some() {
+            apply_pagination_sql_sqlite(
+                &mut sql,
+                &mut predicates,
+                &mut bindings,
+                &query.cursor,
+                query.limit,
+                "updated_at",
+                "id",
+            )?;
+        } else {
+            if !predicates.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&predicates.join(" AND "));
+            }
+            sql.push_str(" ORDER BY name");
+        }
 
         let mut qb = sqlx::query_as::<_, LabelRow>(&sql);
         for value in &bindings {
@@ -5796,13 +5804,13 @@ mod tests {
         query.q = Some("bug".to_string());
         let results = store.list_labels(&query).await.unwrap();
         assert_eq!(results.len(), 2);
-        // Results sorted by updated_at DESC, id DESC (most recently created first)
-        assert_eq!(results[0].1.name, "bugfix");
-        assert_eq!(results[1].1.name, "bug");
+        // Results sorted by name (no pagination params)
+        assert_eq!(results[0].1.name, "bug");
+        assert_eq!(results[1].1.name, "bugfix");
     }
 
     #[tokio::test]
-    async fn list_labels_sorted_by_updated_at() {
+    async fn list_labels_sorted_by_name() {
         let store = create_test_store().await;
 
         store
@@ -5823,9 +5831,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 3);
-        // Sorted by updated_at DESC, id DESC (most recently created first)
-        assert_eq!(results[0].1.name, "middle");
-        assert_eq!(results[1].1.name, "alpha");
+        // Without pagination params, sorted alphabetically by name
+        assert_eq!(results[0].1.name, "alpha");
+        assert_eq!(results[1].1.name, "middle");
         assert_eq!(results[2].1.name, "zebra");
     }
 

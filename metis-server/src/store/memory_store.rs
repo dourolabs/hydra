@@ -1216,13 +1216,18 @@ impl ReadOnlyStore for MemoryStore {
             results.push((entry.key().clone(), label.clone()));
         }
 
-        apply_memory_pagination(
-            results,
-            |(_id, label)| label.updated_at,
-            |(id, _label)| id.as_ref(),
-            &query.cursor,
-            query.limit,
-        )
+        if query.limit.is_some() || query.cursor.is_some() {
+            apply_memory_pagination(
+                results,
+                |(_id, label)| label.updated_at,
+                |(id, _label)| id.as_ref(),
+                &query.cursor,
+                query.limit,
+            )
+        } else {
+            results.sort_by(|(_, a), (_, b)| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            Ok(results)
+        }
     }
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
@@ -5885,13 +5890,13 @@ mod tests {
         query.q = Some("bug".to_string());
         let results = store.list_labels(&query).await.unwrap();
         assert_eq!(results.len(), 2);
-        // Results sorted by updated_at DESC, id DESC (most recently created first)
-        assert_eq!(results[0].1.name, "bugfix");
-        assert_eq!(results[1].1.name, "bug");
+        // Results sorted by name (no pagination params)
+        assert_eq!(results[0].1.name, "bug");
+        assert_eq!(results[1].1.name, "bugfix");
     }
 
     #[tokio::test]
-    async fn list_labels_sorted_by_updated_at() {
+    async fn list_labels_sorted_by_name() {
         let store = MemoryStore::new();
 
         store
@@ -5912,10 +5917,115 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 3);
-        // Sorted by updated_at DESC, id DESC (most recently created first)
-        assert_eq!(results[0].1.name, "middle");
-        assert_eq!(results[1].1.name, "alpha");
+        // Without pagination params, sorted alphabetically by name
+        assert_eq!(results[0].1.name, "alpha");
+        assert_eq!(results[1].1.name, "middle");
         assert_eq!(results[2].1.name, "zebra");
+    }
+
+    // ---- Pagination integration tests ----
+
+    #[tokio::test]
+    async fn labels_pagination_returns_correct_pages() {
+        let store = MemoryStore::new();
+
+        // Create 5 labels with delays to ensure distinct millisecond timestamps
+        let names = ["alpha", "bravo", "charlie", "delta", "echo"];
+        for name in &names {
+            store
+                .add_label(sample_label(name, "#000000"))
+                .await
+                .unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Page 1: limit=2, should get 2+1 items (limit+1 pattern)
+        let mut query = SearchLabelsQuery::default();
+        query.limit = Some(2);
+        let page1 = store.list_labels(&query).await.unwrap();
+        assert_eq!(page1.len(), 3);
+
+        // Simulate what the route handler does: truncate to limit and encode cursor
+        let cursor = metis_common::api::v1::pagination::encode_cursor(
+            &page1[1].1.updated_at,
+            page1[1].0.as_ref(),
+        );
+
+        // Page 2: use cursor, limit=2
+        let mut query2 = SearchLabelsQuery::default();
+        query2.limit = Some(2);
+        query2.cursor = Some(cursor);
+        let page2 = store.list_labels(&query2).await.unwrap();
+        assert_eq!(page2.len(), 3);
+
+        let cursor2 = metis_common::api::v1::pagination::encode_cursor(
+            &page2[1].1.updated_at,
+            page2[1].0.as_ref(),
+        );
+
+        // Page 3: use cursor2, limit=2
+        let mut query3 = SearchLabelsQuery::default();
+        query3.limit = Some(2);
+        query3.cursor = Some(cursor2);
+        let page3 = store.list_labels(&query3).await.unwrap();
+        // Only 1 item remaining (no extra item = last page)
+        assert_eq!(page3.len(), 1);
+
+        // Verify no overlap: collect all names across pages
+        let all_names: Vec<String> = page1[..2]
+            .iter()
+            .chain(page2[..2].iter())
+            .chain(page3.iter())
+            .map(|(_, l)| l.name.clone())
+            .collect();
+        assert_eq!(all_names.len(), 5);
+        let unique: std::collections::HashSet<_> = all_names.iter().collect();
+        assert_eq!(unique.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn labels_pagination_without_limit_returns_all() {
+        let store = MemoryStore::new();
+
+        for name in &["alpha", "bravo", "charlie"] {
+            store
+                .add_label(sample_label(name, "#000000"))
+                .await
+                .unwrap();
+        }
+
+        // No limit = all results, backward compat
+        let results = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        // Sorted alphabetically by name when no pagination
+        assert_eq!(results[0].1.name, "alpha");
+        assert_eq!(results[1].1.name, "bravo");
+        assert_eq!(results[2].1.name, "charlie");
+    }
+
+    #[tokio::test]
+    async fn labels_pagination_with_limit_sorts_by_updated_at() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("zebra", "#000000"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("alpha", "#111111"))
+            .await
+            .unwrap();
+
+        let mut query = SearchLabelsQuery::default();
+        query.limit = Some(10);
+        let results = store.list_labels(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+        // With pagination, sorted by updated_at DESC (most recently created first)
+        assert_eq!(results[0].1.name, "alpha");
+        assert_eq!(results[1].1.name, "zebra");
     }
 
     // ---- Agent tests ----

@@ -1,39 +1,7 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 const MAX_LIMIT: u32 = 200;
-
-/// Pagination parameters accepted by list endpoints.
-///
-/// When `limit` is provided, cursor-based keyset pagination is active.
-/// When `limit` is omitted, all results are returned (backward compatibility).
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-pub struct PaginationParams {
-    /// Maximum number of results to return (max 200).
-    #[serde(default)]
-    pub limit: Option<u32>,
-    /// Opaque cursor from a previous response's `next_cursor` field.
-    #[serde(default)]
-    pub cursor: Option<String>,
-    /// If true, include `total_count` in the response.
-    #[serde(default)]
-    pub count: Option<bool>,
-}
-
-impl PaginationParams {
-    /// Returns the effective limit capped at MAX_LIMIT, or None if unlimited.
-    pub fn effective_limit(&self) -> Option<u32> {
-        self.limit.map(|l| l.min(MAX_LIMIT))
-    }
-
-    /// Returns true if count was requested.
-    pub fn wants_count(&self) -> bool {
-        self.count.unwrap_or(false)
-    }
-}
 
 /// Decoded cursor containing the keyset pagination position.
 #[derive(Debug, Clone)]
@@ -69,6 +37,32 @@ pub fn decode_cursor(cursor: &str) -> Result<DecodedCursor, String> {
     })
 }
 
+/// Returns the effective limit capped at MAX_LIMIT, or None if unlimited.
+pub fn effective_limit(limit: Option<u32>) -> Option<u32> {
+    limit.map(|l| l.min(MAX_LIMIT))
+}
+
+/// Computes the `next_cursor` for paginated results using the limit+1 pattern.
+///
+/// If the result set contains more items than the effective limit, the extra
+/// item is removed and a cursor pointing to the last kept item is returned.
+pub fn compute_next_cursor<T>(
+    records: &mut Vec<T>,
+    eff_limit: Option<u32>,
+    get_timestamp: impl Fn(&T) -> &DateTime<Utc>,
+    get_id: impl Fn(&T) -> &str,
+) -> Option<String> {
+    let limit = eff_limit?;
+    if records.len() > limit as usize {
+        records.truncate(limit as usize);
+        records
+            .last()
+            .map(|last| encode_cursor(get_timestamp(last), get_id(last)))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,27 +87,16 @@ mod tests {
 
     #[test]
     fn effective_limit_caps_at_max() {
-        let params = PaginationParams {
-            limit: Some(500),
-            cursor: None,
-            count: None,
-        };
-        assert_eq!(params.effective_limit(), Some(200));
+        assert_eq!(effective_limit(Some(500)), Some(200));
     }
 
     #[test]
     fn effective_limit_preserves_small_values() {
-        let params = PaginationParams {
-            limit: Some(10),
-            cursor: None,
-            count: None,
-        };
-        assert_eq!(params.effective_limit(), Some(10));
+        assert_eq!(effective_limit(Some(10)), Some(10));
     }
 
     #[test]
     fn effective_limit_none_when_not_set() {
-        let params = PaginationParams::default();
-        assert_eq!(params.effective_limit(), None);
+        assert_eq!(effective_limit(None), None);
     }
 }

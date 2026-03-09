@@ -11,7 +11,10 @@ use axum::{
 };
 use metis_common::{
     DocumentId, MetisId,
-    api::v1::{self, ApiError, pagination::encode_cursor},
+    api::v1::{
+        self, ApiError,
+        pagination::{compute_next_cursor, effective_limit},
+    },
 };
 use tracing::{error, info};
 
@@ -158,7 +161,7 @@ pub async fn list_documents(
             ApiError::internal(anyhow!("failed to fetch labels: {err}"))
         })?;
 
-    let effective_limit = query.limit.map(|l| l.min(200));
+    let eff_limit = effective_limit(query.limit);
     let mut records: Vec<v1::documents::DocumentSummaryRecord> = documents
         .into_iter()
         .map(|(id, versioned)| {
@@ -177,18 +180,12 @@ pub async fn list_documents(
         })
         .collect();
 
-    let next_cursor = if let Some(limit) = effective_limit {
-        if records.len() > limit as usize {
-            records.truncate(limit as usize);
-            records
-                .last()
-                .map(|last| encode_cursor(&last.timestamp, last.document_id.as_ref()))
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let next_cursor = compute_next_cursor(
+        &mut records,
+        eff_limit,
+        |r| &r.timestamp,
+        |r| r.document_id.as_ref(),
+    );
 
     let mut response = v1::documents::ListDocumentsResponse::new(records);
     response.next_cursor = next_cursor;
