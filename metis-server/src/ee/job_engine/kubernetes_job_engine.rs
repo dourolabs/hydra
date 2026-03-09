@@ -22,8 +22,8 @@ use metis_common::constants::{ENV_METIS_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKE
 use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
-use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
 use crate::domain::actors::Actor;
+use crate::job_engine::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
 
 pub struct KubernetesJobEngine {
     pub namespace: String,

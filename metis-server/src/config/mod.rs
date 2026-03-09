@@ -1,8 +1,8 @@
 #[cfg(feature = "kubernetes")]
-pub mod kube;
+pub use crate::ee::config::kube;
 
 #[cfg(feature = "kubernetes")]
-pub use kube::build_kube_client;
+pub use crate::ee::config::build_kube_client;
 
 use anyhow::{Context, Result, ensure};
 use metis_common::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};

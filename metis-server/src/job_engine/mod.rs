@@ -4,12 +4,10 @@ use std::collections::HashMap;
 
 use crate::{domain::actors::Actor, store::StoreError};
 
-#[cfg(feature = "kubernetes")]
-mod kubernetes_job_engine;
 mod local_docker_job_engine;
 
 #[cfg(feature = "kubernetes")]
-pub use kubernetes_job_engine::KubernetesJobEngine;
+pub use crate::ee::job_engine::KubernetesJobEngine;
 pub use local_docker_job_engine::LocalDockerJobEngine;
 pub use metis_common::TaskId;
 

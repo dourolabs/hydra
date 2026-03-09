@@ -46,9 +46,8 @@ use sqlx::{
 };
 use std::{collections::HashMap, collections::HashSet, str::FromStr, time::Duration};
 
-use super::issue_graph::IssueGraphContext;
-
 use crate::config::DatabaseSection;
+use crate::store::issue_graph::IssueGraphContext;
 
 pub type PgStorePool = Pool<Postgres>;
 
@@ -300,12 +299,12 @@ impl PostgresStoreV2 {
              ON CONFLICT (source_id, rel_type, target_id) DO NOTHING"
         );
         for dep in &issue.dependencies {
-            let rel_type = super::RelationshipType::from(dep.dependency_type);
+            let rel_type = crate::store::RelationshipType::from(dep.dependency_type);
             sqlx::query(&insert_sql)
                 .bind(issue_id.as_ref())
-                .bind(super::ObjectKind::Issue.as_str())
+                .bind(crate::store::ObjectKind::Issue.as_str())
                 .bind(dep.issue_id.as_ref())
-                .bind(super::ObjectKind::Issue.as_str())
+                .bind(crate::store::ObjectKind::Issue.as_str())
                 .bind(rel_type.as_str())
                 .execute(&mut **tx)
                 .await
@@ -316,10 +315,10 @@ impl PostgresStoreV2 {
         for patch_id in &issue.patches {
             sqlx::query(&insert_sql)
                 .bind(issue_id.as_ref())
-                .bind(super::ObjectKind::Issue.as_str())
+                .bind(crate::store::ObjectKind::Issue.as_str())
                 .bind(patch_id.as_ref())
-                .bind(super::ObjectKind::Patch.as_str())
-                .bind(super::RelationshipType::HasPatch.as_str())
+                .bind(crate::store::ObjectKind::Patch.as_str())
+                .bind(crate::store::RelationshipType::HasPatch.as_str())
                 .execute(&mut **tx)
                 .await
                 .map_err(map_sqlx_error)?;
@@ -1873,7 +1872,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         );
         let rows = sqlx::query_scalar::<_, String>(&sql)
             .bind(issue_id.as_ref())
-            .bind(super::RelationshipType::ChildOf.as_str())
+            .bind(crate::store::RelationshipType::ChildOf.as_str())
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -1894,7 +1893,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         );
         let rows = sqlx::query_scalar::<_, String>(&sql)
             .bind(issue_id.as_ref())
-            .bind(super::RelationshipType::BlockedOn.as_str())
+            .bind(crate::store::RelationshipType::BlockedOn.as_str())
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2142,7 +2141,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         );
         let rows = sqlx::query_scalar::<_, String>(&sql)
             .bind(patch_id.as_ref())
-            .bind(super::RelationshipType::HasPatch.as_str())
+            .bind(crate::store::RelationshipType::HasPatch.as_str())
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2486,7 +2485,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         if let Some(status) = query.status {
             let server_status: Status = status.into();
             predicates.push(format!("status = ${}", bindings.len() + 1));
-            bindings.push(super::status_to_db_str(server_status).to_string());
+            bindings.push(crate::store::status_to_db_str(server_status).to_string());
         }
 
         // Filter deleted tasks by default
@@ -2543,7 +2542,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         let versions = self.get_task_versions(id).await?;
-        super::task_status_log_from_versions(&versions)
+        crate::store::task_status_log_from_versions(&versions)
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
@@ -2594,7 +2593,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let mut result = HashMap::new();
         for (task_id, versions) in grouped {
-            if let Some(log) = super::task_status_log_from_versions(&versions) {
+            if let Some(log) = crate::store::task_status_log_from_versions(&versions) {
                 result.insert(task_id, log);
             }
         }
@@ -2607,7 +2606,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     // -------------------------------------------------------------------------
 
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
-        super::validate_actor_name(name)?;
+        crate::store::validate_actor_name(name)?;
         let query = format!(
             "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
@@ -3199,8 +3198,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         source_id: Option<&MetisId>,
         target_id: Option<&MetisId>,
-        rel_type: Option<super::RelationshipType>,
-    ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
+        rel_type: Option<crate::store::RelationshipType>,
+    ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
         let mut conditions = Vec::new();
         let mut bind_index = 1u32;
 
@@ -3248,16 +3247,16 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let target_id: MetisId = r.target_id.parse().map_err(|_| {
                 StoreError::Internal("invalid target_id in object_relationships".to_string())
             })?;
-            let source_kind = super::ObjectKind::from_str(&r.source_kind).map_err(|e| {
+            let source_kind = crate::store::ObjectKind::from_str(&r.source_kind).map_err(|e| {
                 StoreError::Internal(format!("invalid source_kind in object_relationships: {e}"))
             })?;
-            let target_kind = super::ObjectKind::from_str(&r.target_kind).map_err(|e| {
+            let target_kind = crate::store::ObjectKind::from_str(&r.target_kind).map_err(|e| {
                 StoreError::Internal(format!("invalid target_kind in object_relationships: {e}"))
             })?;
-            let rel_type = super::RelationshipType::from_str(&r.rel_type).map_err(|e| {
+            let rel_type = crate::store::RelationshipType::from_str(&r.rel_type).map_err(|e| {
                 StoreError::Internal(format!("invalid rel_type in object_relationships: {e}"))
             })?;
-            result.push(super::ObjectRelationship {
+            result.push(crate::store::ObjectRelationship {
                 source_id,
                 source_kind,
                 target_id,
@@ -4090,7 +4089,7 @@ impl Store for PostgresStoreV2 {
         label_id: &LabelId,
         object_id: &MetisId,
     ) -> Result<bool, StoreError> {
-        let object_kind = super::object_kind_from_id(object_id)?;
+        let object_kind = crate::store::object_kind_from_id(object_id)?;
         let sql = format!(
             "INSERT INTO {TABLE_LABEL_ASSOCIATIONS} (label_id, object_id, object_kind) \
              VALUES ($1, $2, $3) \
@@ -4129,10 +4128,10 @@ impl Store for PostgresStoreV2 {
         &self,
         source_id: &MetisId,
         target_id: &MetisId,
-        rel_type: super::RelationshipType,
+        rel_type: crate::store::RelationshipType,
     ) -> Result<bool, StoreError> {
-        let source_kind = super::object_kind_from_id(source_id)?;
-        let target_kind = super::object_kind_from_id(target_id)?;
+        let source_kind = crate::store::object_kind_from_id(source_id)?;
+        let target_kind = crate::store::object_kind_from_id(target_id)?;
         let sql = format!(
             "INSERT INTO {TABLE_OBJECT_RELATIONSHIPS} \
              (source_id, source_kind, target_id, target_kind, rel_type) \
@@ -4155,7 +4154,7 @@ impl Store for PostgresStoreV2 {
         &self,
         source_id: &MetisId,
         target_id: &MetisId,
-        rel_type: super::RelationshipType,
+        rel_type: crate::store::RelationshipType,
     ) -> Result<bool, StoreError> {
         let sql = format!(
             "DELETE FROM {TABLE_OBJECT_RELATIONSHIPS} \
