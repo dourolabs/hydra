@@ -163,6 +163,16 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn get_jobs_summary_for_issues(
+        &self,
+        _issue_ids: &[IssueId],
+    ) -> Result<
+        std::collections::HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>,
+        StoreError,
+    > {
+        fail()
+    }
+
     async fn get_status_log(&self, _id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         fail()
     }

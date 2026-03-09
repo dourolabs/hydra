@@ -62,14 +62,12 @@ impl FromStr for IssueStatus {
 }
 
 impl IssueStatus {
+    /// Returns true for statuses that represent a final/completed state.
+    ///
+    /// Uses a non-terminal allowlist so that any new unknown status
+    /// variants default to terminal, which is the safer behavior for filtering.
     pub fn is_terminal(&self) -> bool {
-        matches!(
-            self,
-            IssueStatus::Closed
-                | IssueStatus::Dropped
-                | IssueStatus::Rejected
-                | IssueStatus::Failed
-        )
+        !matches!(self, IssueStatus::Open | IssueStatus::InProgress)
     }
 }
 
@@ -1349,13 +1347,16 @@ mod tests {
 
     #[test]
     fn issue_status_terminal_classification() {
+        // Non-terminal statuses
         assert!(!IssueStatus::Open.is_terminal());
         assert!(!IssueStatus::InProgress.is_terminal());
+        // Terminal statuses
         assert!(IssueStatus::Closed.is_terminal());
         assert!(IssueStatus::Dropped.is_terminal());
         assert!(IssueStatus::Rejected.is_terminal());
         assert!(IssueStatus::Failed.is_terminal());
-        assert!(!IssueStatus::Unknown.is_terminal());
+        // Unknown defaults to terminal (safer for filtering)
+        assert!(IssueStatus::Unknown.is_terminal());
     }
 
     #[test]
@@ -1420,7 +1421,7 @@ mod tests {
             5,
             2,
             1,
-            Some("t-abc".parse().unwrap()),
+            Some("t-abcdef".parse().unwrap()),
             Some(TaskStatus::Running),
             Some(chrono::Utc::now()),
             None,
