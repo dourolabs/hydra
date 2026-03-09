@@ -75,23 +75,12 @@ pub async fn list_jobs(
         ApiError::internal(format!("Failed to list tasks: {err}"))
     })?;
 
-    // Batch-fetch status logs to compute timing fields
-    let task_ids: Vec<TaskId> = tasks.iter().map(|(id, _)| id.clone()).collect();
-    let status_logs = state.get_status_logs(&task_ids).await.map_err(|err| {
-        error!(error = %err, "failed to fetch status logs for timing");
-        ApiError::internal(format!("Failed to fetch status logs: {err}"))
-    })?;
-
-    // Build summary records with timing fields, sorted by version timestamp
+    // Timing fields (creation_time, start_time, end_time) are denormalized
+    // on the task and flow through the domain→API conversion automatically.
     let mut summaries: Vec<v1::jobs::JobSummaryRecord> = tasks
         .into_iter()
         .map(|(task_id, versioned_task)| {
-            let mut api_task: v1::jobs::Task = versioned_task.item.into();
-            if let Some(log) = status_logs.get(&task_id) {
-                api_task.creation_time = log.creation_time();
-                api_task.start_time = log.start_time();
-                api_task.end_time = log.end_time();
-            }
+            let api_task: v1::jobs::Task = versioned_task.item.into();
             let full_record = v1::jobs::JobVersionRecord::new(
                 task_id,
                 versioned_task.version,

@@ -1929,6 +1929,9 @@ mod tests {
             last_message: None,
             error: None,
             deleted: false,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
         };
 
         let (task_id, _) = store
@@ -1952,6 +1955,9 @@ mod tests {
             last_message: Some("doing work".to_string()),
             error: None,
             deleted: false,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
         };
 
         store

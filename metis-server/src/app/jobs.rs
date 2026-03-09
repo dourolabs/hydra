@@ -772,6 +772,9 @@ impl AppState {
         updated.status = Status::Running;
         updated.last_message = None;
         updated.error = None;
+        if updated.start_time.is_none() {
+            updated.start_time = Some(Utc::now());
+        }
 
         self.store
             .update_task_with_actor(task_id, updated, actor)
@@ -815,6 +818,9 @@ impl AppState {
                 updated.last_message = None;
                 updated.error = Some(error);
             }
+        }
+        if updated.end_time.is_none() {
+            updated.end_time = Some(Utc::now());
         }
 
         self.store
