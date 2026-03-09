@@ -20,7 +20,7 @@ use crate::{
         task_status::{Status, TaskError},
         users::{User, Username},
     },
-    store::{ReadOnlyStore, Store, StoreError, TaskStatusLog, apply_pagination_sql_pg},
+    store::{ReadOnlyStore, Store, StoreError, TaskStatusLog},
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -29,6 +29,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
+use metis_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -4240,6 +4241,50 @@ fn row_to_agent(row: AgentRow) -> Agent {
         created_at: row.created_at,
         updated_at: row.updated_at,
     }
+}
+
+
+/// Appends cursor-based keyset pagination to a SQL query (PostgreSQL dialect).
+///
+/// Adds the cursor WHERE predicate into `predicates`, and appends
+/// ORDER BY / LIMIT clauses to `sql`. Returns the effective limit if set.
+///
+/// The `timestamp_col` is the SQL column name used for the timestamp
+/// component of the cursor (e.g. `"created_at"` or `"updated_at"`).
+fn apply_pagination_sql_pg(
+    sql: &mut String,
+    predicates: &mut Vec<String>,
+    bindings: &mut Vec<String>,
+    cursor: &Option<String>,
+    limit: Option<u32>,
+    timestamp_col: &str,
+    id_col: &str,
+) -> Result<Option<u32>, StoreError> {
+    if let Some(cursor_str) = cursor {
+        let decoded = DecodedCursor::decode(cursor_str)
+            .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
+        let ts_idx = bindings.len() + 1;
+        let id_idx = bindings.len() + 2;
+        predicates.push(format!(
+            "({timestamp_col}, {id_col}) < (${ts_idx}::timestamptz, ${id_idx})"
+        ));
+        bindings.push(decoded.timestamp.to_rfc3339());
+        bindings.push(decoded.id);
+    }
+
+    if !predicates.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&predicates.join(" AND "));
+    }
+
+    sql.push_str(&format!(" ORDER BY {timestamp_col} DESC, {id_col} DESC"));
+
+    let effective_limit = limit.map(|l| l.min(PAGINATION_MAX_LIMIT));
+    if let Some(limit) = effective_limit {
+        sql.push_str(&format!(" LIMIT {}", limit + 1));
+    }
+
+    Ok(effective_limit)
 }
 
 #[cfg(test)]
