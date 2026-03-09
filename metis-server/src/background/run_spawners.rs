@@ -3,24 +3,33 @@ use crate::{
     background::{
         AgentQueue, Spawner,
         scheduler::{ScheduledWorker, WorkerOutcome},
+        spawner::SharedSpawnAttempts,
     },
     domain::actors::ActorRef,
 };
 use async_trait::async_trait;
 use chrono::Utc;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 const WORKER_NAME: &str = "run_spawners";
 
 /// Scheduled worker that runs configured agents once per iteration.
+/// Spawn attempt state is stored here so it persists across iterations.
 #[derive(Clone)]
 pub struct RunSpawnersWorker {
     state: AppState,
+    spawn_attempts_by_agent: Arc<RwLock<HashMap<String, SharedSpawnAttempts>>>,
 }
 
 impl RunSpawnersWorker {
     pub fn new(state: AppState) -> Self {
-        Self { state }
+        Self {
+            state,
+            spawn_attempts_by_agent: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 }
 
@@ -48,7 +57,17 @@ impl ScheduledWorker for RunSpawnersWorker {
             return WorkerOutcome::Idle;
         }
 
-        let queues: Vec<AgentQueue> = agents.into_iter().map(AgentQueue::new).collect();
+        let mut queues = Vec::with_capacity(agents.len());
+        {
+            let mut attempts_map = self.spawn_attempts_by_agent.write().await;
+            for agent in agents {
+                let shared = attempts_map
+                    .entry(agent.name.clone())
+                    .or_insert_with(|| Arc::new(RwLock::new(HashMap::new())))
+                    .clone();
+                queues.push(AgentQueue::new(agent, shared));
+            }
+        }
 
         let mut processed = 0usize;
         let mut failure_reason: Option<String> = None;
