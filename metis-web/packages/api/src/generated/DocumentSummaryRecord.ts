@@ -6,4 +6,11 @@ import type { DocumentSummary } from "./DocumentSummary";
 /**
  * Summary-level version record for document list responses.
  */
-export type DocumentSummaryRecord = { document_id: DocumentId, version: bigint, timestamp: string, document: DocumentSummary, actor?: ActorRef | null, creation_time: string, };
+export type DocumentSummaryRecord = {
+  document_id: DocumentId;
+  version: bigint;
+  timestamp: string;
+  document: DocumentSummary;
+  actor?: ActorRef | null;
+  creation_time: string;
+};

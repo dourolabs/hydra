@@ -2,8 +2,15 @@
 import type { IssueStatus } from "./IssueStatus";
 import type { IssueType } from "./IssueType";
 
-export type SearchIssuesQuery = { issue_type: IssueType | null, status: IssueStatus | null, assignee: string | null, q: string | null, graph: string, include_deleted: boolean | null, 
-/**
- * Filter issues by label IDs (comma-separated in query string).
- */
-labels: string, };
+export type SearchIssuesQuery = {
+  issue_type: IssueType | null;
+  status: IssueStatus | null;
+  assignee: string | null;
+  q: string | null;
+  graph: string;
+  include_deleted: boolean | null;
+  /**
+   * Filter issues by label IDs (comma-separated in query string).
+   */
+  labels: string;
+};

@@ -8,7 +8,17 @@ import type { Username } from "./Username";
  * Lightweight summary of a job/task for list views.
  *
  * Excludes `context`, `image`, `model`, `env_vars`, `cpu_limit`,
- * `memory_limit`, and `last_message`.
- * The `prompt` field is truncated to the first 20 characters.
+ * `memory_limit`, `secrets`, and `last_message`.
+ * The `prompt` field is truncated to the first 100 characters.
  */
-export type JobSummary = { prompt: string, spawned_from?: IssueId | null, creator: Username, status: Status, error?: TaskError | null, deleted?: boolean, creation_time?: string | null, start_time?: string | null, end_time?: string | null, };
+export type JobSummary = {
+  prompt: string;
+  spawned_from?: IssueId | null;
+  creator: Username;
+  status: Status;
+  error?: TaskError | null;
+  deleted?: boolean;
+  creation_time?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+};

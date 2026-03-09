@@ -4,4 +4,4 @@ import type { VersionedMessage } from "./VersionedMessage";
 /**
  * Response containing a list of messages.
  */
-export type ListMessagesResponse = { messages: Array<VersionedMessage>, };
+export type ListMessagesResponse = { messages: Array<VersionedMessage> };

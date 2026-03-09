@@ -2,4 +2,4 @@
 import type { Status } from "./Status";
 import type { TaskId } from "./TaskId";
 
-export type SetJobStatusResponse = { job_id: TaskId, status: Status, };
+export type SetJobStatusResponse = { job_id: TaskId; status: Status };

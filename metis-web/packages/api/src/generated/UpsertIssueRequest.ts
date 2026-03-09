@@ -3,13 +3,16 @@ import type { Issue } from "./Issue";
 import type { LabelId } from "./LabelId";
 import type { TaskId } from "./TaskId";
 
-export type UpsertIssueRequest = { issue: Issue, job_id: TaskId | null, 
-/**
- * Label IDs to associate with this issue (replaces existing labels).
- */
-label_ids?: Array<LabelId> | null, 
-/**
- * Label names to associate with this issue (resolved to label IDs).
- * Labels that do not exist are created automatically.
- */
-label_names?: Array<string> | null, };
+export type UpsertIssueRequest = {
+  issue: Issue;
+  job_id: TaskId | null;
+  /**
+   * Label IDs to associate with this issue (replaces existing labels).
+   */
+  label_ids?: Array<LabelId> | null;
+  /**
+   * Label names to associate with this issue (resolved to label IDs).
+   * Labels that do not exist are created automatically.
+   */
+  label_names?: Array<string> | null;
+};
