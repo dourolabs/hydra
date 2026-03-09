@@ -10,31 +10,33 @@ pub struct DecodedCursor {
     pub id: String,
 }
 
-/// Encodes a `(timestamp, id)` cursor as a base64 opaque string.
-pub fn encode_cursor(timestamp: &DateTime<Utc>, id: &str) -> String {
-    let millis = timestamp.timestamp_millis();
-    let raw = format!("{millis}:{id}");
-    URL_SAFE_NO_PAD.encode(raw.as_bytes())
-}
+impl DecodedCursor {
+    /// Encodes this cursor as a base64 opaque string.
+    pub fn encode(&self) -> String {
+        let millis = self.timestamp.timestamp_millis();
+        let raw = format!("{millis}:{}", self.id);
+        URL_SAFE_NO_PAD.encode(raw.as_bytes())
+    }
 
-/// Decodes a base64 cursor string into `(timestamp, id)`.
-pub fn decode_cursor(cursor: &str) -> Result<DecodedCursor, String> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(cursor)
-        .map_err(|e| format!("invalid cursor encoding: {e}"))?;
-    let raw = String::from_utf8(bytes).map_err(|e| format!("invalid cursor encoding: {e}"))?;
-    let (millis_str, id) = raw
-        .split_once(':')
-        .ok_or_else(|| "invalid cursor format".to_string())?;
-    let millis: i64 = millis_str
-        .parse()
-        .map_err(|e| format!("invalid cursor timestamp: {e}"))?;
-    let timestamp = DateTime::from_timestamp_millis(millis)
-        .ok_or_else(|| "invalid cursor timestamp".to_string())?;
-    Ok(DecodedCursor {
-        timestamp,
-        id: id.to_string(),
-    })
+    /// Decodes a base64 cursor string into a `DecodedCursor`.
+    pub fn decode(cursor: &str) -> Result<Self, String> {
+        let bytes = URL_SAFE_NO_PAD
+            .decode(cursor)
+            .map_err(|e| format!("invalid cursor encoding: {e}"))?;
+        let raw = String::from_utf8(bytes).map_err(|e| format!("invalid cursor encoding: {e}"))?;
+        let (millis_str, id) = raw
+            .split_once(':')
+            .ok_or_else(|| "invalid cursor format".to_string())?;
+        let millis: i64 = millis_str
+            .parse()
+            .map_err(|e| format!("invalid cursor timestamp: {e}"))?;
+        let timestamp = DateTime::from_timestamp_millis(millis)
+            .ok_or_else(|| "invalid cursor timestamp".to_string())?;
+        Ok(DecodedCursor {
+            timestamp,
+            id: id.to_string(),
+        })
+    }
 }
 
 /// Returns the effective limit capped at MAX_LIMIT, or None if unlimited.
@@ -55,9 +57,13 @@ pub fn compute_next_cursor<T>(
     let limit = eff_limit?;
     if records.len() > limit as usize {
         records.truncate(limit as usize);
-        records
-            .last()
-            .map(|last| encode_cursor(get_timestamp(last), get_id(last)))
+        records.last().map(|last| {
+            let cursor = DecodedCursor {
+                timestamp: *get_timestamp(last),
+                id: get_id(last).to_string(),
+            };
+            cursor.encode()
+        })
     } else {
         None
     }
@@ -71,18 +77,22 @@ mod tests {
     fn cursor_round_trip() {
         let ts = Utc::now();
         let id = "i-abcdefghij";
-        let encoded = encode_cursor(&ts, id);
-        let decoded = decode_cursor(&encoded).unwrap();
+        let cursor = DecodedCursor {
+            timestamp: ts,
+            id: id.to_string(),
+        };
+        let encoded = cursor.encode();
+        let decoded = DecodedCursor::decode(&encoded).unwrap();
         assert_eq!(decoded.timestamp.timestamp_millis(), ts.timestamp_millis());
         assert_eq!(decoded.id, id);
     }
 
     #[test]
     fn decode_cursor_rejects_invalid_input() {
-        assert!(decode_cursor("not-valid-base64!!!").is_err());
+        assert!(DecodedCursor::decode("not-valid-base64!!!").is_err());
         // Valid base64 but wrong format (no colon)
         let no_colon = URL_SAFE_NO_PAD.encode(b"12345");
-        assert!(decode_cursor(&no_colon).is_err());
+        assert!(DecodedCursor::decode(&no_colon).is_err());
     }
 
     #[test]
