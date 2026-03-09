@@ -696,7 +696,15 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        let secrets_json: Option<serde_json::Value> = None;
+        let secrets_json = task
+            .secrets
+            .as_ref()
+            .map(|s| {
+                serde_json::to_value(s).map_err(|err| {
+                    StoreError::Internal(format!("failed to serialize secrets: {err}"))
+                })
+            })
+            .transpose()?;
 
         let status_str = match task.status {
             Status::Created => "created",
@@ -749,6 +757,15 @@ impl PostgresStoreV2 {
                 })
             })
             .transpose()?;
+        let secrets: Option<Vec<String>> = row
+            .secrets
+            .as_ref()
+            .map(|s| {
+                serde_json::from_value(s.clone()).map_err(|err| {
+                    StoreError::Internal(format!("failed to deserialize secrets: {err}"))
+                })
+            })
+            .transpose()?;
         let spawned_from = row
             .spawned_from
             .as_ref()
@@ -782,6 +799,7 @@ impl PostgresStoreV2 {
             env_vars,
             cpu_limit: row.cpu_limit.clone(),
             memory_limit: row.memory_limit.clone(),
+            secrets,
             status,
             last_message: row.last_message.clone(),
             error,
@@ -1345,7 +1363,6 @@ struct TaskRow {
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
     creator: Option<String>,
-    #[allow(dead_code)]
     secrets: Option<Value>,
 }
 
@@ -4272,6 +4289,7 @@ mod tests {
             Default::default(),
             None,
             None,
+            None,
             Status::Created,
             None,
             None,
@@ -4288,6 +4306,7 @@ mod tests {
             Some("metis-worker:latest".to_string()),
             Some("model-v1".to_string()),
             Default::default(),
+            None,
             None,
             None,
             Status::Created,
@@ -4329,6 +4348,7 @@ mod tests {
             [("K".to_string(), "V".to_string())].into_iter().collect(),
             Some("1000m".to_string()),
             Some("512Mi".to_string()),
+            None,
             Status::Created,
             Some("last message".to_string()),
             None,
@@ -4390,6 +4410,7 @@ mod tests {
                 max_retries: Some(3),
                 cpu_limit: Some("2".to_string()),
                 memory_limit: Some("4Gi".to_string()),
+                secrets: None,
             }),
             vec![
                 TodoItem::new("todo one".to_string(), false),

@@ -98,6 +98,7 @@ mod tests {
             HashMap::new(),
             None,
             None,
+            None,
             Status::Created,
             None,
             None,
