@@ -20,7 +20,7 @@ use crate::{
         task_status::{Status, TaskError},
         users::{User, Username},
     },
-    store::{ReadOnlyStore, Store, StoreError, TaskStatusLog},
+    store::{ReadOnlyStore, Store, StoreError, TaskStatusLog, apply_pagination_sql_pg},
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -1810,10 +1810,15 @@ impl ReadOnlyStore for PostgresStoreV2 {
             }
         }
 
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_pg(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, IssueRow>(&sql);
         for value in bindings {
@@ -2084,10 +2089,15 @@ impl ReadOnlyStore for PostgresStoreV2 {
             }
         }
 
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_pg(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, PatchRow>(&sql);
         for value in bindings {
@@ -2291,10 +2301,15 @@ impl ReadOnlyStore for PostgresStoreV2 {
             predicates.push("deleted = false".to_string());
         }
 
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_pg(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, DocumentRow>(&sql);
         for value in bindings {
@@ -2479,10 +2494,15 @@ impl ReadOnlyStore for PostgresStoreV2 {
             predicates.push("deleted = false".to_string());
         }
 
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_pg(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, TaskRow>(&sql);
         for value in bindings {
@@ -3010,32 +3030,43 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-        let mut conditions = Vec::new();
-
-        if !include_deleted {
-            conditions.push("deleted = false".to_string());
-        }
-
-        let q_val = query.q.clone();
-        if q_val.is_some() {
-            conditions.push("LOWER(name) LIKE $1".to_string());
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
-
-        let sql = format!(
+        let mut sql = format!(
             "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
-             FROM {TABLE_LABELS}{where_clause} ORDER BY name"
+             FROM {TABLE_LABELS}"
         );
+        let mut predicates = Vec::new();
+        let mut bindings: Vec<String> = Vec::new();
+
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("deleted = false".to_string());
+        }
+
+        if let Some(ref q) = query.q {
+            predicates.push(format!("LOWER(name) LIKE ${}", bindings.len() + 1));
+            bindings.push(format!("%{}%", q.to_lowercase()));
+        }
+
+        if query.limit.is_some() || query.cursor.is_some() {
+            apply_pagination_sql_pg(
+                &mut sql,
+                &mut predicates,
+                &mut bindings,
+                &query.cursor,
+                query.limit,
+                "updated_at",
+                "id",
+            )?;
+        } else {
+            if !predicates.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&predicates.join(" AND "));
+            }
+            sql.push_str(" ORDER BY name");
+        }
 
         let mut qb = sqlx::query_as::<_, LabelRow>(&sql);
-        if let Some(ref q) = q_val {
-            qb = qb.bind(format!("%{}%", q.to_lowercase()));
+        for value in &bindings {
+            qb = qb.bind(value);
         }
 
         let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;

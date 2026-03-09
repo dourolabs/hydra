@@ -91,6 +91,12 @@ pub struct SearchDocumentsQuery {
     pub created_by: Option<TaskId>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
+    /// Maximum number of results to return. When omitted, all results are returned.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Opaque cursor from a previous response's `next_cursor` field.
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 impl SearchDocumentsQuery {
@@ -107,6 +113,8 @@ impl SearchDocumentsQuery {
             path_is_exact,
             created_by,
             include_deleted,
+            limit: None,
+            cursor: None,
         }
     }
 
@@ -247,11 +255,16 @@ impl From<&DocumentVersionRecord> for DocumentSummaryRecord {
 #[non_exhaustive]
 pub struct ListDocumentsResponse {
     pub documents: Vec<DocumentSummaryRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 impl ListDocumentsResponse {
     pub fn new(documents: Vec<DocumentSummaryRecord>) -> Self {
-        Self { documents }
+        Self {
+            documents,
+            next_cursor: None,
+        }
     }
 }
 
@@ -298,6 +311,8 @@ mod tests {
             path_is_exact: None,
             created_by: Some(TaskId::new()),
             include_deleted: None,
+            limit: None,
+            cursor: None,
         };
 
         let params = serialize_query_params(&query)

@@ -3103,6 +3103,7 @@ name = "metis-common"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "chrono",
  "git2",
  "indexmap 2.13.0",

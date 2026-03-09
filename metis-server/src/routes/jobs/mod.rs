@@ -8,7 +8,11 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use metis_common::{TaskId, api::v1};
+use metis_common::{
+    TaskId,
+    api::v1,
+    api::v1::pagination::{compute_next_cursor, effective_limit},
+};
 use tracing::{error, info};
 
 pub use metis_common::api::v1::ApiError;
@@ -92,8 +96,19 @@ pub async fn list_jobs(
         })
         .collect();
 
-    // Sort by version timestamp, most recent first
-    summaries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    // The store already sorts by timestamp DESC when pagination is active.
+    // When no limit is set, sort client-side for backward compat.
+    let eff_limit = effective_limit(query.limit);
+    if eff_limit.is_none() {
+        summaries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    }
+
+    let next_cursor = compute_next_cursor(
+        &mut summaries,
+        eff_limit,
+        |r| &r.timestamp,
+        |r| r.job_id.as_ref(),
+    );
 
     info!(
         namespace = %namespace,
@@ -101,7 +116,8 @@ pub async fn list_jobs(
         "list_jobs completed successfully"
     );
 
-    let response = v1::jobs::ListJobsResponse::new(summaries);
+    let mut response = v1::jobs::ListJobsResponse::new(summaries);
+    response.next_cursor = next_cursor;
     Ok(Json(response))
 }
 

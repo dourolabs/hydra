@@ -140,6 +140,12 @@ pub struct SearchLabelsQuery {
     pub q: Option<String>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
+    /// Maximum number of results to return. When omitted, all results are returned.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Opaque cursor from a previous response's `next_cursor` field.
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 /// Response body for listing labels.
@@ -149,10 +155,15 @@ pub struct SearchLabelsQuery {
 #[non_exhaustive]
 pub struct ListLabelsResponse {
     pub labels: Vec<LabelRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 impl ListLabelsResponse {
     pub fn new(labels: Vec<LabelRecord>) -> Self {
-        Self { labels }
+        Self {
+            labels,
+            next_cursor: None,
+        }
     }
 }

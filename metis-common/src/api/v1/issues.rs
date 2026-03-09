@@ -719,6 +719,12 @@ pub struct SearchIssuesQuery {
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub label_ids: Vec<LabelId>,
+    /// Maximum number of results to return. When omitted, all results are returned.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Opaque cursor from a previous response's `next_cursor` field.
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 impl SearchIssuesQuery {
@@ -738,6 +744,8 @@ impl SearchIssuesQuery {
             graph_filters,
             include_deleted,
             label_ids: Vec::new(),
+            limit: None,
+            cursor: None,
         }
     }
 }
@@ -865,11 +873,16 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
 #[non_exhaustive]
 pub struct ListIssuesResponse {
     pub issues: Vec<IssueSummaryRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 impl ListIssuesResponse {
     pub fn new(issues: Vec<IssueSummaryRecord>) -> Self {
-        Self { issues }
+        Self {
+            issues,
+            next_cursor: None,
+        }
     }
 }
 
@@ -947,6 +960,8 @@ mod tests {
             graph_filters: vec![],
             include_deleted: None,
             label_ids: vec![],
+            limit: None,
+            cursor: None,
         };
 
         let params = serialize_query_params(&query)
@@ -970,6 +985,8 @@ mod tests {
             graph_filters: vec![filter1, filter2],
             include_deleted: None,
             label_ids: vec![],
+            limit: None,
+            cursor: None,
         };
 
         let params = serialize_query_params(&query)
