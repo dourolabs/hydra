@@ -6095,4 +6095,144 @@ mod tests {
             .await
             .unwrap();
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn object_relationship_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Create two issues to use as relationship endpoints.
+        let (issue_a, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (issue_b, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (issue_c, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let id_a = MetisId::from(issue_a.clone());
+        let id_b = MetisId::from(issue_b.clone());
+        let id_c = MetisId::from(issue_c.clone());
+
+        // ADD — create relationships
+        let created = store
+            .add_relationship(&id_a, &id_b, "child-of")
+            .await
+            .unwrap();
+        assert!(created, "first insert should return true");
+
+        let created = store
+            .add_relationship(&id_a, &id_c, "blocked-by")
+            .await
+            .unwrap();
+        assert!(created);
+
+        let created = store
+            .add_relationship(&id_b, &id_c, "child-of")
+            .await
+            .unwrap();
+        assert!(created);
+
+        // ADD duplicate — should return false (ON CONFLICT DO NOTHING)
+        let created = store
+            .add_relationship(&id_a, &id_b, "child-of")
+            .await
+            .unwrap();
+        assert!(!created, "duplicate insert should return false");
+
+        // GET — filter by source_id
+        let rels = store
+            .get_relationships(Some(&id_a), None, None)
+            .await
+            .unwrap();
+        assert_eq!(rels.len(), 2);
+        assert!(
+            rels.iter()
+                .any(|r| r.target_id == id_b && r.rel_type == "child-of")
+        );
+        assert!(
+            rels.iter()
+                .any(|r| r.target_id == id_c && r.rel_type == "blocked-by")
+        );
+
+        // GET — filter by target_id
+        let rels = store
+            .get_relationships(None, Some(&id_c), None)
+            .await
+            .unwrap();
+        assert_eq!(rels.len(), 2);
+        assert!(rels.iter().any(|r| r.source_id == id_a));
+        assert!(rels.iter().any(|r| r.source_id == id_b));
+
+        // GET — filter by rel_type
+        let rels = store
+            .get_relationships(None, None, Some("child-of"))
+            .await
+            .unwrap();
+        assert_eq!(rels.len(), 2);
+
+        // GET — filter by source_id + rel_type
+        let rels = store
+            .get_relationships(Some(&id_a), None, Some("child-of"))
+            .await
+            .unwrap();
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].target_id, id_b);
+
+        // GET — filter by source_id + target_id + rel_type (exact match)
+        let rels = store
+            .get_relationships(Some(&id_a), Some(&id_b), Some("child-of"))
+            .await
+            .unwrap();
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].source_id, id_a);
+        assert_eq!(rels[0].target_id, id_b);
+        assert_eq!(rels[0].rel_type, "child-of");
+        assert_eq!(rels[0].source_kind, "issue");
+        assert_eq!(rels[0].target_kind, "issue");
+
+        // REMOVE — delete one relationship
+        let removed = store
+            .remove_relationship(&id_a, &id_b, "child-of")
+            .await
+            .unwrap();
+        assert!(removed, "removing existing relationship should return true");
+
+        // REMOVE again — should return false
+        let removed = store
+            .remove_relationship(&id_a, &id_b, "child-of")
+            .await
+            .unwrap();
+        assert!(
+            !removed,
+            "removing non-existent relationship should return false"
+        );
+
+        // GET after remove — only two relationships remain
+        let rels = store
+            .get_relationships(Some(&id_a), None, None)
+            .await
+            .unwrap();
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].rel_type, "blocked-by");
+
+        // REMOVE remaining relationships
+        store
+            .remove_relationship(&id_a, &id_c, "blocked-by")
+            .await
+            .unwrap();
+        store
+            .remove_relationship(&id_b, &id_c, "child-of")
+            .await
+            .unwrap();
+
+        // GET — no relationships left
+        let rels = store.get_relationships(None, None, None).await.unwrap();
+        assert!(rels.is_empty());
+    }
 }

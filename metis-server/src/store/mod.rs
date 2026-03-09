@@ -454,8 +454,6 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Returns all object IDs associated with the given label.
     async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<MetisId>, StoreError>;
 
-    // ---- User secrets (read-only) ----
-
     // ---- Object relationships (read-only) ----
 
     /// Returns object relationships matching the given filters.
