@@ -1389,6 +1389,18 @@ struct TaskRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct JobsSummaryRow {
+    spawned_from: String,
+    total: i32,
+    running: i32,
+    failed: i32,
+    latest_job_id: Option<String>,
+    latest_job_status: Option<String>,
+    latest_start_time: Option<DateTime<Utc>>,
+    latest_end_time: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
 struct DocumentRow {
     id: String,
     version_number: i64,
@@ -2659,6 +2671,90 @@ impl ReadOnlyStore for PostgresStoreV2 {
         }
 
         Ok(tasks)
+    }
+
+    async fn get_jobs_summary_for_issues(
+        &self,
+        issue_ids: &[IssueId],
+    ) -> Result<HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>, StoreError> {
+        use metis_common::api::v1::issues::JobStatusSummary;
+        use metis_common::api::v1::task_status::Status as ApiTaskStatus;
+
+        if issue_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Build the subquery to get only the latest version of each task
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, spawned_from, status, creation_time, start_time, end_time \
+             FROM {TABLE_TASKS_V2} WHERE deleted = false ORDER BY id, version_number DESC"
+        );
+
+        // Build placeholders for the IN clause
+        let placeholders: Vec<String> = (1..=issue_ids.len())
+            .map(|i| format!("${i}"))
+            .collect();
+
+        let sql = format!(
+            "SELECT \
+                spawned_from, \
+                COUNT(*)::int4 AS total, \
+                COUNT(*) FILTER (WHERE status IN ('running', 'pending'))::int4 AS running, \
+                COUNT(*) FILTER (WHERE status = 'failed')::int4 AS failed, \
+                (ARRAY_AGG(id ORDER BY creation_time DESC NULLS LAST))[1] AS latest_job_id, \
+                (ARRAY_AGG(status ORDER BY creation_time DESC NULLS LAST))[1] AS latest_job_status, \
+                (ARRAY_AGG(start_time ORDER BY creation_time DESC NULLS LAST))[1] AS latest_start_time, \
+                (ARRAY_AGG(end_time ORDER BY creation_time DESC NULLS LAST))[1] AS latest_end_time \
+             FROM ({subquery}) AS latest \
+             WHERE spawned_from IN ({placeholders}) \
+             GROUP BY spawned_from",
+            placeholders = placeholders.join(", ")
+        );
+
+        let mut query_builder = sqlx::query_as::<_, JobsSummaryRow>(&sql);
+        for id in issue_ids {
+            query_builder = query_builder.bind(id.as_ref().to_string());
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut result = HashMap::new();
+        for row in rows {
+            let issue_id = row
+                .spawned_from
+                .parse::<IssueId>()
+                .map_err(|e| StoreError::Internal(format!("invalid issue id: {e}")))?;
+            let latest_job_id = row
+                .latest_job_id
+                .map(|s| s.parse::<TaskId>())
+                .transpose()
+                .map_err(|e| StoreError::Internal(format!("invalid task id: {e}")))?;
+            let latest_job_status = row.latest_job_status.as_deref().map(|s| match s {
+                "created" => ApiTaskStatus::Created,
+                "pending" => ApiTaskStatus::Pending,
+                "running" => ApiTaskStatus::Running,
+                "complete" => ApiTaskStatus::Complete,
+                "failed" => ApiTaskStatus::Failed,
+                _ => ApiTaskStatus::Unknown,
+            });
+            result.insert(
+                issue_id,
+                JobStatusSummary::new(
+                    row.total as u32,
+                    row.running as u32,
+                    row.failed as u32,
+                    latest_job_id,
+                    latest_job_status,
+                    row.latest_start_time,
+                    row.latest_end_time,
+                ),
+            );
+        }
+
+        Ok(result)
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
