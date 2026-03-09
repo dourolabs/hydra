@@ -48,6 +48,6 @@ openssl-sys = { workspace = true }
 
 [dev-dependencies]
 httpmock = "0.7"
-metis-server = { path = "../metis-server", features = ["test-utils"] }
+metis-server = { path = "../metis-server", features = ["test-utils", "github"] }
 jsonwebtoken = "10"
 openssl = "0.10"

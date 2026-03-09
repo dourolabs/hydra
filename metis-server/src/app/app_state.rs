@@ -4,7 +4,6 @@ use crate::{
     job_engine::JobEngine,
     store::{ReadOnlyStore, Store},
 };
-use octocrab::Octocrab;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
@@ -13,10 +12,17 @@ use super::event_bus::{EventBus, ServerEvent, StoreWithEvents};
 use super::ServiceState;
 
 /// Shared application state and application-specific coordination such as issue lifecycle validation.
+/// Type alias for the optional GitHub App client. When the `github` feature
+/// is disabled, the field is always `None` (using `()` as a zero-size stand-in).
+#[cfg(feature = "github")]
+pub type GithubAppClient = octocrab::Octocrab;
+#[cfg(not(feature = "github"))]
+pub type GithubAppClient = ();
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
-    pub github_app: Option<Octocrab>,
+    pub github_app: Option<GithubAppClient>,
     pub service_state: Arc<ServiceState>,
     pub(crate) store: Arc<StoreWithEvents>,
     pub job_engine: Arc<dyn JobEngine>,
@@ -27,7 +33,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(
         config: Arc<AppConfig>,
-        github_app: Option<Octocrab>,
+        github_app: Option<GithubAppClient>,
         service_state: Arc<ServiceState>,
         store: Arc<dyn Store>,
         job_engine: Arc<dyn JobEngine>,
@@ -63,16 +69,20 @@ impl AppState {
                     PolicyEntry::Name("running_job_validation".to_string()),
                     PolicyEntry::Name("require_creator".to_string()),
                 ],
-                automations: vec![
-                    PolicyEntry::Name("cascade_issue_status".to_string()),
-                    PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
-                    PolicyEntry::Name("close_merge_request_issues".to_string()),
-                    PolicyEntry::Name("sync_review_request_issues".to_string()),
-                    PolicyEntry::Name("patch_workflow".to_string()),
-                    PolicyEntry::Name("github_pr_sync".to_string()),
-                    PolicyEntry::Name("notification_generation".to_string()),
-                    PolicyEntry::Name("inbox_label".to_string()),
-                ],
+                automations: {
+                    let mut automations = vec![
+                        PolicyEntry::Name("cascade_issue_status".to_string()),
+                        PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
+                        PolicyEntry::Name("close_merge_request_issues".to_string()),
+                        PolicyEntry::Name("sync_review_request_issues".to_string()),
+                        PolicyEntry::Name("patch_workflow".to_string()),
+                    ];
+                    #[cfg(feature = "github")]
+                    automations.push(PolicyEntry::Name("github_pr_sync".to_string()));
+                    automations.push(PolicyEntry::Name("notification_generation".to_string()));
+                    automations.push(PolicyEntry::Name("inbox_label".to_string()));
+                    automations
+                },
             },
         };
 

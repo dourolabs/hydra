@@ -18,9 +18,11 @@ mod test;
 
 use crate::app::{AppState, ServiceState};
 use crate::background::start_background_scheduler;
+#[cfg(feature = "github")]
+use crate::config::GithubAppSection;
 #[cfg(feature = "kubernetes")]
 use crate::config::build_kube_client;
-use crate::config::{AppConfig, GithubAppSection, JobEngineConfig, StorageConfig};
+use crate::config::{AppConfig, JobEngineConfig, StorageConfig};
 use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::secrets::SecretManager;
 use crate::domain::users::{User, Username};
@@ -38,8 +40,10 @@ use axum::{
     Json, Router, middleware,
     routing::{get, post, put},
 };
+#[cfg(feature = "github")]
 use jsonwebtoken::EncodingKey;
 use metis_common::constants::ENV_METIS_CONFIG;
+#[cfg(feature = "github")]
 use octocrab::Octocrab;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
@@ -57,15 +61,26 @@ pub async fn run_with_state(
     let automation_handle =
         crate::policy::runner::spawn_automation_runner(state.clone(), automation_shutdown_rx);
 
-    let public_routes = Router::new()
-        .route("/health", get(health_check))
-        .route("/v1/login", post(routes::login::login))
-        .route(
-            "/v1/github/app/client-id",
-            get(routes::github::get_github_app_client_id),
-        );
+    #[allow(unused_mut)]
+    let mut public_routes = Router::new().route("/health", get(health_check));
+    #[cfg(feature = "github")]
+    {
+        public_routes = public_routes
+            .route("/v1/login", post(routes::login::login))
+            .route(
+                "/v1/github/app/client-id",
+                get(routes::github::get_github_app_client_id),
+            );
+    }
 
-    let protected_routes = Router::new()
+    #[allow(unused_mut)]
+    let mut protected_routes = Router::new();
+    #[cfg(feature = "github")]
+    {
+        protected_routes =
+            protected_routes.route("/v1/github/token", get(routes::github::get_github_token));
+    }
+    let protected_routes = protected_routes
         .route(
             "/v1/issues",
             get(routes::issues::list_issues).post(routes::issues::create_issue),
@@ -165,7 +180,6 @@ pub async fn run_with_state(
             "/v1/merge-queues/:organization/:repo/:branch/patches",
             get(routes::merge_queues::get_merge_queue).post(routes::merge_queues::enqueue_patch),
         )
-        .route("/v1/github/token", get(routes::github::get_github_token))
         .route(
             "/v1/jobs",
             get(routes::jobs::list_jobs).post(routes::jobs::create_job),
@@ -277,10 +291,13 @@ pub async fn run() -> anyhow::Result<()> {
         "starting server"
     );
 
+    #[cfg(feature = "github")]
     let github_app = match app_config.auth.github_app() {
         Some(gh) => build_github_app_client(gh)?,
         None => None,
     };
+    #[cfg(not(feature = "github"))]
+    let github_app = None;
 
     // Initialize store based on configured storage backend
     let store: Arc<dyn Store> = match &app_config.storage {
@@ -452,6 +469,7 @@ pub fn config_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("config.yaml"))
 }
 
+#[cfg(feature = "github")]
 fn build_github_app_client(config: &GithubAppSection) -> anyhow::Result<Option<Octocrab>> {
     let key = EncodingKey::from_rsa_pem(config.private_key().as_bytes())
         .context("invalid GitHub App private key")?;

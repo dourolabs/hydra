@@ -1,3 +1,4 @@
+#[cfg(feature = "github")]
 pub mod cleanup_branches;
 pub mod monitor_running_jobs;
 pub mod process_pending_jobs;

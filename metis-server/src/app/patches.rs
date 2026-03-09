@@ -180,7 +180,7 @@ impl AppState {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "github"))]
 mod tests {
     use crate::{
         app::test_helpers::{
