@@ -10,6 +10,7 @@ use metis_common::{
             LabelRecord, ListLabelsResponse, SearchLabelsQuery, UpsertLabelRequest,
             UpsertLabelResponse,
         },
+        pagination::encode_cursor,
     },
     issues::IssueId,
 };
@@ -56,7 +57,9 @@ pub async fn list_labels(
 
     let labels = state.list_labels(&query).await.map_err(map_store_error)?;
 
-    let records: Vec<LabelRecord> = labels
+    let effective_limit = query.limit.map(|l| l.min(200));
+
+    let mut records: Vec<LabelRecord> = labels
         .into_iter()
         .map(|(label_id, label)| {
             LabelRecord::new(
@@ -71,9 +74,24 @@ pub async fn list_labels(
         })
         .collect();
 
+    let next_cursor = if let Some(limit) = effective_limit {
+        if records.len() > limit as usize {
+            records.truncate(limit as usize);
+            records
+                .last()
+                .map(|last| encode_cursor(&last.updated_at, last.label_id.as_ref()))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     info!(actor = %actor.name(), count = records.len(), "list_labels completed");
 
-    Ok(Json(ListLabelsResponse::new(records)))
+    let mut response = ListLabelsResponse::new(records);
+    response.next_cursor = next_cursor;
+    Ok(Json(response))
 }
 
 /// GET /v1/labels/:label_id — get a single label.

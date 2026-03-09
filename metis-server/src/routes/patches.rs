@@ -15,7 +15,7 @@ use axum::{
 };
 use metis_common::{
     MetisId, PatchId,
-    api::v1::{self, ApiError},
+    api::v1::{self, ApiError, pagination::encode_cursor},
 };
 use reqwest::header::{
     ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, USER_AGENT,
@@ -253,7 +253,8 @@ pub async fn list_patches(
             ApiError::internal(anyhow!("failed to fetch labels: {err}"))
         })?;
 
-    let records: Vec<v1::patches::PatchSummaryRecord> = patches
+    let effective_limit = query.limit.map(|l| l.min(200));
+    let mut records: Vec<v1::patches::PatchSummaryRecord> = patches
         .into_iter()
         .map(|(id, versioned)| {
             let object_id = MetisId::from(id.clone());
@@ -271,7 +272,21 @@ pub async fn list_patches(
         })
         .collect();
 
-    let response = v1::patches::ListPatchesResponse::new(records);
+    let next_cursor = if let Some(limit) = effective_limit {
+        if records.len() > limit as usize {
+            records.truncate(limit as usize);
+            records
+                .last()
+                .map(|last| encode_cursor(&last.timestamp, last.patch_id.as_ref()))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut response = v1::patches::ListPatchesResponse::new(records);
+    response.next_cursor = next_cursor;
     info!(
         query = ?query.q,
         returned = response.patches.len(),

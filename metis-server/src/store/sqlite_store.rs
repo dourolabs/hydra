@@ -12,6 +12,7 @@ use crate::domain::{
     patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
     users::{User, Username},
 };
+use crate::store::apply_pagination_sql_sqlite;
 use crate::store::issue_graph::IssueGraphContext;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -1518,10 +1519,15 @@ impl ReadOnlyStore for SqliteStore {
             }
         }
 
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_sqlite(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, IssueRow>(&sql);
         for value in &bindings {
@@ -1796,10 +1802,15 @@ impl ReadOnlyStore for SqliteStore {
             ));
         }
 
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_sqlite(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, PatchRow>(&sql);
         for value in &bindings {
@@ -2000,10 +2011,15 @@ impl ReadOnlyStore for SqliteStore {
             predicates.push("deleted = 0".to_string());
         }
 
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_sqlite(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, DocumentRow>(&sql);
         for value in &bindings {
@@ -2168,10 +2184,15 @@ impl ReadOnlyStore for SqliteStore {
             predicates.push("t.deleted = 0".to_string());
         }
 
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_sqlite(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "t.created_at",
+            "t.id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, TaskRow>(&sql);
         for value in &bindings {
@@ -2690,31 +2711,36 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
         let include_deleted = query.include_deleted.unwrap_or(false);
-        let mut conditions = Vec::new();
+        let mut predicates = Vec::new();
+        let mut bindings: Vec<String> = Vec::new();
 
         if !include_deleted {
-            conditions.push("deleted = 0".to_string());
+            predicates.push("deleted = 0".to_string());
         }
 
-        let q_val = query.q.clone();
-        if q_val.is_some() {
-            conditions.push("LOWER(name) LIKE ?1".to_string());
+        if let Some(ref q) = query.q {
+            bindings.push(format!("%{}%", q.to_lowercase()));
+            predicates.push(format!("LOWER(name) LIKE ?{}", bindings.len()));
         }
 
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
-
-        let sql = format!(
+        let mut sql = format!(
             "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
-             FROM {TABLE_LABELS}{where_clause} ORDER BY name"
+             FROM {TABLE_LABELS}"
         );
 
+        apply_pagination_sql_sqlite(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "updated_at",
+            "id",
+        )?;
+
         let mut qb = sqlx::query_as::<_, LabelRow>(&sql);
-        if let Some(ref q) = q_val {
-            qb = qb.bind(format!("%{}%", q.to_lowercase()));
+        for value in &bindings {
+            qb = qb.bind(value);
         }
 
         let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
@@ -5770,12 +5796,13 @@ mod tests {
         query.q = Some("bug".to_string());
         let results = store.list_labels(&query).await.unwrap();
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].1.name, "bug");
-        assert_eq!(results[1].1.name, "bugfix");
+        // Results sorted by updated_at DESC, id DESC (most recently created first)
+        assert_eq!(results[0].1.name, "bugfix");
+        assert_eq!(results[1].1.name, "bug");
     }
 
     #[tokio::test]
-    async fn list_labels_sorted_by_name() {
+    async fn list_labels_sorted_by_updated_at() {
         let store = create_test_store().await;
 
         store
@@ -5796,8 +5823,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 3);
-        assert_eq!(results[0].1.name, "alpha");
-        assert_eq!(results[1].1.name, "middle");
+        // Sorted by updated_at DESC, id DESC (most recently created first)
+        assert_eq!(results[0].1.name, "middle");
+        assert_eq!(results[1].1.name, "alpha");
         assert_eq!(results[2].1.name, "zebra");
     }
 

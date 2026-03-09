@@ -12,7 +12,7 @@ use axum::{
 };
 use metis_common::{
     IssueId, MetisId,
-    api::v1::{ApiError, issues as api_issues},
+    api::v1::{ApiError, issues as api_issues, pagination::encode_cursor},
 };
 use serde::Deserialize;
 use tracing::{error, info};
@@ -311,6 +311,7 @@ pub async fn list_issues(
             ApiError::internal(anyhow!("failed to fetch labels: {err}"))
         })?;
 
+    let effective_limit = query.limit.map(|l| l.min(200));
     let mut filtered: Vec<api_issues::IssueSummaryRecord> = Vec::new();
     for (id, versioned) in issues {
         let object_id = MetisId::from(id.clone());
@@ -329,7 +330,22 @@ pub async fn list_issues(
         ));
     }
 
-    let response = api_issues::ListIssuesResponse::new(filtered);
+    // Compute next_cursor from the extra item (limit+1 pattern)
+    let next_cursor = if let Some(limit) = effective_limit {
+        if filtered.len() > limit as usize {
+            filtered.truncate(limit as usize);
+            filtered
+                .last()
+                .map(|last| encode_cursor(&last.timestamp, last.issue_id.as_ref()))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut response = api_issues::ListIssuesResponse::new(filtered);
+    response.next_cursor = next_cursor;
     info!(
         issue_type = ?query.issue_type,
         status = ?query.status,

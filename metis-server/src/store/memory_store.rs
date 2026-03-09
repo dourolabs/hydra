@@ -4,7 +4,9 @@ use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
 use super::issue_graph::IssueGraphContext;
-use super::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog};
+use super::{
+    ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog, apply_memory_pagination,
+};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
@@ -497,7 +499,7 @@ impl ReadOnlyStore for MemoryStore {
             .map(|value| value.trim())
             .filter(|value| !value.is_empty());
 
-        Ok(self
+        let items: Vec<_> = self
             .issues
             .iter()
             .filter_map(|entry| {
@@ -532,7 +534,14 @@ impl ReadOnlyStore for MemoryStore {
                 latest.creation_time = entry.value()[0].timestamp;
                 Some((issue_id.clone(), latest))
             })
-            .collect())
+            .collect();
+        apply_memory_pagination(
+            items,
+            |(_id, v)| v.timestamp,
+            |(id, _v)| id.as_ref(),
+            &query.cursor,
+            query.limit,
+        )
     }
 
     async fn search_issue_graph(
@@ -665,7 +674,7 @@ impl ReadOnlyStore for MemoryStore {
         let status_filter: Vec<crate::domain::patches::PatchStatus> =
             query.status.iter().copied().map(Into::into).collect();
 
-        Ok(self
+        let items: Vec<_> = self
             .patches
             .iter()
             .filter_map(|entry| {
@@ -687,7 +696,14 @@ impl ReadOnlyStore for MemoryStore {
                 latest.creation_time = entry.value()[0].timestamp;
                 Some((entry.key().clone(), latest))
             })
-            .collect())
+            .collect();
+        apply_memory_pagination(
+            items,
+            |(_id, v)| v.timestamp,
+            |(id, _v)| id.as_ref(),
+            &query.cursor,
+            query.limit,
+        )
     }
 
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
@@ -790,8 +806,13 @@ impl ReadOnlyStore for MemoryStore {
             });
         }
 
-        documents.sort_by(|(left, _), (right, _)| left.cmp(right));
-        Ok(documents)
+        apply_memory_pagination(
+            documents,
+            |(_id, v)| v.timestamp,
+            |(id, _v)| id.as_ref(),
+            &query.cursor,
+            query.limit,
+        )
     }
 
     async fn get_documents_by_path(
@@ -838,7 +859,7 @@ impl ReadOnlyStore for MemoryStore {
             .map(|value| value.trim().to_lowercase())
             .filter(|value| !value.is_empty());
 
-        Ok(self
+        let items: Vec<_> = self
             .tasks
             .iter()
             .filter_map(|entry| {
@@ -880,7 +901,14 @@ impl ReadOnlyStore for MemoryStore {
 
                 Some((task_id.clone(), latest))
             })
-            .collect())
+            .collect();
+        apply_memory_pagination(
+            items,
+            |(_id, v)| v.timestamp,
+            |(id, _v)| id.as_ref(),
+            &query.cursor,
+            query.limit,
+        )
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
@@ -1188,8 +1216,13 @@ impl ReadOnlyStore for MemoryStore {
             results.push((entry.key().clone(), label.clone()));
         }
 
-        results.sort_by(|a, b| a.1.name.cmp(&b.1.name));
-        Ok(results)
+        apply_memory_pagination(
+            results,
+            |(_id, label)| label.updated_at,
+            |(id, _label)| id.as_ref(),
+            &query.cursor,
+            query.limit,
+        )
     }
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
@@ -5852,13 +5885,13 @@ mod tests {
         query.q = Some("bug".to_string());
         let results = store.list_labels(&query).await.unwrap();
         assert_eq!(results.len(), 2);
-        // Results sorted by name
-        assert_eq!(results[0].1.name, "bug");
-        assert_eq!(results[1].1.name, "bugfix");
+        // Results sorted by updated_at DESC, id DESC (most recently created first)
+        assert_eq!(results[0].1.name, "bugfix");
+        assert_eq!(results[1].1.name, "bug");
     }
 
     #[tokio::test]
-    async fn list_labels_sorted_by_name() {
+    async fn list_labels_sorted_by_updated_at() {
         let store = MemoryStore::new();
 
         store
@@ -5879,8 +5912,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 3);
-        assert_eq!(results[0].1.name, "alpha");
-        assert_eq!(results[1].1.name, "middle");
+        // Sorted by updated_at DESC, id DESC (most recently created first)
+        assert_eq!(results[0].1.name, "middle");
+        assert_eq!(results[1].1.name, "alpha");
         assert_eq!(results[2].1.name, "zebra");
     }
 
