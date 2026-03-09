@@ -862,6 +862,17 @@ impl AppState {
         store.list_tasks(query).await
     }
 
+    pub async fn get_jobs_summary_for_issues(
+        &self,
+        issue_ids: &[IssueId],
+    ) -> Result<
+        std::collections::HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>,
+        StoreError,
+    > {
+        let store = self.store.as_ref();
+        store.get_jobs_summary_for_issues(issue_ids).await
+    }
+
     pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         let store = self.store.as_ref();
         store.get_status_log(task_id).await

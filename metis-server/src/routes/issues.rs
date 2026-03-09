@@ -11,7 +11,7 @@ use axum::{
     http::request::Parts,
 };
 use metis_common::{
-    IssueId, MetisId, TaskId,
+    IssueId, MetisId,
     api::v1::{ApiError, issues as api_issues},
 };
 use serde::Deserialize;
@@ -447,7 +447,7 @@ pub async fn set_todo_item_status(
     Ok(Json(response))
 }
 
-/// Build a map of IssueId → JobStatusSummary by fetching tasks for the given issues.
+/// Build a map of IssueId → JobStatusSummary using store-level aggregation.
 async fn build_jobs_summary_map(
     state: &AppState,
     issues: &[(
@@ -455,92 +455,18 @@ async fn build_jobs_summary_map(
         metis_common::Versioned<crate::domain::issues::Issue>,
     )],
 ) -> Result<HashMap<IssueId, api_issues::JobStatusSummary>, ApiError> {
-    use crate::store::Status as DomainStatus;
-    use metis_common::api::v1::task_status::Status as ApiTaskStatus;
-
-    // Collect all issue IDs for which we need task data
-    let issue_ids: Vec<&IssueId> = issues.iter().map(|(id, _)| id).collect();
+    let issue_ids: Vec<IssueId> = issues.iter().map(|(id, _)| id.clone()).collect();
     if issue_ids.is_empty() {
         return Ok(HashMap::new());
     }
 
-    // Batch-fetch tasks: use list_tasks to get all tasks, then filter by spawned_from.
-    // This is a single query that returns all tasks; we filter in memory.
-    let all_tasks = state
-        .list_tasks_with_query(&metis_common::api::v1::jobs::SearchJobsQuery::default())
+    state
+        .get_jobs_summary_for_issues(&issue_ids)
         .await
         .map_err(|err| {
-            error!(error = %err, "failed to fetch tasks for jobs summary");
-            ApiError::internal(anyhow!("failed to fetch tasks: {err}"))
-        })?;
-
-    // Build per-issue task lists
-    let issue_id_set: std::collections::HashSet<&IssueId> = issue_ids.into_iter().collect();
-    let mut tasks_by_issue: HashMap<IssueId, Vec<(TaskId, &crate::store::Task)>> = HashMap::new();
-
-    // We need to hold the versioned tasks so we can reference them
-    let task_refs: Vec<_> = all_tasks
-        .iter()
-        .filter_map(|(task_id, versioned)| {
-            let spawned_from = versioned.item.spawned_from.as_ref()?;
-            if issue_id_set.contains(spawned_from) {
-                Some((task_id.clone(), spawned_from.clone(), &versioned.item))
-            } else {
-                None
-            }
+            error!(error = %err, "failed to fetch jobs summary");
+            ApiError::internal(anyhow!("failed to fetch jobs summary: {err}"))
         })
-        .collect();
-
-    for (task_id, issue_id, task) in &task_refs {
-        tasks_by_issue
-            .entry(issue_id.clone())
-            .or_default()
-            .push((task_id.clone(), *task));
-    }
-
-    // Compute summary per issue
-    let mut result = HashMap::new();
-    for (issue_id, tasks) in tasks_by_issue {
-        let total = tasks.len() as u32;
-        let running = tasks
-            .iter()
-            .filter(|(_, t)| matches!(t.status, DomainStatus::Running | DomainStatus::Pending))
-            .count() as u32;
-        let failed = tasks
-            .iter()
-            .filter(|(_, t)| t.status == DomainStatus::Failed)
-            .count() as u32;
-
-        // Find the latest job by creation_time (fallback to task_id ordering)
-        let latest = tasks.iter().max_by_key(|(_, t)| t.creation_time);
-
-        let (latest_job_id, latest_job_status, latest_start_time, latest_end_time) =
-            if let Some((tid, task)) = latest {
-                (
-                    Some(tid.clone()),
-                    Some(ApiTaskStatus::from(task.status)),
-                    task.start_time,
-                    task.end_time,
-                )
-            } else {
-                (None, None, None, None)
-            };
-
-        result.insert(
-            issue_id,
-            api_issues::JobStatusSummary::new(
-                total,
-                running,
-                failed,
-                latest_job_id,
-                latest_job_status,
-                latest_start_time,
-                latest_end_time,
-            ),
-        );
-    }
-
-    Ok(result)
 }
 
 fn map_graph_filter_error(err: StoreError) -> ApiError {

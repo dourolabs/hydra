@@ -13,4 +13,8 @@ export type SearchPatchesQuery = {
    * Filter patches by exact branch name.
    */
   branch_name?: string | null;
+  /** Maximum number of results to return. When omitted, all results are returned. */
+  limit: number | null;
+  /** Opaque cursor from a previous response's `next_cursor` field. */
+  cursor: string | null;
 };

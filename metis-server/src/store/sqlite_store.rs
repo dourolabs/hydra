@@ -206,6 +206,22 @@ struct TaskRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct JobsSummaryAggRow {
+    spawned_from: String,
+    total: i64,
+    running: i64,
+    failed: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct LatestJobRow {
+    id: String,
+    status: String,
+    start_time: Option<String>,
+    end_time: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
 struct AgentRow {
     name: String,
     prompt_path: String,
@@ -2449,6 +2465,116 @@ impl ReadOnlyStore for SqliteStore {
         }
 
         Ok(tasks)
+    }
+
+    async fn get_jobs_summary_for_issues(
+        &self,
+        issue_ids: &[IssueId],
+    ) -> Result<HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>, StoreError> {
+        use metis_common::api::v1::issues::JobStatusSummary;
+        use metis_common::api::v1::task_status::Status as ApiTaskStatus;
+
+        if issue_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let placeholders: Vec<String> = (1..=issue_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect();
+
+        // SQLite doesn't support FILTER or ARRAY_AGG, so use SUM(CASE ...) and
+        // a subquery for the latest job.
+        let sql = format!(
+            "SELECT \
+                t.spawned_from, \
+                COUNT(*) AS total, \
+                SUM(CASE WHEN t.status IN ('running', 'pending') THEN 1 ELSE 0 END) AS running, \
+                SUM(CASE WHEN t.status = 'failed' THEN 1 ELSE 0 END) AS failed \
+             FROM {TABLE_TASKS_V2} t \
+             INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
+             ON t.id = latest.id AND t.version_number = latest.max_version \
+             WHERE t.deleted = 0 AND t.spawned_from IN ({placeholders}) \
+             GROUP BY t.spawned_from",
+            placeholders = placeholders.join(", ")
+        );
+
+        let mut query_builder = sqlx::query_as::<_, JobsSummaryAggRow>(&sql);
+        for id in issue_ids {
+            query_builder = query_builder.bind(id.as_ref().to_string());
+        }
+
+        let agg_rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        // For each issue with tasks, get the latest job details via a separate query
+        let mut result = HashMap::new();
+        for row in &agg_rows {
+            let issue_id = row
+                .spawned_from
+                .parse::<IssueId>()
+                .map_err(|e| StoreError::Internal(format!("invalid issue id: {e}")))?;
+
+            // Query for the latest task by creation_time for this issue
+            let latest_sql = format!(
+                "SELECT t.id, t.status, t.start_time, t.end_time \
+                 FROM {TABLE_TASKS_V2} t \
+                 INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
+                 ON t.id = latest.id AND t.version_number = latest.max_version \
+                 WHERE t.deleted = 0 AND t.spawned_from = ?1 \
+                 ORDER BY t.creation_time DESC NULLS LAST \
+                 LIMIT 1"
+            );
+
+            let latest_row = sqlx::query_as::<_, LatestJobRow>(&latest_sql)
+                .bind(issue_id.as_ref().to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_sqlx_error)?;
+
+            let (latest_job_id, latest_job_status, latest_start_time, latest_end_time) =
+                if let Some(lr) = latest_row {
+                    let task_id = lr
+                        .id
+                        .parse::<TaskId>()
+                        .map_err(|e| StoreError::Internal(format!("invalid task id: {e}")))?;
+                    let status = match lr.status.as_str() {
+                        "created" => ApiTaskStatus::Created,
+                        "pending" => ApiTaskStatus::Pending,
+                        "running" => ApiTaskStatus::Running,
+                        "complete" => ApiTaskStatus::Complete,
+                        "failed" => ApiTaskStatus::Failed,
+                        _ => ApiTaskStatus::Unknown,
+                    };
+                    let start_time = lr
+                        .start_time
+                        .as_deref()
+                        .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+                    let end_time = lr
+                        .end_time
+                        .as_deref()
+                        .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+                    (Some(task_id), Some(status), start_time, end_time)
+                } else {
+                    (None, None, None, None)
+                };
+
+            result.insert(
+                issue_id,
+                JobStatusSummary::new(
+                    row.total as u32,
+                    row.running as u32,
+                    row.failed as u32,
+                    latest_job_id,
+                    latest_job_status,
+                    latest_start_time,
+                    latest_end_time,
+                ),
+            );
+        }
+
+        Ok(result)
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {

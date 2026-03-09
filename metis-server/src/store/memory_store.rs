@@ -893,6 +893,104 @@ impl ReadOnlyStore for MemoryStore {
             .collect())
     }
 
+    async fn get_jobs_summary_for_issues(
+        &self,
+        issue_ids: &[IssueId],
+    ) -> Result<HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>, StoreError> {
+        use metis_common::api::v1::issues::JobStatusSummary;
+        use metis_common::api::v1::task_status::Status as ApiTaskStatus;
+
+        if issue_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let issue_id_set: std::collections::HashSet<&IssueId> =
+            issue_ids.iter().collect();
+
+        // Collect relevant task data as owned values to avoid DashMap lifetime issues
+        struct TaskInfo {
+            task_id: TaskId,
+            issue_id: IssueId,
+            status: Status,
+            creation_time: Option<chrono::DateTime<chrono::Utc>>,
+            start_time: Option<chrono::DateTime<chrono::Utc>>,
+            end_time: Option<chrono::DateTime<chrono::Utc>>,
+        }
+
+        let mut task_infos = Vec::new();
+        for entry in self.tasks.iter() {
+            let task_id = entry.key().clone();
+            let Some(latest) = Self::latest_versioned(entry.value()) else {
+                continue;
+            };
+            if latest.item.deleted {
+                continue;
+            }
+            if let Some(spawned_from) = latest.item.spawned_from.as_ref() {
+                if issue_id_set.contains(spawned_from) {
+                    task_infos.push(TaskInfo {
+                        task_id,
+                        issue_id: spawned_from.clone(),
+                        status: latest.item.status,
+                        creation_time: latest.item.creation_time,
+                        start_time: latest.item.start_time,
+                        end_time: latest.item.end_time,
+                    });
+                }
+            }
+        }
+
+        // Group by issue
+        let mut tasks_by_issue: HashMap<IssueId, Vec<&TaskInfo>> = HashMap::new();
+        for info in &task_infos {
+            tasks_by_issue
+                .entry(info.issue_id.clone())
+                .or_default()
+                .push(info);
+        }
+
+        let mut result = HashMap::new();
+        for (issue_id, tasks) in tasks_by_issue {
+            let total = tasks.len() as u32;
+            let running = tasks
+                .iter()
+                .filter(|t| matches!(t.status, Status::Running | Status::Pending))
+                .count() as u32;
+            let failed = tasks
+                .iter()
+                .filter(|t| t.status == Status::Failed)
+                .count() as u32;
+
+            let latest = tasks.iter().max_by_key(|t| t.creation_time);
+            let (latest_job_id, latest_job_status, latest_start_time, latest_end_time) =
+                if let Some(t) = latest {
+                    (
+                        Some(t.task_id.clone()),
+                        Some(ApiTaskStatus::from(t.status)),
+                        t.start_time,
+                        t.end_time,
+                    )
+                } else {
+                    (None, None, None, None)
+                };
+
+            result.insert(
+                issue_id,
+                JobStatusSummary::new(
+                    total,
+                    running,
+                    failed,
+                    latest_job_id,
+                    latest_job_status,
+                    latest_start_time,
+                    latest_end_time,
+                ),
+            );
+        }
+
+        Ok(result)
+    }
+
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         self.tasks
             .get(id)
