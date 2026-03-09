@@ -4243,7 +4243,6 @@ fn row_to_agent(row: AgentRow) -> Agent {
     }
 }
 
-
 /// Appends cursor-based keyset pagination to a SQL query (PostgreSQL dialect).
 ///
 /// Adds the cursor WHERE predicate into `predicates`, and appends

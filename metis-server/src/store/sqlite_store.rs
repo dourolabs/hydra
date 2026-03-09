@@ -4014,7 +4014,6 @@ impl Store for SqliteStore {
     }
 }
 
-
 /// Appends cursor-based keyset pagination to a SQL query (SQLite dialect).
 ///
 /// Same as `apply_pagination_sql_pg` but uses `?` placeholders.

@@ -2028,7 +2028,6 @@ fn issue_matches(
     true
 }
 
-
 /// Applies in-memory cursor-based pagination to a list of items.
 ///
 /// Sorts by (timestamp DESC, id DESC), applies cursor filter, then limits results.
