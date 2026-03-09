@@ -632,7 +632,6 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -891,7 +890,6 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -965,7 +963,6 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1059,7 +1056,6 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1114,7 +1110,6 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1167,7 +1162,6 @@ async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-
                 status: Status::Created,
                 last_message: None,
                 error: None,
@@ -1210,7 +1204,6 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
                 cpu_limit: None,
                 memory_limit: None,
                 secrets: None,
-
                 status: Status::Created,
                 last_message: None,
                 error: None,

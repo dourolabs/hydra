@@ -3951,7 +3951,7 @@ mod tests {
             [("K".to_string(), "V".to_string())].into_iter().collect(),
             Some("1000m".to_string()),
             Some("512Mi".to_string()),
-            None,
+            Some(vec!["secret-a".to_string(), "secret-b".to_string()]),
             Status::Created,
             Some("last message".to_string()),
             None,
@@ -4013,7 +4013,7 @@ mod tests {
                 max_retries: Some(3),
                 cpu_limit: Some("2".to_string()),
                 memory_limit: Some("4Gi".to_string()),
-                secrets: None,
+                secrets: Some(vec!["job-secret".to_string()]),
             }),
             vec![
                 TodoItem::new("todo one".to_string(), false),

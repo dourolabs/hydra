@@ -1,21 +1,21 @@
 #[cfg(test)]
+use crate::domain::actors::ActorId;
+#[cfg(test)]
 use crate::domain::issues::{IssueDependency, IssueType};
 #[cfg(test)]
 use crate::domain::users::Username;
 use crate::{
     app::AppState,
     domain::{
-        actors::ActorId,
         issues::{Issue, IssueDependencyType, IssueStatus},
         jobs::BundleSpec,
     },
-    store::{ReadOnlyStore, Status, StoreError, Task},
+    store::{Status, StoreError, Task},
 };
 use anyhow::Context;
 use async_trait::async_trait;
 #[cfg(test)]
 use metis_common::RepoName;
-use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::{IssueId, VersionNumber};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
@@ -36,7 +36,6 @@ struct SpawnAttempt {
     status: IssueStatus,
     attempts: i32,
     children_snapshot: HashMap<IssueId, VersionNumber>,
-    had_unread_messages: bool,
 }
 
 pub struct AgentQueue {
@@ -125,7 +124,6 @@ impl AgentQueue {
         issue_id: &IssueId,
         status: IssueStatus,
         children_snapshot: HashMap<IssueId, VersionNumber>,
-        had_unread_messages: bool,
         max_tries: i32,
     ) -> bool {
         let mut attempts = self.spawn_attempts.write().await;
@@ -133,22 +131,17 @@ impl AgentQueue {
             status,
             attempts: 0,
             children_snapshot: HashMap::new(),
-            had_unread_messages: false,
         });
 
         let status_changed = entry.status != status;
         let children_changed = entry.children_snapshot != children_snapshot;
-        let new_unread_messages = !entry.had_unread_messages && had_unread_messages;
 
-        if status_changed || children_changed || new_unread_messages {
+        if status_changed || children_changed {
             *entry = SpawnAttempt {
                 status,
                 attempts: 0,
                 children_snapshot,
-                had_unread_messages,
             };
-        } else {
-            entry.had_unread_messages = had_unread_messages;
         }
 
         if entry.attempts >= max_tries {
@@ -228,10 +221,7 @@ impl Spawner for AgentQueue {
                 .is_issue_ready(&issue_id)
                 .await
                 .context("failed to determine if issue is ready")?;
-            let has_unread = has_unread_messages(state, &issue_id)
-                .await
-                .context("failed to check for unread messages")?;
-            if !is_ready && !has_unread {
+            if !is_ready {
                 continue;
             }
 
@@ -282,13 +272,7 @@ impl Spawner for AgentQueue {
                 snapshot
             };
             if !self
-                .register_spawn_attempt(
-                    &issue_id,
-                    issue.status,
-                    children_snapshot,
-                    has_unread,
-                    max_tries,
-                )
+                .register_spawn_attempt(&issue_id, issue.status, children_snapshot, max_tries)
                 .await
             {
                 continue;
@@ -347,16 +331,6 @@ async fn agent_task_state(
     }
 
     Ok(task_state)
-}
-
-async fn has_unread_messages(state: &AppState, issue_id: &IssueId) -> Result<bool, StoreError> {
-    let recipient = ActorId::Issue(issue_id.clone()).to_string();
-    let mut query = SearchMessagesQuery::default();
-    query.recipient = Some(recipient);
-    let messages = state.store.list_messages(&query).await?;
-    Ok(messages
-        .iter()
-        .any(|(_, versioned)| !versioned.item.is_read))
 }
 
 async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool, StoreError> {
@@ -1102,7 +1076,6 @@ mod tests {
                     cpu_limit: None,
                     memory_limit: None,
                     secrets: None,
-
                     status: Status::Created,
                     last_message: None,
                     error: None,
@@ -1187,7 +1160,6 @@ mod tests {
                     cpu_limit: None,
                     memory_limit: None,
                     secrets: None,
-
                     status: Status::Created,
                     last_message: None,
                     error: None,
@@ -1595,7 +1567,100 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unread_message_triggers_spawn_for_not_ready_issue() -> anyhow::Result<()> {
+    async fn spawner_passes_secrets_from_job_settings() -> anyhow::Result<()> {
+        let (repo_name, repository) = repository();
+        let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
+        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
+        let secrets = vec!["db-secret".to_string(), "api-key".to_string()];
+        handles
+            .store
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    title: String::new(),
+                    description: "Issue with secrets".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings {
+                        repo_name: Some(repo_name.clone()),
+                        remote_url: None,
+                        image: Some("worker:latest".to_string()),
+                        model: None,
+                        branch: None,
+                        max_retries: None,
+                        cpu_limit: None,
+                        memory_limit: None,
+                        secrets: Some(secrets.clone()),
+                    },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
+                },
+                &ActorRef::test(),
+            )
+            .await?;
+        let queue = queue("agent-a");
+
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+
+        let task = &tasks[0];
+        assert_eq!(task.secrets, Some(secrets));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn spawner_handles_none_secrets() -> anyhow::Result<()> {
+        let (repo_name, repository) = repository();
+        let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
+        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
+        handles
+            .store
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    title: String::new(),
+                    description: "Issue without secrets".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings {
+                        repo_name: Some(repo_name.clone()),
+                        remote_url: None,
+                        image: Some("worker:latest".to_string()),
+                        model: None,
+                        branch: None,
+                        max_retries: None,
+                        cpu_limit: None,
+                        memory_limit: None,
+                        secrets: None,
+                    },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
+                },
+                &ActorRef::test(),
+            )
+            .await?;
+        let queue = queue("agent-a");
+
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+
+        let task = &tasks[0];
+        assert!(task.secrets.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unread_message_does_not_trigger_spawn_for_not_ready_issue() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
 
         // Create a blocker so the issue is not ready by normal rules.
@@ -1633,12 +1698,11 @@ mod tests {
         let msg = Message::new(None, recipient, "please look at this".to_string());
         handles.store.add_message(msg, &ActorRef::test()).await?;
 
-        // Now should spawn despite not being ready.
+        // Should still not spawn — unread messages no longer bypass readiness checks.
         let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(
-            tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
-            Some(issue_id.as_ref())
+        assert!(
+            tasks.is_empty(),
+            "should not spawn for not-ready issue even with unread messages"
         );
 
         Ok(())
@@ -1740,7 +1804,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retry_counter_resets_on_new_unread_message() -> anyhow::Result<()> {
+    async fn retry_counter_does_not_reset_on_new_unread_message() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
         queue.agent.max_tries = 1;
 
@@ -1767,18 +1831,13 @@ mod tests {
         // Second attempt should be blocked (max_tries=1 reached).
         assert!(queue.spawn(&handles.state).await?.is_empty());
 
-        // Send an unread message — this should reset the retry counter.
+        // Send an unread message — this should NOT reset the retry counter.
         let recipient = ActorId::Issue(issue_id.clone());
         let msg = Message::new(None, recipient, "new info".to_string());
         handles.store.add_message(msg, &ActorRef::test()).await?;
 
-        // Now the counter should have reset, so spawning succeeds again.
-        let tasks = queue.spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(
-            tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
-            Some(issue_id.as_ref())
-        );
+        // Spawning should still be blocked after max_tries even with new messages.
+        assert!(queue.spawn(&handles.state).await?.is_empty());
 
         Ok(())
     }

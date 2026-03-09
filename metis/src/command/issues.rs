@@ -3125,6 +3125,156 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_issue_sets_secrets() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+
+        let mut job_settings = JobSettings::default();
+        job_settings.secrets = Some(vec!["my-api-secret".into(), "my-db-secret".into()]);
+        let create_request = UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Task,
+                "Test Title".to_string(),
+                "Issue with secrets".into(),
+                Username::from("creator-a"),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Some(job_settings.clone()),
+                Vec::new(),
+                Vec::new(),
+                vec![],
+                false,
+            ),
+            None,
+        );
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/issues")
+                .json_body_obj(&create_request);
+            then.status(200)
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-secrets"), 0));
+        });
+
+        create_issue(
+            &client,
+            IssueType::Task,
+            "Test Title".to_string(),
+            IssueStatus::Open,
+            Vec::new(),
+            vec![],
+            None,
+            Username::from("creator-a"),
+            "Issue with secrets".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec!["my-api-secret".into(), "my-db-secret".into()],
+            None,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        create_mock.assert();
+        assert_eq!(create_mock.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn create_issue_inherits_secrets_from_current_issue() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+
+        let current_issue_id = issue_id("i-current");
+        let mut inherited_settings = JobSettings::default();
+        inherited_settings.secrets = Some(vec!["inherited-secret".into()]);
+        let current_issue = IssueVersionRecord::new(
+            current_issue_id.clone(),
+            0,
+            Utc::now(),
+            Issue::new(
+                IssueType::Task,
+                "Test Title".to_string(),
+                "Parent issue".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Some(inherited_settings.clone()),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+            ),
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
+        let current_issue_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{current_issue_id}").as_str());
+            then.status(200).json_body_obj(&current_issue);
+        });
+        let create_request = UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Task,
+                "Test Title".to_string(),
+                "Child issue".into(),
+                Username::from("creator-a"),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Some(inherited_settings),
+                Vec::new(),
+                Vec::new(),
+                vec![],
+                false,
+            ),
+            None,
+        );
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/issues")
+                .json_body_obj(&create_request);
+            then.status(200)
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-child"), 0));
+        });
+
+        create_issue(
+            &client,
+            IssueType::Task,
+            "Test Title".to_string(),
+            IssueStatus::Open,
+            Vec::new(),
+            vec![],
+            None,
+            Username::from("creator-a"),
+            "Child issue".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            Some(current_issue_id),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        current_issue_mock.assert();
+        create_mock.assert();
+        assert_eq!(current_issue_mock.hits(), 1);
+        assert_eq!(create_mock.hits(), 1);
+    }
+
+    #[tokio::test]
     async fn create_issue_requires_description() {
         let server = MockServer::start();
         let client = metis_client(&server);
@@ -3522,6 +3672,196 @@ mod tests {
             Vec::new(),
             false,
             true,
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        get_mock.assert();
+        update_mock.assert();
+        assert_eq!(get_mock.hits(), 1);
+        assert_eq!(update_mock.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn update_issue_sets_secrets() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let target_issue_id = issue_id("i-secrets");
+        let current_issue = IssueVersionRecord::new(
+            target_issue_id.clone(),
+            0,
+            Utc::now(),
+            Issue::new(
+                IssueType::Task,
+                "Test Title".to_string(),
+                "Existing issue".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+            ),
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
+        let mut expected_settings = JobSettings::default();
+        expected_settings.secrets = Some(vec!["new-secret".into()]);
+        let update_request = UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Task,
+                "Test Title".to_string(),
+                "Existing issue".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Some(expected_settings),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+            ),
+            None,
+        );
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{target_issue_id}").as_str());
+            then.status(200).json_body_obj(&current_issue);
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path(format!("/v1/issues/{target_issue_id}").as_str())
+                .json_body_obj(&update_request);
+            then.status(200)
+                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
+        });
+
+        update_issue(
+            &client,
+            target_issue_id,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            vec![],
+            false,
+            vec![],
+            false,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec!["new-secret".into()],
+            false,
+            false,
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        get_mock.assert();
+        update_mock.assert();
+        assert_eq!(get_mock.hits(), 1);
+        assert_eq!(update_mock.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn update_issue_allows_clearing_secrets() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let target_issue_id = issue_id("i-clear-secrets");
+        let mut existing_settings = JobSettings::default();
+        existing_settings.secrets = Some(vec!["old-secret".into()]);
+        let current_issue = IssueVersionRecord::new(
+            target_issue_id.clone(),
+            0,
+            Utc::now(),
+            Issue::new(
+                IssueType::Task,
+                "Test Title".to_string(),
+                "Existing issue".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Some(existing_settings),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+            ),
+            None,
+            Utc::now(),
+            Vec::new(),
+        );
+        let update_request = UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Task,
+                "Test Title".to_string(),
+                "Existing issue".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Some(JobSettings::default()),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+            ),
+            None,
+        );
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{target_issue_id}").as_str());
+            then.status(200).json_body_obj(&current_issue);
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path(format!("/v1/issues/{target_issue_id}").as_str())
+                .json_body_obj(&update_request);
+            then.status(200)
+                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
+        });
+
+        update_issue(
+            &client,
+            target_issue_id,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            vec![],
+            false,
+            vec![],
+            false,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            true,
+            false,
             Vec::new(),
             Vec::new(),
         )
