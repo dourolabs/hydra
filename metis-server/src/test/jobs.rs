@@ -392,6 +392,7 @@ async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
         store.clone(),
         Arc::new(MockJobEngine::new()),
         test_secret_manager(),
+        None,
     );
     let server = spawn_test_server_with_state(state, store).await?;
 

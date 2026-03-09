@@ -1,10 +1,10 @@
 use axum::{Json, extract::State};
 use metis_common::api::v1::ApiError;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::app::AppState;
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct LocalAuthResponse {
     pub token: String,
 }

@@ -24,6 +24,7 @@ async fn github_app_client_id_returns_configured_value() -> anyhow::Result<()> {
         store.clone(),
         Arc::new(MockJobEngine::new()),
         test_secret_manager(),
+        None,
     );
 
     let server = spawn_test_server_with_state(state, store).await?;

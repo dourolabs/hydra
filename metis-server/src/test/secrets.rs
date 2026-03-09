@@ -26,6 +26,7 @@ fn test_state_with_secrets() -> TestStateHandles {
         store.clone(),
         Arc::new(MockJobEngine::new()),
         test_secret_manager(),
+        None,
     );
     TestStateHandles { state, store }
 }
@@ -315,6 +316,7 @@ fn test_state_with_secrets_and_config() -> TestStateHandles {
         store.clone(),
         Arc::new(MockJobEngine::new()),
         test_secret_manager(),
+        None,
     );
     TestStateHandles { state, store }
 }
@@ -405,6 +407,7 @@ async fn resolve_secrets_no_user_secret_no_config_not_set() {
         store.clone(),
         Arc::new(MockJobEngine::new()),
         test_secret_manager(),
+        None,
     );
     let username = Username::from("dave");
 

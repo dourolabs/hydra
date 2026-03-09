@@ -391,17 +391,15 @@ pub async fn run() -> anyhow::Result<()> {
     );
     info!("secret encryption enabled");
 
-    let mut state = AppState::new(
+    let state = AppState::new(
         Arc::new(app_config),
         github_app,
         Arc::new(service_state),
         store,
         job_engine,
         secret_manager,
+        local_auth_token,
     );
-    if let Some(token) = local_auth_token {
-        state.set_local_auth_token(token);
-    }
 
     // Ensure the 'inbox' label exists (recurse=false, hidden=true).
     state.ensure_inbox_label().await;

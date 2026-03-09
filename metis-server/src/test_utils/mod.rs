@@ -140,6 +140,7 @@ pub fn test_state_with_store_and_engine(
         store.clone(),
         job_engine,
         test_secret_manager(),
+        None,
     );
 
     TestStateHandles { state, store }
@@ -158,6 +159,7 @@ pub fn test_state_with_github_app(github_app: octocrab::Octocrab) -> TestStateHa
         store.clone(),
         Arc::new(MockJobEngine::new()),
         test_secret_manager(),
+        None,
     );
 
     TestStateHandles { state, store }
