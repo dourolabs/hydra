@@ -104,6 +104,11 @@ pub enum AuthConfig {
         /// omitted, producing actor name `u-local`.
         #[serde(default)]
         username: Option<String>,
+        /// Optional file path where the auto-generated auth token should be
+        /// written on startup (mode 600). Used by `metis server init` so the
+        /// CLI can pick up the token.
+        #[serde(default)]
+        auth_token_file: Option<PathBuf>,
     },
     /// GitHub OAuth mode: users authenticate via the GitHub device flow.
     /// Requires the `github_app` section in the config.
@@ -119,6 +124,7 @@ impl Default for AuthConfig {
         Self::Local {
             github_token: String::new(),
             username: None,
+            auth_token_file: None,
         }
     }
 }
@@ -160,6 +166,18 @@ impl AuthConfig {
     pub fn local_username(&self) -> Option<&str> {
         match self {
             Self::Local { username, .. } => Some(username.as_deref().unwrap_or("local")),
+            Self::Github { .. } => None,
+        }
+    }
+
+    /// Returns the auth token file path for local mode.
+    ///
+    /// Returns `None` for GitHub auth mode or when unset.
+    pub fn auth_token_file(&self) -> Option<&Path> {
+        match self {
+            Self::Local {
+                auth_token_file, ..
+            } => auth_token_file.as_deref(),
             Self::Github { .. } => None,
         }
     }

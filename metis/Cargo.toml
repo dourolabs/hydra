@@ -35,6 +35,7 @@ chrono = { version = "0.4", features = ["clock"] }
 owo-colors = "4.1"
 serde_yaml_ng = "0.10"
 serde_json = "1.0"
+getrandom = "0.2"
 sha2 = "0.10"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = { version = "0.27", features = ["event-stream"] }

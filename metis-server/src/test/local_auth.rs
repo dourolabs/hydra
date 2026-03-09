@@ -13,6 +13,7 @@ async fn setup_local_auth_creates_actor() -> anyhow::Result<()> {
     config.auth = AuthConfig::Local {
         github_token: "ghp_test_token".to_string(),
         username: None,
+        auth_token_file: None,
     };
 
     let store = Arc::new(MemoryStore::new());
@@ -31,6 +32,7 @@ async fn setup_local_auth_is_idempotent() -> anyhow::Result<()> {
     config.auth = AuthConfig::Local {
         github_token: "ghp_test_token".to_string(),
         username: None,
+        auth_token_file: None,
     };
 
     let store = Arc::new(MemoryStore::new());
@@ -52,6 +54,7 @@ async fn setup_local_auth_stores_github_pat() -> anyhow::Result<()> {
     config.auth = AuthConfig::Local {
         github_token: "ghp_test_pat_token_123".to_string(),
         username: None,
+        auth_token_file: None,
     };
 
     let store = Arc::new(MemoryStore::new());
@@ -71,6 +74,7 @@ async fn setup_local_auth_uses_custom_username() -> anyhow::Result<()> {
     config.auth = AuthConfig::Local {
         github_token: "ghp_test_token".to_string(),
         username: Some("alice".to_string()),
+        auth_token_file: None,
     };
 
     let store = Arc::new(MemoryStore::new());

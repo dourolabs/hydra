@@ -43,7 +43,7 @@ use metis_common::constants::ENV_METIS_CONFIG;
 use octocrab::Octocrab;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
-use tracing::{info, warn};
+use tracing::info;
 
 pub async fn run_with_state(
     state: AppState,
@@ -400,14 +400,10 @@ pub async fn run() -> anyhow::Result<()> {
     run_with_state(state, listener).await
 }
 
-/// Environment variable that, when set, tells the server to write the
-/// auto-generated local-auth token to the given file path (mode 600).
-pub const ENV_AUTH_TOKEN_FILE: &str = "METIS_AUTH_TOKEN_FILE";
-
 /// Create a default user actor for local auth mode.
 ///
-/// When the `METIS_AUTH_TOKEN_FILE` environment variable is set, the
-/// generated auth token is written to that path so the CLI can pick it up.
+/// When `auth_token_file` is set in the config, the generated auth token is
+/// written to that path so the CLI can pick it up.
 pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
     let username = Username::from(
         config
@@ -444,9 +440,8 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
         Err(err) => return Err(err.into()),
     }
 
-    // Write the auth token to a file if METIS_AUTH_TOKEN_FILE is set.
-    if let Ok(token_path) = std::env::var(ENV_AUTH_TOKEN_FILE) {
-        let path = std::path::Path::new(&token_path);
+    // Write the auth token to a file if auth_token_file is configured.
+    if let Some(path) = config.auth.auth_token_file() {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!(
@@ -464,8 +459,6 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
                 .with_context(|| format!("failed to set permissions on {}", path.display()))?;
         }
         info!("auth token written to {}", path.display());
-    } else {
-        warn!("METIS_AUTH_TOKEN_FILE not set; auth token was not persisted to disk");
     }
 
     info!("local auth configured");
