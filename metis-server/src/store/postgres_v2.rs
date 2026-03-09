@@ -4036,6 +4036,7 @@ mod tests {
             SearchRepositoriesQuery,
         },
     };
+    use chrono::Timelike;
     use std::{collections::HashSet, str::FromStr, sync::Arc};
 
     fn assert_versioned<T: std::fmt::Debug + PartialEq>(
@@ -4149,6 +4150,13 @@ mod tests {
         )
     }
 
+    /// Truncate a DateTime to microsecond precision to match Postgres TIMESTAMPTZ storage.
+    fn truncate_to_micros(dt: DateTime<Utc>) -> DateTime<Utc> {
+        let nanos = dt.timestamp_subsec_nanos();
+        let micros_only = (nanos / 1_000) * 1_000;
+        dt.with_nanosecond(micros_only).unwrap()
+    }
+
     /// Task with every optional field set so serialization round-trip can assert full equality.
     fn sample_task_all_fields() -> Task {
         let mut task = Task::new(
@@ -4166,8 +4174,8 @@ mod tests {
             Some("last message".to_string()),
             None,
         );
-        task.start_time = Some(Utc::now() - chrono::Duration::minutes(10));
-        task.end_time = Some(Utc::now() - chrono::Duration::minutes(5));
+        task.start_time = Some(truncate_to_micros(Utc::now() - chrono::Duration::minutes(10)));
+        task.end_time = Some(truncate_to_micros(Utc::now() - chrono::Duration::minutes(5)));
         task
     }
 
@@ -4576,7 +4584,7 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let task = sample_task_all_fields();
 
-        let now = Utc::now();
+        let now = truncate_to_micros(Utc::now());
         let (task_id, _) = store
             .add_task(task.clone(), now, &ActorRef::test())
             .await
