@@ -1,12 +1,10 @@
-use crate::domain::actors::ActorRef;
-use crate::test::{
-    github_user_response, spawn_test_server, spawn_test_server_with_state, test_auth_token,
-    test_client, test_state_with_github_api_base_url,
-};
-use httpmock::prelude::*;
+use crate::test::{spawn_test_server, test_auth_token, test_client};
 use metis_common::api::v1::whoami::{ActorIdentity, WhoAmIResponse};
-use reqwest::{Client, StatusCode, header};
+use reqwest::StatusCode;
+#[cfg(feature = "github")]
+use reqwest::{Client, header};
 
+#[cfg(feature = "github")]
 fn client_with_token(token: &str) -> Client {
     let mut headers = header::HeaderMap::new();
     let auth_value = format!("Bearer {token}");
@@ -21,8 +19,15 @@ fn client_with_token(token: &str) -> Client {
         .expect("failed to build client")
 }
 
+#[cfg(feature = "github")]
 #[tokio::test]
 async fn whoami_returns_user_identity() -> anyhow::Result<()> {
+    use crate::domain::actors::ActorRef;
+    use crate::test::{
+        github_user_response, spawn_test_server_with_state, test_state_with_github_api_base_url,
+    };
+    use httpmock::prelude::*;
+
     let github_server = MockServer::start_async().await;
     let _mock = github_server.mock(|when, then| {
         when.method(GET).path("/user");

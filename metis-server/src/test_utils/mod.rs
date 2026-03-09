@@ -1,9 +1,10 @@
+#[cfg(feature = "github")]
+use crate::config::{AuthConfig, GithubAppSection};
 use crate::{
     app::{AppState, Repository, ServiceState},
     config::{
-        AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, GithubAppSection,
-        JobEngineConfig, JobSection, MetisSection, SchedulerSection, StorageConfig,
-        WorkerSchedulerConfig,
+        AppConfig, BackgroundSection, BuildCacheSection, JobEngineConfig, JobSection, MetisSection,
+        SchedulerSection, StorageConfig, WorkerSchedulerConfig,
     },
     domain::{
         actors::{Actor, ActorRef},
@@ -24,13 +25,17 @@ use std::{
 use tokio::{task::JoinHandle, time::sleep};
 
 pub mod git_remote;
+#[cfg(feature = "github")]
 pub mod github_mock;
+#[cfg(feature = "github")]
 pub mod github_test_utils;
 pub mod job_engine;
 pub mod store;
 
 pub use git_remote::GitRemote;
+#[cfg(feature = "github")]
 pub use github_mock::{GitHubMockBuilder, MockPr, MockReview};
+#[cfg(feature = "github")]
 pub use github_test_utils::{
     github_user_response, test_state_with_github_api_base_url, test_state_with_github_urls,
     test_state_with_github_urls_and_allowed_orgs,
@@ -77,22 +82,35 @@ pub fn test_app_config() -> AppConfig {
         },
         storage: StorageConfig::default(),
         job_engine: JobEngineConfig::default(),
-        auth: AuthConfig::Github {
-            github_app: GithubAppSection {
-                app_id: 1,
-                client_id: "client-id".to_string(),
-                client_secret: "client-secret".to_string(),
-                private_key: "private-key".to_string(),
-                api_base_url: "https://api.github.com".to_string(),
-                oauth_base_url: "https://github.com".to_string(),
-            },
-        },
+        auth: test_auth_config(),
         background: BackgroundSection {
             scheduler: test_scheduler_section(),
             ..BackgroundSection::default()
         },
         build_cache: BuildCacheSection::default(),
         policies: None,
+    }
+}
+
+#[cfg(feature = "github")]
+fn test_auth_config() -> AuthConfig {
+    AuthConfig::Github {
+        github_app: GithubAppSection {
+            app_id: 1,
+            client_id: "client-id".to_string(),
+            client_secret: "client-secret".to_string(),
+            private_key: "private-key".to_string(),
+            api_base_url: "https://api.github.com".to_string(),
+            oauth_base_url: "https://github.com".to_string(),
+        },
+    }
+}
+
+#[cfg(not(feature = "github"))]
+fn test_auth_config() -> crate::config::AuthConfig {
+    crate::config::AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: Some("test-local".to_string()),
     }
 }
 
@@ -149,6 +167,7 @@ pub fn test_state_with_store(store: Arc<dyn Store>) -> TestStateHandles {
     test_state_with_store_and_engine(store, Arc::new(MockJobEngine::new()))
 }
 
+#[cfg(feature = "github")]
 pub fn test_state_with_github_app(github_app: octocrab::Octocrab) -> TestStateHandles {
     let store = Arc::new(MemoryStore::new());
     let state = AppState::new(

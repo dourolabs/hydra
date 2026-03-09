@@ -4,6 +4,7 @@ use crate::{
     job_engine::JobEngine,
     store::{ReadOnlyStore, Store},
 };
+#[cfg(feature = "github")]
 use octocrab::Octocrab;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -16,6 +17,7 @@ use super::ServiceState;
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
+    #[cfg(feature = "github")]
     pub github_app: Option<Octocrab>,
     pub service_state: Arc<ServiceState>,
     pub(crate) store: Arc<StoreWithEvents>,
@@ -25,6 +27,7 @@ pub struct AppState {
 }
 
 impl AppState {
+    #[cfg(feature = "github")]
     pub fn new(
         config: Arc<AppConfig>,
         github_app: Option<Octocrab>,
@@ -46,6 +49,27 @@ impl AppState {
         }
     }
 
+    #[cfg(not(feature = "github"))]
+    pub fn new(
+        config: Arc<AppConfig>,
+        _github_app: Option<()>,
+        service_state: Arc<ServiceState>,
+        store: Arc<dyn Store>,
+        job_engine: Arc<dyn JobEngine>,
+        secret_manager: Arc<SecretManager>,
+    ) -> Self {
+        let event_bus = Arc::new(EventBus::new());
+        let policy_engine = Self::build_policy_engine(config.policies.as_ref());
+        Self {
+            config,
+            service_state,
+            store: Arc::new(StoreWithEvents::new(store, event_bus)),
+            job_engine,
+            policy_engine: Arc::new(policy_engine),
+            secret_manager,
+        }
+    }
+
     /// Build the policy engine from config, or fall back to all built-in
     /// policies with default params when no `[policies]` section is present.
     pub(crate) fn build_policy_engine(
@@ -53,6 +77,20 @@ impl AppState {
     ) -> crate::policy::PolicyEngine {
         use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
         use crate::policy::registry::build_default_registry;
+
+        let mut automations = vec![
+            PolicyEntry::Name("cascade_issue_status".to_string()),
+            PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
+            PolicyEntry::Name("close_merge_request_issues".to_string()),
+            PolicyEntry::Name("sync_review_request_issues".to_string()),
+            PolicyEntry::Name("patch_workflow".to_string()),
+        ];
+
+        #[cfg(feature = "github")]
+        automations.push(PolicyEntry::Name("github_pr_sync".to_string()));
+
+        automations.push(PolicyEntry::Name("notification_generation".to_string()));
+        automations.push(PolicyEntry::Name("inbox_label".to_string()));
 
         let default_config = PolicyConfig {
             global: PolicyList {
@@ -63,16 +101,7 @@ impl AppState {
                     PolicyEntry::Name("running_job_validation".to_string()),
                     PolicyEntry::Name("require_creator".to_string()),
                 ],
-                automations: vec![
-                    PolicyEntry::Name("cascade_issue_status".to_string()),
-                    PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
-                    PolicyEntry::Name("close_merge_request_issues".to_string()),
-                    PolicyEntry::Name("sync_review_request_issues".to_string()),
-                    PolicyEntry::Name("patch_workflow".to_string()),
-                    PolicyEntry::Name("github_pr_sync".to_string()),
-                    PolicyEntry::Name("notification_generation".to_string()),
-                    PolicyEntry::Name("inbox_label".to_string()),
-                ],
+                automations,
             },
         };
 
