@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { JobSummaryRecord } from "@metis/api";
+import type { JobSummaryRecord, JobStatusSummary } from "@metis/api";
 import { formatDuration } from "../../utils/time";
 
 interface JobDuration {
@@ -42,6 +42,48 @@ export function useJobDuration(jobs: JobSummaryRecord[] | undefined): JobDuratio
     return {
       durationText: formatDuration(
         new Date(lastFinishedJob.task.end_time).getTime() - new Date(lastFinishedJob.task.start_time).getTime(),
+      ),
+      isRunning: false,
+    };
+  }
+
+  return { durationText: "\u2014", isRunning: false };
+}
+
+/**
+ * Compute job duration from an embedded JobStatusSummary (from include=jobs_summary).
+ * Avoids needing the full job list for the dashboard.
+ */
+export function useJobSummaryDuration(summary: JobStatusSummary | null | undefined): {
+  durationText: string;
+  isRunning: boolean;
+} {
+  const isRunning = !!(summary && summary.running > 0);
+  const startTime = summary?.latest_start_time;
+  const endTime = summary?.latest_end_time;
+
+  const [elapsed, setElapsed] = useState(() => {
+    if (!isRunning || !startTime) return 0;
+    return Date.now() - new Date(startTime).getTime();
+  });
+
+  useEffect(() => {
+    if (!isRunning || !startTime) return;
+    setElapsed(Date.now() - new Date(startTime).getTime());
+    const id = setInterval(() => {
+      setElapsed(Date.now() - new Date(startTime).getTime());
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isRunning, startTime]);
+
+  if (isRunning && startTime) {
+    return { durationText: formatDuration(elapsed), isRunning: true };
+  }
+
+  if (startTime && endTime) {
+    return {
+      durationText: formatDuration(
+        new Date(endTime).getTime() - new Date(startTime).getTime(),
       ),
       isRunning: false,
     };

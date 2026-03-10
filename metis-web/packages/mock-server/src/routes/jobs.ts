@@ -90,6 +90,8 @@ export function createJobRoutes(store: Store): Hono {
     const q = c.req.query("q");
     const spawnedFrom = c.req.query("spawned_from");
     const status = c.req.query("status");
+    const limitParam = c.req.query("limit");
+    const cursor = c.req.query("cursor") ?? null;
 
     const items = store.list<Task>(COLLECTION, includeDeleted);
 
@@ -107,10 +109,36 @@ export function createJobRoutes(store: Store): Hono {
       filtered = filtered.filter(({ entry }) => entry.data.status === status);
     }
 
-    const jobs: JobSummaryRecord[] = filtered.map(({ id, entry }) =>
+    const limit = limitParam ? Number(limitParam) : null;
+    const sorted = [...filtered].sort((a, b) => b.entry.timestamp.localeCompare(a.entry.timestamp));
+    let startIdx = 0;
+    if (cursor) {
+      try {
+        const decoded = Buffer.from(cursor, "base64").toString("utf-8");
+        const sepIdx = decoded.lastIndexOf(":");
+        const cursorTs = decoded.slice(0, sepIdx);
+        const cursorId = decoded.slice(sepIdx + 1);
+        startIdx = sorted.findIndex(
+          ({ id, entry: e }) =>
+            e.timestamp < cursorTs || (e.timestamp === cursorTs && id <= cursorId),
+        );
+        if (startIdx < 0) startIdx = sorted.length;
+      } catch {
+        startIdx = 0;
+      }
+    }
+    const pageItems = limit !== null ? sorted.slice(startIdx, startIdx + limit) : sorted.slice(startIdx);
+    const hasMore = limit !== null && startIdx + limit < sorted.length;
+    let nextCursor: string | null = null;
+    if (hasMore && pageItems.length > 0) {
+      const last = pageItems[pageItems.length - 1];
+      nextCursor = Buffer.from(`${last.entry.timestamp}:${last.id}`).toString("base64");
+    }
+
+    const jobs: JobSummaryRecord[] = pageItems.map(({ id, entry }) =>
       toSummaryRecord(id, entry.version, entry.timestamp, entry.data),
     );
-    const resp: ListJobsResponse = { jobs };
+    const resp: ListJobsResponse = { jobs, next_cursor: nextCursor };
     return c.json(resp);
   });
 

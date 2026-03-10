@@ -123,15 +123,19 @@ export function useSSE(): SSEConnectionState {
 
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         queryClient.invalidateQueries({ queryKey: ["issues"] });
+        queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
         queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
       } else if (entity_type === "job" || eventType.startsWith("job_")) {
         queryClient.invalidateQueries({ queryKey: ["jobs"] });
         queryClient.invalidateQueries({ queryKey: ["allJobs"] });
+        // Invalidate paginated issues since embedded jobs_summary may have changed
+        queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         queryClient.invalidateQueries({ queryKey: ["patches"] });
         queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
         queryClient.invalidateQueries({ queryKey: ["documents"] });
+        queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
         queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
       } else if (entity_type === "label" || eventType.startsWith("label_")) {
         queryClient.invalidateQueries({ queryKey: ["labels"] });
@@ -161,6 +165,8 @@ export function useSSE(): SSEConnectionState {
           upsertInList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id, record);
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
         }
+        // Invalidate paginated issues cache (subtree data may need refresh)
+        queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
       } else if (entity_type === "job" || eventType.startsWith("job_")) {
         const record = entity as unknown as JobSummaryRecord;
         const spawnedFrom = record.task?.spawned_from;
@@ -174,6 +180,8 @@ export function useSSE(): SSEConnectionState {
         } else {
           queryClient.invalidateQueries({ queryKey: ["jobs"] });
         }
+        // Invalidate paginated issues since embedded jobs_summary may have changed
+        queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         if (eventType === "patch_deleted") {
           queryClient.removeQueries({ queryKey: ["patch", entity_id] });
@@ -204,10 +212,13 @@ export function useSSE(): SSEConnectionState {
 
   const invalidateAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["issues"] });
+    queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
     queryClient.invalidateQueries({ queryKey: ["jobs"] });
     queryClient.invalidateQueries({ queryKey: ["allJobs"] });
+    queryClient.invalidateQueries({ queryKey: ["paginatedJobs"] });
     queryClient.invalidateQueries({ queryKey: ["patches"] });
     queryClient.invalidateQueries({ queryKey: ["documents"] });
+    queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
     queryClient.invalidateQueries({ queryKey: ["labels"] });
   }, [queryClient]);
 

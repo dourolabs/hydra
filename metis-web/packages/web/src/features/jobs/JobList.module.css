@@ -58,5 +58,11 @@
   color: var(--color-accent);
 }
 
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3);
+}
+
 .empty { composes: empty from '../detail.module.css'; }
 .error { composes: error from '../detail.module.css'; }

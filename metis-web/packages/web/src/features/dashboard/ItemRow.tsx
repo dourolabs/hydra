@@ -1,8 +1,8 @@
 import React, { useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { Avatar, Badge, useKeyboardClick } from "@metis/ui";
-import type { JobSummaryRecord, LabelSummary } from "@metis/api";
+import type { JobSummaryRecord, JobStatusSummary, LabelSummary, ListIssuesResponse } from "@metis/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { StatusBoxes } from "./StatusBoxes";
@@ -11,7 +11,7 @@ import { apiClient } from "../../api/client";
 import { normalizeIssueStatus, normalizePatchStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { LabelChip } from "../labels/LabelChip";
-import { useJobDuration } from "./useJobDuration";
+import { useJobDuration, useJobSummaryDuration } from "./useJobDuration";
 import { useSwipeToArchive } from "./useSwipeToArchive";
 import styles from "./ItemRow.module.css";
 
@@ -69,13 +69,14 @@ const TYPE_ICONS: Record<WorkItem["kind"], (() => React.JSX.Element) | null> = {
 interface ItemRowProps {
   item: WorkItem;
   jobs?: JobSummaryRecord[];
+  jobsSummary?: JobStatusSummary | null;
   childStatuses?: ChildStatus[];
   isActive?: boolean;
   filterRootId?: string | null;
   inboxLabelId?: string;
 }
 
-export const ItemRow = React.memo(function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inboxLabelId }: ItemRowProps) {
+export const ItemRow = React.memo(function ItemRow({ item, jobs, jobsSummary, childStatuses, isActive, filterRootId, inboxLabelId }: ItemRowProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -85,30 +86,47 @@ export const ItemRow = React.memo(function ItemRow({ item, jobs, childStatuses, 
       apiClient.removeLabelFromObject(inboxLabelId!, issueId),
     onMutate: async (issueId) => {
       await queryClient.cancelQueries({ queryKey: ["issues"] });
+      await queryClient.cancelQueries({ queryKey: ["paginatedIssues"] });
       const previousQueries = queryClient.getQueriesData({ queryKey: ["issues"] });
+      const previousPaginated = queryClient.getQueriesData<InfiniteData<ListIssuesResponse>>({ queryKey: ["paginatedIssues"] });
+
+      const removeLabelFromIssue = (issue: { issue_id: string; issue: { labels?: Array<{ label_id: string }> } }) =>
+        issue.issue_id === issueId
+          ? {
+              ...issue,
+              issue: {
+                ...issue.issue,
+                labels: (issue.issue.labels ?? []).filter(
+                  (l) => l.label_id !== inboxLabelId,
+                ),
+              },
+            }
+          : issue;
+
       queryClient.setQueriesData<{ issues: Array<{ issue_id: string; issue: { labels?: Array<{ label_id: string }> } }> }>(
         { queryKey: ["issues"] },
         (old) => {
           if (!old) return old;
+          return { ...old, issues: old.issues.map(removeLabelFromIssue) };
+        },
+      );
+
+      // Optimistically update paginated issues cache
+      queryClient.setQueriesData<InfiniteData<ListIssuesResponse>>(
+        { queryKey: ["paginatedIssues"] },
+        (old) => {
+          if (!old) return old;
           return {
             ...old,
-            issues: old.issues.map((issue) =>
-              issue.issue_id === issueId
-                ? {
-                    ...issue,
-                    issue: {
-                      ...issue.issue,
-                      labels: (issue.issue.labels ?? []).filter(
-                        (l) => l.label_id !== inboxLabelId,
-                      ),
-                    },
-                  }
-                : issue,
-            ),
+            pages: old.pages.map((page) => ({
+              ...page,
+              issues: page.issues.map(removeLabelFromIssue) as ListIssuesResponse["issues"],
+            })),
           };
         },
       );
-      return { previousQueries };
+
+      return { previousQueries, previousPaginated };
     },
     onError: (_err, _issueId, context) => {
       if (context?.previousQueries) {
@@ -116,9 +134,15 @@ export const ItemRow = React.memo(function ItemRow({ item, jobs, childStatuses, 
           queryClient.setQueryData(key, data);
         }
       }
+      if (context?.previousPaginated) {
+        for (const [key, data] of context.previousPaginated) {
+          queryClient.setQueryData(key, data);
+        }
+      }
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["issues"] });
+      queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
     },
   });
   const Icon = TYPE_ICONS[item.kind];
@@ -175,11 +199,13 @@ export const ItemRow = React.memo(function ItemRow({ item, jobs, childStatuses, 
   const isAssignedToMe =
     item.kind === "issue" && !item.isTerminal && !!assignee && assignee === currentUsername;
 
-  // Job status (issues only) — isActive is tree-computed, fall back to direct job check
-  const hasRunningJob = isActive ?? (jobs?.some((j) => j.task.status === "running" || j.task.status === "pending") ?? false);
+  // Job status (issues only) — isActive is tree-computed, fall back to summary or direct job check
+  const hasRunningJob = isActive ?? (jobsSummary ? jobsSummary.running > 0 : (jobs?.some((j) => j.task.status === "running" || j.task.status === "pending") ?? false));
 
-  // Job duration display (extracted to hook to isolate timer re-renders)
-  const { durationText, isRunning } = useJobDuration(jobs);
+  // Job duration display — prefer embedded summary, fall back to full job list
+  const summaryDuration = useJobSummaryDuration(jobsSummary);
+  const jobListDuration = useJobDuration(jobsSummary ? undefined : jobs);
+  const { durationText, isRunning } = jobsSummary ? summaryDuration : jobListDuration;
   const durationClass = isRunning
     ? `${styles.timestamp} ${styles.timerRunning}`
     : styles.timestamp;

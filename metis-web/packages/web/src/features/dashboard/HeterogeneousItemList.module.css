@@ -97,6 +97,34 @@
   }
 }
 
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3);
+}
+
+.loadMoreButton {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.loadMoreButton:hover:not(:disabled) {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+}
+
+.loadMoreButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 @media (max-width: 768px) {
   .sidebarToggle {
     display: none;

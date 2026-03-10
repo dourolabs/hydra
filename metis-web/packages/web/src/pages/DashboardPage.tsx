@@ -1,8 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
+import type { IssueSummaryRecord, JobStatusSummary } from "@metis/api";
 import { Spinner } from "@metis/ui";
-import { useIssues } from "../features/issues/useIssues";
-import { useAllJobs } from "../features/jobs/useAllJobs";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/IssueFilterSidebar";
@@ -12,7 +11,13 @@ import {
   buildChildrenMap,
   findTransitiveChildren,
 } from "../features/dashboard/useTransitiveWorkItems";
-import { computeIsActiveMap, countNeedsAttentionBadge, type ChildStatus } from "../features/dashboard/computeIssueProgress";
+import {
+  computeIsActiveMapFromSubtree,
+  computeChildStatusFromSubtree,
+  countNeedsAttentionBadge,
+  type ChildStatus,
+} from "../features/dashboard/computeIssueProgress";
+import { usePaginatedIssues } from "../features/dashboard/usePaginatedIssues";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
@@ -36,8 +41,19 @@ export function DashboardPage() {
     return () => clearTimeout(debounceRef.current);
   }, []);
 
-  const { data: issues, isLoading } = useIssues(searchQuery || undefined);
-  const { data: jobsByIssue } = useAllJobs();
+  const {
+    data: paginatedData,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = usePaginatedIssues({ q: searchQuery || undefined });
+
+  // Flatten all loaded pages into a single issues array
+  const issues: IssueSummaryRecord[] | undefined = useMemo(
+    () => paginatedData?.pages.flatMap((page) => page.issues),
+    [paginatedData],
+  );
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
@@ -66,9 +82,21 @@ export function DashboardPage() {
     useTransitiveWorkItems(hookRootId, issues ?? []);
 
   const isActiveMap = useMemo(() => {
-    if (!issues || !jobsByIssue) return new Map<string, boolean>();
-    return computeIsActiveMap(issues, jobsByIssue);
-  }, [issues, jobsByIssue]);
+    if (!issues) return new Map<string, boolean>();
+    return computeIsActiveMapFromSubtree(issues);
+  }, [issues]);
+
+  // Build jobs_summary map for ItemRow to display durations
+  const jobsSummaryByIssue = useMemo(() => {
+    if (!issues) return new Map<string, JobStatusSummary>();
+    const map = new Map<string, JobStatusSummary>();
+    for (const issue of issues) {
+      if (issue.jobs_summary) {
+        map.set(issue.issue_id, issue.jobs_summary);
+      }
+    }
+    return map;
+  }, [issues]);
 
   const inboxCount = useMemo(() => {
     if (!issues || !inboxLabel) return 0;
@@ -87,37 +115,9 @@ export function DashboardPage() {
   }, [issues, username, isActiveMap]);
 
   const childStatusMap = useMemo(() => {
-    const map = new Map<string, ChildStatus[]>();
-    if (!issues) return map;
-    const childrenByParent = new Map<string, string[]>();
-    for (const issue of issues) {
-      for (const dep of issue.issue.dependencies) {
-        if (dep.type === "child-of") {
-          const siblings = childrenByParent.get(dep.issue_id) ?? [];
-          siblings.push(issue.issue_id);
-          childrenByParent.set(dep.issue_id, siblings);
-        }
-      }
-    }
-    const issueById = new Map(issues.map((i) => [i.issue_id, i]));
-    for (const [parentId, childIds] of childrenByParent) {
-      const statuses: ChildStatus[] = [];
-      for (const childId of childIds) {
-        const child = issueById.get(childId);
-        if (!child) continue;
-        statuses.push({
-          id: childId,
-          status: child.issue.status,
-          hasActiveTask: isActiveMap.get(childId) ?? false,
-          assignedToUser: !!(username && child.issue.assignee === username),
-        });
-      }
-      if (statuses.length > 0) {
-        map.set(parentId, statuses);
-      }
-    }
-    return map;
-  }, [issues, isActiveMap, username]);
+    if (!issues) return new Map<string, ChildStatus[]>();
+    return computeChildStatusFromSubtree(issues, username);
+  }, [issues, username]);
 
   const workItems = useMemo(() => {
     // Helper: given matching issue IDs, collect all their transitive descendants
@@ -235,7 +235,8 @@ export function DashboardPage() {
         />
         <HeterogeneousItemList
           items={workItems}
-          jobsByIssue={jobsByIssue ?? new Map()}
+          jobsByIssue={new Map()}
+          jobsSummaryByIssue={jobsSummaryByIssue}
           childStatusMap={childStatusMap}
           isActiveMap={isActiveMap}
           isLoading={workItemsLoading}
@@ -246,6 +247,9 @@ export function DashboardPage() {
           searchValue={searchValue}
           onSearchChange={handleSearchChange}
           inboxLabelId={filterRootId === "inbox" && inboxLabel ? inboxLabel.label_id : undefined}
+          hasMore={hasNextPage}
+          onLoadMore={() => fetchNextPage()}
+          isLoadingMore={isFetchingNextPage}
         />
       </div>
       <button

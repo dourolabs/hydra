@@ -1,8 +1,9 @@
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { Badge, Spinner } from "@metis/ui";
+import { Badge, Button, Spinner } from "@metis/ui";
 import { normalizeJobStatus } from "../../utils/statusMapping";
 import { getRuntime } from "../../utils/time";
-import { useJobsByIssue } from "./useJobsByIssue";
+import { usePaginatedJobsByIssue } from "./usePaginatedJobsByIssue";
 import styles from "./JobList.module.css";
 
 interface JobListProps {
@@ -10,7 +11,19 @@ interface JobListProps {
 }
 
 export function JobList({ issueId }: JobListProps) {
-  const { data: jobs, isLoading, error } = useJobsByIssue(issueId);
+  const {
+    data: paginatedData,
+    isLoading,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = usePaginatedJobsByIssue(issueId);
+
+  const jobs = useMemo(
+    () => paginatedData?.pages.flatMap((page) => page.jobs),
+    [paginatedData],
+  );
 
   if (isLoading) {
     return <Spinner size="sm" />;
@@ -29,53 +42,67 @@ export function JobList({ issueId }: JobListProps) {
   }
 
   return (
-    <table className={styles.table}>
-      <thead>
-        <tr>
-          <th className={styles.th}>Status</th>
-          <th className={styles.th}>Job ID</th>
-          <th className={styles.th}>Created</th>
-          <th className={styles.th}>Runtime</th>
-          <th className={styles.th}>Logs</th>
-        </tr>
-      </thead>
-      <tbody>
-        {jobs.map((record) => (
-          <tr key={record.job_id} className={styles.row}>
-            <td className={styles.td}>
-              <Badge status={normalizeJobStatus(record.task.status)} />
-            </td>
-            <td className={styles.td}>
-              <Link
-                to={`/issues/${issueId}/jobs/${record.job_id}/logs`}
-                className={styles.jobId}
-              >
-                {record.job_id}
-              </Link>
-            </td>
-            <td className={styles.td}>
-              <span className={styles.time}>
-                {record.task.creation_time
-                  ? new Date(record.task.creation_time).toLocaleString()
-                  : "\u2014"}
-              </span>
-            </td>
-            <td className={styles.td}>
-              <span className={styles.time}>
-                {getRuntime(record.task.start_time, record.task.end_time)}
-              </span>
-            </td>
-            <td className={styles.td}>
-              <Link
-                to={`/issues/${issueId}/jobs/${record.job_id}/logs`}
-                className={styles.logLink}
-              >
-                View Logs
-              </Link>
-            </td>
+    <>
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th className={styles.th}>Status</th>
+            <th className={styles.th}>Job ID</th>
+            <th className={styles.th}>Created</th>
+            <th className={styles.th}>Runtime</th>
+            <th className={styles.th}>Logs</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {jobs.map((record) => (
+            <tr key={record.job_id} className={styles.row}>
+              <td className={styles.td}>
+                <Badge status={normalizeJobStatus(record.task.status)} />
+              </td>
+              <td className={styles.td}>
+                <Link
+                  to={`/issues/${issueId}/jobs/${record.job_id}/logs`}
+                  className={styles.jobId}
+                >
+                  {record.job_id}
+                </Link>
+              </td>
+              <td className={styles.td}>
+                <span className={styles.time}>
+                  {record.task.creation_time
+                    ? new Date(record.task.creation_time).toLocaleString()
+                    : "\u2014"}
+                </span>
+              </td>
+              <td className={styles.td}>
+                <span className={styles.time}>
+                  {getRuntime(record.task.start_time, record.task.end_time)}
+                </span>
+              </td>
+              <td className={styles.td}>
+                <Link
+                  to={`/issues/${issueId}/jobs/${record.job_id}/logs`}
+                  className={styles.logLink}
+                >
+                  View Logs
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {hasNextPage && (
+        <div className={styles.loadMore}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? "Loading..." : "Load more jobs"}
+          </Button>
+        </div>
+      )}
+    </>
   );
 }

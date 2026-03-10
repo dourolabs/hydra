@@ -3,6 +3,7 @@ import type { Store } from "../store.js";
 import { generateId } from "../id.js";
 import type {
   Issue,
+  Task,
   UpsertIssueRequest,
   UpsertIssueResponse,
   IssueVersionRecord,
@@ -10,15 +11,20 @@ import type {
   ListIssueVersionsResponse,
   IssueSummaryRecord,
   IssueSummary,
+  SubtreeIssue,
+  JobStatusSummary,
   AddTodoItemRequest,
   ReplaceTodoListRequest,
   SetTodoItemStatusRequest,
   TodoListResponse,
   TodoItem,
+  IssueStatus,
+  Status,
 } from "@metis/api";
 import { getLabelsForObject, resolveLabelNames } from "./labels.js";
 
 const COLLECTION = "issues";
+const JOBS_COLLECTION = "jobs";
 const SSE_PREFIX = "issue";
 
 function toVersionRecord(
@@ -66,6 +72,115 @@ function toSummaryRecord(
     issue: summary,
     creation_time: creationTime,
   };
+}
+
+function computeJobStatusSummary(store: Store, issueId: string): JobStatusSummary {
+  const allJobs = store.list<Task>(JOBS_COLLECTION, false);
+  const issueJobs = allJobs.filter(({ entry }) => entry.data.spawned_from === issueId);
+
+  let running = 0;
+  let failed = 0;
+  let latestJob: { id: string; task: Task; timestamp: string } | null = null;
+
+  for (const { id, entry } of issueJobs) {
+    if (entry.data.status === "running" || entry.data.status === "pending") running++;
+    if (entry.data.status === "failed") failed++;
+    if (!latestJob || entry.timestamp > latestJob.timestamp) {
+      latestJob = { id, task: entry.data, timestamp: entry.timestamp };
+    }
+  }
+
+  return {
+    total: issueJobs.length,
+    running,
+    failed,
+    latest_job_id: latestJob?.id ?? null,
+    latest_job_status: (latestJob?.task.status as Status) ?? null,
+    latest_start_time: latestJob?.task.start_time ?? null,
+    latest_end_time: latestJob?.task.end_time ?? null,
+  };
+}
+
+function computeSubtree(store: Store, parentId: string): SubtreeIssue[] {
+  const allIssues = store.list<Issue>(COLLECTION, false);
+  const childrenMap = new Map<string, { id: string; issue: Issue }[]>();
+  for (const { id, entry } of allIssues) {
+    for (const dep of entry.data.dependencies) {
+      if (dep.type === "child-of") {
+        const siblings = childrenMap.get(dep.issue_id) ?? [];
+        siblings.push({ id, issue: entry.data });
+        childrenMap.set(dep.issue_id, siblings);
+      }
+    }
+  }
+
+  const allJobs = store.list<Task>(JOBS_COLLECTION, false);
+  const activeJobIssues = new Set<string>();
+  for (const { entry } of allJobs) {
+    if (
+      entry.data.spawned_from &&
+      (entry.data.status === "running" || entry.data.status === "pending")
+    ) {
+      activeJobIssues.add(entry.data.spawned_from);
+    }
+  }
+
+  function buildNode(issueId: string, issue: Issue): SubtreeIssue {
+    const children = (childrenMap.get(issueId) ?? []).map(({ id, issue: childIssue }) =>
+      buildNode(id, childIssue),
+    );
+    return {
+      issue_id: issueId,
+      status: issue.status as IssueStatus,
+      has_active_task: activeJobIssues.has(issueId),
+      assignee: issue.assignee,
+      title: issue.title,
+      children,
+    };
+  }
+
+  const directChildren = childrenMap.get(parentId) ?? [];
+  return directChildren.map(({ id, issue }) => buildNode(id, issue));
+}
+
+/**
+ * Apply cursor-based pagination to items sorted by timestamp DESC.
+ */
+function applyPagination<T extends { timestamp: string; id: string }>(
+  items: T[],
+  limit: number | null,
+  cursor: string | null,
+): { page: T[]; nextCursor: string | null } {
+  const sorted = [...items].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  let startIdx = 0;
+  if (cursor) {
+    try {
+      const decoded = Buffer.from(cursor, "base64").toString("utf-8");
+      const sepIdx = decoded.lastIndexOf(":");
+      const cursorTs = decoded.slice(0, sepIdx);
+      const cursorId = decoded.slice(sepIdx + 1);
+      startIdx = sorted.findIndex(
+        (item) => item.timestamp < cursorTs || (item.timestamp === cursorTs && item.id <= cursorId),
+      );
+      if (startIdx < 0) startIdx = sorted.length;
+    } catch {
+      startIdx = 0;
+    }
+  }
+
+  if (limit === null) {
+    return { page: sorted.slice(startIdx), nextCursor: null };
+  }
+
+  const page = sorted.slice(startIdx, startIdx + limit);
+  const hasMore = startIdx + limit < sorted.length;
+  let nextCursor: string | null = null;
+  if (hasMore && page.length > 0) {
+    const last = page[page.length - 1];
+    nextCursor = Buffer.from(`${last.timestamp}:${last.id}`).toString("base64");
+  }
+  return { page, nextCursor };
 }
 
 export function createIssueRoutes(store: Store): Hono {
@@ -144,6 +259,10 @@ export function createIssueRoutes(store: Store): Hono {
     const status = c.req.query("status");
     const assignee = c.req.query("assignee");
     const q = c.req.query("q");
+    const limitParam = c.req.query("limit");
+    const cursor = c.req.query("cursor") ?? null;
+    const includeSubtree = c.req.query("include_subtree") === "true";
+    const includeJobStatus = c.req.query("include_job_status") === "true";
 
     const items = store.list<Issue>(COLLECTION, includeDeleted);
 
@@ -165,11 +284,26 @@ export function createIssueRoutes(store: Store): Hono {
       );
     }
 
-    const issues: IssueSummaryRecord[] = filtered.map(({ id, entry }) => {
+    const limit = limitParam ? Number(limitParam) : null;
+    const withTimestamp = filtered.map(({ id, entry }) => ({
+      id,
+      entry,
+      timestamp: entry.timestamp,
+    }));
+    const { page, nextCursor } = applyPagination(withTimestamp, limit, cursor);
+
+    const issues: IssueSummaryRecord[] = page.map(({ id, entry }) => {
       const creationTime = store.getCreationTime(COLLECTION, id)!;
-      return toSummaryRecord(id, entry.version, entry.timestamp, entry.data, creationTime);
+      const record = toSummaryRecord(id, entry.version, entry.timestamp, entry.data, creationTime);
+      if (includeJobStatus) {
+        record.jobs_summary = computeJobStatusSummary(store, id);
+      }
+      if (includeSubtree) {
+        record.subtree = computeSubtree(store, id);
+      }
+      return record;
     });
-    const resp: ListIssuesResponse = { issues };
+    const resp: ListIssuesResponse = { issues, next_cursor: nextCursor };
     return c.json(resp);
   });
 

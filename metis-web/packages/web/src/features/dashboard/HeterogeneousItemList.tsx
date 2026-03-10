@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { JobSummaryRecord } from "@metis/api";
+import type { JobSummaryRecord, JobStatusSummary } from "@metis/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { topologicalSortWorkItems } from "../issues/topologicalSort";
@@ -10,6 +10,7 @@ import styles from "./HeterogeneousItemList.module.css";
 interface HeterogeneousItemListProps {
   items: WorkItem[];
   jobsByIssue: Map<string, JobSummaryRecord[]>;
+  jobsSummaryByIssue?: Map<string, JobStatusSummary>;
   childStatusMap: Map<string, ChildStatus[]>;
   isActiveMap: Map<string, boolean>;
   isLoading: boolean;
@@ -20,6 +21,9 @@ interface HeterogeneousItemListProps {
   searchValue: string;
   onSearchChange: (value: string) => void;
   inboxLabelId?: string;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
+  isLoadingMore?: boolean;
 }
 
 /** Artifacts are patches and documents regardless of terminal status. */
@@ -39,6 +43,7 @@ function sortByLastUpdated(a: WorkItem, b: WorkItem): number {
 export function HeterogeneousItemList({
   items,
   jobsByIssue,
+  jobsSummaryByIssue,
   childStatusMap,
   isActiveMap,
   isLoading,
@@ -49,6 +54,9 @@ export function HeterogeneousItemList({
   searchValue,
   onSearchChange,
   inboxLabelId,
+  hasMore,
+  onLoadMore,
+  isLoadingMore,
 }: HeterogeneousItemListProps) {
   const activeItems = useMemo(
     () => topologicalSortWorkItems(items.filter(isActiveItem)),
@@ -140,6 +148,11 @@ export function HeterogeneousItemList({
                       ? jobsByIssue.get(item.id)
                       : undefined
                   }
+                  jobsSummary={
+                    item.kind === "issue"
+                      ? jobsSummaryByIssue?.get(item.id)
+                      : undefined
+                  }
                   childStatuses={
                     item.kind === "issue"
                       ? childStatusMap.get(item.id)
@@ -168,6 +181,11 @@ export function HeterogeneousItemList({
                   jobs={
                     item.kind === "issue"
                       ? jobsByIssue.get(item.id)
+                      : undefined
+                  }
+                  jobsSummary={
+                    item.kind === "issue"
+                      ? jobsSummaryByIssue?.get(item.id)
                       : undefined
                   }
                   childStatuses={
@@ -203,6 +221,19 @@ export function HeterogeneousItemList({
 
             </ul>
           </>
+        )}
+
+        {hasMore && onLoadMore && (
+          <div className={styles.loadMore}>
+            <button
+              type="button"
+              className={styles.loadMoreButton}
+              onClick={onLoadMore}
+              disabled={isLoadingMore}
+            >
+              {isLoadingMore ? "Loading..." : "Load more"}
+            </button>
+          </div>
         )}
       </div>
     </div>

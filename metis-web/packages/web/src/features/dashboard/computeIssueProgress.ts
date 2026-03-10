@@ -1,4 +1,4 @@
-import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, JobSummaryRecord, SubtreeIssue } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 
@@ -153,4 +153,64 @@ export function computeIssueProgress(
       children: childStatuses,
     };
   });
+}
+
+/**
+ * Compute isActive map from server-provided subtree data.
+ * An issue is "active" if it or any of its subtree descendants has an active task.
+ */
+export function computeIsActiveMapFromSubtree(
+  issues: IssueSummaryRecord[],
+): Map<string, boolean> {
+  const cache = new Map<string, boolean>();
+
+  function hasActiveDescendant(subtree: SubtreeIssue[]): boolean {
+    for (const child of subtree) {
+      if (child.has_active_task) return true;
+      if (child.children && hasActiveDescendant(child.children)) return true;
+    }
+    return false;
+  }
+
+  for (const issue of issues) {
+    const jobsSummary = issue.jobs_summary;
+    const hasOwnActiveJob = !!(jobsSummary && jobsSummary.running > 0);
+    const subtreeActive = issue.subtree ? hasActiveDescendant(issue.subtree) : false;
+    cache.set(issue.issue_id, hasOwnActiveJob || subtreeActive);
+  }
+  return cache;
+}
+
+/**
+ * Compute child status map from server-provided subtree data.
+ * Maps each issue ID to an array of ChildStatus for its direct children.
+ */
+export function computeChildStatusFromSubtree(
+  issues: IssueSummaryRecord[],
+  username?: string,
+): Map<string, ChildStatus[]> {
+  const map = new Map<string, ChildStatus[]>();
+  for (const issue of issues) {
+    if (!issue.subtree || issue.subtree.length === 0) continue;
+    const statuses: ChildStatus[] = issue.subtree.map((child) => {
+      const childHasActive = child.has_active_task ||
+        (child.children ? subtreeHasActive(child.children) : false);
+      return {
+        id: child.issue_id,
+        status: child.status,
+        hasActiveTask: childHasActive,
+        assignedToUser: !!(username && child.assignee === username),
+      };
+    });
+    map.set(issue.issue_id, statuses);
+  }
+  return map;
+}
+
+function subtreeHasActive(children: SubtreeIssue[]): boolean {
+  for (const child of children) {
+    if (child.has_active_task) return true;
+    if (child.children && subtreeHasActive(child.children)) return true;
+  }
+  return false;
 }

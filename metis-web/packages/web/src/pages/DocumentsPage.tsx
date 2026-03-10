@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Panel, Spinner, Button, Modal, Input, Textarea } from "@metis/ui";
 import type { DocumentSummaryRecord } from "@metis/api";
 import { apiClient } from "../api/client";
-import { useDocuments } from "../features/documents/useDocuments";
+import { usePaginatedDocuments } from "../features/documents/usePaginatedDocuments";
 import { useToast } from "../features/toast/useToast";
 import { formatRelativeTime } from "../utils/time";
 import styles from "./DocumentsPage.module.css";
@@ -57,7 +57,18 @@ function getDocumentDisplayTitle(doc: DocumentSummaryRecord): string {
 }
 
 export function DocumentsPage() {
-  const { data: documents, isLoading, error } = useDocuments();
+  const {
+    data: paginatedData,
+    isLoading,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = usePaginatedDocuments();
+  const documents = useMemo(
+    () => paginatedData?.pages.flatMap((page) => page.documents),
+    [paginatedData],
+  );
   const [createOpen, setCreateOpen] = useState(false);
 
   const groups = useMemo(() => (documents ? groupDocumentsByPrefix(documents) : []), [documents]);
@@ -94,6 +105,19 @@ export function DocumentsPage() {
           </ul>
         </Panel>
       ))}
+
+      {hasNextPage && (
+        <div className={styles.loadMore}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? "Loading..." : "Load more"}
+          </Button>
+        </div>
+      )}
 
       <DocumentCreateModal
         open={createOpen}

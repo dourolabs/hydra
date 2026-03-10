@@ -201,6 +201,12 @@
   border-top: 1px solid var(--color-border);
 }
 
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   .docRow {
