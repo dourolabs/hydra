@@ -1984,6 +1984,19 @@ impl ReadOnlyStore for PostgresStoreV2 {
             r.creation_time = creation_time.unwrap_or(r.timestamp);
         }
 
+        // Populate relationships from object_relationships table.
+        // Project current relationships onto all historical versions.
+        if let Some(first) = results.first_mut() {
+            self.populate_issue_relationships(id, &mut first.item)
+                .await?;
+            let dependencies = first.item.dependencies.clone();
+            let patches = first.item.patches.clone();
+            for r in results.iter_mut().skip(1) {
+                r.item.dependencies = dependencies.clone();
+                r.item.patches = patches.clone();
+            }
+        }
+
         Ok(results)
     }
 
@@ -4963,6 +4976,54 @@ mod tests {
             store.get_issue_children(&new_parent).await.unwrap(),
             vec![issue]
         );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_issue_versions_populates_relationships_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Create a parent issue.
+        let (parent_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Create a child issue with a dependency on the parent.
+        let (issue_id, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Update the issue to create a second version.
+        let mut updated = sample_issue(vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_id.clone(),
+        )]);
+        updated.description = "updated details".to_string();
+        store
+            .update_issue(&issue_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Fetch all versions and verify relationships are populated on every version.
+        let versions = store.get_issue_versions(&issue_id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+        for v in &versions {
+            assert_eq!(
+                v.item.dependencies.len(),
+                1,
+                "version {} should have 1 dependency",
+                v.version
+            );
+            assert_eq!(v.item.dependencies[0].issue_id, parent_id);
+        }
     }
 
     #[sqlx::test(migrations = "./migrations")]
