@@ -1302,7 +1302,7 @@ impl ReadOnlyStore for StoreWithEvents {
     async fn get_issue_subtrees(
         &self,
         root_ids: &[IssueId],
-    ) -> Result<Vec<metis_common::api::v1::issues::SubtreeIssueRow>, StoreError> {
+    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, StoreError> {
         self.inner.get_issue_subtrees(root_ids).await
     }
 
