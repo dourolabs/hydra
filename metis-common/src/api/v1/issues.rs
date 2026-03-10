@@ -4,7 +4,7 @@ pub use crate::IssueId;
 use crate::{LabelId, PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
-use std::{collections::HashSet, fmt, str::FromStr};
+use std::{fmt, str::FromStr};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -634,43 +634,6 @@ impl UpsertIssueResponse {
     }
 }
 
-/// Represents the set of optional includes for the issues list endpoint.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct IssueIncludes {
-    pub subtree: bool,
-}
-
-impl IssueIncludes {
-    pub fn has_any(&self) -> bool {
-        self.subtree
-    }
-}
-
-fn serialize_issue_includes<S>(includes: &IssueIncludes, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let mut parts = Vec::new();
-    if includes.subtree {
-        parts.push("subtree");
-    }
-    serializer.serialize_str(&parts.join(","))
-}
-
-fn deserialize_issue_includes<'de, D>(deserializer: D) -> Result<IssueIncludes, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s.is_empty() {
-        return Ok(IssueIncludes::default());
-    }
-    let values: HashSet<&str> = s.split(',').map(|p| p.trim()).collect();
-    Ok(IssueIncludes {
-        subtree: values.contains("subtree"),
-    })
-}
-
 fn serialize_label_ids<S>(ids: &[LabelId], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -762,14 +725,9 @@ pub struct SearchIssuesQuery {
     /// Opaque cursor from a previous response's `next_cursor` field.
     #[serde(default)]
     pub cursor: Option<String>,
-    /// Comma-separated list of optional includes (e.g., "subtree").
-    #[serde(
-        default,
-        serialize_with = "serialize_issue_includes",
-        deserialize_with = "deserialize_issue_includes"
-    )]
-    #[cfg_attr(feature = "ts", ts(type = "string"))]
-    pub include: IssueIncludes,
+    /// When true, each returned issue includes its full descendant subtree.
+    #[serde(default)]
+    pub include_subtree: bool,
 }
 
 impl SearchIssuesQuery {
@@ -791,7 +749,7 @@ impl SearchIssuesQuery {
             label_ids: Vec::new(),
             limit: None,
             cursor: None,
-            include: IssueIncludes::default(),
+            include_subtree: false,
         }
     }
 }
@@ -894,6 +852,20 @@ impl SubtreeIssue {
             children,
         }
     }
+}
+
+/// A flat row from a subtree query, representing one descendant issue and its parent.
+///
+/// Store implementations return these flat rows; the caller assembles them into
+/// nested [`SubtreeIssue`] trees.
+#[derive(Debug, Clone)]
+pub struct SubtreeIssueRow {
+    pub issue_id: IssueId,
+    pub parent_id: IssueId,
+    pub status: IssueStatus,
+    pub title: String,
+    pub assignee: Option<String>,
+    pub has_active_task: bool,
 }
 
 /// Summary-level version record for issue list responses.
@@ -1048,7 +1020,7 @@ mod tests {
             label_ids: vec![],
             limit: None,
             cursor: None,
-            include: IssueIncludes::default(),
+            include_subtree: false,
         };
 
         let params = serialize_query_params(&query)
@@ -1074,7 +1046,7 @@ mod tests {
             label_ids: vec![],
             limit: None,
             cursor: None,
-            include: IssueIncludes::default(),
+            include_subtree: false,
         };
 
         let params = serialize_query_params(&query)

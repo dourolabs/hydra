@@ -1831,7 +1831,7 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_issue_subtrees(
         &self,
         root_ids: &[IssueId],
-    ) -> Result<Vec<super::SubtreeRow>, StoreError> {
+    ) -> Result<Vec<metis_common::api::v1::issues::SubtreeIssueRow>, StoreError> {
         if root_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -1897,7 +1897,7 @@ impl ReadOnlyStore for SqliteStore {
                     .status
                     .parse::<metis_common::api::v1::issues::IssueStatus>()
                     .unwrap_or(metis_common::api::v1::issues::IssueStatus::Unknown);
-                Ok(super::SubtreeRow {
+                Ok(metis_common::api::v1::issues::SubtreeIssueRow {
                     issue_id,
                     parent_id,
                     status,
@@ -6735,7 +6735,10 @@ mod tests {
             .await
             .unwrap();
 
-        let rows = store.get_issue_subtrees(&[parent_id.clone()]).await.unwrap();
+        let rows = store
+            .get_issue_subtrees(&[parent_id.clone()])
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].issue_id, child_id);
         assert_eq!(rows[0].parent_id, parent_id);
