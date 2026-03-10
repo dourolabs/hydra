@@ -1516,6 +1516,277 @@ struct AgentRow {
     updated_at: DateTime<Utc>,
 }
 
+/// Build WHERE predicates and bindings for issues queries (PostgreSQL `$N` placeholders).
+fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if let Some(issue_type) = query.issue_type.as_ref() {
+        predicates.push(format!("issue_type = ${}", bindings.len() + 1));
+        bindings.push(issue_type.as_str().to_string());
+    }
+
+    if let Some(status) = query.status.as_ref() {
+        predicates.push(format!("status = ${}", bindings.len() + 1));
+        bindings.push(status.as_str().to_string());
+    }
+
+    if let Some(assignee) = query
+        .assignee
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        predicates.push(format!("LOWER(assignee) = ${}", bindings.len() + 1));
+        bindings.push(assignee.to_lowercase());
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let idx_id = bindings.len() + 1;
+        let idx_title = bindings.len() + 2;
+        let idx_desc = bindings.len() + 3;
+        let idx_progress = bindings.len() + 4;
+        let idx_type = bindings.len() + 5;
+        let idx_status = bindings.len() + 6;
+        let idx_creator = bindings.len() + 7;
+        let idx_assignee = bindings.len() + 8;
+        predicates.push(format!(
+            "(LOWER(id) LIKE ${idx_id} \
+             OR LOWER(title) LIKE ${idx_title} \
+             OR LOWER(description) LIKE ${idx_desc} \
+             OR LOWER(progress) LIKE ${idx_progress} \
+             OR issue_type = ${idx_type} \
+             OR status = ${idx_status} \
+             OR LOWER(creator) LIKE ${idx_creator} \
+             OR LOWER(COALESCE(assignee,'')) LIKE ${idx_assignee})"
+        ));
+        let pattern = format!("%{term}%");
+        bindings.push(pattern.clone()); // id
+        bindings.push(pattern.clone()); // title
+        bindings.push(pattern.clone()); // description
+        bindings.push(pattern.clone()); // progress
+        bindings.push(term.clone()); // type (exact match)
+        bindings.push(term.clone()); // status (exact match)
+        bindings.push(pattern.clone()); // creator
+        bindings.push(pattern); // assignee
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = false".to_string());
+    }
+
+    if !query.label_ids.is_empty() {
+        let label_count = query.label_ids.len();
+        let placeholders: Vec<String> = query
+            .label_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!(
+            "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la \
+             WHERE la.label_id IN ({}) \
+             GROUP BY la.object_id \
+             HAVING COUNT(DISTINCT la.label_id) = {label_count})",
+            placeholders.join(", ")
+        ));
+        for label_id in &query.label_ids {
+            bindings.push(label_id.to_string());
+        }
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for patches queries (PostgreSQL `$N` placeholders).
+fn build_patches_predicates_pg(query: &SearchPatchesQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings = Vec::new();
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = false".to_string());
+    }
+
+    if !query.status.is_empty() {
+        let status_strings: Vec<String> = query
+            .status
+            .iter()
+            .map(|s| {
+                let domain: crate::domain::patches::PatchStatus = (*s).into();
+                domain.as_str().to_string()
+            })
+            .collect();
+        let placeholders: Vec<String> = status_strings
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("status IN ({})", placeholders.join(", ")));
+        for s in status_strings {
+            bindings.push(s);
+        }
+    }
+
+    if let Some(ref branch) = query.branch_name {
+        let idx = bindings.len() + 1;
+        predicates.push(format!("branch_name = ${idx}"));
+        bindings.push(branch.clone());
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let idx_start = bindings.len() + 1;
+        predicates.push(format!(
+            "(LOWER(id) LIKE ${idx_id} \
+             OR LOWER(title) LIKE ${idx_title} \
+             OR LOWER(description) LIKE ${idx_desc} \
+             OR LOWER(status) LIKE ${idx_status} \
+             OR LOWER(service_repo_name) LIKE ${idx_repo} \
+             OR LOWER(diff) LIKE ${idx_diff} \
+             OR LOWER(COALESCE(branch_name,'')) LIKE ${idx_branch} \
+             OR LOWER(github->>'owner') LIKE ${idx_gh_owner} \
+             OR LOWER(github->>'repo') LIKE ${idx_gh_repo} \
+             OR (github->>'number') LIKE ${idx_gh_number} \
+             OR LOWER(COALESCE(github->>'head_ref','')) LIKE ${idx_gh_head} \
+             OR LOWER(COALESCE(github->>'base_ref','')) LIKE ${idx_gh_base})",
+            idx_id = idx_start,
+            idx_title = idx_start + 1,
+            idx_desc = idx_start + 2,
+            idx_status = idx_start + 3,
+            idx_repo = idx_start + 4,
+            idx_diff = idx_start + 5,
+            idx_branch = idx_start + 6,
+            idx_gh_owner = idx_start + 7,
+            idx_gh_repo = idx_start + 8,
+            idx_gh_number = idx_start + 9,
+            idx_gh_head = idx_start + 10,
+            idx_gh_base = idx_start + 11,
+        ));
+        let pattern = format!("%{term}%");
+        for _ in 0..12 {
+            bindings.push(pattern.clone());
+        }
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for documents queries (PostgreSQL `$N` placeholders).
+fn build_documents_predicates_pg(query: &SearchDocumentsQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings = Vec::new();
+
+    if let Some(path) = query.path_prefix.as_ref() {
+        if query.path_is_exact.unwrap_or(false) {
+            predicates.push(format!("COALESCE(path,'') = ${}", bindings.len() + 1));
+            bindings.push(path.clone());
+        } else {
+            predicates.push(format!("COALESCE(path,'') LIKE ${}", bindings.len() + 1));
+            bindings.push(format!("{path}%"));
+        }
+    }
+
+    if let Some(created_by) = query.created_by.as_ref() {
+        predicates.push(format!("created_by = ${}", bindings.len() + 1));
+        bindings.push(created_by.as_ref().to_string());
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let idx_title = bindings.len() + 1;
+        let idx_body = bindings.len() + 2;
+        let idx_path = bindings.len() + 3;
+        predicates.push(format!(
+            "(LOWER(title) LIKE ${idx_title} \
+             OR LOWER(body_markdown) LIKE ${idx_body} \
+             OR LOWER(COALESCE(path,'')) LIKE ${idx_path})"
+        ));
+        let pattern = format!("%{term}%");
+        bindings.push(pattern.clone());
+        bindings.push(pattern.clone());
+        bindings.push(pattern);
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = false".to_string());
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for tasks queries (PostgreSQL `$N` placeholders).
+fn build_tasks_predicates_pg(query: &SearchJobsQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if let Some(spawned_from) = query.spawned_from.as_ref() {
+        predicates.push(format!("spawned_from = ${}", bindings.len() + 1));
+        bindings.push(spawned_from.as_ref().to_string());
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let idx_id = bindings.len() + 1;
+        let idx_prompt = bindings.len() + 2;
+        let idx_status = bindings.len() + 3;
+        predicates.push(format!(
+            "(LOWER(id) LIKE ${idx_id} \
+             OR LOWER(prompt) LIKE ${idx_prompt} \
+             OR LOWER(status) LIKE ${idx_status})"
+        ));
+        let pattern = format!("%{term}%");
+        bindings.push(pattern.clone());
+        bindings.push(pattern.clone());
+        bindings.push(pattern);
+    }
+
+    if let Some(status) = query.status {
+        let server_status: Status = status.into();
+        predicates.push(format!("status = ${}", bindings.len() + 1));
+        bindings.push(super::status_to_db_str(server_status).to_string());
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = false".to_string());
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for labels queries (PostgreSQL `$N` placeholders).
+fn build_labels_predicates_pg(query: &SearchLabelsQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = false".to_string());
+    }
+
+    if let Some(ref q) = query.q {
+        predicates.push(format!("LOWER(name) LIKE ${}", bindings.len() + 1));
+        bindings.push(format!("%{}%", q.to_lowercase()));
+    }
+
+    (predicates, bindings)
+}
+
 fn map_sqlx_error(err: sqlx::Error) -> StoreError {
     if let sqlx::Error::Database(ref db_err) = err {
         if db_err.code().as_deref() == Some("23505")
@@ -1744,93 +2015,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_ISSUES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        // Filter by issue_type
-        if let Some(issue_type) = query.issue_type.as_ref() {
-            predicates.push(format!("issue_type = ${}", bindings.len() + 1));
-            bindings.push(issue_type.as_str().to_string());
-        }
-
-        // Filter by status
-        if let Some(status) = query.status.as_ref() {
-            predicates.push(format!("status = ${}", bindings.len() + 1));
-            bindings.push(status.as_str().to_string());
-        }
-
-        // Filter by assignee (case-insensitive)
-        if let Some(assignee) = query
-            .assignee
-            .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            predicates.push(format!("LOWER(assignee) = ${}", bindings.len() + 1));
-            bindings.push(assignee.to_lowercase());
-        }
-
-        // Filter by search term (q)
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let idx_id = bindings.len() + 1;
-            let idx_title = bindings.len() + 2;
-            let idx_desc = bindings.len() + 3;
-            let idx_progress = bindings.len() + 4;
-            let idx_type = bindings.len() + 5;
-            let idx_status = bindings.len() + 6;
-            let idx_creator = bindings.len() + 7;
-            let idx_assignee = bindings.len() + 8;
-            predicates.push(format!(
-                "(LOWER(id) LIKE ${idx_id} \
-                 OR LOWER(title) LIKE ${idx_title} \
-                 OR LOWER(description) LIKE ${idx_desc} \
-                 OR LOWER(progress) LIKE ${idx_progress} \
-                 OR issue_type = ${idx_type} \
-                 OR status = ${idx_status} \
-                 OR LOWER(creator) LIKE ${idx_creator} \
-                 OR LOWER(COALESCE(assignee,'')) LIKE ${idx_assignee})"
-            ));
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone()); // id
-            bindings.push(pattern.clone()); // title
-            bindings.push(pattern.clone()); // description
-            bindings.push(pattern.clone()); // progress
-            bindings.push(term.clone()); // type (exact match)
-            bindings.push(term.clone()); // status (exact match)
-            bindings.push(pattern.clone()); // creator
-            bindings.push(pattern); // assignee
-        }
-
-        // Filter deleted issues by default
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
-
-        // Filter by label IDs (AND semantics: issue must have ALL specified labels)
-        if !query.label_ids.is_empty() {
-            let label_count = query.label_ids.len();
-            let placeholders: Vec<String> = query
-                .label_ids
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("${}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!(
-                "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la \
-                 WHERE la.label_id IN ({}) \
-                 GROUP BY la.object_id \
-                 HAVING COUNT(DISTINCT la.label_id) = {label_count})",
-                placeholders.join(", ")
-            ));
-            for label_id in &query.label_ids {
-                bindings.push(label_id.to_string());
-            }
-        }
+        let (mut predicates, mut bindings) = build_issues_predicates_pg(query);
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -1885,87 +2070,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_ISSUES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if let Some(issue_type) = query.issue_type.as_ref() {
-            predicates.push(format!("issue_type = ${}", bindings.len() + 1));
-            bindings.push(issue_type.as_str().to_string());
-        }
-
-        if let Some(status) = query.status.as_ref() {
-            predicates.push(format!("status = ${}", bindings.len() + 1));
-            bindings.push(status.as_str().to_string());
-        }
-
-        if let Some(assignee) = query
-            .assignee
-            .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            predicates.push(format!("LOWER(assignee) = ${}", bindings.len() + 1));
-            bindings.push(assignee.to_lowercase());
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let idx_id = bindings.len() + 1;
-            let idx_title = bindings.len() + 2;
-            let idx_desc = bindings.len() + 3;
-            let idx_progress = bindings.len() + 4;
-            let idx_type = bindings.len() + 5;
-            let idx_status = bindings.len() + 6;
-            let idx_creator = bindings.len() + 7;
-            let idx_assignee = bindings.len() + 8;
-            predicates.push(format!(
-                "(LOWER(id) LIKE ${idx_id} \
-                 OR LOWER(title) LIKE ${idx_title} \
-                 OR LOWER(description) LIKE ${idx_desc} \
-                 OR LOWER(progress) LIKE ${idx_progress} \
-                 OR issue_type = ${idx_type} \
-                 OR status = ${idx_status} \
-                 OR LOWER(creator) LIKE ${idx_creator} \
-                 OR LOWER(COALESCE(assignee,'')) LIKE ${idx_assignee})"
-            ));
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone()); // id
-            bindings.push(pattern.clone()); // title
-            bindings.push(pattern.clone()); // description
-            bindings.push(pattern.clone()); // progress
-            bindings.push(term.clone()); // type (exact match)
-            bindings.push(term.clone()); // status (exact match)
-            bindings.push(pattern.clone()); // creator
-            bindings.push(pattern); // assignee
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
-
-        if !query.label_ids.is_empty() {
-            let label_count = query.label_ids.len();
-            let placeholders: Vec<String> = query
-                .label_ids
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("${}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!(
-                "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la \
-                 WHERE la.label_id IN ({}) \
-                 GROUP BY la.object_id \
-                 HAVING COUNT(DISTINCT la.label_id) = {label_count})",
-                placeholders.join(", ")
-            ));
-            for label_id in &query.label_ids {
-                bindings.push(label_id.to_string());
-            }
-        }
+        let (predicates, bindings) = build_issues_predicates_pg(query);
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2222,79 +2327,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings = Vec::new();
-
-        // Filter deleted patches by default
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
-
-        if !query.status.is_empty() {
-            let status_strings: Vec<String> = query
-                .status
-                .iter()
-                .map(|s| {
-                    let domain: crate::domain::patches::PatchStatus = (*s).into();
-                    domain.as_str().to_string()
-                })
-                .collect();
-            let placeholders: Vec<String> = status_strings
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("${}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!("status IN ({})", placeholders.join(", ")));
-            for s in status_strings {
-                bindings.push(s);
-            }
-        }
-
-        if let Some(ref branch) = query.branch_name {
-            let idx = bindings.len() + 1;
-            predicates.push(format!("branch_name = ${idx}"));
-            bindings.push(branch.clone());
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            // Search across multiple fields: id, title, description, status, service_repo_name, diff, github fields
-            let idx_start = bindings.len() + 1;
-            predicates.push(format!(
-                "(LOWER(id) LIKE ${idx_id} \
-                 OR LOWER(title) LIKE ${idx_title} \
-                 OR LOWER(description) LIKE ${idx_desc} \
-                 OR LOWER(status) LIKE ${idx_status} \
-                 OR LOWER(service_repo_name) LIKE ${idx_repo} \
-                 OR LOWER(diff) LIKE ${idx_diff} \
-                 OR LOWER(COALESCE(branch_name,'')) LIKE ${idx_branch} \
-                 OR LOWER(github->>'owner') LIKE ${idx_gh_owner} \
-                 OR LOWER(github->>'repo') LIKE ${idx_gh_repo} \
-                 OR (github->>'number') LIKE ${idx_gh_number} \
-                 OR LOWER(COALESCE(github->>'head_ref','')) LIKE ${idx_gh_head} \
-                 OR LOWER(COALESCE(github->>'base_ref','')) LIKE ${idx_gh_base})",
-                idx_id = idx_start,
-                idx_title = idx_start + 1,
-                idx_desc = idx_start + 2,
-                idx_status = idx_start + 3,
-                idx_repo = idx_start + 4,
-                idx_diff = idx_start + 5,
-                idx_branch = idx_start + 6,
-                idx_gh_owner = idx_start + 7,
-                idx_gh_repo = idx_start + 8,
-                idx_gh_number = idx_start + 9,
-                idx_gh_head = idx_start + 10,
-                idx_gh_base = idx_start + 11,
-            ));
-            let pattern = format!("%{term}%");
-            for _ in 0..12 {
-                bindings.push(pattern.clone());
-            }
-        }
+        let (mut predicates, mut bindings) = build_patches_predicates_pg(query);
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2347,77 +2380,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings = Vec::new();
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
-
-        if !query.status.is_empty() {
-            let status_strings: Vec<String> = query
-                .status
-                .iter()
-                .map(|s| {
-                    let domain: crate::domain::patches::PatchStatus = (*s).into();
-                    domain.as_str().to_string()
-                })
-                .collect();
-            let placeholders: Vec<String> = status_strings
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("${}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!("status IN ({})", placeholders.join(", ")));
-            for s in status_strings {
-                bindings.push(s);
-            }
-        }
-
-        if let Some(ref branch) = query.branch_name {
-            let idx = bindings.len() + 1;
-            predicates.push(format!("branch_name = ${idx}"));
-            bindings.push(branch.clone());
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let idx_start = bindings.len() + 1;
-            predicates.push(format!(
-                "(LOWER(id) LIKE ${idx_id} \
-                 OR LOWER(title) LIKE ${idx_title} \
-                 OR LOWER(description) LIKE ${idx_desc} \
-                 OR LOWER(status) LIKE ${idx_status} \
-                 OR LOWER(service_repo_name) LIKE ${idx_repo} \
-                 OR LOWER(diff) LIKE ${idx_diff} \
-                 OR LOWER(COALESCE(branch_name,'')) LIKE ${idx_branch} \
-                 OR LOWER(github->>'owner') LIKE ${idx_gh_owner} \
-                 OR LOWER(github->>'repo') LIKE ${idx_gh_repo} \
-                 OR (github->>'number') LIKE ${idx_gh_number} \
-                 OR LOWER(COALESCE(github->>'head_ref','')) LIKE ${idx_gh_head} \
-                 OR LOWER(COALESCE(github->>'base_ref','')) LIKE ${idx_gh_base})",
-                idx_id = idx_start,
-                idx_title = idx_start + 1,
-                idx_desc = idx_start + 2,
-                idx_status = idx_start + 3,
-                idx_repo = idx_start + 4,
-                idx_diff = idx_start + 5,
-                idx_branch = idx_start + 6,
-                idx_gh_owner = idx_start + 7,
-                idx_gh_repo = idx_start + 8,
-                idx_gh_number = idx_start + 9,
-                idx_gh_head = idx_start + 10,
-                idx_gh_base = idx_start + 11,
-            ));
-            let pattern = format!("%{term}%");
-            for _ in 0..12 {
-                bindings.push(pattern.clone());
-            }
-        }
+        let (predicates, bindings) = build_patches_predicates_pg(query);
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2561,48 +2524,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_DOCUMENTS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings = Vec::new();
-
-        if let Some(path) = query.path_prefix.as_ref() {
-            if query.path_is_exact.unwrap_or(false) {
-                predicates.push(format!("COALESCE(path,'') = ${}", bindings.len() + 1));
-                bindings.push(path.clone());
-            } else {
-                predicates.push(format!("COALESCE(path,'') LIKE ${}", bindings.len() + 1));
-                bindings.push(format!("{path}%"));
-            }
-        }
-
-        if let Some(created_by) = query.created_by.as_ref() {
-            predicates.push(format!("created_by = ${}", bindings.len() + 1));
-            bindings.push(created_by.as_ref().to_string());
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let idx_title = bindings.len() + 1;
-            let idx_body = bindings.len() + 2;
-            let idx_path = bindings.len() + 3;
-            predicates.push(format!(
-                "(LOWER(title) LIKE ${idx_title} \
-                 OR LOWER(body_markdown) LIKE ${idx_body} \
-                 OR LOWER(COALESCE(path,'')) LIKE ${idx_path})"
-            ));
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone());
-            bindings.push(pattern.clone());
-            bindings.push(pattern);
-        }
-
-        // Filter deleted documents by default
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
+        let (mut predicates, mut bindings) = build_documents_predicates_pg(query);
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2655,47 +2577,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_DOCUMENTS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings = Vec::new();
-
-        if let Some(path) = query.path_prefix.as_ref() {
-            if query.path_is_exact.unwrap_or(false) {
-                predicates.push(format!("COALESCE(path,'') = ${}", bindings.len() + 1));
-                bindings.push(path.clone());
-            } else {
-                predicates.push(format!("COALESCE(path,'') LIKE ${}", bindings.len() + 1));
-                bindings.push(format!("{path}%"));
-            }
-        }
-
-        if let Some(created_by) = query.created_by.as_ref() {
-            predicates.push(format!("created_by = ${}", bindings.len() + 1));
-            bindings.push(created_by.as_ref().to_string());
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let idx_title = bindings.len() + 1;
-            let idx_body = bindings.len() + 2;
-            let idx_path = bindings.len() + 3;
-            predicates.push(format!(
-                "(LOWER(title) LIKE ${idx_title} \
-                 OR LOWER(body_markdown) LIKE ${idx_body} \
-                 OR LOWER(COALESCE(path,'')) LIKE ${idx_path})"
-            ));
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone());
-            bindings.push(pattern.clone());
-            bindings.push(pattern);
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
+        let (predicates, bindings) = build_documents_predicates_pg(query);
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2821,47 +2703,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        // Filter by spawned_from
-        if let Some(spawned_from) = query.spawned_from.as_ref() {
-            predicates.push(format!("spawned_from = ${}", bindings.len() + 1));
-            bindings.push(spawned_from.as_ref().to_string());
-        }
-
-        // Filter by search term (q) - matches task ID, prompt, status
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let idx_id = bindings.len() + 1;
-            let idx_prompt = bindings.len() + 2;
-            let idx_status = bindings.len() + 3;
-            predicates.push(format!(
-                "(LOWER(id) LIKE ${idx_id} \
-                 OR LOWER(prompt) LIKE ${idx_prompt} \
-                 OR LOWER(status) LIKE ${idx_status})"
-            ));
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone()); // id
-            bindings.push(pattern.clone()); // prompt
-            bindings.push(pattern); // status
-        }
-
-        // Filter by status
-        if let Some(status) = query.status {
-            let server_status: Status = status.into();
-            predicates.push(format!("status = ${}", bindings.len() + 1));
-            bindings.push(crate::store::status_to_db_str(server_status).to_string());
-        }
-
-        // Filter deleted tasks by default
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
+        let (mut predicates, mut bindings) = build_tasks_predicates_pg(query);
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2996,43 +2838,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if let Some(spawned_from) = query.spawned_from.as_ref() {
-            predicates.push(format!("spawned_from = ${}", bindings.len() + 1));
-            bindings.push(spawned_from.as_ref().to_string());
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let idx_id = bindings.len() + 1;
-            let idx_prompt = bindings.len() + 2;
-            let idx_status = bindings.len() + 3;
-            predicates.push(format!(
-                "(LOWER(id) LIKE ${idx_id} \
-                 OR LOWER(prompt) LIKE ${idx_prompt} \
-                 OR LOWER(status) LIKE ${idx_status})"
-            ));
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone()); // id
-            bindings.push(pattern.clone()); // prompt
-            bindings.push(pattern); // status
-        }
-
-        if let Some(status) = query.status {
-            let server_status: Status = status.into();
-            predicates.push(format!("status = ${}", bindings.len() + 1));
-            bindings.push(super::status_to_db_str(server_status).to_string());
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
+        let (predicates, bindings) = build_tasks_predicates_pg(query);
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -3545,17 +3351,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
              FROM {TABLE_LABELS}"
         );
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
-
-        if let Some(ref q) = query.q {
-            predicates.push(format!("LOWER(name) LIKE ${}", bindings.len() + 1));
-            bindings.push(format!("%{}%", q.to_lowercase()));
-        }
+        let (mut predicates, mut bindings) = build_labels_predicates_pg(query);
 
         if query.limit.is_some() || query.cursor.is_some() {
             apply_pagination_sql_pg(
@@ -3596,17 +3392,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError> {
         let mut sql = format!("SELECT COUNT(*) FROM {TABLE_LABELS}");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
-
-        if let Some(ref q) = query.q {
-            predicates.push(format!("LOWER(name) LIKE ${}", bindings.len() + 1));
-            bindings.push(format!("%{}%", q.to_lowercase()));
-        }
+        let (predicates, bindings) = build_labels_predicates_pg(query);
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
