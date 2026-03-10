@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Store } from "../store.js";
 import { generateId } from "../id.js";
+import { applyPagination } from "./pagination.js";
 import type {
   Document,
   UpsertDocumentRequest,
@@ -141,33 +142,14 @@ export function createDocumentRoutes(store: Store): Hono {
     }
 
     const limit = limitParam ? Number(limitParam) : null;
-    // Sort by timestamp DESC, apply cursor-based pagination
-    const sorted = [...filtered].sort((a, b) => b.entry.timestamp.localeCompare(a.entry.timestamp));
-    let startIdx = 0;
-    if (cursor) {
-      try {
-        const decoded = Buffer.from(cursor, "base64").toString("utf-8");
-        const sepIdx = decoded.lastIndexOf(":");
-        const cursorTs = decoded.slice(0, sepIdx);
-        const cursorId = decoded.slice(sepIdx + 1);
-        startIdx = sorted.findIndex(
-          ({ id, entry }) =>
-            entry.timestamp < cursorTs || (entry.timestamp === cursorTs && id <= cursorId),
-        );
-        if (startIdx < 0) startIdx = sorted.length;
-      } catch {
-        startIdx = 0;
-      }
-    }
-    const pageItems = limit !== null ? sorted.slice(startIdx, startIdx + limit) : sorted.slice(startIdx);
-    const hasMore = limit !== null && startIdx + limit < sorted.length;
-    let nextCursor: string | null = null;
-    if (hasMore && pageItems.length > 0) {
-      const last = pageItems[pageItems.length - 1];
-      nextCursor = Buffer.from(`${last.entry.timestamp}:${last.id}`).toString("base64");
-    }
+    const withTimestamp = filtered.map(({ id, entry }) => ({
+      id,
+      entry,
+      timestamp: entry.timestamp,
+    }));
+    const { page, nextCursor } = applyPagination(withTimestamp, limit, cursor);
 
-    const documents: DocumentSummaryRecord[] = pageItems.map(({ id, entry }) => {
+    const documents: DocumentSummaryRecord[] = page.map(({ id, entry }) => {
       const creationTime = store.getCreationTime(COLLECTION, id)!;
       return toSummaryRecord(id, entry.version, entry.timestamp, entry.data, creationTime);
     });
