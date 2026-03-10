@@ -22,7 +22,7 @@ export type SearchIssuesQuery = {
    */
   cursor: string | null;
   /**
-   * Comma-separated list of optional includes (e.g., "subtree").
+   * When true, each returned issue includes its full descendant subtree.
    */
-  include: string;
+  include_subtree: boolean;
 };

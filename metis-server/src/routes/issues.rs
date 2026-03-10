@@ -2,7 +2,7 @@ use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::issues::TodoItem;
 use crate::{
     app::{AppState, UpdateTodoListError, UpsertIssueError},
-    store::{StoreError, SubtreeRow},
+    store::StoreError,
 };
 use anyhow::anyhow;
 use axum::{
@@ -14,6 +14,7 @@ use metis_common::{
     IssueId, MetisId,
     api::v1::{
         ApiError, issues as api_issues,
+        issues::SubtreeIssueRow,
         pagination::{compute_next_cursor, effective_limit},
     },
 };
@@ -341,8 +342,8 @@ pub async fn list_issues(
         |r| r.issue_id.as_ref(),
     );
 
-    // If include=subtree, fetch and attach subtrees
-    if query.include.subtree {
+    // If include_subtree is set, fetch and attach subtrees
+    if query.include_subtree {
         let root_ids: Vec<_> = filtered.iter().map(|r| r.issue_id.clone()).collect();
         let subtree_rows = state.get_issue_subtrees(&root_ids).await.map_err(|err| {
             error!(error = %err, "failed to fetch issue subtrees");
@@ -613,10 +614,10 @@ pub async fn delete_issue(
 /// Assembles flat subtree rows into nested tree structures keyed by root issue ID.
 fn assemble_subtrees(
     root_ids: &[IssueId],
-    rows: Vec<SubtreeRow>,
+    rows: Vec<SubtreeIssueRow>,
 ) -> HashMap<IssueId, Vec<api_issues::SubtreeIssue>> {
     // Build a map from parent_id -> list of children rows
-    let mut children_map: HashMap<IssueId, Vec<SubtreeRow>> = HashMap::new();
+    let mut children_map: HashMap<IssueId, Vec<SubtreeIssueRow>> = HashMap::new();
     for row in rows {
         children_map
             .entry(row.parent_id.clone())
@@ -627,7 +628,7 @@ fn assemble_subtrees(
     // Recursively build nested SubtreeIssue nodes
     fn build_children(
         parent_id: &IssueId,
-        children_map: &HashMap<IssueId, Vec<SubtreeRow>>,
+        children_map: &HashMap<IssueId, Vec<SubtreeIssueRow>>,
     ) -> Vec<api_issues::SubtreeIssue> {
         let Some(children) = children_map.get(parent_id) else {
             return Vec::new();
@@ -659,8 +660,8 @@ mod tests {
     use super::*;
     use metis_common::api::v1::issues::IssueStatus;
 
-    fn row(issue: &IssueId, parent: &IssueId, title: &str) -> SubtreeRow {
-        SubtreeRow {
+    fn row(issue: &IssueId, parent: &IssueId, title: &str) -> SubtreeIssueRow {
+        SubtreeIssueRow {
             issue_id: issue.clone(),
             parent_id: parent.clone(),
             status: IssueStatus::Open,
@@ -724,7 +725,7 @@ mod tests {
     fn assemble_subtrees_preserves_has_active_task() {
         let root = IssueId::new();
         let child = IssueId::new();
-        let rows = vec![SubtreeRow {
+        let rows = vec![SubtreeIssueRow {
             issue_id: child.clone(),
             parent_id: root.clone(),
             status: IssueStatus::InProgress,
@@ -744,10 +745,7 @@ mod tests {
         let root_without = IssueId::new();
         let child = IssueId::new();
         let rows = vec![row(&child, &root_with_children, "child")];
-        let result = assemble_subtrees(
-            &[root_with_children.clone(), root_without.clone()],
-            rows,
-        );
+        let result = assemble_subtrees(&[root_with_children.clone(), root_without.clone()], rows);
         assert_eq!(result[&root_with_children].len(), 1);
         assert_eq!(result[&root_without].len(), 0);
     }

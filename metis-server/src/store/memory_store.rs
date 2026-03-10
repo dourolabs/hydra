@@ -608,7 +608,7 @@ impl ReadOnlyStore for MemoryStore {
     async fn get_issue_subtrees(
         &self,
         root_ids: &[IssueId],
-    ) -> Result<Vec<super::SubtreeRow>, StoreError> {
+    ) -> Result<Vec<metis_common::api::v1::issues::SubtreeIssueRow>, StoreError> {
         let mut result = Vec::new();
         // BFS traversal for each root
         for root_id in root_ids {
@@ -648,7 +648,7 @@ impl ReadOnlyStore for MemoryStore {
                                 })
                                 .unwrap_or(false);
 
-                            result.push(super::SubtreeRow {
+                            result.push(metis_common::api::v1::issues::SubtreeIssueRow {
                                 issue_id: child_id.clone(),
                                 parent_id: parent_id.clone(),
                                 status,
