@@ -2147,20 +2147,25 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 i.status, \
                 i.title, \
                 i.assignee, \
-                EXISTS ( \
-                    SELECT 1 FROM {TABLE_TASKS_V2} t \
-                    WHERE t.spawned_from = s.issue_id \
-                    AND t.status IN ('running', 'pending') \
-                    AND t.version_number = ( \
-                        SELECT MAX(t2.version_number) FROM {TABLE_TASKS_V2} t2 WHERE t2.id = t.id \
-                    ) \
-                ) AS has_active_task \
+                active_check.has_active_task \
             FROM subtree s \
-            JOIN ( \
-                SELECT DISTINCT ON (id) id, status, title, assignee \
+            JOIN LATERAL ( \
+                SELECT status, title, assignee \
                 FROM {TABLE_ISSUES_V2} \
-                ORDER BY id, version_number DESC \
-            ) i ON i.id = s.issue_id \
+                WHERE id = s.issue_id \
+                ORDER BY version_number DESC \
+                LIMIT 1 \
+            ) i ON true \
+            JOIN LATERAL ( \
+                SELECT EXISTS ( \
+                    SELECT 1 FROM ( \
+                        SELECT DISTINCT ON (id) id, status \
+                        FROM {TABLE_TASKS_V2} \
+                        WHERE spawned_from = s.issue_id AND deleted = false \
+                        ORDER BY id, version_number DESC \
+                    ) t WHERE t.status IN ('running', 'pending') \
+                ) AS has_active_task \
+            ) active_check ON true \
             ORDER BY s.parent_id, s.issue_id"
         );
 
