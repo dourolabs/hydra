@@ -303,28 +303,46 @@ pub async fn list_issues(
         issues
     };
 
-    // Batch-fetch labels for all issues in a single query
+    // Batch-fetch labels, jobs summary, and subtrees concurrently
     let object_ids: Vec<MetisId> = issues
         .iter()
         .map(|(id, _)| MetisId::from(id.clone()))
         .collect();
-    let labels_map = state
-        .get_labels_for_objects(&object_ids)
-        .await
-        .map_err(|err| {
-            error!(error = %err, "failed to batch-fetch labels for issues");
-            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
-        })?;
+    let issue_ids: Vec<IssueId> = issues.iter().map(|(id, _)| id.clone()).collect();
+
+    let wants_jobs_summary = query.include_job_status.unwrap_or(false);
+    let wants_subtree = query.include_subtree;
+
+    let (labels_map, jobs_summary_map, subtree_rows) = tokio::try_join!(
+        async {
+            state
+                .get_labels_for_objects(&object_ids)
+                .await
+                .map_err(|err| {
+                    error!(error = %err, "failed to batch-fetch labels for issues");
+                    ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+                })
+        },
+        async {
+            if wants_jobs_summary {
+                build_jobs_summary_map(&state, &issues).await
+            } else {
+                Ok(HashMap::new())
+            }
+        },
+        async {
+            if wants_subtree {
+                state.get_issue_subtrees(&issue_ids).await.map_err(|err| {
+                    error!(error = %err, "failed to fetch issue subtrees");
+                    ApiError::internal(anyhow!("failed to fetch issue subtrees: {err}"))
+                })
+            } else {
+                Ok(vec![])
+            }
+        },
+    )?;
 
     let eff_limit = effective_limit(query.limit);
-
-    // Optionally compute jobs summary per issue
-    let wants_jobs_summary = query.include_job_status.unwrap_or(false);
-    let jobs_summary_map: HashMap<IssueId, api_issues::JobStatusSummary> = if wants_jobs_summary {
-        build_jobs_summary_map(&state, &issues).await?
-    } else {
-        HashMap::new()
-    };
 
     let mut filtered: Vec<api_issues::IssueSummaryRecord> = Vec::new();
     for (id, versioned) in issues {
@@ -355,13 +373,9 @@ pub async fn list_issues(
         |r| r.issue_id.as_ref(),
     );
 
-    // If include_subtree is set, fetch and attach subtrees
-    if query.include_subtree {
+    // Attach pre-fetched subtrees to paginated results
+    if wants_subtree {
         let root_ids: Vec<_> = filtered.iter().map(|r| r.issue_id.clone()).collect();
-        let subtree_rows = state.get_issue_subtrees(&root_ids).await.map_err(|err| {
-            error!(error = %err, "failed to fetch issue subtrees");
-            ApiError::internal(anyhow!("failed to fetch issue subtrees: {err}"))
-        })?;
         let subtree_map = assemble_subtrees(&root_ids, subtree_rows);
         for record in &mut filtered {
             record.subtree = Some(
