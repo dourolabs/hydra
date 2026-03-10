@@ -2,7 +2,7 @@ use super::labels::LabelSummary;
 use super::task_status::Status as TaskStatus;
 use super::users::Username;
 pub use crate::IssueId;
-use crate::{LabelId, PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
+use crate::{DocumentId, LabelId, PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
@@ -252,6 +252,15 @@ impl TodoListResponse {
             todo_list,
         }
     }
+}
+
+/// Response type for issue-document linking operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct IssueDocumentsResponse {
+    pub issue_id: IssueId,
+    pub documents: Vec<DocumentId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -123,12 +123,7 @@ impl ResponseExt for Response {
     }
 }
 
-/// Response type for issue-document linking operations.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct IssueDocumentsResponse {
-    pub issue_id: IssueId,
-    pub documents: Vec<DocumentId>,
-}
+pub use metis_common::api::v1::issues::IssueDocumentsResponse;
 
 #[async_trait]
 pub trait MetisClientInterface: Send + Sync {

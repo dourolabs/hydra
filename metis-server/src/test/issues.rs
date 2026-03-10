@@ -7,10 +7,14 @@ use crate::{
 };
 use metis_common::{
     IssueId, PatchId,
-    api::v1::issues::{
-        AddTodoItemRequest, IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse,
-        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse,
-        UpsertIssueRequest, UpsertIssueResponse,
+    api::v1::{
+        documents::{Document, UpsertDocumentRequest, UpsertDocumentResponse},
+        issues::{
+            AddTodoItemRequest, IssueDocumentsResponse, IssueVersionRecord,
+            ListIssueVersionsResponse, ListIssuesResponse, ReplaceTodoListRequest,
+            SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse, UpsertIssueRequest,
+            UpsertIssueResponse,
+        },
     },
 };
 use reqwest::StatusCode;
@@ -1355,6 +1359,261 @@ async fn list_issues_count_true_returns_total_count() -> anyhow::Result<()> {
         .await?;
     assert_eq!(resp.issues.len(), 2);
     assert_eq!(resp.total_count, Some(3));
+
+    Ok(())
+}
+
+// ── Issue-document linking tests ──────────────────────────────────────────────
+
+/// Helper: create a minimal issue and return its id.
+async fn create_test_issue(client: &reqwest::Client, base_url: &str) -> anyhow::Result<IssueId> {
+    let resp: UpsertIssueResponse = client
+        .post(format!("{base_url}/v1/issues"))
+        .json(&UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Task,
+                "Test Issue".to_string(),
+                "test".to_string(),
+                default_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    Ok(resp.issue_id)
+}
+
+/// Helper: create a minimal document and return its id.
+async fn create_test_document(
+    client: &reqwest::Client,
+    base_url: &str,
+) -> anyhow::Result<metis_common::DocumentId> {
+    let doc = Document::new(
+        "Test doc".to_string(),
+        "body".to_string(),
+        Some("docs/test.md".to_string()),
+        None,
+        false,
+    )
+    .unwrap();
+    let resp: UpsertDocumentResponse = client
+        .post(format!("{base_url}/v1/documents"))
+        .json(&UpsertDocumentRequest::new(doc))
+        .send()
+        .await?
+        .json()
+        .await?;
+    Ok(resp.document_id)
+}
+
+#[tokio::test]
+async fn link_document_to_issue_and_list() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let issue_id = create_test_issue(&client, &server.base_url()).await?;
+    let doc_id = create_test_document(&client, &server.base_url()).await?;
+
+    // Link the document
+    let resp: IssueDocumentsResponse = client
+        .put(format!(
+            "{}/v1/issues/{}/documents/{}",
+            server.base_url(),
+            issue_id,
+            doc_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(resp.issue_id, issue_id);
+    assert_eq!(resp.documents.len(), 1);
+    assert!(resp.documents.contains(&doc_id));
+
+    // List documents — should contain the linked doc
+    let list_resp: IssueDocumentsResponse = client
+        .get(format!(
+            "{}/v1/issues/{}/documents",
+            server.base_url(),
+            issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(list_resp.documents.len(), 1);
+    assert!(list_resp.documents.contains(&doc_id));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn unlink_document_from_issue() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let issue_id = create_test_issue(&client, &server.base_url()).await?;
+    let doc_id = create_test_document(&client, &server.base_url()).await?;
+
+    // Link
+    client
+        .put(format!(
+            "{}/v1/issues/{}/documents/{}",
+            server.base_url(),
+            issue_id,
+            doc_id
+        ))
+        .send()
+        .await?;
+
+    // Unlink
+    let resp: IssueDocumentsResponse = client
+        .delete(format!(
+            "{}/v1/issues/{}/documents/{}",
+            server.base_url(),
+            issue_id,
+            doc_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(resp.issue_id, issue_id);
+    assert!(resp.documents.is_empty());
+
+    // Verify list is empty
+    let list_resp: IssueDocumentsResponse = client
+        .get(format!(
+            "{}/v1/issues/{}/documents",
+            server.base_url(),
+            issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert!(list_resp.documents.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn link_nonexistent_document_returns_404() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let issue_id = create_test_issue(&client, &server.base_url()).await?;
+    let fake_doc_id = "d-nonexistent";
+
+    let resp = client
+        .put(format!(
+            "{}/v1/issues/{}/documents/{}",
+            server.base_url(),
+            issue_id,
+            fake_doc_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn link_document_to_nonexistent_issue_returns_404() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let doc_id = create_test_document(&client, &server.base_url()).await?;
+    let fake_issue_id = "i-nonexistent";
+
+    let resp = client
+        .put(format!(
+            "{}/v1/issues/{}/documents/{}",
+            server.base_url(),
+            fake_issue_id,
+            doc_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn duplicate_link_is_idempotent() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let issue_id = create_test_issue(&client, &server.base_url()).await?;
+    let doc_id = create_test_document(&client, &server.base_url()).await?;
+
+    // Link twice
+    client
+        .put(format!(
+            "{}/v1/issues/{}/documents/{}",
+            server.base_url(),
+            issue_id,
+            doc_id
+        ))
+        .send()
+        .await?;
+
+    let resp: IssueDocumentsResponse = client
+        .put(format!(
+            "{}/v1/issues/{}/documents/{}",
+            server.base_url(),
+            issue_id,
+            doc_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Should still only have one document
+    assert_eq!(resp.documents.len(), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_documents_empty_by_default() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let issue_id = create_test_issue(&client, &server.base_url()).await?;
+
+    let resp: IssueDocumentsResponse = client
+        .get(format!(
+            "{}/v1/issues/{}/documents",
+            server.base_url(),
+            issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(resp.issue_id, issue_id);
+    assert!(resp.documents.is_empty());
 
     Ok(())
 }

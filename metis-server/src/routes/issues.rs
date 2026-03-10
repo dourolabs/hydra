@@ -18,7 +18,7 @@ use metis_common::{
         pagination::{compute_next_cursor, effective_limit},
     },
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 use tracing::{error, info};
 
@@ -664,11 +664,7 @@ where
     }
 }
 
-#[derive(Debug, Serialize)]
-pub struct IssueDocumentsResponse {
-    pub issue_id: IssueId,
-    pub documents: Vec<DocumentId>,
-}
+use metis_common::api::v1::issues::IssueDocumentsResponse;
 
 /// PUT /v1/issues/:issue_id/documents/:document_id — link a document to an issue.
 pub async fn link_document(
