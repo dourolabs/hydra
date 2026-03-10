@@ -244,14 +244,9 @@ impl PostgresStoreV2 {
             .map_err(|e| StoreError::Internal(format!("failed to serialize job_settings: {e}")))?;
         let todo_list_json = serde_json::to_value(&issue.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
-        let dependencies_json = serde_json::to_value(&issue.dependencies)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize dependencies: {e}")))?;
-        let patches_json = serde_json::to_value(&issue.patches)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize patches: {e}")))?;
-
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -265,8 +260,6 @@ impl PostgresStoreV2 {
             .bind(issue.assignee.as_deref())
             .bind(&job_settings_json)
             .bind(&todo_list_json)
-            .bind(&dependencies_json)
-            .bind(&patches_json)
             .bind(issue.deleted)
             .bind(actor)
             .execute(executor)
@@ -338,13 +331,6 @@ impl PostgresStoreV2 {
             })?;
         let todo_list: Vec<TodoItem> = serde_json::from_value(row.todo_list.clone())
             .map_err(|e| StoreError::Internal(format!("failed to deserialize todo_list: {e}")))?;
-        let dependencies: Vec<IssueDependency> = serde_json::from_value(row.dependencies.clone())
-            .map_err(|e| {
-            StoreError::Internal(format!("failed to deserialize dependencies: {e}"))
-        })?;
-        let patches: Vec<PatchId> = serde_json::from_value(row.patches.clone())
-            .map_err(|e| StoreError::Internal(format!("failed to deserialize patches: {e}")))?;
-
         Ok(Issue {
             issue_type,
             title: row.title.clone(),
@@ -355,8 +341,8 @@ impl PostgresStoreV2 {
             assignee: row.assignee.clone(),
             job_settings,
             todo_list,
-            dependencies,
-            patches,
+            dependencies: vec![],
+            patches: vec![],
             deleted: row.deleted,
         })
     }
@@ -1321,8 +1307,6 @@ struct IssueRow {
     assignee: Option<String>,
     job_settings: Value,
     todo_list: Value,
-    dependencies: Value,
-    patches: Value,
     deleted: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
@@ -1921,7 +1905,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
@@ -1961,7 +1945,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2010,7 +1994,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each issue, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, \
+            "SELECT DISTINCT ON (id) id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, \
              MIN(created_at) OVER (PARTITION BY id) AS creation_time \
              FROM {TABLE_ISSUES_V2} ORDER BY id, version_number DESC"
         );
