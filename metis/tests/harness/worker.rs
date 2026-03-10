@@ -289,9 +289,6 @@ pub(super) async fn run_worker_impl(
         job_id.clone(),
         worker_dir,
         None,
-        None,
-        None,
-        None,
         true, // use_tempdir — matches production (K8s always passes --tempdir)
         &bash_commands,
         &context,
@@ -341,9 +338,6 @@ pub(super) async fn run_worker_expect_failure_impl(
         harness.default_user().client(),
         job_id.clone(),
         worker_dir,
-        None,
-        None,
-        None,
         None,
         true, // use_tempdir — matches production (K8s always passes --tempdir)
         &bash_commands,
