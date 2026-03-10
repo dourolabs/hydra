@@ -1760,7 +1760,7 @@ fn build_tasks_predicates_pg(query: &SearchJobsQuery) -> (Vec<String>, Vec<Strin
     if let Some(status) = query.status {
         let server_status: Status = status.into();
         predicates.push(format!("status = ${}", bindings.len() + 1));
-        bindings.push(super::status_to_db_str(server_status).to_string());
+        bindings.push(crate::store::status_to_db_str(server_status).to_string());
     }
 
     if !query.include_deleted.unwrap_or(false) {
