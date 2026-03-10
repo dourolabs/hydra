@@ -2564,15 +2564,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
             return Ok(HashMap::new());
         }
 
-        // Build the subquery to get only the latest version of each task
-        let subquery = format!(
-            "SELECT DISTINCT ON (id) id, spawned_from, status, creation_time, start_time, end_time \
-             FROM {TABLE_TASKS_V2} WHERE deleted = false ORDER BY id, version_number DESC"
-        );
-
         // Build placeholders for the IN clause
         let placeholders: Vec<String> = (1..=issue_ids.len()).map(|i| format!("${i}")).collect();
+        let in_clause = placeholders.join(", ");
 
+        // Build the subquery to get only the latest version of each task,
+        // filtering by spawned_from inside the subquery to avoid scanning all tasks.
         let sql = format!(
             "SELECT \
                 spawned_from, \
@@ -2583,10 +2580,11 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 (ARRAY_AGG(status ORDER BY creation_time DESC NULLS LAST))[1] AS latest_job_status, \
                 (ARRAY_AGG(start_time ORDER BY creation_time DESC NULLS LAST))[1] AS latest_start_time, \
                 (ARRAY_AGG(end_time ORDER BY creation_time DESC NULLS LAST))[1] AS latest_end_time \
-             FROM ({subquery}) AS latest \
-             WHERE spawned_from IN ({placeholders}) \
-             GROUP BY spawned_from",
-            placeholders = placeholders.join(", ")
+             FROM (SELECT DISTINCT ON (id) id, spawned_from, status, creation_time, start_time, end_time \
+                   FROM {TABLE_TASKS_V2} \
+                   WHERE deleted = false AND spawned_from IN ({in_clause}) \
+                   ORDER BY id, version_number DESC) AS latest \
+             GROUP BY spawned_from"
         );
 
         let mut query_builder = sqlx::query_as::<_, JobsSummaryRow>(&sql);
