@@ -183,6 +183,223 @@ impl MemoryStore {
                 .unwrap_or(false)
     }
 
+    /// Returns an iterator over issues matching the query filters (without pagination).
+    fn filter_issues<'a>(
+        &'a self,
+        query: &'a SearchIssuesQuery,
+    ) -> impl Iterator<Item = (IssueId, Versioned<Issue>)> + 'a {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let issue_type_filter: Option<IssueType> = query.issue_type.map(Into::into);
+        let status_filter: Option<IssueStatus> = query.status.map(Into::into);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+        let assignee_filter = query
+            .assignee
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+
+        self.issues.iter().filter_map(move |entry| {
+            let latest = Self::latest_versioned(entry.value())?;
+            if !include_deleted && latest.item.deleted {
+                return None;
+            }
+            let issue_id = entry.key();
+            if !issue_matches(
+                issue_type_filter,
+                status_filter,
+                search_term.as_deref(),
+                assignee_filter,
+                issue_id,
+                &latest.item,
+            ) {
+                return None;
+            }
+            if !query.label_ids.is_empty() {
+                let object_id = MetisId::from(issue_id.clone());
+                let has_all_labels = if let Some(issue_labels) = self.object_labels.get(&object_id)
+                {
+                    query.label_ids.iter().all(|lid| issue_labels.contains(lid))
+                } else {
+                    false
+                };
+                if !has_all_labels {
+                    return None;
+                }
+            }
+            Some((issue_id.clone(), latest))
+        })
+    }
+
+    /// Returns an iterator over patches matching the query filters (without pagination).
+    fn filter_patches<'a>(
+        &'a self,
+        query: &'a SearchPatchesQuery,
+    ) -> impl Iterator<Item = (PatchId, Versioned<Patch>)> + 'a {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+        let status_filter: Vec<crate::domain::patches::PatchStatus> =
+            query.status.iter().copied().map(Into::into).collect();
+
+        self.patches.iter().filter_map(move |entry| {
+            let latest = Self::latest_versioned(entry.value())?;
+            if !include_deleted && latest.item.deleted {
+                return None;
+            }
+            if !status_filter.is_empty() && !status_filter.contains(&latest.item.status) {
+                return None;
+            }
+            if let Some(ref branch) = query.branch_name {
+                if latest.item.branch_name.as_deref() != Some(branch.as_str()) {
+                    return None;
+                }
+            }
+            if !Self::patch_matches(search_term.as_deref(), entry.key(), &latest.item) {
+                return None;
+            }
+            Some((entry.key().clone(), latest))
+        })
+    }
+
+    /// Returns filtered documents matching the query (without pagination).
+    fn filter_documents(
+        &self,
+        query: &SearchDocumentsQuery,
+    ) -> Vec<(DocumentId, Versioned<Document>)> {
+        let mut documents: Vec<(DocumentId, Versioned<Document>)> =
+            if let Some(path) = query.path_prefix.as_deref() {
+                let ids = if query.path_is_exact.unwrap_or(false) {
+                    self.document_ids_with_exact_path(path)
+                } else {
+                    self.document_ids_with_path_prefix(path)
+                };
+                self.documents_from_ids(&ids)
+            } else {
+                self.documents
+                    .iter()
+                    .filter_map(|entry| {
+                        let mut latest = Self::latest_versioned(entry.value())?;
+                        latest.creation_time = entry.value()[0].timestamp;
+                        Some((entry.key().clone(), latest))
+                    })
+                    .collect()
+            };
+
+        if !query.include_deleted.unwrap_or(false) {
+            documents.retain(|(_, versioned)| !versioned.item.deleted);
+        }
+
+        if let Some(created_by) = query.created_by.as_ref() {
+            documents
+                .retain(|(_, versioned)| versioned.item.created_by.as_ref() == Some(created_by));
+        }
+
+        if let Some(search_term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            documents.retain(|(_, versioned)| {
+                versioned.item.title.to_lowercase().contains(&search_term)
+                    || versioned
+                        .item
+                        .body_markdown
+                        .to_lowercase()
+                        .contains(&search_term)
+                    || versioned
+                        .item
+                        .path
+                        .as_deref()
+                        .map(|path| path.to_lowercase().contains(&search_term))
+                        .unwrap_or(false)
+            });
+        }
+
+        documents
+    }
+
+    /// Returns an iterator over tasks matching the query filters (without pagination).
+    fn filter_tasks<'a>(
+        &'a self,
+        query: &'a SearchJobsQuery,
+    ) -> impl Iterator<Item = (TaskId, Versioned<Task>)> + 'a {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+
+        self.tasks.iter().filter_map(move |entry| {
+            let task_id = entry.key();
+            let latest = Self::latest_versioned(entry.value())?;
+
+            if !include_deleted && latest.item.deleted {
+                return None;
+            }
+
+            if let Some(expected_issue) = query.spawned_from.as_ref() {
+                if latest.item.spawned_from.as_ref() != Some(expected_issue) {
+                    return None;
+                }
+            }
+
+            if let Some(expected_status) = query.status {
+                let server_status: Status = expected_status.into();
+                if latest.item.status != server_status {
+                    return None;
+                }
+            }
+
+            if let Some(term) = search_term.as_deref() {
+                let matches_id = task_id.as_ref().to_lowercase().contains(term);
+                let matches_prompt = latest.item.prompt.to_lowercase().contains(term);
+                let matches_status = format!("{:?}", latest.item.status)
+                    .to_lowercase()
+                    .contains(term);
+
+                if !matches_id && !matches_prompt && !matches_status {
+                    return None;
+                }
+            }
+
+            Some((task_id.clone(), latest))
+        })
+    }
+
+    /// Returns filtered labels matching the query (without pagination).
+    fn filter_labels(&self, query: &SearchLabelsQuery) -> Vec<(LabelId, Label)> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let mut results: Vec<(LabelId, Label)> = Vec::new();
+
+        for entry in self.labels.iter() {
+            let label = entry.value();
+
+            if !include_deleted && label.deleted {
+                continue;
+            }
+
+            if let Some(ref q) = query.q {
+                let q_lower = q.to_lowercase();
+                if !label.name.to_lowercase().contains(&q_lower) {
+                    continue;
+                }
+            }
+
+            results.push((entry.key().clone(), label.clone()));
+        }
+
+        results
+    }
+
     /// Updates issue adjacency indexes to match the provided dependency list.
     fn apply_issue_dependency_delta(
         &self,
@@ -484,54 +701,15 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-        let issue_type_filter: Option<IssueType> = query.issue_type.map(Into::into);
-        let status_filter: Option<IssueStatus> = query.status.map(Into::into);
-        let search_term = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty());
-        let assignee_filter = query
-            .assignee
-            .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty());
-
         let items: Vec<_> = self
-            .issues
-            .iter()
-            .filter_map(|entry| {
-                let mut latest = Self::latest_versioned(entry.value())?;
-                if !include_deleted && latest.item.deleted {
-                    return None;
-                }
-                let issue_id = entry.key();
-                if !issue_matches(
-                    issue_type_filter,
-                    status_filter,
-                    search_term.as_deref(),
-                    assignee_filter,
-                    issue_id,
-                    &latest.item,
-                ) {
-                    return None;
-                }
-                // Filter by label IDs (AND semantics: issue must have ALL specified labels)
-                if !query.label_ids.is_empty() {
-                    let object_id = MetisId::from(issue_id.clone());
-                    let has_all_labels =
-                        if let Some(issue_labels) = self.object_labels.get(&object_id) {
-                            query.label_ids.iter().all(|lid| issue_labels.contains(lid))
-                        } else {
-                            false
-                        };
-                    if !has_all_labels {
-                        return None;
-                    }
-                }
-                latest.creation_time = entry.value()[0].timestamp;
-                Some((issue_id.clone(), latest))
+            .filter_issues(query)
+            .map(|(issue_id, mut latest)| {
+                latest.creation_time = self
+                    .issues
+                    .get(&issue_id)
+                    .map(|e| e.value()[0].timestamp)
+                    .unwrap_or(latest.timestamp);
+                (issue_id, latest)
             })
             .collect();
         apply_memory_pagination(
@@ -541,6 +719,10 @@ impl ReadOnlyStore for MemoryStore {
             &query.cursor,
             query.limit,
         )
+    }
+
+    async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
+        Ok(self.filter_issues(query).count() as u64)
     }
 
     async fn search_issue_graph(
@@ -724,37 +906,15 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-        let search_term = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty());
-
-        let status_filter: Vec<crate::domain::patches::PatchStatus> =
-            query.status.iter().copied().map(Into::into).collect();
-
         let items: Vec<_> = self
-            .patches
-            .iter()
-            .filter_map(|entry| {
-                let mut latest = Self::latest_versioned(entry.value())?;
-                if !include_deleted && latest.item.deleted {
-                    return None;
-                }
-                if !status_filter.is_empty() && !status_filter.contains(&latest.item.status) {
-                    return None;
-                }
-                if let Some(ref branch) = query.branch_name {
-                    if latest.item.branch_name.as_deref() != Some(branch.as_str()) {
-                        return None;
-                    }
-                }
-                if !Self::patch_matches(search_term.as_deref(), entry.key(), &latest.item) {
-                    return None;
-                }
-                latest.creation_time = entry.value()[0].timestamp;
-                Some((entry.key().clone(), latest))
+            .filter_patches(query)
+            .map(|(patch_id, mut latest)| {
+                latest.creation_time = self
+                    .patches
+                    .get(&patch_id)
+                    .map(|e| e.value()[0].timestamp)
+                    .unwrap_or(latest.timestamp);
+                (patch_id, latest)
             })
             .collect();
         apply_memory_pagination(
@@ -764,6 +924,10 @@ impl ReadOnlyStore for MemoryStore {
             &query.cursor,
             query.limit,
         )
+    }
+
+    async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
+        Ok(self.filter_patches(query).count() as u64)
     }
 
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
@@ -815,57 +979,7 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        let mut documents: Vec<(DocumentId, Versioned<Document>)> =
-            if let Some(path) = query.path_prefix.as_deref() {
-                let ids = if query.path_is_exact.unwrap_or(false) {
-                    self.document_ids_with_exact_path(path)
-                } else {
-                    self.document_ids_with_path_prefix(path)
-                };
-                self.documents_from_ids(&ids)
-            } else {
-                self.documents
-                    .iter()
-                    .filter_map(|entry| {
-                        let mut latest = Self::latest_versioned(entry.value())?;
-                        latest.creation_time = entry.value()[0].timestamp;
-                        Some((entry.key().clone(), latest))
-                    })
-                    .collect()
-            };
-
-        // Filter deleted documents unless include_deleted is true
-        if !query.include_deleted.unwrap_or(false) {
-            documents.retain(|(_, versioned)| !versioned.item.deleted);
-        }
-
-        if let Some(created_by) = query.created_by.as_ref() {
-            documents
-                .retain(|(_, versioned)| versioned.item.created_by.as_ref() == Some(created_by));
-        }
-
-        if let Some(search_term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            documents.retain(|(_, versioned)| {
-                versioned.item.title.to_lowercase().contains(&search_term)
-                    || versioned
-                        .item
-                        .body_markdown
-                        .to_lowercase()
-                        .contains(&search_term)
-                    || versioned
-                        .item
-                        .path
-                        .as_deref()
-                        .map(|path| path.to_lowercase().contains(&search_term))
-                        .unwrap_or(false)
-            });
-        }
-
+        let documents = self.filter_documents(query);
         apply_memory_pagination(
             documents,
             |(_id, v)| v.timestamp,
@@ -873,6 +987,10 @@ impl ReadOnlyStore for MemoryStore {
             &query.cursor,
             query.limit,
         )
+    }
+
+    async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
+        Ok(self.filter_documents(query).len() as u64)
     }
 
     async fn get_documents_by_path(
@@ -912,56 +1030,7 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-        let search_term = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty());
-
-        let items: Vec<_> = self
-            .tasks
-            .iter()
-            .filter_map(|entry| {
-                let task_id = entry.key();
-                let latest = Self::latest_versioned(entry.value())?;
-
-                // Filter by deleted status
-                if !include_deleted && latest.item.deleted {
-                    return None;
-                }
-
-                // Filter by spawned_from
-                if let Some(expected_issue) = query.spawned_from.as_ref() {
-                    if latest.item.spawned_from.as_ref() != Some(expected_issue) {
-                        return None;
-                    }
-                }
-
-                // Filter by status
-                if let Some(expected_status) = query.status {
-                    let server_status: Status = expected_status.into();
-                    if latest.item.status != server_status {
-                        return None;
-                    }
-                }
-
-                // Filter by text search (matches task ID, prompt, status - NOT notes)
-                if let Some(term) = search_term.as_deref() {
-                    let matches_id = task_id.as_ref().to_lowercase().contains(term);
-                    let matches_prompt = latest.item.prompt.to_lowercase().contains(term);
-                    let matches_status = format!("{:?}", latest.item.status)
-                        .to_lowercase()
-                        .contains(term);
-
-                    if !matches_id && !matches_prompt && !matches_status {
-                        return None;
-                    }
-                }
-
-                Some((task_id.clone(), latest))
-            })
-            .collect();
+        let items: Vec<_> = self.filter_tasks(query).collect();
         apply_memory_pagination(
             items,
             |(_id, v)| v.timestamp,
@@ -1063,6 +1132,10 @@ impl ReadOnlyStore for MemoryStore {
         }
 
         Ok(result)
+    }
+
+    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+        Ok(self.filter_tasks(query).count() as u64)
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
@@ -1350,25 +1423,7 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-
-        let mut results: Vec<(LabelId, Label)> = Vec::new();
-        for entry in self.labels.iter() {
-            let label = entry.value();
-
-            if !include_deleted && label.deleted {
-                continue;
-            }
-
-            if let Some(ref q) = query.q {
-                let q_lower = q.to_lowercase();
-                if !label.name.to_lowercase().contains(&q_lower) {
-                    continue;
-                }
-            }
-
-            results.push((entry.key().clone(), label.clone()));
-        }
+        let mut results = self.filter_labels(query);
 
         if query.limit.is_some() || query.cursor.is_some() {
             apply_memory_pagination(
@@ -1382,6 +1437,10 @@ impl ReadOnlyStore for MemoryStore {
             results.sort_by(|(_, a), (_, b)| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
             Ok(results)
         }
+    }
+
+    async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError> {
+        Ok(self.filter_labels(query).len() as u64)
     }
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
@@ -6629,5 +6688,214 @@ mod tests {
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.prompt_path, "new/path");
         assert!(!fetched.deleted);
+    }
+
+    // --- count_* method tests ---
+
+    #[tokio::test]
+    async fn count_issues_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        // Create 5 issues: 3 open tasks, 1 open bug, 1 closed task
+        for _ in 0..3 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        }
+        let bug = Issue::new(
+            IssueType::Bug,
+            "Bug Title".to_string(),
+            "a bug".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(bug, &actor).await.unwrap();
+
+        let closed = Issue::new(
+            IssueType::Task,
+            "Closed".to_string(),
+            "closed task".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Closed,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(closed, &actor).await.unwrap();
+
+        // Count all issues
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
+
+        // Count only bugs
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            Some(metis_common::api::v1::issues::IssueType::Bug),
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+
+        // Count only closed
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn count_patches_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..3 {
+            store.add_patch(sample_patch(), &actor).await.unwrap();
+        }
+
+        let query =
+            metis_common::api::v1::patches::SearchPatchesQuery::new(None, None, Vec::new(), None);
+        assert_eq!(store.count_patches(&query).await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn count_documents_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        store
+            .add_document(sample_document(Some("docs/a.md"), None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document(Some("docs/b.md"), None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document(Some("other/c.md"), None), &actor)
+            .await
+            .unwrap();
+
+        // Count all
+        let query = metis_common::api::v1::documents::SearchDocumentsQuery::new(
+            None, None, None, None, None,
+        );
+        assert_eq!(store.count_documents(&query).await.unwrap(), 3);
+
+        // Count with path prefix filter
+        let query = metis_common::api::v1::documents::SearchDocumentsQuery::new(
+            Some("docs/".to_string()),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(store.count_documents(&query).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn count_tasks_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..4 {
+            store
+                .add_task(spawn_task(), Utc::now(), &actor)
+                .await
+                .unwrap();
+        }
+
+        let query = metis_common::api::v1::jobs::SearchJobsQuery::new(None, None, None, None);
+        assert_eq!(store.count_tasks(&query).await.unwrap(), 4);
+    }
+
+    #[tokio::test]
+    async fn count_labels_returns_total_matching() {
+        use crate::domain::labels::Label as DomainLabel;
+        use metis_common::Rgb;
+
+        let store = MemoryStore::new();
+        let default_color: Rgb = "#000000".parse().unwrap();
+
+        store
+            .add_label(DomainLabel::new(
+                "bug".to_string(),
+                default_color.clone(),
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+        store
+            .add_label(DomainLabel::new(
+                "feature".to_string(),
+                default_color.clone(),
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+        store
+            .add_label(DomainLabel::new(
+                "bugfix".to_string(),
+                default_color,
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+
+        // Count all
+        let query = metis_common::api::v1::labels::SearchLabelsQuery::default();
+        assert_eq!(store.count_labels(&query).await.unwrap(), 3);
+
+        // Count with search filter
+        let mut query = metis_common::api::v1::labels::SearchLabelsQuery::default();
+        query.q = Some("bug".to_string());
+        assert_eq!(store.count_labels(&query).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn count_issues_ignores_pagination() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..5 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Count should return 5 even when limit is set
+        let mut query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        query.limit = Some(2);
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
     }
 }

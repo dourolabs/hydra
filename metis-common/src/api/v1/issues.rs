@@ -772,6 +772,9 @@ pub struct SearchIssuesQuery {
     /// When true, include a `JobStatusSummary` per issue in the response.
     #[serde(default)]
     pub include_job_status: Option<bool>,
+    /// When true, include `total_count` in the response.
+    #[serde(default)]
+    pub count: Option<bool>,
 }
 
 impl SearchIssuesQuery {
@@ -795,6 +798,7 @@ impl SearchIssuesQuery {
             cursor: None,
             include_subtree: false,
             include_job_status: None,
+            count: None,
         }
     }
 }
@@ -982,6 +986,8 @@ pub struct ListIssuesResponse {
     pub issues: Vec<IssueSummaryRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<u64>,
 }
 
 impl ListIssuesResponse {
@@ -989,6 +995,7 @@ impl ListIssuesResponse {
         Self {
             issues,
             next_cursor: None,
+            total_count: None,
         }
     }
 }
@@ -1071,6 +1078,7 @@ mod tests {
             cursor: None,
             include_subtree: false,
             include_job_status: None,
+            count: None,
         };
 
         let params = serialize_query_params(&query)
@@ -1098,6 +1106,7 @@ mod tests {
             cursor: None,
             include_subtree: false,
             include_job_status: None,
+            count: None,
         };
 
         let params = serialize_query_params(&query)

@@ -282,8 +282,19 @@ pub async fn list_patches(
         |r| r.patch_id.as_ref(),
     );
 
+    let total_count = if query.count == Some(true) {
+        let count = state
+            .count_patches(&query)
+            .await
+            .map_err(|err| map_patch_error(err, None))?;
+        Some(count)
+    } else {
+        None
+    };
+
     let mut response = v1::patches::ListPatchesResponse::new(records);
     response.next_cursor = next_cursor;
+    response.total_count = total_count;
     info!(
         query = ?query.q,
         returned = response.patches.len(),
