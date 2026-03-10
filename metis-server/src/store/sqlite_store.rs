@@ -2606,14 +2606,10 @@ impl ReadOnlyStore for SqliteStore {
                         .map_err(|e| StoreError::Internal(format!("invalid task id: {e}")))
                 })
                 .transpose()?;
-            let latest_job_status = row.latest_job_status.as_deref().map(|s| match s {
-                "created" => ApiTaskStatus::Created,
-                "pending" => ApiTaskStatus::Pending,
-                "running" => ApiTaskStatus::Running,
-                "complete" => ApiTaskStatus::Complete,
-                "failed" => ApiTaskStatus::Failed,
-                _ => ApiTaskStatus::Unknown,
-            });
+            let latest_job_status = row
+                .latest_job_status
+                .as_deref()
+                .map(|s| s.parse::<ApiTaskStatus>().unwrap());
             let latest_start_time = row
                 .latest_start_time
                 .as_deref()
