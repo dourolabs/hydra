@@ -303,28 +303,34 @@ pub async fn list_issues(
         issues
     };
 
-    // Batch-fetch labels for all issues in a single query
+    // Batch-fetch labels and jobs summary concurrently
     let object_ids: Vec<MetisId> = issues
         .iter()
         .map(|(id, _)| MetisId::from(id.clone()))
         .collect();
-    let labels_map = state
-        .get_labels_for_objects(&object_ids)
-        .await
-        .map_err(|err| {
-            error!(error = %err, "failed to batch-fetch labels for issues");
-            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
-        })?;
+
+    let wants_jobs_summary = query.include_job_status.unwrap_or(false);
+
+    let (labels_map, jobs_summary_map) = tokio::try_join!(
+        async {
+            state
+                .get_labels_for_objects(&object_ids)
+                .await
+                .map_err(|err| {
+                    error!(error = %err, "failed to batch-fetch labels for issues");
+                    ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+                })
+        },
+        async {
+            if wants_jobs_summary {
+                build_jobs_summary_map(&state, &issues).await
+            } else {
+                Ok(HashMap::new())
+            }
+        },
+    )?;
 
     let eff_limit = effective_limit(query.limit);
-
-    // Optionally compute jobs summary per issue
-    let wants_jobs_summary = query.include_job_status.unwrap_or(false);
-    let jobs_summary_map: HashMap<IssueId, api_issues::JobStatusSummary> = if wants_jobs_summary {
-        build_jobs_summary_map(&state, &issues).await?
-    } else {
-        HashMap::new()
-    };
 
     let mut filtered: Vec<api_issues::IssueSummaryRecord> = Vec::new();
     for (id, versioned) in issues {
@@ -355,7 +361,7 @@ pub async fn list_issues(
         |r| r.issue_id.as_ref(),
     );
 
-    // If include_subtree is set, fetch and attach subtrees
+    // If include_subtree is set, fetch and attach subtrees post-pagination
     if query.include_subtree {
         let root_ids: Vec<_> = filtered.iter().map(|r| r.issue_id.clone()).collect();
         let subtree_rows = state.get_issue_subtrees(&root_ids).await.map_err(|err| {
