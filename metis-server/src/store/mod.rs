@@ -942,6 +942,7 @@ pub(crate) fn object_kind_from_id(id: &MetisId) -> Result<ObjectKind, StoreError
 ///
 /// The `timestamp_col` is the SQL column name used for the timestamp
 /// component of the cursor (e.g. `"created_at"` or `"updated_at"`).
+#[cfg(feature = "postgres")]
 pub(crate) fn apply_pagination_sql_pg(
     sql: &mut String,
     predicates: &mut Vec<String>,
