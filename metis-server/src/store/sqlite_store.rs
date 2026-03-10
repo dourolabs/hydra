@@ -217,6 +217,18 @@ struct TaskRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct JobsSummaryRow {
+    spawned_from: String,
+    total: i64,
+    running: i64,
+    failed: i64,
+    latest_job_id: Option<String>,
+    latest_job_status: Option<String>,
+    latest_start_time: Option<String>,
+    latest_end_time: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
 struct AgentRow {
     name: String,
     prompt_path: String,
@@ -2530,6 +2542,102 @@ impl ReadOnlyStore for SqliteStore {
         }
 
         Ok(tasks)
+    }
+
+    async fn get_jobs_summary_for_issues(
+        &self,
+        issue_ids: &[IssueId],
+    ) -> Result<HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>, StoreError> {
+        use metis_common::api::v1::issues::JobStatusSummary;
+        use metis_common::api::v1::task_status::Status as ApiTaskStatus;
+
+        if issue_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let placeholders: Vec<String> = (1..=issue_ids.len()).map(|i| format!("?{i}")).collect();
+
+        // Single query using a window function to identify the latest job per issue,
+        // then aggregate counts and latest job details together.
+        let sql = format!(
+            "SELECT \
+                spawned_from, \
+                COUNT(*) AS total, \
+                SUM(CASE WHEN status IN ('running', 'pending') THEN 1 ELSE 0 END) AS running, \
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed, \
+                MAX(CASE WHEN rn = 1 THEN id END) AS latest_job_id, \
+                MAX(CASE WHEN rn = 1 THEN status END) AS latest_job_status, \
+                MAX(CASE WHEN rn = 1 THEN start_time END) AS latest_start_time, \
+                MAX(CASE WHEN rn = 1 THEN end_time END) AS latest_end_time \
+             FROM ( \
+                SELECT t.id, t.spawned_from, t.status, t.start_time, t.end_time, \
+                       ROW_NUMBER() OVER (PARTITION BY t.spawned_from ORDER BY t.creation_time DESC NULLS LAST) AS rn \
+                FROM {TABLE_TASKS_V2} t \
+                INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
+                ON t.id = latest.id AND t.version_number = latest.max_version \
+                WHERE t.deleted = 0 AND t.spawned_from IN ({placeholders}) \
+             ) \
+             GROUP BY spawned_from",
+            placeholders = placeholders.join(", ")
+        );
+
+        let mut query_builder = sqlx::query_as::<_, JobsSummaryRow>(&sql);
+        for id in issue_ids {
+            query_builder = query_builder.bind(id.as_ref().to_string());
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut result = HashMap::new();
+        for row in &rows {
+            let issue_id = row
+                .spawned_from
+                .parse::<IssueId>()
+                .map_err(|e| StoreError::Internal(format!("invalid issue id: {e}")))?;
+
+            let latest_job_id = row
+                .latest_job_id
+                .as_deref()
+                .map(|s| {
+                    s.parse::<TaskId>()
+                        .map_err(|e| StoreError::Internal(format!("invalid task id: {e}")))
+                })
+                .transpose()?;
+            let latest_job_status = row.latest_job_status.as_deref().map(|s| match s {
+                "created" => ApiTaskStatus::Created,
+                "pending" => ApiTaskStatus::Pending,
+                "running" => ApiTaskStatus::Running,
+                "complete" => ApiTaskStatus::Complete,
+                "failed" => ApiTaskStatus::Failed,
+                _ => ApiTaskStatus::Unknown,
+            });
+            let latest_start_time = row
+                .latest_start_time
+                .as_deref()
+                .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+            let latest_end_time = row
+                .latest_end_time
+                .as_deref()
+                .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+
+            result.insert(
+                issue_id,
+                JobStatusSummary::new(
+                    row.total as u32,
+                    row.running as u32,
+                    row.failed as u32,
+                    latest_job_id,
+                    latest_job_status,
+                    latest_start_time,
+                    latest_end_time,
+                ),
+            );
+        }
+
+        Ok(result)
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {

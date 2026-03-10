@@ -317,6 +317,15 @@ pub async fn list_issues(
         })?;
 
     let eff_limit = effective_limit(query.limit);
+
+    // Optionally compute jobs summary per issue
+    let wants_jobs_summary = query.include_job_status.unwrap_or(false);
+    let jobs_summary_map: HashMap<IssueId, api_issues::JobStatusSummary> = if wants_jobs_summary {
+        build_jobs_summary_map(&state, &issues).await?
+    } else {
+        HashMap::new()
+    };
+
     let mut filtered: Vec<api_issues::IssueSummaryRecord> = Vec::new();
     for (id, versioned) in issues {
         let object_id = MetisId::from(id.clone());
@@ -324,15 +333,19 @@ pub async fn list_issues(
 
         let api_issue: api_issues::Issue = versioned.item.into();
         let summary = api_issues::IssueSummary::from(&api_issue);
-        filtered.push(api_issues::IssueSummaryRecord::new(
-            id,
+        let mut record = api_issues::IssueSummaryRecord::new(
+            id.clone(),
             versioned.version,
             versioned.timestamp,
             summary,
             versioned.actor,
             versioned.creation_time,
             labels,
-        ));
+        );
+        if wants_jobs_summary {
+            record.jobs_summary = jobs_summary_map.get(&id).cloned();
+        }
+        filtered.push(record);
     }
 
     let next_cursor = compute_next_cursor(
@@ -464,6 +477,28 @@ pub async fn set_todo_item_status(
         todo_list.into_iter().map(Into::into).collect(),
     );
     Ok(Json(response))
+}
+
+/// Build a map of IssueId → JobStatusSummary using store-level aggregation.
+async fn build_jobs_summary_map(
+    state: &AppState,
+    issues: &[(
+        IssueId,
+        metis_common::Versioned<crate::domain::issues::Issue>,
+    )],
+) -> Result<HashMap<IssueId, api_issues::JobStatusSummary>, ApiError> {
+    let issue_ids: Vec<IssueId> = issues.iter().map(|(id, _)| id.clone()).collect();
+    if issue_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    state
+        .get_jobs_summary_for_issues(&issue_ids)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to fetch jobs summary");
+            ApiError::internal(anyhow!("failed to fetch jobs summary: {err}"))
+        })
 }
 
 fn map_graph_filter_error(err: StoreError) -> ApiError {

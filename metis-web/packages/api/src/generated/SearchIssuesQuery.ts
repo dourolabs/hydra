@@ -25,4 +25,8 @@ export type SearchIssuesQuery = {
    * When true, each returned issue includes its full descendant subtree.
    */
   include_subtree: boolean;
+  /**
+   * When true, include a `JobStatusSummary` per issue in the response.
+   */
+  include_job_status: boolean | null;
 };

@@ -13,7 +13,7 @@ use crate::domain::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
-use metis_common::api::v1::issues::{SearchIssuesQuery, SubtreeIssueRow};
+use metis_common::api::v1::issues::{JobStatusSummary, SearchIssuesQuery, SubtreeIssueRow};
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
@@ -420,6 +420,18 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
+
+    /// Computes job status summaries for a batch of issues.
+    ///
+    /// Returns a map from IssueId to JobStatusSummary for each issue that has
+    /// at least one task. Issues with no tasks are omitted from the result.
+    ///
+    /// Implementations should use SQL aggregation (GROUP BY) where possible
+    /// to avoid loading all task rows into memory.
+    async fn get_jobs_summary_for_issues(
+        &self,
+        issue_ids: &[IssueId],
+    ) -> Result<HashMap<IssueId, JobStatusSummary>, StoreError>;
 
     /// Gets the status log for a task by its TaskId.
     ///

@@ -51,6 +51,7 @@ export type { IssueSummaryRecord } from "./generated/IssueSummaryRecord";
 export type { IssueType } from "./generated/IssueType";
 export type { IssueVersionRecord } from "./generated/IssueVersionRecord";
 export type { JobSettings } from "./generated/JobSettings";
+export type { JobStatusSummary } from "./generated/JobStatusSummary";
 export type { JobStatusUpdate } from "./generated/JobStatusUpdate";
 export type { JobSummary } from "./generated/JobSummary";
 export type { JobSummaryRecord } from "./generated/JobSummaryRecord";
