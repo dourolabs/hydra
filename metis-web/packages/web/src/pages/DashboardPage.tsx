@@ -41,19 +41,6 @@ export function DashboardPage() {
     return () => clearTimeout(debounceRef.current);
   }, []);
 
-  const {
-    data: paginatedData,
-    isLoading,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = usePaginatedIssues({ q: searchQuery || undefined });
-
-  // Flatten all loaded pages into a single issues array
-  const issues: IssueSummaryRecord[] | undefined = useMemo(
-    () => paginatedData?.pages.flatMap((page) => page.issues),
-    [paginatedData],
-  );
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
@@ -66,6 +53,39 @@ export function DashboardPage() {
   const username = user ? actorDisplayName(user.actor) : "";
   const { data: inboxLabel } = useInboxLabel();
 
+  const isLabelFilter = filterRootId?.startsWith(LABEL_FILTER_PREFIX) ?? false;
+  const isMyIssuesFilter = filterRootId === "my-issues";
+
+  // Compute server-side filter params based on the active tab so each tab
+  // independently paginates over its own relevant result set.
+  const paginatedOptions = useMemo(() => {
+    const base: Parameters<typeof usePaginatedIssues>[0] = {
+      q: searchQuery || undefined,
+    };
+    if (filterRootId === "inbox" && inboxLabel) {
+      base.labels = inboxLabel.label_id;
+    } else if (isLabelFilter) {
+      base.labels = filterRootId!.slice(LABEL_FILTER_PREFIX.length);
+    }
+    // "my-issues" and "everything" have no server-side filter (creator is not
+    // available as a query param; my-issues falls back to client-side filtering).
+    return base;
+  }, [searchQuery, filterRootId, inboxLabel, isLabelFilter]);
+
+  const {
+    data: paginatedData,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = usePaginatedIssues(paginatedOptions);
+
+  // Flatten all loaded pages into a single issues array
+  const issues: IssueSummaryRecord[] | undefined = useMemo(
+    () => paginatedData?.pages.flatMap((page) => page.issues),
+    [paginatedData],
+  );
+
   const assignees = useMemo(() => {
     if (!issues) return [];
     const set = new Set<string>();
@@ -74,9 +94,6 @@ export function DashboardPage() {
     }
     return Array.from(set).sort();
   }, [issues]);
-
-  const isLabelFilter = filterRootId?.startsWith(LABEL_FILTER_PREFIX) ?? false;
-  const isMyIssuesFilter = filterRootId === "my-issues";
   const hookRootId = filterRootId === "inbox" || isLabelFilter || isMyIssuesFilter ? null : filterRootId;
   const { items: allWorkItems, isLoading: workItemsLoading } =
     useTransitiveWorkItems(hookRootId, issues ?? []);

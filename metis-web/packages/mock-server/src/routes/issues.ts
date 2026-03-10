@@ -221,6 +221,7 @@ export function createIssueRoutes(store: Store): Hono {
     const status = c.req.query("status");
     const assignee = c.req.query("assignee");
     const q = c.req.query("q");
+    const labels = c.req.query("labels");
     const limitParam = c.req.query("limit");
     const cursor = c.req.query("cursor") ?? null;
     const includeSubtree = c.req.query("include_subtree") === "true";
@@ -237,6 +238,13 @@ export function createIssueRoutes(store: Store): Hono {
     }
     if (assignee) {
       filtered = filtered.filter(({ entry }) => entry.data.assignee === assignee);
+    }
+    if (labels) {
+      const labelIds = new Set(labels.split(",").map((l) => l.trim()));
+      filtered = filtered.filter(({ id }) => {
+        const issueLabels = getLabelsForObject(id);
+        return issueLabels.some((l) => labelIds.has(l.label_id));
+      });
     }
     if (q) {
       const lower = q.toLowerCase();

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient, type InfiniteData } from "@tanstack/react-query";
 import type {
   EntityEventData,
   IssueSummaryRecord,
   JobSummaryRecord,
   PatchSummaryRecord,
   DocumentSummaryRecord,
+  JobStatusSummary,
   ListIssuesResponse,
   ListJobsResponse,
   ListPatchesResponse,
@@ -85,6 +86,128 @@ function removeFromList<TResp, TItem>(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Paginated (infinite query) in-place update helpers
+// ---------------------------------------------------------------------------
+
+type PaginatedIssuesData = InfiniteData<ListIssuesResponse>;
+
+/**
+ * Update an issue record in-place within all paginated issue queries.
+ * Walks every loaded page across all matching query keys and performs a
+ * version-guarded replacement.  Returns true if the entity was found and
+ * updated in at least one query.
+ */
+function upsertInPaginatedIssues(
+  qc: QueryClient,
+  entityId: string,
+  record: IssueSummaryRecord,
+): boolean {
+  let found = false;
+  qc.setQueriesData<PaginatedIssuesData>(
+    { queryKey: ["paginatedIssues"] },
+    (old) => {
+      if (!old) return old;
+      let changed = false;
+      const pages = old.pages.map((page) => {
+        const idx = page.issues.findIndex((i: IssueSummaryRecord) => i.issue_id === entityId);
+        if (idx < 0) return page;
+        if (page.issues[idx].version > record.version) return page;
+        changed = true;
+        const updated = [...page.issues];
+        updated[idx] = record;
+        return { ...page, issues: updated };
+      });
+      if (!changed) return old;
+      found = true;
+      return { ...old, pages };
+    },
+  );
+  return found;
+}
+
+/**
+ * Remove an issue from all paginated issue queries.
+ */
+function removeFromPaginatedIssues(
+  qc: QueryClient,
+  entityId: string,
+): void {
+  qc.setQueriesData<PaginatedIssuesData>(
+    { queryKey: ["paginatedIssues"] },
+    (old) => {
+      if (!old) return old;
+      let changed = false;
+      const pages = old.pages.map((page) => {
+        const filtered = page.issues.filter((i: IssueSummaryRecord) => i.issue_id !== entityId);
+        if (filtered.length !== page.issues.length) changed = true;
+        return filtered.length === page.issues.length ? page : { ...page, issues: filtered };
+      });
+      if (!changed) return old;
+      return { ...old, pages };
+    },
+  );
+}
+
+/**
+ * Update the embedded jobs_summary for a specific issue across all paginated
+ * issue queries.  Uses setQueriesData to update the job summary in-place
+ * within loaded pages so that a full re-fetch is not required.
+ */
+function updateJobSummaryInPaginatedIssues(
+  qc: QueryClient,
+  issueId: string,
+  jobRecord: JobSummaryRecord,
+): boolean {
+  let found = false;
+  qc.setQueriesData<PaginatedIssuesData>(
+    { queryKey: ["paginatedIssues"] },
+    (old) => {
+      if (!old) return old;
+      let changed = false;
+      const pages = old.pages.map((page) => {
+        const idx = page.issues.findIndex((i: IssueSummaryRecord) => i.issue_id === issueId);
+        if (idx < 0) return page;
+        changed = true;
+        const issue = page.issues[idx];
+        const prev = issue.jobs_summary;
+        // Incrementally update the summary from the job event
+        const jobStatus = jobRecord.task?.status;
+        const isRunning = jobStatus === "running" || jobStatus === "pending";
+        const isFailed = jobStatus === "failed";
+        const summary: JobStatusSummary = prev
+          ? { ...prev }
+          : {
+              total: 0,
+              running: 0,
+              failed: 0,
+              latest_job_id: null,
+              latest_job_status: null,
+              latest_start_time: null,
+              latest_end_time: null,
+            };
+        // Update latest job info
+        summary.latest_job_id = jobRecord.job_id;
+        summary.latest_job_status = (jobStatus as JobStatusSummary["latest_job_status"]) ?? null;
+        summary.latest_start_time = jobRecord.task?.start_time ?? summary.latest_start_time;
+        summary.latest_end_time = jobRecord.task?.end_time ?? summary.latest_end_time;
+        // We can't perfectly track running/failed counts from a single event,
+        // but we can mark the summary as stale. For now, do a best-effort
+        // update: if the latest job is running, ensure running >= 1.
+        if (isRunning && summary.running === 0) summary.running = 1;
+        if (isFailed && summary.failed === 0) summary.failed = 1;
+        const updated = [...page.issues];
+        updated[idx] = { ...issue, jobs_summary: summary };
+        return { ...page, issues: updated };
+      });
+      if (!changed) return old;
+      found = true;
+      return { ...old, pages };
+    },
+  );
+  return found;
+}
+
 // Entity-specific accessors for the list-response shapes
 const issueList = (r: ListIssuesResponse) => r.issues;
 const wrapIssues = (items: IssueSummaryRecord[]): ListIssuesResponse => ({ issues: items });
@@ -159,14 +282,20 @@ export function useSSE(): SSEConnectionState {
         if (eventType === "issue_deleted") {
           queryClient.removeQueries({ queryKey: ["issue", entity_id] });
           removeFromList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id);
+          removeFromPaginatedIssues(queryClient, entity_id);
         } else {
           const record = entity as unknown as IssueSummaryRecord;
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
           upsertInList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id, record);
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
+          // Update in-place within paginated pages; only invalidate if the
+          // entity was not found (e.g. a newly created issue that may belong
+          // to an earlier page).
+          const updated = upsertInPaginatedIssues(queryClient, entity_id, record);
+          if (!updated) {
+            queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
+          }
         }
-        // Invalidate paginated issues cache (subtree data may need refresh)
-        queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
       } else if (entity_type === "job" || eventType.startsWith("job_")) {
         const record = entity as unknown as JobSummaryRecord;
         const spawnedFrom = record.task?.spawned_from;
@@ -177,11 +306,17 @@ export function useSSE(): SSEConnectionState {
 
         if (spawnedFrom) {
           upsertInList(queryClient, ["jobs", spawnedFrom], jobList, wrapJobs, jobRecordId, entity_id, record);
+          // Update embedded jobs_summary in-place for the parent issue
+          const updated = updateJobSummaryInPaginatedIssues(queryClient, spawnedFrom, record);
+          if (!updated) {
+            // Parent issue not in any loaded page — fall back to invalidation
+            queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
+          }
         } else {
           queryClient.invalidateQueries({ queryKey: ["jobs"] });
+          // Job has no parent issue context — invalidate to be safe
+          queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
         }
-        // Invalidate paginated issues since embedded jobs_summary may have changed
-        queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         if (eventType === "patch_deleted") {
           queryClient.removeQueries({ queryKey: ["patch", entity_id] });
