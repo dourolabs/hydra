@@ -2697,14 +2697,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 .map(|s| s.parse::<TaskId>())
                 .transpose()
                 .map_err(|e| StoreError::Internal(format!("invalid task id: {e}")))?;
-            let latest_job_status = row.latest_job_status.as_deref().map(|s| match s {
-                "created" => ApiTaskStatus::Created,
-                "pending" => ApiTaskStatus::Pending,
-                "running" => ApiTaskStatus::Running,
-                "complete" => ApiTaskStatus::Complete,
-                "failed" => ApiTaskStatus::Failed,
-                _ => ApiTaskStatus::Unknown,
-            });
+            let latest_job_status = row
+                .latest_job_status
+                .as_deref()
+                .map(|s| s.parse::<ApiTaskStatus>().unwrap());
             result.insert(
                 issue_id,
                 JobStatusSummary::new(
