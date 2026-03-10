@@ -1390,10 +1390,7 @@ impl ReadOnlyStore for StoreWithEvents {
     async fn get_jobs_summary_for_issues(
         &self,
         issue_ids: &[IssueId],
-    ) -> Result<
-        HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>,
-        StoreError,
-    > {
+    ) -> Result<HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>, StoreError> {
         self.inner.get_jobs_summary_for_issues(issue_ids).await
     }
 

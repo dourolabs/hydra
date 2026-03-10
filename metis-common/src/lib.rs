@@ -153,7 +153,6 @@ mod ts_export {
         crate::issues::IssueSummaryRecord::export_all(&cfg).expect("IssueSummaryRecord");
         crate::issues::SubtreeIssue::export_all(&cfg).expect("SubtreeIssue");
         crate::issues::JobStatusSummary::export_all(&cfg).expect("JobStatusSummary");
-        crate::issues::StatusGroup::export_all(&cfg).expect("StatusGroup");
         crate::issues::SearchIssuesQuery::export_all(&cfg).expect("SearchIssuesQuery");
         crate::issues::ListIssuesResponse::export_all(&cfg).expect("ListIssuesResponse");
         crate::issues::ListIssueVersionsResponse::export_all(&cfg)

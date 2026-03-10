@@ -1759,39 +1759,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
             bindings.push(status.as_str().to_string());
         }
 
-        // Filter by status group (active = non-terminal, completed = terminal)
-        // Uses a non-terminal allowlist to match IssueStatus::is_terminal() semantics:
-        // any new status variants default to terminal, which is the safer behavior.
-        if let Some(status_group) = query.status_group.as_ref() {
-            use metis_common::api::v1::issues::StatusGroup;
-            let non_terminal = ["open", "in-progress"];
-            match status_group {
-                StatusGroup::Active => {
-                    let placeholders: Vec<String> = non_terminal
-                        .iter()
-                        .enumerate()
-                        .map(|(i, _)| format!("${}", bindings.len() + i + 1))
-                        .collect();
-                    predicates.push(format!("status IN ({})", placeholders.join(", ")));
-                    for s in &non_terminal {
-                        bindings.push(s.to_string());
-                    }
-                }
-                StatusGroup::Completed => {
-                    let placeholders: Vec<String> = non_terminal
-                        .iter()
-                        .enumerate()
-                        .map(|(i, _)| format!("${}", bindings.len() + i + 1))
-                        .collect();
-                    predicates.push(format!("status NOT IN ({})", placeholders.join(", ")));
-                    for s in &non_terminal {
-                        bindings.push(s.to_string());
-                    }
-                }
-                _ => {}
-            }
-        }
-
         // Filter by assignee (case-insensitive)
         if let Some(assignee) = query
             .assignee
@@ -2693,9 +2660,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         );
 
         // Build placeholders for the IN clause
-        let placeholders: Vec<String> = (1..=issue_ids.len())
-            .map(|i| format!("${i}"))
-            .collect();
+        let placeholders: Vec<String> = (1..=issue_ids.len()).map(|i| format!("${i}")).collect();
 
         let sql = format!(
             "SELECT \

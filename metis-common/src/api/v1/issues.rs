@@ -71,30 +71,6 @@ impl IssueStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum StatusGroup {
-    Active,
-    Completed,
-    #[serde(other)]
-    Unknown,
-}
-
-impl FromStr for StatusGroup {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "active" => Ok(StatusGroup::Active),
-            "completed" => Ok(StatusGroup::Completed),
-            other => Err(format!("unsupported status group '{other}'")),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -803,12 +779,9 @@ pub struct SearchIssuesQuery {
     /// When true, each returned issue includes its full descendant subtree.
     #[serde(default)]
     pub include_subtree: bool,
-    /// Filter by status group: `active` (non-terminal) or `completed` (terminal).
+    /// When true, include a `JobStatusSummary` per issue in the response.
     #[serde(default)]
-    pub status_group: Option<StatusGroup>,
-    /// Comma-separated list of optional includes (e.g., `jobs_summary`).
-    #[serde(default)]
-    pub include: Option<String>,
+    pub include_job_status: Option<bool>,
 }
 
 impl SearchIssuesQuery {
@@ -831,16 +804,8 @@ impl SearchIssuesQuery {
             limit: None,
             cursor: None,
             include_subtree: false,
-            status_group: None,
-            include: None,
+            include_job_status: None,
         }
-    }
-
-    pub fn wants_jobs_summary(&self) -> bool {
-        self.include
-            .as_deref()
-            .map(|s| s.split(',').any(|part| part.trim() == "jobs_summary"))
-            .unwrap_or(false)
     }
 }
 
@@ -1115,8 +1080,7 @@ mod tests {
             limit: None,
             cursor: None,
             include_subtree: false,
-            status_group: None,
-            include: None,
+            include_job_status: None,
         };
 
         let params = serialize_query_params(&query)
@@ -1143,8 +1107,7 @@ mod tests {
             limit: None,
             cursor: None,
             include_subtree: false,
-            status_group: None,
-            include: None,
+            include_job_status: None,
         };
 
         let params = serialize_query_params(&query)
@@ -1420,44 +1383,16 @@ mod tests {
     }
 
     #[test]
-    fn status_group_parses() {
-        assert_eq!(
-            "active".parse::<StatusGroup>().unwrap(),
-            StatusGroup::Active
-        );
-        assert_eq!(
-            "completed".parse::<StatusGroup>().unwrap(),
-            StatusGroup::Completed
-        );
-        assert!("invalid".parse::<StatusGroup>().is_err());
+    fn include_job_status_defaults_to_none() {
+        let query = SearchIssuesQuery::default();
+        assert_eq!(query.include_job_status, None);
     }
 
     #[test]
-    fn status_group_deserializes_from_json() {
-        let val: StatusGroup = serde_json::from_str(r#""active""#).unwrap();
-        assert_eq!(val, StatusGroup::Active);
-        let val: StatusGroup = serde_json::from_str(r#""completed""#).unwrap();
-        assert_eq!(val, StatusGroup::Completed);
-        let val: StatusGroup = serde_json::from_str(r#""other""#).unwrap();
-        assert_eq!(val, StatusGroup::Unknown);
-    }
-
-    #[test]
-    fn wants_jobs_summary_parses_include_param() {
-        let mut query = SearchIssuesQuery::default();
-        assert!(!query.wants_jobs_summary());
-
-        query.include = Some("jobs_summary".to_string());
-        assert!(query.wants_jobs_summary());
-
-        query.include = Some("subtree,jobs_summary".to_string());
-        assert!(query.wants_jobs_summary());
-
-        query.include = Some("subtree".to_string());
-        assert!(!query.wants_jobs_summary());
-
-        query.include = Some("".to_string());
-        assert!(!query.wants_jobs_summary());
+    fn include_job_status_deserializes() {
+        let json = r#"{"include_job_status": true}"#;
+        let query: SearchIssuesQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.include_job_status, Some(true));
     }
 
     #[test]
