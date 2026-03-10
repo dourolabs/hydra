@@ -2122,7 +2122,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_issue_subtrees(
         &self,
         root_ids: &[IssueId],
-    ) -> Result<Vec<metis_common::api::v1::issues::SubtreeIssueRow>, StoreError> {
+    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, StoreError> {
         if root_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -2184,9 +2184,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 })?;
                 let status = row
                     .status
-                    .parse::<metis_common::api::v1::issues::IssueStatus>()
-                    .unwrap_or(metis_common::api::v1::issues::IssueStatus::Unknown);
-                Ok(metis_common::api::v1::issues::SubtreeIssueRow {
+                    .parse::<crate::domain::issues::IssueStatus>()
+                    .unwrap_or_default();
+                Ok(crate::domain::issues::SubtreeIssueRow {
                     issue_id,
                     parent_id,
                     status,

@@ -903,20 +903,6 @@ impl SubtreeIssue {
     }
 }
 
-/// A flat row from a subtree query, representing one descendant issue and its parent.
-///
-/// Store implementations return these flat rows; the caller assembles them into
-/// nested [`SubtreeIssue`] trees.
-#[derive(Debug, Clone)]
-pub struct SubtreeIssueRow {
-    pub issue_id: IssueId,
-    pub parent_id: IssueId,
-    pub status: IssueStatus,
-    pub title: String,
-    pub assignee: Option<String>,
-    pub has_active_task: bool,
-}
-
 /// Summary-level version record for issue list responses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
