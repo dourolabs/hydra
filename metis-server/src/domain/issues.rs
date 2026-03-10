@@ -5,6 +5,20 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 use thiserror::Error;
 
+/// A flat row from a subtree query, representing one descendant issue and its parent.
+///
+/// Store implementations return these flat rows; the caller assembles them into
+/// nested [`SubtreeIssue`](metis_common::api::v1::issues::SubtreeIssue) trees.
+#[derive(Debug, Clone)]
+pub struct SubtreeIssueRow {
+    pub issue_id: IssueId,
+    pub parent_id: IssueId,
+    pub status: IssueStatus,
+    pub title: String,
+    pub assignee: Option<String>,
+    pub has_active_task: bool,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum IssueStatus {

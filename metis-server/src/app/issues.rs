@@ -134,7 +134,7 @@ impl AppState {
     pub async fn get_issue_subtrees(
         &self,
         root_ids: &[IssueId],
-    ) -> Result<Vec<metis_common::api::v1::issues::SubtreeIssueRow>, crate::store::StoreError> {
+    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, crate::store::StoreError> {
         let store = self.store.as_ref();
         store.get_issue_subtrees(root_ids).await
     }

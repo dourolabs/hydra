@@ -87,7 +87,7 @@ impl ReadOnlyStore for FailingStore {
     async fn get_issue_subtrees(
         &self,
         _root_ids: &[IssueId],
-    ) -> Result<Vec<metis_common::api::v1::issues::SubtreeIssueRow>, StoreError> {
+    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, StoreError> {
         fail()
     }
 

@@ -1,4 +1,5 @@
 use crate::domain::actors::{Actor, ActorRef};
+use crate::domain::issues::SubtreeIssueRow;
 use crate::domain::issues::TodoItem;
 use crate::{
     app::{AppState, UpdateTodoListError, UpsertIssueError},
@@ -14,7 +15,6 @@ use metis_common::{
     IssueId, MetisId,
     api::v1::{
         ApiError, issues as api_issues,
-        issues::SubtreeIssueRow,
         pagination::{compute_next_cursor, effective_limit},
     },
 };
@@ -638,7 +638,7 @@ fn assemble_subtrees(
             .map(|row| {
                 api_issues::SubtreeIssue::new(
                     row.issue_id.clone(),
-                    row.status,
+                    row.status.into(),
                     row.has_active_task,
                     row.assignee.clone(),
                     row.title.clone(),
@@ -658,7 +658,7 @@ fn assemble_subtrees(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use metis_common::api::v1::issues::IssueStatus;
+    use crate::domain::issues::IssueStatus;
 
     fn row(issue: &IssueId, parent: &IssueId, title: &str) -> SubtreeIssueRow {
         SubtreeIssueRow {
@@ -736,7 +736,7 @@ mod tests {
         let result = assemble_subtrees(&[root.clone()], rows);
         assert!(result[&root][0].has_active_task);
         assert_eq!(result[&root][0].assignee, Some("alice".to_string()));
-        assert_eq!(result[&root][0].status, IssueStatus::InProgress);
+        assert_eq!(result[&root][0].status, api_issues::IssueStatus::InProgress);
     }
 
     #[test]

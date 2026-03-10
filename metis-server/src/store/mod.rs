@@ -1,3 +1,4 @@
+use crate::domain::issues::SubtreeIssueRow;
 use crate::domain::{
     actors::{Actor, ActorError, ActorId, ActorRef},
     agents::Agent,
@@ -13,7 +14,7 @@ use crate::domain::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
-use metis_common::api::v1::issues::{SearchIssuesQuery, SubtreeIssueRow};
+use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;

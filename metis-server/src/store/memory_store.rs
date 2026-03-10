@@ -608,7 +608,7 @@ impl ReadOnlyStore for MemoryStore {
     async fn get_issue_subtrees(
         &self,
         root_ids: &[IssueId],
-    ) -> Result<Vec<metis_common::api::v1::issues::SubtreeIssueRow>, StoreError> {
+    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, StoreError> {
         let mut result = Vec::new();
         // BFS traversal for each root
         for root_id in root_ids {
@@ -626,8 +626,7 @@ impl ReadOnlyStore for MemoryStore {
                     // Get latest version of child issue
                     if let Some(versions) = self.issues.get(&child_id) {
                         if let Some(latest) = Self::latest_versioned(versions.value()) {
-                            let status: metis_common::api::v1::issues::IssueStatus =
-                                latest.item.status.into();
+                            let status = latest.item.status;
                             let has_active_task = self
                                 .issue_tasks
                                 .get(&child_id)
@@ -648,7 +647,7 @@ impl ReadOnlyStore for MemoryStore {
                                 })
                                 .unwrap_or(false);
 
-                            result.push(metis_common::api::v1::issues::SubtreeIssueRow {
+                            result.push(crate::domain::issues::SubtreeIssueRow {
                                 issue_id: child_id.clone(),
                                 parent_id: parent_id.clone(),
                                 status,
