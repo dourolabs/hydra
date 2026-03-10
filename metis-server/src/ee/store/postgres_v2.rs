@@ -1947,7 +1947,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         for id in root_ids {
             query = query.bind(id.as_ref());
         }
-        query = query.bind(super::RelationshipType::ChildOf.as_str());
+        query = query.bind(crate::store::RelationshipType::ChildOf.as_str());
 
         let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
 
