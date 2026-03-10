@@ -114,7 +114,6 @@ export type { SetTodoItemStatusRequest } from "./generated/SetTodoItemStatusRequ
 export type { SnapshotEventData } from "./generated/SnapshotEventData";
 export type { SseEventType } from "./generated/SseEventType";
 export type { Status } from "./generated/Status";
-export type { StatusGroup } from "./generated/StatusGroup";
 export type { Task } from "./generated/Task";
 export type { TaskError } from "./generated/TaskError";
 export type { TaskId } from "./generated/TaskId";
