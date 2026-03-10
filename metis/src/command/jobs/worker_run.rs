@@ -8,10 +8,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
-    constants::{
-        ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_DOCUMENTS_DIR,
-        ENV_METIS_ISSUE_ID, ENV_OPENAI_API_KEY,
-    },
+    constants::{ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ISSUE_ID},
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     IssueId, TaskId,
@@ -32,9 +29,6 @@ pub async fn run(
     client: &dyn MetisClientInterface,
     job: TaskId,
     dest: PathBuf,
-    openai_api_key: Option<String>,
-    anthropic_api_key: Option<String>,
-    claude_code_oauth_token: Option<String>,
     issue_id: Option<IssueId>,
     use_tempdir: bool,
     commands: &dyn WorkerCommands,
@@ -58,26 +52,8 @@ pub async fn run(
         ensure_clean_destination(&dest)?;
         dest
     };
-    // The API response (variables) is the single source of truth for application
-    // secrets. Clap env values from the K8s container are used as fallbacks only,
-    // in case the API response does not include them.
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
-    insert_secret_fallback(
-        &mut execution_env,
-        ENV_CLAUDE_CODE_OAUTH_TOKEN,
-        claude_code_oauth_token.as_deref(),
-    );
-    insert_secret_fallback(
-        &mut execution_env,
-        ENV_ANTHROPIC_API_KEY,
-        anthropic_api_key.as_deref(),
-    );
-    insert_secret_fallback(
-        &mut execution_env,
-        ENV_OPENAI_API_KEY,
-        openai_api_key.as_deref(),
-    );
     let worker_home_dir = resolve_worker_home_dir();
     let issue_branch_id = issue_id
         .as_ref()
@@ -396,18 +372,6 @@ fn ensure_clean_destination(dest: &Path) -> Result<()> {
         Ok(())
     } else {
         fs::create_dir_all(dest).with_context(|| format!("failed to create {dest:?}"))
-    }
-}
-
-/// Insert a secret into the environment map only if it is not already present
-/// (or is empty). This allows the API response to take precedence while using
-/// K8s container env values as a fallback.
-fn insert_secret_fallback(env: &mut HashMap<String, String>, key: &str, value: Option<&str>) {
-    let existing = env.get(key).filter(|v| !v.trim().is_empty());
-    if existing.is_none() {
-        if let Some(v) = value.filter(|s| !s.trim().is_empty()) {
-            env.insert(key.to_string(), v.to_string());
-        }
     }
 }
 
@@ -1138,33 +1102,5 @@ mod tests {
         repo.checkout_head(Some(&mut checkout))
             .context("failed to checkout 'main' in upstream repo")?;
         Ok(())
-    }
-
-    #[test]
-    fn insert_secret_fallback_does_not_overwrite_api_value() {
-        let mut env = HashMap::from([("SECRET".to_string(), "from-api".to_string())]);
-        insert_secret_fallback(&mut env, "SECRET", Some("from-k8s"));
-        assert_eq!(env.get("SECRET").map(String::as_str), Some("from-api"));
-    }
-
-    #[test]
-    fn insert_secret_fallback_inserts_when_missing() {
-        let mut env = HashMap::new();
-        insert_secret_fallback(&mut env, "SECRET", Some("from-k8s"));
-        assert_eq!(env.get("SECRET").map(String::as_str), Some("from-k8s"));
-    }
-
-    #[test]
-    fn insert_secret_fallback_inserts_when_empty() {
-        let mut env = HashMap::from([("SECRET".to_string(), "  ".to_string())]);
-        insert_secret_fallback(&mut env, "SECRET", Some("from-k8s"));
-        assert_eq!(env.get("SECRET").map(String::as_str), Some("from-k8s"));
-    }
-
-    #[test]
-    fn insert_secret_fallback_skips_none_value() {
-        let mut env = HashMap::new();
-        insert_secret_fallback(&mut env, "SECRET", None);
-        assert!(!env.contains_key("SECRET"));
     }
 }
