@@ -1433,6 +1433,271 @@ impl SqliteStore {
     }
 }
 
+/// Build WHERE predicates and bindings for issues queries (SQLite `?N` placeholders).
+fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if let Some(issue_type) = query.issue_type.as_ref() {
+        bindings.push(issue_type.as_str().to_string());
+        predicates.push(format!("issue_type = ?{}", bindings.len()));
+    }
+
+    if let Some(status) = query.status.as_ref() {
+        bindings.push(status.as_str().to_string());
+        predicates.push(format!("status = ?{}", bindings.len()));
+    }
+
+    if let Some(assignee) = query
+        .assignee
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
+        bindings.push(assignee.to_lowercase());
+        predicates.push(format!("LOWER(assignee) = ?{}", bindings.len()));
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
+    {
+        let pattern = format!("%{term}%");
+        let start = bindings.len() + 1;
+        bindings.push(pattern.clone()); // id
+        bindings.push(pattern.clone()); // title
+        bindings.push(pattern.clone()); // description
+        bindings.push(pattern.clone()); // progress
+        bindings.push(term.clone()); // type (exact)
+        bindings.push(term.clone()); // status (exact)
+        bindings.push(pattern.clone()); // creator
+        bindings.push(pattern); // assignee
+        predicates.push(format!(
+            "(LOWER(id) LIKE ?{s0} OR LOWER(title) LIKE ?{s1} OR LOWER(description) LIKE ?{s2} OR LOWER(progress) LIKE ?{s3} OR issue_type = ?{s4} OR status = ?{s5} OR LOWER(creator) LIKE ?{s6} OR LOWER(COALESCE(assignee,'')) LIKE ?{s7})",
+            s0 = start,
+            s1 = start + 1,
+            s2 = start + 2,
+            s3 = start + 3,
+            s4 = start + 4,
+            s5 = start + 5,
+            s6 = start + 6,
+            s7 = start + 7,
+        ));
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = 0".to_string());
+    }
+
+    if !query.label_ids.is_empty() {
+        let label_count = query.label_ids.len();
+        let placeholders: Vec<String> = query
+            .label_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!(
+            "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la WHERE la.label_id IN ({}) GROUP BY la.object_id HAVING COUNT(DISTINCT la.label_id) = {label_count})",
+            placeholders.join(", ")
+        ));
+        for label_id in &query.label_ids {
+            bindings.push(label_id.to_string());
+        }
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for patches queries (SQLite `?N` placeholders).
+fn build_patches_predicates_sqlite(query: &SearchPatchesQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = 0".to_string());
+    }
+
+    if !query.status.is_empty() {
+        let status_strings: Vec<String> = query
+            .status
+            .iter()
+            .map(|s| {
+                let domain: crate::domain::patches::PatchStatus = (*s).into();
+                domain.as_str().to_string()
+            })
+            .collect();
+        let placeholders: Vec<String> = status_strings
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("status IN ({})", placeholders.join(", ")));
+        for s in status_strings {
+            bindings.push(s);
+        }
+    }
+
+    if let Some(ref branch) = query.branch_name {
+        bindings.push(branch.clone());
+        predicates.push(format!("branch_name = ?{}", bindings.len()));
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let pattern = format!("%{term}%");
+        let start = bindings.len() + 1;
+        for _ in 0..12 {
+            bindings.push(pattern.clone());
+        }
+        predicates.push(format!(
+            "(LOWER(id) LIKE ?{s0} \
+             OR LOWER(title) LIKE ?{s1} \
+             OR LOWER(description) LIKE ?{s2} \
+             OR LOWER(status) LIKE ?{s3} \
+             OR LOWER(service_repo_name) LIKE ?{s4} \
+             OR LOWER(diff) LIKE ?{s5} \
+             OR LOWER(COALESCE(branch_name,'')) LIKE ?{s6} \
+             OR LOWER(COALESCE(json_extract(github,'$.owner'),'')) LIKE ?{s7} \
+             OR LOWER(COALESCE(json_extract(github,'$.repo'),'')) LIKE ?{s8} \
+             OR CAST(json_extract(github,'$.number') AS TEXT) LIKE ?{s9} \
+             OR LOWER(COALESCE(json_extract(github,'$.head_ref'),'')) LIKE ?{s10} \
+             OR LOWER(COALESCE(json_extract(github,'$.base_ref'),'')) LIKE ?{s11})",
+            s0 = start,
+            s1 = start + 1,
+            s2 = start + 2,
+            s3 = start + 3,
+            s4 = start + 4,
+            s5 = start + 5,
+            s6 = start + 6,
+            s7 = start + 7,
+            s8 = start + 8,
+            s9 = start + 9,
+            s10 = start + 10,
+            s11 = start + 11,
+        ));
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for documents queries (SQLite `?N` placeholders).
+fn build_documents_predicates_sqlite(query: &SearchDocumentsQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if let Some(path) = query.path_prefix.as_ref() {
+        if query.path_is_exact.unwrap_or(false) {
+            bindings.push(path.clone());
+            predicates.push(format!("COALESCE(path,'') = ?{}", bindings.len()));
+        } else {
+            bindings.push(format!("{path}%"));
+            predicates.push(format!("COALESCE(path,'') LIKE ?{}", bindings.len()));
+        }
+    }
+
+    if let Some(created_by) = query.created_by.as_ref() {
+        bindings.push(created_by.as_ref().to_string());
+        predicates.push(format!("created_by = ?{}", bindings.len()));
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let pattern = format!("%{term}%");
+        let start = bindings.len() + 1;
+        bindings.push(pattern.clone());
+        bindings.push(pattern.clone());
+        bindings.push(pattern);
+        predicates.push(format!(
+            "(LOWER(title) LIKE ?{s0} \
+             OR LOWER(body_markdown) LIKE ?{s1} \
+             OR LOWER(COALESCE(path,'')) LIKE ?{s2})",
+            s0 = start,
+            s1 = start + 1,
+            s2 = start + 2,
+        ));
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = 0".to_string());
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for tasks queries (SQLite `?N` placeholders).
+/// Uses `t.` column prefix since tasks queries join against the table alias `t`.
+fn build_tasks_predicates_sqlite(query: &SearchJobsQuery) -> (Vec<String>, Vec<String>) {
+    use crate::domain::task_status::Status;
+
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if let Some(spawned_from) = query.spawned_from.as_ref() {
+        bindings.push(spawned_from.as_ref().to_string());
+        predicates.push(format!("t.spawned_from = ?{}", bindings.len()));
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let pattern = format!("%{term}%");
+        bindings.push(pattern.clone());
+        let idx_id = bindings.len();
+        bindings.push(pattern.clone());
+        let idx_prompt = bindings.len();
+        bindings.push(pattern);
+        let idx_status = bindings.len();
+        predicates.push(format!(
+            "(LOWER(t.id) LIKE ?{idx_id} \
+             OR LOWER(t.prompt) LIKE ?{idx_prompt} \
+             OR LOWER(t.status) LIKE ?{idx_status})"
+        ));
+    }
+
+    if let Some(status) = query.status {
+        let server_status: Status = status.into();
+        bindings.push(super::status_to_db_str(server_status).to_string());
+        predicates.push(format!("t.status = ?{}", bindings.len()));
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("t.deleted = 0".to_string());
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for labels queries (SQLite `?N` placeholders).
+fn build_labels_predicates_sqlite(query: &SearchLabelsQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = 0".to_string());
+    }
+
+    if let Some(ref q) = query.q {
+        bindings.push(format!("%{}%", q.to_lowercase()));
+        predicates.push(format!("LOWER(name) LIKE ?{}", bindings.len()));
+    }
+
+    (predicates, bindings)
+}
+
 fn actor_to_json_string(actor: &ActorRef) -> String {
     serde_json::to_string(actor).expect("ActorRef serialization should not fail")
 }
@@ -1662,78 +1927,7 @@ impl ReadOnlyStore for SqliteStore {
              ON i.id = latest.id AND i.version_number = latest.max_vn"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if let Some(issue_type) = query.issue_type.as_ref() {
-            bindings.push(issue_type.as_str().to_string());
-            predicates.push(format!("issue_type = ?{}", bindings.len()));
-        }
-
-        if let Some(status) = query.status.as_ref() {
-            bindings.push(status.as_str().to_string());
-            predicates.push(format!("status = ?{}", bindings.len()));
-        }
-
-        if let Some(assignee) = query
-            .assignee
-            .as_ref()
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-        {
-            bindings.push(assignee.to_lowercase());
-            predicates.push(format!("LOWER(assignee) = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|v| v.trim().to_lowercase())
-            .filter(|v| !v.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            let start = bindings.len() + 1;
-            bindings.push(pattern.clone()); // id
-            bindings.push(pattern.clone()); // title
-            bindings.push(pattern.clone()); // description
-            bindings.push(pattern.clone()); // progress
-            bindings.push(term.clone()); // type (exact)
-            bindings.push(term.clone()); // status (exact)
-            bindings.push(pattern.clone()); // creator
-            bindings.push(pattern); // assignee
-            predicates.push(format!(
-                "(LOWER(id) LIKE ?{s0} OR LOWER(title) LIKE ?{s1} OR LOWER(description) LIKE ?{s2} OR LOWER(progress) LIKE ?{s3} OR issue_type = ?{s4} OR status = ?{s5} OR LOWER(creator) LIKE ?{s6} OR LOWER(COALESCE(assignee,'')) LIKE ?{s7})",
-                s0 = start,
-                s1 = start + 1,
-                s2 = start + 2,
-                s3 = start + 3,
-                s4 = start + 4,
-                s5 = start + 5,
-                s6 = start + 6,
-                s7 = start + 7,
-            ));
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = 0".to_string());
-        }
-
-        if !query.label_ids.is_empty() {
-            let label_count = query.label_ids.len();
-            let placeholders: Vec<String> = query
-                .label_ids
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!(
-                "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la WHERE la.label_id IN ({}) GROUP BY la.object_id HAVING COUNT(DISTINCT la.label_id) = {label_count})",
-                placeholders.join(", ")
-            ));
-            for label_id in &query.label_ids {
-                bindings.push(label_id.to_string());
-            }
-        }
+        let (mut predicates, mut bindings) = build_issues_predicates_sqlite(query);
 
         apply_pagination_sql_sqlite(
             &mut sql,
@@ -1797,78 +1991,7 @@ impl ReadOnlyStore for SqliteStore {
              ON i.id = latest.id AND i.version_number = latest.max_vn"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if let Some(issue_type) = query.issue_type.as_ref() {
-            bindings.push(issue_type.as_str().to_string());
-            predicates.push(format!("issue_type = ?{}", bindings.len()));
-        }
-
-        if let Some(status) = query.status.as_ref() {
-            bindings.push(status.as_str().to_string());
-            predicates.push(format!("status = ?{}", bindings.len()));
-        }
-
-        if let Some(assignee) = query
-            .assignee
-            .as_ref()
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-        {
-            bindings.push(assignee.to_lowercase());
-            predicates.push(format!("LOWER(assignee) = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|v| v.trim().to_lowercase())
-            .filter(|v| !v.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            let start = bindings.len() + 1;
-            bindings.push(pattern.clone()); // id
-            bindings.push(pattern.clone()); // title
-            bindings.push(pattern.clone()); // description
-            bindings.push(pattern.clone()); // progress
-            bindings.push(term.clone()); // type (exact)
-            bindings.push(term.clone()); // status (exact)
-            bindings.push(pattern.clone()); // creator
-            bindings.push(pattern); // assignee
-            predicates.push(format!(
-                "(LOWER(id) LIKE ?{s0} OR LOWER(title) LIKE ?{s1} OR LOWER(description) LIKE ?{s2} OR LOWER(progress) LIKE ?{s3} OR issue_type = ?{s4} OR status = ?{s5} OR LOWER(creator) LIKE ?{s6} OR LOWER(COALESCE(assignee,'')) LIKE ?{s7})",
-                s0 = start,
-                s1 = start + 1,
-                s2 = start + 2,
-                s3 = start + 3,
-                s4 = start + 4,
-                s5 = start + 5,
-                s6 = start + 6,
-                s7 = start + 7,
-            ));
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = 0".to_string());
-        }
-
-        if !query.label_ids.is_empty() {
-            let label_count = query.label_ids.len();
-            let placeholders: Vec<String> = query
-                .label_ids
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!(
-                "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la WHERE la.label_id IN ({}) GROUP BY la.object_id HAVING COUNT(DISTINCT la.label_id) = {label_count})",
-                placeholders.join(", ")
-            ));
-            for label_id in &query.label_ids {
-                bindings.push(label_id.to_string());
-            }
-        }
+        let (predicates, bindings) = build_issues_predicates_sqlite(query);
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2045,78 +2168,7 @@ impl ReadOnlyStore for SqliteStore {
              ON p.id = latest.id AND p.version_number = latest.max_vn"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = 0".to_string());
-        }
-
-        if !query.status.is_empty() {
-            let status_strings: Vec<String> = query
-                .status
-                .iter()
-                .map(|s| {
-                    let domain: crate::domain::patches::PatchStatus = (*s).into();
-                    domain.as_str().to_string()
-                })
-                .collect();
-            let placeholders: Vec<String> = status_strings
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!("status IN ({})", placeholders.join(", ")));
-            for s in status_strings {
-                bindings.push(s);
-            }
-        }
-
-        if let Some(ref branch) = query.branch_name {
-            bindings.push(branch.clone());
-            predicates.push(format!("branch_name = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            let start = bindings.len() + 1;
-            // id, title, description, status, service_repo_name, diff, branch_name,
-            // github JSON sub-fields: owner, repo, number, head_ref, base_ref
-            for _ in 0..12 {
-                bindings.push(pattern.clone());
-            }
-            predicates.push(format!(
-                "(LOWER(id) LIKE ?{s0} \
-                 OR LOWER(title) LIKE ?{s1} \
-                 OR LOWER(description) LIKE ?{s2} \
-                 OR LOWER(status) LIKE ?{s3} \
-                 OR LOWER(service_repo_name) LIKE ?{s4} \
-                 OR LOWER(diff) LIKE ?{s5} \
-                 OR LOWER(COALESCE(branch_name,'')) LIKE ?{s6} \
-                 OR LOWER(COALESCE(json_extract(github,'$.owner'),'')) LIKE ?{s7} \
-                 OR LOWER(COALESCE(json_extract(github,'$.repo'),'')) LIKE ?{s8} \
-                 OR CAST(json_extract(github,'$.number') AS TEXT) LIKE ?{s9} \
-                 OR LOWER(COALESCE(json_extract(github,'$.head_ref'),'')) LIKE ?{s10} \
-                 OR LOWER(COALESCE(json_extract(github,'$.base_ref'),'')) LIKE ?{s11})",
-                s0 = start,
-                s1 = start + 1,
-                s2 = start + 2,
-                s3 = start + 3,
-                s4 = start + 4,
-                s5 = start + 5,
-                s6 = start + 6,
-                s7 = start + 7,
-                s8 = start + 8,
-                s9 = start + 9,
-                s10 = start + 10,
-                s11 = start + 11,
-            ));
-        }
+        let (mut predicates, mut bindings) = build_patches_predicates_sqlite(query);
 
         apply_pagination_sql_sqlite(
             &mut sql,
@@ -2178,76 +2230,7 @@ impl ReadOnlyStore for SqliteStore {
              ON p.id = latest.id AND p.version_number = latest.max_vn"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = 0".to_string());
-        }
-
-        if !query.status.is_empty() {
-            let status_strings: Vec<String> = query
-                .status
-                .iter()
-                .map(|s| {
-                    let domain: crate::domain::patches::PatchStatus = (*s).into();
-                    domain.as_str().to_string()
-                })
-                .collect();
-            let placeholders: Vec<String> = status_strings
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!("status IN ({})", placeholders.join(", ")));
-            for s in status_strings {
-                bindings.push(s);
-            }
-        }
-
-        if let Some(ref branch) = query.branch_name {
-            bindings.push(branch.clone());
-            predicates.push(format!("branch_name = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            let start = bindings.len() + 1;
-            for _ in 0..12 {
-                bindings.push(pattern.clone());
-            }
-            predicates.push(format!(
-                "(LOWER(id) LIKE ?{s0} \
-                 OR LOWER(title) LIKE ?{s1} \
-                 OR LOWER(description) LIKE ?{s2} \
-                 OR LOWER(status) LIKE ?{s3} \
-                 OR LOWER(service_repo_name) LIKE ?{s4} \
-                 OR LOWER(diff) LIKE ?{s5} \
-                 OR LOWER(COALESCE(branch_name,'')) LIKE ?{s6} \
-                 OR LOWER(COALESCE(json_extract(github,'$.owner'),'')) LIKE ?{s7} \
-                 OR LOWER(COALESCE(json_extract(github,'$.repo'),'')) LIKE ?{s8} \
-                 OR CAST(json_extract(github,'$.number') AS TEXT) LIKE ?{s9} \
-                 OR LOWER(COALESCE(json_extract(github,'$.head_ref'),'')) LIKE ?{s10} \
-                 OR LOWER(COALESCE(json_extract(github,'$.base_ref'),'')) LIKE ?{s11})",
-                s0 = start,
-                s1 = start + 1,
-                s2 = start + 2,
-                s3 = start + 3,
-                s4 = start + 4,
-                s5 = start + 5,
-                s6 = start + 6,
-                s7 = start + 7,
-                s8 = start + 8,
-                s9 = start + 9,
-                s10 = start + 10,
-                s11 = start + 11,
-            ));
-        }
+        let (predicates, bindings) = build_patches_predicates_sqlite(query);
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2391,48 +2374,7 @@ impl ReadOnlyStore for SqliteStore {
              ON d.id = latest.id AND d.version_number = latest.max_vn"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if let Some(path) = query.path_prefix.as_ref() {
-            if query.path_is_exact.unwrap_or(false) {
-                bindings.push(path.clone());
-                predicates.push(format!("COALESCE(path,'') = ?{}", bindings.len()));
-            } else {
-                bindings.push(format!("{path}%"));
-                predicates.push(format!("COALESCE(path,'') LIKE ?{}", bindings.len()));
-            }
-        }
-
-        if let Some(created_by) = query.created_by.as_ref() {
-            bindings.push(created_by.as_ref().to_string());
-            predicates.push(format!("created_by = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            let start = bindings.len() + 1;
-            bindings.push(pattern.clone());
-            bindings.push(pattern.clone());
-            bindings.push(pattern);
-            predicates.push(format!(
-                "(LOWER(title) LIKE ?{s0} \
-                 OR LOWER(body_markdown) LIKE ?{s1} \
-                 OR LOWER(COALESCE(path,'')) LIKE ?{s2})",
-                s0 = start,
-                s1 = start + 1,
-                s2 = start + 2,
-            ));
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = 0".to_string());
-        }
+        let (mut predicates, mut bindings) = build_documents_predicates_sqlite(query);
 
         apply_pagination_sql_sqlite(
             &mut sql,
@@ -2494,48 +2436,7 @@ impl ReadOnlyStore for SqliteStore {
              ON d.id = latest.id AND d.version_number = latest.max_vn"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if let Some(path) = query.path_prefix.as_ref() {
-            if query.path_is_exact.unwrap_or(false) {
-                bindings.push(path.clone());
-                predicates.push(format!("COALESCE(path,'') = ?{}", bindings.len()));
-            } else {
-                bindings.push(format!("{path}%"));
-                predicates.push(format!("COALESCE(path,'') LIKE ?{}", bindings.len()));
-            }
-        }
-
-        if let Some(created_by) = query.created_by.as_ref() {
-            bindings.push(created_by.as_ref().to_string());
-            predicates.push(format!("created_by = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            let start = bindings.len() + 1;
-            bindings.push(pattern.clone());
-            bindings.push(pattern.clone());
-            bindings.push(pattern);
-            predicates.push(format!(
-                "(LOWER(title) LIKE ?{s0} \
-                 OR LOWER(body_markdown) LIKE ?{s1} \
-                 OR LOWER(COALESCE(path,'')) LIKE ?{s2})",
-                s0 = start,
-                s1 = start + 1,
-                s2 = start + 2,
-            ));
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = 0".to_string());
-        }
+        let (predicates, bindings) = build_documents_predicates_sqlite(query);
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2638,43 +2539,7 @@ impl ReadOnlyStore for SqliteStore {
              INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
              ON t.id = latest.id AND t.version_number = latest.max_version"
         );
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if let Some(spawned_from) = query.spawned_from.as_ref() {
-            bindings.push(spawned_from.as_ref().to_string());
-            predicates.push(format!("t.spawned_from = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone());
-            let idx_id = bindings.len();
-            bindings.push(pattern.clone());
-            let idx_prompt = bindings.len();
-            bindings.push(pattern);
-            let idx_status = bindings.len();
-            predicates.push(format!(
-                "(LOWER(t.id) LIKE ?{idx_id} \
-                 OR LOWER(t.prompt) LIKE ?{idx_prompt} \
-                 OR LOWER(t.status) LIKE ?{idx_status})"
-            ));
-        }
-
-        if let Some(status) = query.status {
-            let server_status: Status = status.into();
-            bindings.push(super::status_to_db_str(server_status).to_string());
-            predicates.push(format!("t.status = ?{}", bindings.len()));
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("t.deleted = 0".to_string());
-        }
+        let (mut predicates, mut bindings) = build_tasks_predicates_sqlite(query);
 
         apply_pagination_sql_sqlite(
             &mut sql,
@@ -2713,43 +2578,7 @@ impl ReadOnlyStore for SqliteStore {
              INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
              ON t.id = latest.id AND t.version_number = latest.max_version"
         );
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if let Some(spawned_from) = query.spawned_from.as_ref() {
-            bindings.push(spawned_from.as_ref().to_string());
-            predicates.push(format!("t.spawned_from = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone());
-            let idx_id = bindings.len();
-            bindings.push(pattern.clone());
-            let idx_prompt = bindings.len();
-            bindings.push(pattern);
-            let idx_status = bindings.len();
-            predicates.push(format!(
-                "(LOWER(t.id) LIKE ?{idx_id} \
-                 OR LOWER(t.prompt) LIKE ?{idx_prompt} \
-                 OR LOWER(t.status) LIKE ?{idx_status})"
-            ));
-        }
-
-        if let Some(status) = query.status {
-            let server_status: Status = status.into();
-            bindings.push(super::status_to_db_str(server_status).to_string());
-            predicates.push(format!("t.status = ?{}", bindings.len()));
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("t.deleted = 0".to_string());
-        }
+        let (predicates, bindings) = build_tasks_predicates_sqlite(query);
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -3265,18 +3094,7 @@ impl ReadOnlyStore for SqliteStore {
         &self,
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if !include_deleted {
-            predicates.push("deleted = 0".to_string());
-        }
-
-        if let Some(ref q) = query.q {
-            bindings.push(format!("%{}%", q.to_lowercase()));
-            predicates.push(format!("LOWER(name) LIKE ?{}", bindings.len()));
-        }
+        let (mut predicates, mut bindings) = build_labels_predicates_sqlite(query);
 
         let mut sql = format!(
             "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
@@ -3321,18 +3139,7 @@ impl ReadOnlyStore for SqliteStore {
     }
 
     async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
-
-        if !include_deleted {
-            predicates.push("deleted = 0".to_string());
-        }
-
-        if let Some(ref q) = query.q {
-            bindings.push(format!("%{}%", q.to_lowercase()));
-            predicates.push(format!("LOWER(name) LIKE ?{}", bindings.len()));
-        }
+        let (predicates, bindings) = build_labels_predicates_sqlite(query);
 
         let mut sql = format!("SELECT COUNT(*) FROM {TABLE_LABELS}");
 
