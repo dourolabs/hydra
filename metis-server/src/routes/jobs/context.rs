@@ -20,6 +20,9 @@ pub async fn get_job_context(
     let resolved = state.resolve_task(&task).await.map_err(ApiError::from)?;
 
     let mut env_vars = resolved.env_vars;
+    state
+        .resolve_secrets_into_env_vars(&task.creator, &mut env_vars, &task.secrets)
+        .await;
     env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
 
     let build_cache = state.config.build_cache.to_context();

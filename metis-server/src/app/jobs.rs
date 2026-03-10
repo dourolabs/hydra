@@ -239,6 +239,11 @@ impl AppState {
             ENV_CLAUDE_CODE_OAUTH_TOKEN,
         ];
 
+        info!(
+            username = %creator,
+            "resolving secrets for user"
+        );
+
         // 1. Load user secrets and inject them as env vars, filtered by Task.secrets.
         let user_secret_names = match self.store.list_user_secret_names(creator).await {
             Ok(names) => names,
@@ -251,6 +256,12 @@ impl AppState {
                 Vec::new()
             }
         };
+
+        info!(
+            username = %creator,
+            user_secrets_count = user_secret_names.len(),
+            "found user secrets"
+        );
 
         for secret_name in &user_secret_names {
             // Always inject well-known AI model keys; only inject other secrets
@@ -310,6 +321,12 @@ impl AppState {
 
         for (secret_name, config_fallback) in system_entries {
             if env_vars.contains_key(secret_name) {
+                info!(
+                    username = %creator,
+                    secret = secret_name,
+                    source = "user",
+                    "system secret resolved from user override"
+                );
                 continue;
             }
 
@@ -318,7 +335,20 @@ impl AppState {
                 .filter(|v| !v.trim().is_empty());
 
             if let Some(value) = global_value {
+                info!(
+                    username = %creator,
+                    secret = secret_name,
+                    source = "config",
+                    "system secret resolved from config fallback"
+                );
                 env_vars.insert(secret_name.to_string(), value);
+            } else {
+                info!(
+                    username = %creator,
+                    secret = secret_name,
+                    source = "none",
+                    "system secret not available from user or config"
+                );
             }
         }
     }
