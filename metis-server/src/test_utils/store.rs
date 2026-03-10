@@ -84,6 +84,13 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn get_issue_subtrees(
+        &self,
+        _root_ids: &[IssueId],
+    ) -> Result<Vec<metis_common::api::v1::issues::SubtreeIssueRow>, StoreError> {
+        fail()
+    }
+
     async fn get_issue_blocked_on(&self, _issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         fail()
     }

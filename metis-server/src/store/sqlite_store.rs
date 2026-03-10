@@ -110,6 +110,16 @@ struct ObjectRelationshipRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct SubtreeQueryRow {
+    issue_id: String,
+    parent_id: String,
+    status: String,
+    title: String,
+    assignee: Option<String>,
+    has_active_task: bool,
+}
+
+#[derive(sqlx::FromRow)]
 struct IssueRow {
     id: String,
     version_number: i64,
@@ -1813,6 +1823,87 @@ impl ReadOnlyStore for SqliteStore {
             .map(|id| {
                 id.parse::<IssueId>().map_err(|err| {
                     StoreError::Internal(format!("invalid issue id in object_relationships: {err}"))
+                })
+            })
+            .collect()
+    }
+
+    async fn get_issue_subtrees(
+        &self,
+        root_ids: &[IssueId],
+    ) -> Result<Vec<metis_common::api::v1::issues::SubtreeIssueRow>, StoreError> {
+        if root_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // SQLite uses ?1, ?2, ... for positional params
+        let placeholders: Vec<String> = (1..=root_ids.len()).map(|i| format!("?{i}")).collect();
+        let placeholders_str = placeholders.join(", ");
+        let rel_param = format!("?{}", root_ids.len() + 1);
+
+        let sql = format!(
+            "WITH RECURSIVE subtree AS ( \
+                SELECT source_id AS issue_id, target_id AS parent_id \
+                FROM {TABLE_OBJECT_RELATIONSHIPS} \
+                WHERE target_id IN ({placeholders_str}) AND rel_type = {rel_param} \
+                UNION \
+                SELECT r.source_id AS issue_id, s.issue_id AS parent_id \
+                FROM subtree s \
+                JOIN {TABLE_OBJECT_RELATIONSHIPS} r ON r.target_id = s.issue_id \
+                WHERE r.rel_type = {rel_param} \
+            ) \
+            SELECT \
+                s.issue_id, \
+                s.parent_id, \
+                i.status, \
+                i.title, \
+                i.assignee, \
+                EXISTS ( \
+                    SELECT 1 FROM {TABLE_TASKS_V2} t \
+                    WHERE t.spawned_from = s.issue_id \
+                    AND t.status IN ('running', 'pending') \
+                    AND t.version_number = ( \
+                        SELECT MAX(t2.version_number) FROM {TABLE_TASKS_V2} t2 WHERE t2.id = t.id \
+                    ) \
+                ) AS has_active_task \
+            FROM subtree s \
+            JOIN ( \
+                SELECT id, status, title, assignee \
+                FROM {TABLE_ISSUES_V2} \
+                WHERE version_number = ( \
+                    SELECT MAX(i2.version_number) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = {TABLE_ISSUES_V2}.id \
+                ) \
+            ) i ON i.id = s.issue_id \
+            ORDER BY s.parent_id, s.issue_id"
+        );
+
+        let mut query = sqlx::query_as::<_, SubtreeQueryRow>(&sql);
+        for id in root_ids {
+            query = query.bind(id.as_ref());
+        }
+        query = query.bind(super::RelationshipType::ChildOf.as_str());
+
+        let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let issue_id = row.issue_id.parse::<IssueId>().map_err(|e| {
+                    StoreError::Internal(format!("invalid issue id in subtree: {e}"))
+                })?;
+                let parent_id = row.parent_id.parse::<IssueId>().map_err(|e| {
+                    StoreError::Internal(format!("invalid parent id in subtree: {e}"))
+                })?;
+                let status = row
+                    .status
+                    .parse::<metis_common::api::v1::issues::IssueStatus>()
+                    .unwrap_or(metis_common::api::v1::issues::IssueStatus::Unknown);
+                Ok(metis_common::api::v1::issues::SubtreeIssueRow {
+                    issue_id,
+                    parent_id,
+                    status,
+                    title: row.title,
+                    assignee: row.assignee,
+                    has_active_task: row.has_active_task,
                 })
             })
             .collect()
@@ -6645,5 +6736,138 @@ mod tests {
 
         let bob_names = store.list_user_secret_names(&bob).await.unwrap();
         assert_eq!(bob_names, vec!["key_b"]);
+    }
+
+    // ---- Subtree tests ----
+
+    #[tokio::test]
+    async fn get_issue_subtrees_empty_for_no_children() {
+        let store = create_test_store().await;
+        let (root_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let rows = store.get_issue_subtrees(&[root_id]).await.unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_returns_direct_children() {
+        let store = create_test_store().await;
+        let (parent_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child_id, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let rows = store
+            .get_issue_subtrees(&[parent_id.clone()])
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].issue_id, child_id);
+        assert_eq!(rows[0].parent_id, parent_id);
+        assert_eq!(rows[0].title, "Test Title");
+        assert!(!rows[0].has_active_task);
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_returns_transitive_descendants() {
+        let store = create_test_store().await;
+        let (root, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    root.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (grandchild, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    child.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let rows = store.get_issue_subtrees(&[root.clone()]).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        let ids: Vec<_> = rows.iter().map(|r| r.issue_id.clone()).collect();
+        assert!(ids.contains(&child));
+        assert!(ids.contains(&grandchild));
+
+        // Check parent linkage
+        let child_row = rows.iter().find(|r| r.issue_id == child).unwrap();
+        assert_eq!(child_row.parent_id, root);
+        let gc_row = rows.iter().find(|r| r.issue_id == grandchild).unwrap();
+        assert_eq!(gc_row.parent_id, child);
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_multiple_roots() {
+        let store = create_test_store().await;
+        let (root_a, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (root_b, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child_a, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    root_a.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (child_b, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    root_b.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let rows = store
+            .get_issue_subtrees(&[root_a.clone(), root_b.clone()])
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        let ids: Vec<_> = rows.iter().map(|r| r.issue_id.clone()).collect();
+        assert!(ids.contains(&child_a));
+        assert!(ids.contains(&child_b));
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_empty_root_ids() {
+        let store = create_test_store().await;
+        let rows = store.get_issue_subtrees(&[]).await.unwrap();
+        assert!(rows.is_empty());
     }
 }

@@ -13,7 +13,7 @@ use crate::domain::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
-use metis_common::api::v1::issues::SearchIssuesQuery;
+use metis_common::api::v1::issues::{SearchIssuesQuery, SubtreeIssueRow};
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
@@ -315,6 +315,15 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
+
+    /// Returns the full descendant subtree (as flat rows) for each of the given root issue IDs.
+    ///
+    /// Each row represents a descendant issue with its immediate parent in the tree.
+    /// The caller assembles the flat rows into a nested tree structure.
+    async fn get_issue_subtrees(
+        &self,
+        root_ids: &[IssueId],
+    ) -> Result<Vec<SubtreeIssueRow>, StoreError>;
 
     /// Lists all issues that are blocked on the provided issue.
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
