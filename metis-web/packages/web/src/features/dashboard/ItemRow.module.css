@@ -256,6 +256,7 @@
 .rowSwipeable {
   padding: 0;
   overflow: hidden;
+  align-items: stretch;
 }
 
 /* Swipe-to-archive states */
