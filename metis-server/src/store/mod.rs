@@ -84,6 +84,7 @@ pub enum RelationshipType {
     ChildOf,
     BlockedOn,
     HasPatch,
+    HasDocument,
 }
 
 impl RelationshipType {
@@ -92,6 +93,7 @@ impl RelationshipType {
             RelationshipType::ChildOf => "child-of",
             RelationshipType::BlockedOn => "blocked-on",
             RelationshipType::HasPatch => "has-patch",
+            RelationshipType::HasDocument => "has-document",
         }
     }
 }
@@ -111,6 +113,7 @@ impl FromStr for RelationshipType {
             "child-of" | "childof" | "child_of" => Ok(RelationshipType::ChildOf),
             "blocked-on" | "blockedon" | "blocked_on" => Ok(RelationshipType::BlockedOn),
             "has-patch" | "haspatch" | "has_patch" => Ok(RelationshipType::HasPatch),
+            "has-document" | "hasdocument" | "has_document" => Ok(RelationshipType::HasDocument),
             other => Err(format!("unsupported relationship type '{other}'")),
         }
     }

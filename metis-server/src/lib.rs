@@ -98,6 +98,14 @@ pub async fn run_with_state(
             post(routes::issues::set_todo_item_status),
         )
         .route(
+            "/v1/issues/:issue_id/documents",
+            get(routes::issues::list_issue_documents),
+        )
+        .route(
+            "/v1/issues/:issue_id/documents/:document_id",
+            put(routes::issues::link_document).delete(routes::issues::unlink_document),
+        )
+        .route(
             "/v1/patches",
             get(routes::patches::list_patches).post(routes::patches::create_patch),
         )

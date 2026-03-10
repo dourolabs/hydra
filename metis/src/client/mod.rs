@@ -123,6 +123,13 @@ impl ResponseExt for Response {
     }
 }
 
+/// Response type for issue-document linking operations.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IssueDocumentsResponse {
+    pub issue_id: IssueId,
+    pub documents: Vec<DocumentId>,
+}
+
 #[async_trait]
 pub trait MetisClientInterface: Send + Sync {
     fn base_url(&self) -> &Url;
@@ -259,6 +266,18 @@ pub trait MetisClientInterface: Send + Sync {
     async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord>;
     async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord>;
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord>;
+
+    async fn link_document(
+        &self,
+        issue_id: &IssueId,
+        document_id: &DocumentId,
+    ) -> Result<IssueDocumentsResponse>;
+    async fn unlink_document(
+        &self,
+        issue_id: &IssueId,
+        document_id: &DocumentId,
+    ) -> Result<IssueDocumentsResponse>;
+    async fn list_issue_documents(&self, issue_id: &IssueId) -> Result<IssueDocumentsResponse>;
 
     /// Open an SSE connection to GET /v1/events and return a stream of parsed events.
     async fn subscribe_events(
@@ -1523,6 +1542,70 @@ impl MetisClient {
             .context("failed to decode delete document response")
     }
 
+    /// Call `PUT /v1/issues/:issue_id/documents/:document_id` to link a document.
+    pub async fn link_document(
+        &self,
+        issue_id: &IssueId,
+        document_id: &DocumentId,
+    ) -> Result<IssueDocumentsResponse> {
+        let path = format!("/v1/issues/{issue_id}/documents/{document_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.put(url))
+            .send()
+            .await
+            .context("failed to submit link document request")?
+            .error_for_status_with_body("metis-server returned an error while linking document")
+            .await?;
+
+        response
+            .json::<IssueDocumentsResponse>()
+            .await
+            .context("failed to decode link document response")
+    }
+
+    /// Call `DELETE /v1/issues/:issue_id/documents/:document_id` to unlink a document.
+    pub async fn unlink_document(
+        &self,
+        issue_id: &IssueId,
+        document_id: &DocumentId,
+    ) -> Result<IssueDocumentsResponse> {
+        let path = format!("/v1/issues/{issue_id}/documents/{document_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to submit unlink document request")?
+            .error_for_status_with_body("metis-server returned an error while unlinking document")
+            .await?;
+
+        response
+            .json::<IssueDocumentsResponse>()
+            .await
+            .context("failed to decode unlink document response")
+    }
+
+    /// Call `GET /v1/issues/:issue_id/documents` to list linked documents.
+    pub async fn list_issue_documents(&self, issue_id: &IssueId) -> Result<IssueDocumentsResponse> {
+        let path = format!("/v1/issues/{issue_id}/documents");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to submit list issue documents request")?
+            .error_for_status_with_body(
+                "metis-server returned an error while listing issue documents",
+            )
+            .await?;
+
+        response
+            .json::<IssueDocumentsResponse>()
+            .await
+            .context("failed to decode list issue documents response")
+    }
+
     /// Open an SSE connection to GET /v1/events.
     pub async fn subscribe_events(
         &self,
@@ -2197,6 +2280,26 @@ impl MetisClientInterface for MetisClient {
 
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
         MetisClient::delete_document(self, document_id).await
+    }
+
+    async fn link_document(
+        &self,
+        issue_id: &IssueId,
+        document_id: &DocumentId,
+    ) -> Result<IssueDocumentsResponse> {
+        MetisClient::link_document(self, issue_id, document_id).await
+    }
+
+    async fn unlink_document(
+        &self,
+        issue_id: &IssueId,
+        document_id: &DocumentId,
+    ) -> Result<IssueDocumentsResponse> {
+        MetisClient::unlink_document(self, issue_id, document_id).await
+    }
+
+    async fn list_issue_documents(&self, issue_id: &IssueId) -> Result<IssueDocumentsResponse> {
+        MetisClient::list_issue_documents(self, issue_id).await
     }
 
     async fn subscribe_events(

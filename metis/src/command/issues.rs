@@ -365,6 +365,26 @@ pub enum IssueCommands {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
+    /// Link a document to an issue.
+    LinkDocument {
+        /// Issue ID to link the document to.
+        #[arg(value_name = "ISSUE_ID")]
+        issue_id: IssueId,
+
+        /// Document ID to link.
+        #[arg(value_name = "DOCUMENT_ID")]
+        document_id: metis_common::DocumentId,
+    },
+    /// Unlink a document from an issue.
+    UnlinkDocument {
+        /// Issue ID to unlink the document from.
+        #[arg(value_name = "ISSUE_ID")]
+        issue_id: IssueId,
+
+        /// Document ID to unlink.
+        #[arg(value_name = "DOCUMENT_ID")]
+        document_id: metis_common::DocumentId,
+    },
 }
 
 pub async fn run(
@@ -551,6 +571,38 @@ pub async fn run(
         IssueCommands::Changelog { id, limit } => {
             changelog_issue(client, id, context.output_format, limit).await
         }
+        IssueCommands::LinkDocument {
+            issue_id,
+            document_id,
+        } => {
+            let response = client
+                .link_document(&issue_id, &document_id)
+                .await
+                .with_context(|| {
+                    format!("failed to link document '{document_id}' to issue '{issue_id}'")
+                })?;
+            println!(
+                "Linked document '{document_id}' to issue '{issue_id}' ({} document(s) linked)",
+                response.documents.len()
+            );
+            Ok(())
+        }
+        IssueCommands::UnlinkDocument {
+            issue_id,
+            document_id,
+        } => {
+            let response = client
+                .unlink_document(&issue_id, &document_id)
+                .await
+                .with_context(|| {
+                    format!("failed to unlink document '{document_id}' from issue '{issue_id}'")
+                })?;
+            println!(
+                "Unlinked document '{document_id}' from issue '{issue_id}' ({} document(s) linked)",
+                response.documents.len()
+            );
+            Ok(())
+        }
     }
 }
 
@@ -565,6 +617,7 @@ struct IssueDescription {
     issue: IssueWithPatches,
     parents: Vec<IssueWithPatches>,
     children: Vec<IssueWithPatches>,
+    documents: Vec<metis_common::DocumentId>,
     activity_log: Vec<ActivityLogEntry>,
 }
 
@@ -573,6 +626,7 @@ struct IssueDescriptionSummary {
     issue: IssueWithPatches,
     parents: Vec<IssueId>,
     children: Vec<IssueId>,
+    documents: Vec<metis_common::DocumentId>,
     activity_log: Vec<ActivityLogEntrySummary>,
 }
 
@@ -656,6 +710,12 @@ async fn collect_issue_description(
     let children = fetch_child_issues(client, &issue.issue_id).await?;
     let mut patch_cache = HashMap::new();
 
+    let documents = client
+        .list_issue_documents(&issue_id)
+        .await
+        .map(|r| r.documents)
+        .unwrap_or_default();
+
     let issue_with_patches = issue_with_patches(client, issue, &mut patch_cache).await?;
     let parents_with_patches = issues_with_patches(client, parents, &mut patch_cache).await?;
     let children_with_patches = issues_with_patches(client, children, &mut patch_cache).await?;
@@ -671,6 +731,7 @@ async fn collect_issue_description(
         issue: issue_with_patches,
         parents: parents_with_patches,
         children: children_with_patches,
+        documents,
         activity_log,
     })
 }
@@ -688,6 +749,7 @@ fn summarize_issue_description(description: &IssueDescription) -> Result<IssueDe
             .iter()
             .map(|child| child.issue.issue_id.clone())
             .collect(),
+        documents: description.documents.clone(),
         activity_log: summarize_activity_log(&description.activity_log)?,
     })
 }
@@ -1869,6 +1931,15 @@ fn print_issue_description_pretty(
     } else {
         for child in &description.children {
             writeln!(writer, "  {child}")?;
+        }
+    }
+
+    writeln!(writer, "{}", colorize_header("Documents:"))?;
+    if description.documents.is_empty() {
+        writeln!(writer, "  none")?;
+    } else {
+        for doc_id in &description.documents {
+            writeln!(writer, "  {doc_id}")?;
         }
     }
 
@@ -4199,6 +4270,7 @@ mod tests {
                 patches: Vec::new(),
             }],
             children: vec![],
+            documents: vec![],
             activity_log: Vec::new(),
         };
 
@@ -4349,6 +4421,7 @@ mod tests {
             },
             parents: vec![],
             children: vec![],
+            documents: vec![],
             activity_log,
         };
 
@@ -4442,6 +4515,7 @@ mod tests {
                 ),
                 patches: Vec::new(),
             }],
+            documents: vec![],
             activity_log: Vec::new(),
         };
 
@@ -4537,6 +4611,7 @@ mod tests {
                 ),
                 patches: Vec::new(),
             }],
+            documents: vec![],
             activity_log: Vec::new(),
         };
 
@@ -4626,6 +4701,7 @@ mod tests {
             },
             parents: vec![],
             children: vec![],
+            documents: vec![],
             activity_log: Vec::new(),
         };
 

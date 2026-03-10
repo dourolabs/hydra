@@ -12,13 +12,13 @@ use axum::{
     http::request::Parts,
 };
 use metis_common::{
-    IssueId, MetisId,
+    DocumentId, IssueId, MetisId,
     api::v1::{
         ApiError, issues as api_issues,
         pagination::{compute_next_cursor, effective_limit},
     },
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{error, info};
 
@@ -636,6 +636,138 @@ fn map_todo_error(err: UpdateTodoListError) -> ApiError {
         }
         UpdateTodoListError::Store { issue_id, source } => map_issue_error(source, Some(&issue_id)),
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct IssueDocumentPath {
+    pub issue_id: IssueId,
+    pub document_id: DocumentId,
+}
+
+#[async_trait]
+impl<S> FromRequestParts<S> for IssueDocumentPath
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path((issue_id, document_id)) =
+            Path::<(IssueId, DocumentId)>::from_request_parts(parts, state)
+                .await
+                .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+
+        Ok(Self {
+            issue_id,
+            document_id,
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct IssueDocumentsResponse {
+    pub issue_id: IssueId,
+    pub documents: Vec<DocumentId>,
+}
+
+/// PUT /v1/issues/:issue_id/documents/:document_id — link a document to an issue.
+pub async fn link_document(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    IssueDocumentPath {
+        issue_id,
+        document_id,
+    }: IssueDocumentPath,
+) -> Result<Json<IssueDocumentsResponse>, ApiError> {
+    info!(issue_id = %issue_id, document_id = %document_id, "link_document invoked");
+
+    // Verify issue exists
+    state
+        .get_issue(&issue_id, false)
+        .await
+        .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
+
+    // Verify document exists
+    state
+        .get_document(&document_id, false)
+        .await
+        .map_err(|err| {
+            error!(document_id = %document_id, error = %err, "document not found");
+            ApiError::not_found(format!("document '{document_id}' not found"))
+        })?;
+
+    let source_id = MetisId::from(issue_id.clone());
+    let target_id = MetisId::from(document_id);
+    state
+        .link_document(&source_id, &target_id, ActorRef::from(&actor))
+        .await
+        .map_err(|err| {
+            error!(issue_id = %issue_id, error = %err, "failed to link document");
+            ApiError::internal(anyhow!("failed to link document: {err}"))
+        })?;
+
+    let documents = state.list_issue_documents(&issue_id).await.map_err(|err| {
+        error!(issue_id = %issue_id, error = %err, "failed to list issue documents");
+        ApiError::internal(anyhow!("failed to list issue documents: {err}"))
+    })?;
+
+    info!(issue_id = %issue_id, "link_document completed");
+    Ok(Json(IssueDocumentsResponse {
+        issue_id,
+        documents,
+    }))
+}
+
+/// DELETE /v1/issues/:issue_id/documents/:document_id — unlink a document from an issue.
+pub async fn unlink_document(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    IssueDocumentPath {
+        issue_id,
+        document_id,
+    }: IssueDocumentPath,
+) -> Result<Json<IssueDocumentsResponse>, ApiError> {
+    info!(issue_id = %issue_id, document_id = %document_id, "unlink_document invoked");
+
+    let source_id = MetisId::from(issue_id.clone());
+    let target_id = MetisId::from(document_id);
+    state
+        .unlink_document(&source_id, &target_id, ActorRef::from(&actor))
+        .await
+        .map_err(|err| {
+            error!(issue_id = %issue_id, error = %err, "failed to unlink document");
+            ApiError::internal(anyhow!("failed to unlink document: {err}"))
+        })?;
+
+    let documents = state.list_issue_documents(&issue_id).await.map_err(|err| {
+        error!(issue_id = %issue_id, error = %err, "failed to list issue documents");
+        ApiError::internal(anyhow!("failed to list issue documents: {err}"))
+    })?;
+
+    info!(issue_id = %issue_id, "unlink_document completed");
+    Ok(Json(IssueDocumentsResponse {
+        issue_id,
+        documents,
+    }))
+}
+
+/// GET /v1/issues/:issue_id/documents — list documents linked to an issue.
+pub async fn list_issue_documents(
+    State(state): State<AppState>,
+    IssueIdPath(issue_id): IssueIdPath,
+) -> Result<Json<IssueDocumentsResponse>, ApiError> {
+    info!(issue_id = %issue_id, "list_issue_documents invoked");
+
+    let documents = state.list_issue_documents(&issue_id).await.map_err(|err| {
+        error!(issue_id = %issue_id, error = %err, "failed to list issue documents");
+        ApiError::internal(anyhow!("failed to list issue documents: {err}"))
+    })?;
+
+    info!(issue_id = %issue_id, count = documents.len(), "list_issue_documents completed");
+    Ok(Json(IssueDocumentsResponse {
+        issue_id,
+        documents,
+    }))
 }
 
 pub async fn delete_issue(

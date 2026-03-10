@@ -469,6 +469,61 @@ impl AppState {
             })?;
         Ok(todo_list)
     }
+
+    /// Link a document to an issue via the object_relationships table.
+    pub async fn link_document(
+        &self,
+        source_id: &metis_common::MetisId,
+        target_id: &metis_common::MetisId,
+        actor: ActorRef,
+    ) -> Result<bool, StoreError> {
+        self.store
+            .add_relationship_with_actor(
+                source_id,
+                target_id,
+                crate::store::RelationshipType::HasDocument,
+                actor,
+            )
+            .await
+    }
+
+    /// Unlink a document from an issue via the object_relationships table.
+    pub async fn unlink_document(
+        &self,
+        source_id: &metis_common::MetisId,
+        target_id: &metis_common::MetisId,
+        actor: ActorRef,
+    ) -> Result<bool, StoreError> {
+        self.store
+            .remove_relationship_with_actor(
+                source_id,
+                target_id,
+                crate::store::RelationshipType::HasDocument,
+                actor,
+            )
+            .await
+    }
+
+    /// List document IDs linked to an issue.
+    pub async fn list_issue_documents(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<metis_common::DocumentId>, StoreError> {
+        let source_id = metis_common::MetisId::from(issue_id.clone());
+        let relationships = self
+            .store
+            .get_relationships(
+                Some(&source_id),
+                None,
+                Some(crate::store::RelationshipType::HasDocument),
+            )
+            .await?;
+        let document_ids: Vec<metis_common::DocumentId> = relationships
+            .into_iter()
+            .filter_map(|rel| metis_common::DocumentId::try_from(rel.target_id).ok())
+            .collect();
+        Ok(document_ids)
+    }
 }
 
 fn issue_ready<'a>(
