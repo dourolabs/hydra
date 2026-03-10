@@ -6944,4 +6944,186 @@ mod tests {
         let leaf_rows = store.get_issue_subtrees(&[leaf]).await.unwrap();
         assert!(leaf_rows.is_empty());
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_issues_returns_total_matching_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        // Create 5 issues: 3 open tasks, 1 open bug, 1 closed task
+        for _ in 0..3 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        }
+        let bug = Issue::new(
+            IssueType::Bug,
+            "Bug Title".to_string(),
+            "a bug".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(bug, &actor).await.unwrap();
+
+        let closed = Issue::new(
+            IssueType::Task,
+            "Closed".to_string(),
+            "closed task".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Closed,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(closed, &actor).await.unwrap();
+
+        // Count all issues
+        let query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
+
+        // Count only bugs
+        let query = SearchIssuesQuery::new(
+            Some(metis_common::api::v1::issues::IssueType::Bug),
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+
+        // Count only closed
+        let query = SearchIssuesQuery::new(
+            None,
+            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_patches_returns_total_matching_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        for _ in 0..3 {
+            store.add_patch(sample_patch(), &actor).await.unwrap();
+        }
+
+        let query = SearchPatchesQuery::new(None, None, Vec::new(), None);
+        assert_eq!(store.count_patches(&query).await.unwrap(), 3);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_documents_returns_total_matching_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        store
+            .add_document(sample_document("docs/a.md", None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document("docs/b.md", None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document("other/c.md", None), &actor)
+            .await
+            .unwrap();
+
+        // Count all
+        let query = SearchDocumentsQuery::new(None, None, None, None, None);
+        assert_eq!(store.count_documents(&query).await.unwrap(), 3);
+
+        // Count with path prefix filter
+        let query = SearchDocumentsQuery::new(Some("docs/".to_string()), None, None, None, None);
+        assert_eq!(store.count_documents(&query).await.unwrap(), 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_tasks_returns_total_matching_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        for _ in 0..4 {
+            store
+                .add_task(sample_task(), Utc::now(), &actor)
+                .await
+                .unwrap();
+        }
+
+        let query = SearchJobsQuery::new(None, None, None, None);
+        assert_eq!(store.count_tasks(&query).await.unwrap(), 4);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_labels_returns_total_matching_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let default_color: metis_common::Rgb = "#000000".parse().unwrap();
+
+        store
+            .add_label(Label::new(
+                "bug".to_string(),
+                default_color.clone(),
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+        store
+            .add_label(Label::new(
+                "feature".to_string(),
+                default_color.clone(),
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+        store
+            .add_label(Label::new("bugfix".to_string(), default_color, true, false))
+            .await
+            .unwrap();
+
+        // Count all
+        let query = SearchLabelsQuery::default();
+        assert_eq!(store.count_labels(&query).await.unwrap(), 3);
+
+        // Count with search filter
+        let mut query = SearchLabelsQuery::default();
+        query.q = Some("bug".to_string());
+        assert_eq!(store.count_labels(&query).await.unwrap(), 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_issues_ignores_pagination_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        for _ in 0..5 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Count should return 5 even when limit is set
+        let mut query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        query.limit = Some(2);
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
+    }
 }
