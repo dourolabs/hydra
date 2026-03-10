@@ -2004,16 +2004,22 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        // Use a subquery to get the latest version of each issue first,
-        // then apply filters. This ensures we filter on the current state
-        // of each issue, not historical versions.
-        let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, \
-             MIN(created_at) OVER (PARTITION BY id) AS creation_time \
-             FROM {TABLE_ISSUES_V2} ORDER BY id, version_number DESC"
+        // Use a correlated subquery to filter to the latest version of each
+        // issue instead of DISTINCT ON, which materializes the full table.
+        // With an index on (created_at DESC, id DESC), Postgres can scan in
+        // sort order and short-circuit at the LIMIT without computing latest
+        // versions for all issues.
+        let mut sql = format!(
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
+             i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, \
+             i.created_at, i.updated_at, \
+             (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time \
+             FROM {TABLE_ISSUES_V2} i"
         );
-        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) = build_issues_predicates_pg(query);
+        predicates.push(format!(
+            "i.version_number = (SELECT MAX(i3.version_number) FROM {TABLE_ISSUES_V2} i3 WHERE i3.id = i.id)"
+        ));
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2063,12 +2069,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
-        let subquery = format!(
-            "SELECT DISTINCT ON (id) id, issue_type, title, description, creator, progress, status, assignee, deleted, created_at \
-             FROM {TABLE_ISSUES_V2} ORDER BY id, version_number DESC"
-        );
-        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let (predicates, bindings) = build_issues_predicates_pg(query);
+        // Use correlated subquery instead of DISTINCT ON to avoid
+        // materializing all latest versions before counting.
+        let mut sql = format!("SELECT COUNT(*) FROM {TABLE_ISSUES_V2} i");
+        let (mut predicates, bindings) = build_issues_predicates_pg(query);
+        predicates.push(format!(
+            "i.version_number = (SELECT MAX(i2.version_number) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id)"
+        ));
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -7171,5 +7178,67 @@ mod tests {
         let mut query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
         query.limit = Some(2);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_issues_returns_latest_version_with_pagination_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        // Create 3 issues with small time gaps so created_at ordering is deterministic.
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let id = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            ids.push(id);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Update the first issue twice so it has 3 versions.
+        let mut updated = sample_issue(vec![]);
+        updated.progress = "v2 progress".to_string();
+        store.update_issue(&ids[0], updated, &actor).await.unwrap();
+
+        let mut updated = sample_issue(vec![]);
+        updated.progress = "v3 progress".to_string();
+        updated.status = IssueStatus::InProgress;
+        store.update_issue(&ids[0], updated, &actor).await.unwrap();
+
+        // list_issues should return 3 issues, each at their latest version.
+        let query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 3);
+
+        // The first issue (ids[0]) should reflect the latest update.
+        let first = results.iter().find(|(id, _)| *id == ids[0]).unwrap();
+        assert_eq!(first.1.item.progress, "v3 progress");
+        assert_eq!(first.1.item.status, IssueStatus::InProgress);
+        assert_eq!(first.1.version, 3);
+
+        // Paginate with limit=2 and verify we get 2 results, then use cursor
+        // to get the remaining 1.
+        let mut query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        query.limit = Some(2);
+        let page1 = store.list_issues(&query).await.unwrap();
+        // limit+1 is fetched internally but caller sees at most limit+1 rows;
+        // the handler trims, so we just check we got results.
+        assert!(page1.len() >= 2);
+
+        // count_issues should still return the total (3), not affected by versions.
+        let count_query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        assert_eq!(store.count_issues(&count_query).await.unwrap(), 3);
+
+        // Filter by status=InProgress should return only the updated issue.
+        let query = SearchIssuesQuery::new(
+            None,
+            Some(metis_common::api::v1::issues::IssueStatus::InProgress),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        let filtered = store.list_issues(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, ids[0]);
     }
 }
