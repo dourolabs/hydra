@@ -516,16 +516,6 @@ impl ReadOnlyStore for MemoryStore {
                 ) {
                     return None;
                 }
-                // Filter by status group
-                if let Some(status_group) = query.status_group.as_ref() {
-                    use metis_common::api::v1::issues::StatusGroup;
-                    let is_terminal = latest.item.status.is_terminal();
-                    match status_group {
-                        StatusGroup::Active if is_terminal => return None,
-                        StatusGroup::Completed if !is_terminal => return None,
-                        _ => {}
-                    }
-                }
                 // Filter by label IDs (AND semantics: issue must have ALL specified labels)
                 if !query.label_ids.is_empty() {
                     let object_id = MetisId::from(issue_id.clone());
@@ -904,8 +894,7 @@ impl ReadOnlyStore for MemoryStore {
             return Ok(HashMap::new());
         }
 
-        let issue_id_set: std::collections::HashSet<&IssueId> =
-            issue_ids.iter().collect();
+        let issue_id_set: std::collections::HashSet<&IssueId> = issue_ids.iter().collect();
 
         // Collect relevant task data as owned values to avoid DashMap lifetime issues
         struct TaskInfo {
@@ -956,10 +945,7 @@ impl ReadOnlyStore for MemoryStore {
                 .iter()
                 .filter(|t| matches!(t.status, Status::Running | Status::Pending))
                 .count() as u32;
-            let failed = tasks
-                .iter()
-                .filter(|t| t.status == Status::Failed)
-                .count() as u32;
+            let failed = tasks.iter().filter(|t| t.status == Status::Failed).count() as u32;
 
             let latest = tasks.iter().max_by_key(|t| t.creation_time);
             let (latest_job_id, latest_job_status, latest_start_time, latest_end_time) =

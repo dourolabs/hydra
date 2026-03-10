@@ -313,7 +313,7 @@ pub async fn list_issues(
         })?;
 
     // Optionally compute jobs summary per issue
-    let wants_jobs_summary = query.wants_jobs_summary();
+    let wants_jobs_summary = query.include_job_status.unwrap_or(false);
     let jobs_summary_map: HashMap<IssueId, api_issues::JobStatusSummary> = if wants_jobs_summary {
         build_jobs_summary_map(&state, &issues).await?
     } else {
