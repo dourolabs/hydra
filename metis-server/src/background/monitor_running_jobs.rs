@@ -39,23 +39,25 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
         };
         self.state.cleanup_orphaned_tasks(cleanup_actor).await;
 
-        let mut active_ids = Vec::new();
-        for status in [Status::Pending, Status::Running] {
-            let query = SearchJobsQuery::new(None, None, None, Some(status.into()));
-            match self.state.list_tasks_with_query(&query).await {
-                Ok(tasks) => active_ids.extend(tasks.into_iter().map(|(id, _)| id)),
-                Err(err) => {
-                    error!(error = %err, "failed to list active tasks");
-                    info!(
-                        worker = WORKER_NAME,
-                        "worker iteration completed with transient error"
-                    );
-                    return WorkerOutcome::TransientError {
-                        reason: err.to_string(),
-                    };
-                }
+        let query = SearchJobsQuery::new(
+            None,
+            None,
+            None,
+            vec![Status::Pending.into(), Status::Running.into()],
+        );
+        let active_ids: Vec<_> = match self.state.list_tasks_with_query(&query).await {
+            Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
+            Err(err) => {
+                error!(error = %err, "failed to list active tasks");
+                info!(
+                    worker = WORKER_NAME,
+                    "worker iteration completed with transient error"
+                );
+                return WorkerOutcome::TransientError {
+                    reason: err.to_string(),
+                };
             }
-        }
+        };
 
         if active_ids.is_empty() {
             info!(worker = WORKER_NAME, "no active tasks found; worker idle");

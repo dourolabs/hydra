@@ -343,9 +343,10 @@ impl MemoryStore {
                 }
             }
 
-            if let Some(expected_status) = query.status {
-                let server_status: Status = expected_status.into();
-                if latest.item.status != server_status {
+            if !query.status.is_empty() {
+                let status_filter: Vec<Status> =
+                    query.status.iter().copied().map(Into::into).collect();
+                if !status_filter.contains(&latest.item.status) {
                     return None;
                 }
             }
@@ -4511,7 +4512,7 @@ mod tests {
 
         // Deleted task should appear with include_deleted=true
         let tasks = store
-            .list_tasks(&SearchJobsQuery::new(None, None, Some(true), None))
+            .list_tasks(&SearchJobsQuery::new(None, None, Some(true), vec![]))
             .await
             .unwrap();
         assert_eq!(tasks.len(), 1);
@@ -4855,7 +4856,7 @@ mod tests {
             .unwrap();
 
         // Filter by issue_a should return only tasks spawned from issue_a
-        let query = SearchJobsQuery::new(None, Some(issue_a.clone()), None, None);
+        let query = SearchJobsQuery::new(None, Some(issue_a.clone()), None, vec![]);
         let tasks: HashSet<_> = store
             .list_tasks(&query)
             .await
@@ -4869,7 +4870,7 @@ mod tests {
         );
 
         // Filter by issue_b should return only tasks spawned from issue_b
-        let query = SearchJobsQuery::new(None, Some(issue_b.clone()), None, None);
+        let query = SearchJobsQuery::new(None, Some(issue_b.clone()), None, vec![]);
         let tasks: HashSet<_> = store
             .list_tasks(&query)
             .await
@@ -4920,7 +4921,7 @@ mod tests {
             .unwrap();
 
         // Search for "auth" should match task1
-        let query = SearchJobsQuery::new(Some("auth".to_string()), None, None, None);
+        let query = SearchJobsQuery::new(Some("auth".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -4931,7 +4932,7 @@ mod tests {
         assert_eq!(tasks, vec![task1_id.clone()]);
 
         // Search for "login" should match task2
-        let query = SearchJobsQuery::new(Some("login".to_string()), None, None, None);
+        let query = SearchJobsQuery::new(Some("login".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -4942,7 +4943,7 @@ mod tests {
         assert_eq!(tasks, vec![task2_id.clone()]);
 
         // Search for "FIX" (case-insensitive) should match task1
-        let query = SearchJobsQuery::new(Some("FIX".to_string()), None, None, None);
+        let query = SearchJobsQuery::new(Some("FIX".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -4953,12 +4954,12 @@ mod tests {
         assert_eq!(tasks, vec![task1_id.clone()]);
 
         // Search for "nonexistent" should return empty
-        let query = SearchJobsQuery::new(Some("nonexistent".to_string()), None, None, None);
+        let query = SearchJobsQuery::new(Some("nonexistent".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store.list_tasks(&query).await.unwrap();
         assert!(tasks.is_empty());
 
         // Empty search term should return all tasks
-        let query = SearchJobsQuery::new(Some("".to_string()), None, None, None);
+        let query = SearchJobsQuery::new(Some("".to_string()), None, None, vec![]);
         let tasks: HashSet<_> = store
             .list_tasks(&query)
             .await
@@ -4981,7 +4982,7 @@ mod tests {
 
         // Search by partial task ID
         let id_prefix = &task_id.as_ref()[..6]; // First 6 characters
-        let query = SearchJobsQuery::new(Some(id_prefix.to_string()), None, None, None);
+        let query = SearchJobsQuery::new(Some(id_prefix.to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -5129,7 +5130,7 @@ mod tests {
             .unwrap();
 
         // Search for "created" should match task1
-        let query = SearchJobsQuery::new(Some("created".to_string()), None, None, None);
+        let query = SearchJobsQuery::new(Some("created".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -5140,7 +5141,7 @@ mod tests {
         assert_eq!(tasks, vec![task1_id]);
 
         // Search for "running" should match task2
-        let query = SearchJobsQuery::new(Some("running".to_string()), None, None, None);
+        let query = SearchJobsQuery::new(Some("running".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -5151,7 +5152,7 @@ mod tests {
         assert_eq!(tasks, vec![task2_id]);
 
         // Search for "complete" should match task3
-        let query = SearchJobsQuery::new(Some("complete".to_string()), None, None, None);
+        let query = SearchJobsQuery::new(Some("complete".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -5200,7 +5201,7 @@ mod tests {
             .unwrap();
 
         // Filter by Created should return only task1
-        let query = SearchJobsQuery::new(None, None, None, Some(Status::Created.into()));
+        let query = SearchJobsQuery::new(None, None, None, vec![Status::Created.into()]);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -5211,7 +5212,7 @@ mod tests {
         assert_eq!(tasks, vec![task1_id]);
 
         // Filter by Running should return only task2
-        let query = SearchJobsQuery::new(None, None, None, Some(Status::Running.into()));
+        let query = SearchJobsQuery::new(None, None, None, vec![Status::Running.into()]);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -5222,7 +5223,7 @@ mod tests {
         assert_eq!(tasks, vec![task2_id]);
 
         // Filter by Complete should return only task3
-        let query = SearchJobsQuery::new(None, None, None, Some(Status::Complete.into()));
+        let query = SearchJobsQuery::new(None, None, None, vec![Status::Complete.into()]);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -5233,12 +5234,12 @@ mod tests {
         assert_eq!(tasks, vec![task3_id]);
 
         // Filter by Failed should return no tasks
-        let query = SearchJobsQuery::new(None, None, None, Some(Status::Failed.into()));
+        let query = SearchJobsQuery::new(None, None, None, vec![Status::Failed.into()]);
         let tasks: Vec<_> = store.list_tasks(&query).await.unwrap();
         assert!(tasks.is_empty());
 
         // No status filter should return all tasks
-        let query = SearchJobsQuery::new(None, None, None, None);
+        let query = SearchJobsQuery::new(None, None, None, vec![]);
         let tasks: Vec<_> = store
             .list_tasks(&query)
             .await
@@ -6586,7 +6587,7 @@ mod tests {
                 .unwrap();
         }
 
-        let query = metis_common::api::v1::jobs::SearchJobsQuery::new(None, None, None, None);
+        let query = metis_common::api::v1::jobs::SearchJobsQuery::new(None, None, None, vec![]);
         assert_eq!(store.count_tasks(&query).await.unwrap(), 4);
     }
 

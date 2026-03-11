@@ -48,7 +48,7 @@ async fn stream_logs_for_issue(
             None,
             Some(issue_id.clone()),
             None,
-            None,
+            vec![],
         ))
         .await
         .with_context(|| format!("failed to find jobs for issue '{issue_id}'"))?

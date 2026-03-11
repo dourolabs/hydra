@@ -1720,10 +1720,24 @@ fn build_tasks_predicates_pg(query: &SearchJobsQuery) -> (Vec<String>, Vec<Strin
         bindings.push(pattern);
     }
 
-    if let Some(status) = query.status {
-        let server_status: Status = status.into();
-        predicates.push(format!("status = ${}", bindings.len() + 1));
-        bindings.push(status_to_db_str(server_status).to_string());
+    if !query.status.is_empty() {
+        let status_strings: Vec<String> = query
+            .status
+            .iter()
+            .map(|s| {
+                let server_status: Status = (*s).into();
+                status_to_db_str(server_status).to_string()
+            })
+            .collect();
+        let placeholders: Vec<String> = status_strings
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("status IN ({})", placeholders.join(", ")));
+        for s in status_strings {
+            bindings.push(s);
+        }
     }
 
     if !query.include_deleted.unwrap_or(false) {
@@ -2126,7 +2140,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
         // Use spawned_from filter at the database level for efficiency
-        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, None);
+        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, vec![]);
         let tasks = self.list_tasks(&query).await?;
         Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }
@@ -4951,7 +4965,7 @@ mod tests {
         let tasks = handles.store.get_tasks_for_issue(&issue_id).await.unwrap();
         assert_eq!(tasks, vec![task_id.clone()]);
 
-        let query = SearchJobsQuery::new(None, None, None, Some(Status::Complete.into()));
+        let query = SearchJobsQuery::new(None, None, None, vec![Status::Complete.into()]);
         let complete: Vec<_> = handles
             .store
             .list_tasks(&query)
@@ -6874,7 +6888,7 @@ mod tests {
                 .unwrap();
         }
 
-        let query = SearchJobsQuery::new(None, None, None, None);
+        let query = SearchJobsQuery::new(None, None, None, vec![]);
         assert_eq!(store.count_tasks(&query).await.unwrap(), 4);
     }
 

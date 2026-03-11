@@ -365,7 +365,7 @@ impl TestHarness {
             None,
             None,
             None,
-            Some(metis_server::store::Status::Created.into()),
+            vec![metis_server::store::Status::Created.into()],
         );
         let before: Vec<TaskId> = self
             .state
