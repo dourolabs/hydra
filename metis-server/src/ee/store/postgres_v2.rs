@@ -7189,7 +7189,7 @@ mod tests {
         // Create 3 issues with small time gaps so created_at ordering is deterministic.
         let mut ids = Vec::new();
         for _ in 0..3 {
-            let id = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            let (id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
             ids.push(id);
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
