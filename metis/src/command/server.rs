@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::{self, BufRead, Write},
-    path::{Path, PathBuf},
+    path::Path,
     process::Command,
     thread,
     time::Duration,
@@ -23,17 +23,8 @@ const PID_FILE_PATH: &str = "~/.metis/server/metis-server.pid";
 const LOG_DIR: &str = "~/.metis/server/logs";
 const LOG_FILE_PATH: &str = "~/.metis/server/logs/metis-server.log";
 const SERVER_DB_PATH: &str = "~/.metis/server/metis.db";
-const BIN_DIR: &str = "~/.metis/bin";
 
 const LOCAL_SERVER_URL: &str = "http://127.0.0.1:8080";
-
-#[cfg(target_os = "macos")]
-const LAUNCHD_LABEL: &str = "dev.metis.server";
-#[cfg(target_os = "macos")]
-const LAUNCHD_PLIST_PATH: &str = "~/Library/LaunchAgents/dev.metis.server.plist";
-
-#[cfg(target_os = "linux")]
-const SYSTEMD_UNIT_NAME: &str = "metis-server.service";
 
 #[derive(Debug, Subcommand)]
 pub enum ServerCommand {
@@ -93,13 +84,10 @@ fn cmd_init() -> Result<()> {
 
     // Create directory structure.
     let log_dir = expand_path(LOG_DIR);
-    let bin_dir = expand_path(BIN_DIR);
     fs::create_dir_all(&server_dir)
         .with_context(|| format!("failed to create {}", server_dir.display()))?;
     fs::create_dir_all(&log_dir)
         .with_context(|| format!("failed to create {}", log_dir.display()))?;
-    fs::create_dir_all(&bin_dir)
-        .with_context(|| format!("failed to create {}", bin_dir.display()))?;
 
     // Write server config.
     let db_path = expand_path(SERVER_DB_PATH);
@@ -115,9 +103,9 @@ fn cmd_init() -> Result<()> {
 
     println!("Server config written to {}", config_path.display());
 
-    // Start the server so it creates the local user and auth token.
+    // Start the server in-process so it creates the local user and auth token.
     println!("Starting server...");
-    start_server_process()?;
+    start_server_in_process()?;
 
     // Wait for the auth token file to appear (the server writes it on startup).
     let token_path = expand_path(AUTH_TOKEN_PATH);
@@ -246,180 +234,15 @@ fn cmd_start() -> Result<()> {
         return Ok(());
     }
 
-    start_server_process()?;
+    start_server_in_process()?;
     println!("Server started.");
     Ok(())
 }
 
-fn start_server_process() -> Result<()> {
-    start_server_platform()
-}
-
-#[cfg(target_os = "macos")]
-fn start_server_platform() -> Result<()> {
-    start_with_launchd()
-}
-
-#[cfg(target_os = "linux")]
-fn start_server_platform() -> Result<()> {
-    start_with_systemd().or_else(|_| start_with_pid_file())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn start_server_platform() -> Result<()> {
-    start_with_pid_file()
-}
-
-fn find_server_binary() -> Result<PathBuf> {
-    // Look for metis-server at ~/.metis/bin/metis-server first, then in PATH.
-    let local_bin = expand_path(BIN_DIR).join("metis-server");
-    if local_bin.exists() {
-        return Ok(local_bin);
-    }
-
-    which_server_binary()
-}
-
-fn which_server_binary() -> Result<PathBuf> {
-    let output = Command::new("which")
-        .arg("metis-server")
-        .output()
-        .context("failed to search PATH for metis-server")?;
-
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Ok(PathBuf::from(path));
-        }
-    }
-
-    bail!(
-        "metis-server binary not found. \
-         Install it at ~/.metis/bin/metis-server or ensure it is in your PATH."
-    );
-}
-
-#[cfg(target_os = "macos")]
-fn start_with_launchd() -> Result<()> {
-    let server_binary = find_server_binary()?;
-    let config_path = expand_path(SERVER_CONFIG_PATH);
-    let log_file = expand_path(LOG_FILE_PATH);
-    let plist_path = expand_path(LAUNCHD_PLIST_PATH);
-
-    // Create the plist directory if needed.
-    if let Some(parent) = plist_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let plist_content = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{LAUNCHD_LABEL}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{server_binary}</string>
-    </array>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>METIS_CONFIG</key>
-        <string>{config_path}</string>
-    </dict>
-    <key>RunAtLoad</key>
-    <false/>
-    <key>KeepAlive</key>
-    <false/>
-    <key>StandardOutPath</key>
-    <string>{log_file}</string>
-    <key>StandardErrorPath</key>
-    <string>{log_file}</string>
-</dict>
-</plist>
-"#,
-        server_binary = server_binary.display(),
-        config_path = config_path.display(),
-        log_file = log_file.display(),
-    );
-
-    fs::write(&plist_path, plist_content)
-        .with_context(|| format!("failed to write plist to {}", plist_path.display()))?;
-
-    let status = Command::new("launchctl")
-        .args(["load", "-w"])
-        .arg(&plist_path)
-        .status()
-        .context("failed to run launchctl load")?;
-
-    ensure!(status.success(), "launchctl load failed");
-
-    let status = Command::new("launchctl")
-        .args(["start", LAUNCHD_LABEL])
-        .status()
-        .context("failed to run launchctl start")?;
-
-    ensure!(status.success(), "launchctl start failed");
-
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn start_with_systemd() -> Result<()> {
-    let server_binary = find_server_binary()?;
-    let config_path = expand_path(SERVER_CONFIG_PATH);
-
-    let unit_dir = expand_path("~/.config/systemd/user");
-    fs::create_dir_all(&unit_dir)
-        .with_context(|| format!("failed to create {}", unit_dir.display()))?;
-
-    let unit_path = unit_dir.join(SYSTEMD_UNIT_NAME);
-
-    let unit_content = format!(
-        r#"[Unit]
-Description=Metis Server
-After=network.target
-
-[Service]
-Type=simple
-ExecStart={server_binary}
-Environment=METIS_CONFIG={config_path}
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-"#,
-        server_binary = server_binary.display(),
-        config_path = config_path.display(),
-    );
-
-    fs::write(&unit_path, unit_content)
-        .with_context(|| format!("failed to write systemd unit to {}", unit_path.display()))?;
-
-    // Reload systemd to pick up the new/changed unit file.
-    let reload = Command::new("systemctl")
-        .args(["--user", "daemon-reload"])
-        .status();
-    if reload.is_err() || !reload.unwrap().success() {
-        bail!("systemctl --user daemon-reload failed; falling back to PID file");
-    }
-
-    let status = Command::new("systemctl")
-        .args(["--user", "start", SYSTEMD_UNIT_NAME])
-        .status()
-        .context("failed to start systemd unit")?;
-
-    ensure!(
-        status.success(),
-        "systemctl --user start {SYSTEMD_UNIT_NAME} failed"
-    );
-
-    Ok(())
-}
-
-fn start_with_pid_file() -> Result<()> {
-    let server_binary = find_server_binary()?;
+/// Start the server in-process by forking the current process and running
+/// `metis_server::run()` in the child. The child's PID is written to the
+/// PID file so that `metis server stop` can find it.
+fn start_server_in_process() -> Result<()> {
     let config_path = expand_path(SERVER_CONFIG_PATH);
     let log_file = expand_path(LOG_FILE_PATH);
     let pid_file = expand_path(PID_FILE_PATH);
@@ -429,25 +252,72 @@ fn start_with_pid_file() -> Result<()> {
         fs::create_dir_all(parent)?;
     }
 
-    let log_handle = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file)
-        .with_context(|| format!("failed to open log file {}", log_file.display()))?;
+    // Set the server config env var so `metis_server::run()` can find it.
+    // This is safe because we run before the tokio runtime is created
+    // (no other threads exist yet).
+    std::env::set_var("METIS_CONFIG", &config_path);
 
-    let stderr_handle = log_handle
-        .try_clone()
-        .context("failed to clone log file handle")?;
+    // Fork the process. The child runs the server; the parent records
+    // the child PID and returns.
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::IntoRawFd;
 
-    let child = Command::new(&server_binary)
-        .env("METIS_CONFIG", &config_path)
-        .stdout(log_handle)
-        .stderr(stderr_handle)
-        .spawn()
-        .with_context(|| format!("failed to start {}", server_binary.display()))?;
+        // Open the log file for the child's stdout/stderr.
+        let log_handle = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file)
+            .with_context(|| format!("failed to open log file {}", log_file.display()))?;
+        let log_fd = log_handle.into_raw_fd();
 
-    fs::write(&pid_file, child.id().to_string())
-        .with_context(|| format!("failed to write PID file {}", pid_file.display()))?;
+        // Safety: fork() is called before the tokio runtime is created.
+        // main() handles the server subcommand synchronously before calling
+        // tokio::runtime::Runtime::new(), so no worker threads exist yet.
+        let fork_result = unsafe { libc::fork() };
+        match fork_result {
+            -1 => bail!("fork() failed: {}", io::Error::last_os_error()),
+            0 => {
+                // Child process — become a new session leader (detach from terminal).
+                unsafe {
+                    libc::setsid();
+                }
+
+                // Redirect stdout and stderr to the log file.
+                unsafe {
+                    libc::dup2(log_fd, libc::STDOUT_FILENO);
+                    libc::dup2(log_fd, libc::STDERR_FILENO);
+                    libc::close(log_fd);
+                }
+
+                // Build a new tokio runtime and run the server.
+                let rt = tokio::runtime::Runtime::new()
+                    .expect("failed to create tokio runtime for in-process server");
+                let result = rt.block_on(metis_server::run());
+                if let Err(e) = result {
+                    eprintln!("metis-server exited with error: {e:#}");
+                    std::process::exit(1);
+                }
+                std::process::exit(0);
+            }
+            child_pid => {
+                // Parent process — record the child PID.
+                unsafe {
+                    libc::close(log_fd);
+                }
+                fs::write(&pid_file, child_pid.to_string())
+                    .with_context(|| format!("failed to write PID file {}", pid_file.display()))?;
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        bail!(
+            "In-process server startup via fork is only supported on Unix. \
+             Please run `metis-server` as a separate process."
+        );
+    }
 
     Ok(())
 }
@@ -458,67 +328,10 @@ fn start_with_pid_file() -> Result<()> {
 
 fn cmd_stop() -> Result<()> {
     ensure_initialized()?;
-    stop_server_platform()
+    stop_server()
 }
 
-#[cfg(target_os = "macos")]
-fn stop_server_platform() -> Result<()> {
-    stop_with_launchd()
-}
-
-#[cfg(target_os = "linux")]
-fn stop_server_platform() -> Result<()> {
-    stop_with_systemd().or_else(|_| stop_with_pid_file())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn stop_server_platform() -> Result<()> {
-    stop_with_pid_file()
-}
-
-#[cfg(target_os = "macos")]
-fn stop_with_launchd() -> Result<()> {
-    let plist_path = expand_path(LAUNCHD_PLIST_PATH);
-    if !plist_path.exists() {
-        // Fall back to PID file if launchd plist doesn't exist.
-        return stop_with_pid_file();
-    }
-
-    let _ = Command::new("launchctl")
-        .args(["stop", LAUNCHD_LABEL])
-        .status();
-
-    let status = Command::new("launchctl")
-        .args(["unload"])
-        .arg(&plist_path)
-        .status()
-        .context("failed to run launchctl unload")?;
-
-    if status.success() {
-        println!("Server stopped.");
-    } else {
-        println!("launchctl unload returned non-zero; server may already be stopped.");
-    }
-
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn stop_with_systemd() -> Result<()> {
-    let status = Command::new("systemctl")
-        .args(["--user", "stop", SYSTEMD_UNIT_NAME])
-        .status()
-        .context("failed to run systemctl stop")?;
-
-    if status.success() {
-        println!("Server stopped.");
-        Ok(())
-    } else {
-        bail!("systemctl --user stop failed; falling back to PID file");
-    }
-}
-
-fn stop_with_pid_file() -> Result<()> {
+fn stop_server() -> Result<()> {
     let pid_file = expand_path(PID_FILE_PATH);
     if !pid_file.exists() {
         println!("Server is not running (no PID file found).");
