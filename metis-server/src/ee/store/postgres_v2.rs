@@ -1286,16 +1286,6 @@ struct ObjectRelationshipRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct SubtreeQueryRow {
-    issue_id: String,
-    parent_id: String,
-    status: String,
-    title: String,
-    assignee: Option<String>,
-    has_active_task: Option<bool>,
-}
-
-#[derive(sqlx::FromRow)]
 struct IssueRow {
     id: String,
     version_number: i64,
@@ -1371,18 +1361,6 @@ struct TaskRow {
     start_time: Option<DateTime<Utc>>,
     #[sqlx(default)]
     end_time: Option<DateTime<Utc>>,
-}
-
-#[derive(sqlx::FromRow)]
-struct JobsSummaryRow {
-    spawned_from: String,
-    total: i32,
-    running: i32,
-    failed: i32,
-    latest_job_id: Option<String>,
-    latest_job_status: Option<String>,
-    latest_start_time: Option<DateTime<Utc>>,
-    latest_end_time: Option<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2124,90 +2102,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .collect()
     }
 
-    async fn get_issue_subtrees(
-        &self,
-        root_ids: &[IssueId],
-    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, StoreError> {
-        if root_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Build parameter placeholders $1, $2, ...
-        let placeholders: Vec<String> = (1..=root_ids.len()).map(|i| format!("${i}")).collect();
-        let placeholders_str = placeholders.join(", ");
-        let rel_param = format!("${}", root_ids.len() + 1);
-
-        let sql = format!(
-            "WITH RECURSIVE subtree AS ( \
-                SELECT source_id AS issue_id, target_id AS parent_id \
-                FROM {TABLE_OBJECT_RELATIONSHIPS} \
-                WHERE target_id IN ({placeholders_str}) AND rel_type = {rel_param} \
-                UNION \
-                SELECT r.source_id AS issue_id, s.issue_id AS parent_id \
-                FROM subtree s \
-                JOIN {TABLE_OBJECT_RELATIONSHIPS} r ON r.target_id = s.issue_id \
-                WHERE r.rel_type = {rel_param} \
-            ) \
-            SELECT \
-                s.issue_id, \
-                s.parent_id, \
-                i.status, \
-                i.title, \
-                i.assignee, \
-                active_check.has_active_task \
-            FROM subtree s \
-            JOIN LATERAL ( \
-                SELECT status, title, assignee \
-                FROM {TABLE_ISSUES_V2} \
-                WHERE id = s.issue_id \
-                ORDER BY version_number DESC \
-                LIMIT 1 \
-            ) i ON true \
-            JOIN LATERAL ( \
-                SELECT EXISTS ( \
-                    SELECT 1 FROM ( \
-                        SELECT DISTINCT ON (id) id, status \
-                        FROM {TABLE_TASKS_V2} \
-                        WHERE spawned_from = s.issue_id AND deleted = false \
-                        ORDER BY id, version_number DESC \
-                    ) t WHERE t.status IN ('running', 'pending') \
-                ) AS has_active_task \
-            ) active_check ON true \
-            ORDER BY s.parent_id, s.issue_id"
-        );
-
-        let mut query = sqlx::query_as::<_, SubtreeQueryRow>(&sql);
-        for id in root_ids {
-            query = query.bind(id.as_ref());
-        }
-        query = query.bind(crate::store::RelationshipType::ChildOf.as_str());
-
-        let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
-
-        rows.into_iter()
-            .map(|row| {
-                let issue_id = row.issue_id.parse::<IssueId>().map_err(|e| {
-                    StoreError::Internal(format!("invalid issue id in subtree: {e}"))
-                })?;
-                let parent_id = row.parent_id.parse::<IssueId>().map_err(|e| {
-                    StoreError::Internal(format!("invalid parent id in subtree: {e}"))
-                })?;
-                let status = row
-                    .status
-                    .parse::<crate::domain::issues::IssueStatus>()
-                    .unwrap_or_default();
-                Ok(crate::domain::issues::SubtreeIssueRow {
-                    issue_id,
-                    parent_id,
-                    status,
-                    title: row.title,
-                    assignee: row.assignee,
-                    has_active_task: row.has_active_task.unwrap_or(false),
-                })
-            })
-            .collect()
-    }
-
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
         let sql = format!(
@@ -2760,82 +2654,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
         }
 
         Ok(tasks)
-    }
-
-    async fn get_jobs_summary_for_issues(
-        &self,
-        issue_ids: &[IssueId],
-    ) -> Result<HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>, StoreError> {
-        use metis_common::api::v1::issues::JobStatusSummary;
-        use metis_common::api::v1::task_status::Status as ApiTaskStatus;
-
-        if issue_ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        // Build placeholders for the IN clause
-        let placeholders: Vec<String> = (1..=issue_ids.len()).map(|i| format!("${i}")).collect();
-        let in_clause = placeholders.join(", ");
-
-        // Build the subquery to get only the latest version of each task,
-        // filtering by spawned_from inside the subquery to avoid scanning all tasks.
-        let sql = format!(
-            "SELECT \
-                spawned_from, \
-                COUNT(*)::int4 AS total, \
-                COUNT(*) FILTER (WHERE status IN ('running', 'pending'))::int4 AS running, \
-                COUNT(*) FILTER (WHERE status = 'failed')::int4 AS failed, \
-                (ARRAY_AGG(id ORDER BY creation_time DESC NULLS LAST))[1] AS latest_job_id, \
-                (ARRAY_AGG(status ORDER BY creation_time DESC NULLS LAST))[1] AS latest_job_status, \
-                (ARRAY_AGG(start_time ORDER BY creation_time DESC NULLS LAST))[1] AS latest_start_time, \
-                (ARRAY_AGG(end_time ORDER BY creation_time DESC NULLS LAST))[1] AS latest_end_time \
-             FROM (SELECT DISTINCT ON (id) id, spawned_from, status, creation_time, start_time, end_time \
-                   FROM {TABLE_TASKS_V2} \
-                   WHERE deleted = false AND spawned_from IN ({in_clause}) \
-                   ORDER BY id, version_number DESC) AS latest \
-             GROUP BY spawned_from"
-        );
-
-        let mut query_builder = sqlx::query_as::<_, JobsSummaryRow>(&sql);
-        for id in issue_ids {
-            query_builder = query_builder.bind(id.as_ref().to_string());
-        }
-
-        let rows = query_builder
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        let mut result = HashMap::new();
-        for row in rows {
-            let issue_id = row
-                .spawned_from
-                .parse::<IssueId>()
-                .map_err(|e| StoreError::Internal(format!("invalid issue id: {e}")))?;
-            let latest_job_id = row
-                .latest_job_id
-                .map(|s| s.parse::<TaskId>())
-                .transpose()
-                .map_err(|e| StoreError::Internal(format!("invalid task id: {e}")))?;
-            let latest_job_status = row
-                .latest_job_status
-                .as_deref()
-                .map(|s| s.parse::<ApiTaskStatus>().unwrap());
-            result.insert(
-                issue_id,
-                JobStatusSummary::new(
-                    row.total as u32,
-                    row.running as u32,
-                    row.failed as u32,
-                    latest_job_id,
-                    latest_job_status,
-                    row.latest_start_time,
-                    row.latest_end_time,
-                ),
-            );
-        }
-
-        Ok(result)
     }
 
     async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
@@ -6932,75 +6750,6 @@ mod tests {
         // GET — no relationships left
         let rels = store.get_relationships(None, None, None).await.unwrap();
         assert!(rels.is_empty());
-    }
-
-    #[sqlx::test(migrations = "./migrations")]
-    #[ignore]
-    async fn get_issue_subtrees_round_trip_v2(pool: PgStorePool) {
-        let store = PostgresStoreV2::new(pool);
-
-        // Create a parent issue with two children, one grandchild
-        let (parent_id, _) = store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-        let (child_a, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent_id.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        let (child_b, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    parent_id.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        let (grandchild, _) = store
-            .add_issue(
-                sample_issue(vec![IssueDependency::new(
-                    IssueDependencyType::ChildOf,
-                    child_a.clone(),
-                )]),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        // Query subtrees for parent
-        let rows = store
-            .get_issue_subtrees(&[parent_id.clone()])
-            .await
-            .unwrap();
-        assert_eq!(rows.len(), 3);
-        let ids: HashSet<_> = rows.iter().map(|r| r.issue_id.clone()).collect();
-        assert!(ids.contains(&child_a));
-        assert!(ids.contains(&child_b));
-        assert!(ids.contains(&grandchild));
-
-        // Check parent linkage
-        let gc_row = rows.iter().find(|r| r.issue_id == grandchild).unwrap();
-        assert_eq!(gc_row.parent_id, child_a);
-
-        // Empty root_ids returns nothing
-        let empty = store.get_issue_subtrees(&[]).await.unwrap();
-        assert!(empty.is_empty());
-
-        // Issue with no children returns empty
-        let (leaf, _) = store
-            .add_issue(sample_issue(vec![]), &ActorRef::test())
-            .await
-            .unwrap();
-        let leaf_rows = store.get_issue_subtrees(&[leaf]).await.unwrap();
-        assert!(leaf_rows.is_empty());
     }
 
     #[sqlx::test(migrations = "./migrations")]

@@ -1,5 +1,4 @@
 use super::labels::LabelSummary;
-use super::task_status::Status as TaskStatus;
 use super::users::Username;
 pub use crate::IssueId;
 use crate::{LabelId, PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
@@ -57,46 +56,6 @@ impl FromStr for IssueStatus {
             "rejected" => Ok(IssueStatus::Rejected),
             "failed" => Ok(IssueStatus::Failed),
             other => Err(format!("unsupported issue status '{other}'")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
-pub struct JobStatusSummary {
-    pub total: u32,
-    pub running: u32,
-    pub failed: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_job_id: Option<TaskId>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_job_status: Option<TaskStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_start_time: Option<DateTime<Utc>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_end_time: Option<DateTime<Utc>>,
-}
-
-impl JobStatusSummary {
-    pub fn new(
-        total: u32,
-        running: u32,
-        failed: u32,
-        latest_job_id: Option<TaskId>,
-        latest_job_status: Option<TaskStatus>,
-        latest_start_time: Option<DateTime<Utc>>,
-        latest_end_time: Option<DateTime<Utc>>,
-    ) -> Self {
-        Self {
-            total,
-            running,
-            failed,
-            latest_job_id,
-            latest_job_status,
-            latest_start_time,
-            latest_end_time,
         }
     }
 }
@@ -766,12 +725,6 @@ pub struct SearchIssuesQuery {
     /// Opaque cursor from a previous response's `next_cursor` field.
     #[serde(default)]
     pub cursor: Option<String>,
-    /// When true, each returned issue includes its full descendant subtree.
-    #[serde(default)]
-    pub include_subtree: bool,
-    /// When true, include a `JobStatusSummary` per issue in the response.
-    #[serde(default)]
-    pub include_job_status: Option<bool>,
     /// When true, include `total_count` in the response.
     #[serde(default)]
     pub count: Option<bool>,
@@ -796,8 +749,6 @@ impl SearchIssuesQuery {
             label_ids: Vec::new(),
             limit: None,
             cursor: None,
-            include_subtree: false,
-            include_job_status: None,
             count: None,
         }
     }
@@ -867,42 +818,6 @@ impl From<&Issue> for IssueSummary {
     }
 }
 
-/// A node in the issue subtree, representing a descendant issue with lightweight fields.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
-pub struct SubtreeIssue {
-    pub issue_id: IssueId,
-    pub status: IssueStatus,
-    pub has_active_task: bool,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub assignee: Option<String>,
-    pub title: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<SubtreeIssue>,
-}
-
-impl SubtreeIssue {
-    pub fn new(
-        issue_id: IssueId,
-        status: IssueStatus,
-        has_active_task: bool,
-        assignee: Option<String>,
-        title: String,
-        children: Vec<SubtreeIssue>,
-    ) -> Self {
-        Self {
-            issue_id,
-            status,
-            has_active_task,
-            assignee,
-            title,
-            children,
-        }
-    }
-}
-
 /// Summary-level version record for issue list responses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -916,10 +831,6 @@ pub struct IssueSummaryRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
     pub creation_time: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subtree: Option<Vec<SubtreeIssue>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub jobs_summary: Option<JobStatusSummary>,
 }
 
 impl IssueSummaryRecord {
@@ -941,8 +852,6 @@ impl IssueSummaryRecord {
             issue,
             actor,
             creation_time,
-            subtree: None,
-            jobs_summary: None,
         }
     }
 }
@@ -958,8 +867,6 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
             issue: summary,
             actor: record.actor.clone(),
             creation_time: record.creation_time,
-            subtree: None,
-            jobs_summary: None,
         }
     }
 }
@@ -1062,8 +969,6 @@ mod tests {
             label_ids: vec![],
             limit: None,
             cursor: None,
-            include_subtree: false,
-            include_job_status: None,
             count: None,
         };
 
@@ -1090,8 +995,6 @@ mod tests {
             label_ids: vec![],
             limit: None,
             cursor: None,
-            include_subtree: false,
-            include_job_status: None,
             count: None,
         };
 
@@ -1115,8 +1018,8 @@ mod tests {
         assert_eq!(params.get("labels").map(String::as_str), Some(""));
         assert_eq!(
             params.len(),
-            3,
-            "only the graph, labels, and include keys should exist when no filters are provided"
+            2,
+            "only the graph and labels keys should exist when no filters are provided"
         );
     }
 
@@ -1351,52 +1254,5 @@ mod tests {
         let issue = make_test_issue("");
         let summary = IssueSummary::from(&issue);
         assert_eq!(summary.description, "");
-    }
-
-    #[test]
-    fn include_job_status_defaults_to_none() {
-        let query = SearchIssuesQuery::default();
-        assert_eq!(query.include_job_status, None);
-    }
-
-    #[test]
-    fn include_job_status_deserializes() {
-        let json = r#"{"include_job_status": true}"#;
-        let query: SearchIssuesQuery = serde_json::from_str(json).unwrap();
-        assert_eq!(query.include_job_status, Some(true));
-    }
-
-    #[test]
-    fn issue_summary_record_jobs_summary_omitted_when_none() {
-        let issue = make_test_issue("desc");
-        let ts = chrono::Utc::now();
-        let record =
-            IssueVersionRecord::new(issue_id("i-test"), 1, ts, issue, None, ts, Vec::new());
-        let summary_record = IssueSummaryRecord::from(&record);
-        let value = serde_json::to_value(&summary_record).unwrap();
-        assert!(
-            value.get("jobs_summary").is_none(),
-            "jobs_summary should be omitted when None"
-        );
-    }
-
-    #[test]
-    fn job_status_summary_serializes() {
-        use super::super::task_status::Status as TaskStatus;
-        let summary = JobStatusSummary::new(
-            5,
-            2,
-            1,
-            Some("t-abcdef".parse().unwrap()),
-            Some(TaskStatus::Running),
-            Some(chrono::Utc::now()),
-            None,
-        );
-        let value = serde_json::to_value(&summary).unwrap();
-        assert_eq!(value["total"], 5);
-        assert_eq!(value["running"], 2);
-        assert_eq!(value["failed"], 1);
-        assert_eq!(value["latest_job_status"], "running");
-        assert!(value.get("latest_end_time").is_none());
     }
 }
