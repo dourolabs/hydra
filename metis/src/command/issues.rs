@@ -947,7 +947,7 @@ async fn fetch_jobs_for_issue(
             None,
             Some(issue_id.clone()),
             None,
-            None,
+            vec![],
         ))
         .await
         .with_context(|| format!("failed to fetch jobs for issue '{issue_id}'"))?;

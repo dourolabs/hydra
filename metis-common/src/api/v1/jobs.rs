@@ -5,7 +5,7 @@ use crate::{
     users::Username,
 };
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -437,6 +437,35 @@ impl JobVersionRecord {
     }
 }
 
+fn serialize_statuses<S>(statuses: &[Status], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let s = statuses
+        .iter()
+        .map(|status| serde_json::to_value(status).unwrap_or_default())
+        .map(|v| v.as_str().unwrap_or("unknown").to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    serializer.serialize_str(&s)
+}
+
+fn deserialize_statuses<'de, D>(deserializer: D) -> Result<Vec<Status>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    s.split(',')
+        .map(|part| {
+            let trimmed = part.trim();
+            serde_json::from_value(Value::String(trimmed.to_string())).map_err(de::Error::custom)
+        })
+        .collect()
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -448,8 +477,16 @@ pub struct SearchJobsQuery {
     pub spawned_from: Option<IssueId>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<Status>,
+    /// Filter jobs by status (comma-separated in query string). When multiple
+    /// statuses are provided, a job matches if its status is any of the given values.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_statuses",
+        deserialize_with = "deserialize_statuses"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub status: Vec<Status>,
     /// Maximum number of results to return. When omitted, all results are returned.
     #[serde(default)]
     pub limit: Option<u32>,
@@ -480,7 +517,7 @@ impl SearchJobsQuery {
         q: Option<String>,
         spawned_from: Option<IssueId>,
         include_deleted: Option<bool>,
-        status: Option<Status>,
+        status: Vec<Status>,
     ) -> Self {
         Self {
             q,
@@ -522,7 +559,7 @@ mod tests {
             q: Some("test query".to_string()),
             spawned_from: Some(issue_id.clone()),
             include_deleted: None,
-            status: None,
+            status: vec![],
             limit: None,
             cursor: None,
             count: None,
@@ -540,12 +577,40 @@ mod tests {
 
     #[test]
     fn search_jobs_query_serializes_status_filter() {
-        let query = SearchJobsQuery::new(None, None, None, Some(Status::Running));
+        let query = SearchJobsQuery::new(None, None, None, vec![Status::Running]);
 
         let params = serialize_query_params(&query)
             .into_iter()
             .collect::<HashMap<_, _>>();
         assert_eq!(params.get("status").map(String::as_str), Some("running"));
+    }
+
+    #[test]
+    fn search_jobs_query_serializes_multi_status_filter() {
+        let query = SearchJobsQuery::new(
+            None,
+            None,
+            None,
+            vec![Status::Created, Status::Pending, Status::Running],
+        );
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            params.get("status").map(String::as_str),
+            Some("created,pending,running")
+        );
+    }
+
+    #[test]
+    fn search_jobs_query_deserializes_comma_separated_status() {
+        let query: SearchJobsQuery =
+            serde_urlencoded::from_str("status=created%2Cpending%2Crunning").unwrap();
+        assert_eq!(
+            query.status,
+            vec![Status::Created, Status::Pending, Status::Running]
+        );
     }
 
     #[test]

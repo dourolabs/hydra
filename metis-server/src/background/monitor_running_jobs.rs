@@ -41,7 +41,7 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
 
         let mut active_ids = Vec::new();
         for status in [Status::Pending, Status::Running] {
-            let query = SearchJobsQuery::new(None, None, None, Some(status.into()));
+            let query = SearchJobsQuery::new(None, None, None, vec![status.into()]);
             match self.state.list_tasks_with_query(&query).await {
                 Ok(tasks) => active_ids.extend(tasks.into_iter().map(|(id, _)| id)),
                 Err(err) => {

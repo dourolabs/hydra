@@ -1674,10 +1674,24 @@ fn build_tasks_predicates_sqlite(query: &SearchJobsQuery) -> (Vec<String>, Vec<S
         ));
     }
 
-    if let Some(status) = query.status {
-        let server_status: Status = status.into();
-        bindings.push(super::status_to_db_str(server_status).to_string());
-        predicates.push(format!("t.status = ?{}", bindings.len()));
+    if !query.status.is_empty() {
+        let status_strings: Vec<String> = query
+            .status
+            .iter()
+            .map(|s| {
+                let server_status: Status = (*s).into();
+                super::status_to_db_str(server_status).to_string()
+            })
+            .collect();
+        let placeholders: Vec<String> = status_strings
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("t.status IN ({})", placeholders.join(", ")));
+        for s in status_strings {
+            bindings.push(s);
+        }
     }
 
     if !query.include_deleted.unwrap_or(false) {
@@ -2150,7 +2164,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, None);
+        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, vec![]);
         let tasks = self.list_tasks(&query).await?;
         Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }
@@ -5828,7 +5842,7 @@ mod tests {
             .await
             .unwrap();
 
-        let query = SearchJobsQuery::new(Some("deploy".to_string()), None, None, None);
+        let query = SearchJobsQuery::new(Some("deploy".to_string()), None, None, vec![]);
         let tasks = store.list_tasks(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].1.item.prompt, "deploy to production");
@@ -5855,7 +5869,7 @@ mod tests {
             None,
             None,
             None,
-            Some(metis_common::task_status::Status::Running),
+            vec![metis_common::task_status::Status::Running],
         );
         let tasks = store.list_tasks(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
@@ -5865,7 +5879,7 @@ mod tests {
             None,
             None,
             None,
-            Some(metis_common::task_status::Status::Created),
+            vec![metis_common::task_status::Status::Created],
         );
         let tasks = store.list_tasks(&query).await.unwrap();
         assert_eq!(tasks.len(), 0);
@@ -5890,7 +5904,7 @@ mod tests {
         assert!(tasks.is_empty());
 
         // Should appear when include_deleted is true
-        let query = SearchJobsQuery::new(None, None, Some(true), None);
+        let query = SearchJobsQuery::new(None, None, Some(true), vec![]);
         let tasks = store.list_tasks(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert!(tasks[0].1.item.deleted);
@@ -7261,7 +7275,7 @@ mod tests {
                 .unwrap();
         }
 
-        let query = metis_common::api::v1::jobs::SearchJobsQuery::new(None, None, None, None);
+        let query = metis_common::api::v1::jobs::SearchJobsQuery::new(None, None, None, vec![]);
         assert_eq!(store.count_tasks(&query).await.unwrap(), 4);
     }
 

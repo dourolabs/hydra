@@ -261,7 +261,7 @@ impl UserHandle {
         &self,
         issue_id: &IssueId,
     ) -> Result<Vec<metis_common::jobs::JobSummaryRecord>> {
-        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, None);
+        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, vec![]);
         let response = self
             .client
             .list_jobs(&query)

@@ -128,7 +128,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
                 None,
                 Some(child_a_id.clone()),
                 None,
-                None,
+                vec![],
             ))
             .await?;
         assert_eq!(jobs.jobs.len(), 1, "child A should have exactly one task");
@@ -141,7 +141,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
                 None,
                 Some(child_b_id.clone()),
                 None,
-                None,
+                vec![],
             ))
             .await?;
         assert_eq!(jobs.jobs.len(), 1, "child B should have exactly one task");
@@ -237,7 +237,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
             None,
             Some(child_c_id.clone()),
             None,
-            None,
+            vec![],
         ))
         .await?;
     assert!(
