@@ -1299,13 +1299,6 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_issue_children(issue_id).await
     }
 
-    async fn get_issue_subtrees(
-        &self,
-        root_ids: &[IssueId],
-    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, StoreError> {
-        self.inner.get_issue_subtrees(root_ids).await
-    }
-
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.inner.get_issue_blocked_on(issue_id).await
     }
@@ -1397,13 +1390,6 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         self.inner.list_tasks(query).await
-    }
-
-    async fn get_jobs_summary_for_issues(
-        &self,
-        issue_ids: &[IssueId],
-    ) -> Result<HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>, StoreError> {
-        self.inner.get_jobs_summary_for_issues(issue_ids).await
     }
 
     async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {

@@ -1,4 +1,3 @@
-use crate::domain::issues::SubtreeIssueRow;
 use crate::domain::{
     actors::{Actor, ActorError, ActorId, ActorRef},
     agents::Agent,
@@ -14,7 +13,7 @@ use crate::domain::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
-use metis_common::api::v1::issues::{JobStatusSummary, SearchIssuesQuery};
+use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
@@ -320,15 +319,6 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 
-    /// Returns the full descendant subtree (as flat rows) for each of the given root issue IDs.
-    ///
-    /// Each row represents a descendant issue with its immediate parent in the tree.
-    /// The caller assembles the flat rows into a nested tree structure.
-    async fn get_issue_subtrees(
-        &self,
-        root_ids: &[IssueId],
-    ) -> Result<Vec<SubtreeIssueRow>, StoreError>;
-
     /// Lists all issues that are blocked on the provided issue.
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 
@@ -430,18 +420,6 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
-
-    /// Computes job status summaries for a batch of issues.
-    ///
-    /// Returns a map from IssueId to JobStatusSummary for each issue that has
-    /// at least one task. Issues with no tasks are omitted from the result.
-    ///
-    /// Implementations should use SQL aggregation (GROUP BY) where possible
-    /// to avoid loading all task rows into memory.
-    async fn get_jobs_summary_for_issues(
-        &self,
-        issue_ids: &[IssueId],
-    ) -> Result<HashMap<IssueId, JobStatusSummary>, StoreError>;
 
     /// Counts tasks matching the search query, ignoring pagination (cursor/limit).
     async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError>;
