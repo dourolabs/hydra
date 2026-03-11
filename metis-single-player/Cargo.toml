@@ -15,19 +15,31 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"
+axum = "0.7"
+axum-extra = { version = "0.9", features = ["cookie"] }
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env"] }
 getrandom = "0.2"
+http = "1"
 libc = "0.2"
 metis = { path = "../metis" }
 metis-common = { path = "../metis-common" }
 metis-server = { path = "../metis-server" }
+mime_guess = "2"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 rpassword = "5"
+rust-embed = "8"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 serde_yaml_ng = "0.10"
 shellexpand = "3.1"
 tokio = { version = "1.38", features = ["macros", "rt-multi-thread"] }
+tower = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 [dev-dependencies]
 metis-server = { path = "../metis-server", features = ["test-utils"] }
+reqwest = { version = "0.12", features = ["json", "cookies"] }
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread"] }
+tower = "0.5"
