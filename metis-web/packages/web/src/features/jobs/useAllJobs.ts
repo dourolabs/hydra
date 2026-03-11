@@ -10,7 +10,7 @@ import { apiClient } from "../../api/client";
 export function useAllJobs() {
   return useQuery({
     queryKey: ["allJobs"],
-    queryFn: () => apiClient.listJobs(),
+    queryFn: () => apiClient.listJobs({ status: "created,pending,running" }),
     select: (data): Map<string, JobSummaryRecord[]> => {
       const map = new Map<string, JobSummaryRecord[]>();
       for (const job of data.jobs) {

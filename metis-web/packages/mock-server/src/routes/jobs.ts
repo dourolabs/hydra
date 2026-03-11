@@ -104,7 +104,8 @@ export function createJobRoutes(store: Store): Hono {
       filtered = filtered.filter(({ entry }) => entry.data.spawned_from === spawnedFrom);
     }
     if (status) {
-      filtered = filtered.filter(({ entry }) => entry.data.status === status);
+      const statuses = new Set(status.split(","));
+      filtered = filtered.filter(({ entry }) => statuses.has(entry.data.status));
     }
 
     const jobs: JobSummaryRecord[] = filtered.map(({ id, entry }) =>
