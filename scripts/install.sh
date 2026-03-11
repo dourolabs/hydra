@@ -1,7 +1,5 @@
 #!/bin/sh
 # Metis installer script
-# Usage: curl -fsSL https://get.metis.dev | bash
-#   or:  curl -fsSL https://get.metis.dev | bash -s -- --version v0.1.0
 #
 # Downloads the correct pre-built metis binary for the current OS and
 # architecture, verifies its SHA256 checksum, and installs it to ~/.metis/bin/.
