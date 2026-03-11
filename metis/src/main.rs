@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use metis::{
     client::{MetisClient, MetisClientInterface, MetisClientUnauthenticated},
@@ -138,18 +138,26 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // The `server` subcommand manages the local server lifecycle and does not
-    // need an authenticated client. Handle it early to avoid prompting for
-    // auth tokens or contacting a remote server.
+    // The `server` subcommand manages the local server lifecycle (fork, etc.)
+    // and must run before the tokio runtime is created. `#[tokio::main]`
+    // spawns worker threads immediately, making fork() unsafe — so we parse
+    // CLI args synchronously here and only create the runtime for other
+    // commands.
     #[cfg(feature = "bundled-server")]
     if let Some(Commands::Server { command }) = cli.command {
         return command::server::run(command);
     }
 
+    // Build the tokio runtime manually so that the server subcommand above
+    // can run before any threads are spawned.
+    let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+    rt.block_on(async_main(cli))
+}
+
+async fn async_main(cli: Cli) -> Result<()> {
     let config_path = resolve_config_path(&cli);
     let app_config = load_app_config(&config_path)?;
     let server_url = resolve_server_url(&cli, &app_config)?;

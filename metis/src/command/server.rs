@@ -253,6 +253,8 @@ fn start_server_in_process() -> Result<()> {
     }
 
     // Set the server config env var so `metis_server::run()` can find it.
+    // This is safe because we run before the tokio runtime is created
+    // (no other threads exist yet).
     std::env::set_var("METIS_CONFIG", &config_path);
 
     // Fork the process. The child runs the server; the parent records
@@ -269,9 +271,9 @@ fn start_server_in_process() -> Result<()> {
             .with_context(|| format!("failed to open log file {}", log_file.display()))?;
         let log_fd = log_handle.into_raw_fd();
 
-        // Safety: we are calling fork() before spawning any threads in this
-        // process. The server subcommand runs synchronously before the tokio
-        // runtime is created in main().
+        // Safety: fork() is called before the tokio runtime is created.
+        // main() handles the server subcommand synchronously before calling
+        // tokio::runtime::Runtime::new(), so no worker threads exist yet.
         let fork_result = unsafe { libc::fork() };
         match fork_result {
             -1 => bail!("fork() failed: {}", io::Error::last_os_error()),

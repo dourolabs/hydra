@@ -53,6 +53,6 @@ metis-server = { path = "../metis-server", optional = true }
 
 [dev-dependencies]
 httpmock = "0.7"
-metis-server = { path = "../metis-server", features = ["test-utils", "bundled-frontend"] }
+metis-server = { path = "../metis-server", features = ["test-utils"] }
 jsonwebtoken = "10"
 openssl = "0.10"
