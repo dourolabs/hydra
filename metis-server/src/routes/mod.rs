@@ -3,6 +3,7 @@ use metis_common::{RelativeVersionNumber, VersionNumber, api::v1::ApiError};
 
 pub mod agents;
 pub mod auth;
+pub mod bff_auth;
 pub mod documents;
 pub mod events;
 #[cfg(feature = "bundled-frontend")]

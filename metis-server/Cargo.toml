@@ -20,6 +20,7 @@ aes-gcm = "0.10"
 anyhow = "1.0"
 async-trait = "0.1"
 axum = "0.7"
+axum-extra = { version = "0.9", features = ["cookie"] }
 base64 = "0.22"
 futures = "0.3"
 k8s-openapi = { version = "0.21.1", features = ["v1_29"], optional = true }
@@ -57,9 +58,11 @@ httpmock = { version = "0.7", optional = true }
 openssl = { version = "0.10", optional = true }
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
+time = "0.3.47"
 
 [dev-dependencies]
 serde_urlencoded = "0.7"
 httpmock = "0.7"
 openssl = "0.10"
 regex = "1"
+tower = { version = "0.5.3", features = ["util"] }

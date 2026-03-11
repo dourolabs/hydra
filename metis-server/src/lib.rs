@@ -252,6 +252,7 @@ pub async fn run_with_state(
     {
         app = app
             .route("/v1/local-auth", get(routes::local_auth::local_auth))
+            .merge(routes::bff_auth::router())
             .merge(routes::frontend::router());
     }
 
