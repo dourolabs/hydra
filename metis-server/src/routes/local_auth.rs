@@ -17,7 +17,9 @@ pub async fn local_auth(
     })?;
 
     let token = std::fs::read_to_string(path)
-        .map_err(|_| ApiError::bad_request("auth token file not found or unreadable"))?;
+        .map_err(|_| ApiError::bad_request("auth token file not found or unreadable"))?
+        .trim()
+        .to_string();
 
     Ok(Json(LocalAuthResponse { token }))
 }
