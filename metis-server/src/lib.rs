@@ -376,17 +376,7 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             routes::auth::require_auth,
         ));
 
-    #[allow(unused_mut)]
-    let mut router = Router::new().merge(public_routes).merge(protected_routes);
-
-    #[cfg(feature = "bundled-frontend")]
-    {
-        router = router
-            .route("/v1/local-auth", get(routes::local_auth::local_auth))
-            .merge(routes::frontend::router());
-    }
-
-    router
+    Router::new().merge(public_routes).merge(protected_routes)
 }
 
 pub async fn run_with_state(

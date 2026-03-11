@@ -130,29 +130,12 @@ enum Commands {
         #[arg(long = "full-auto")]
         full_auto: bool,
     },
-    /// Manage the local metis server lifecycle.
-    #[cfg(feature = "bundled-server")]
-    Server {
-        #[command(subcommand)]
-        command: command::server::ServerCommand,
-    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // The `server` subcommand manages the local server lifecycle (fork, etc.)
-    // and must run before the tokio runtime is created. `#[tokio::main]`
-    // spawns worker threads immediately, making fork() unsafe — so we parse
-    // CLI args synchronously here and only create the runtime for other
-    // commands.
-    #[cfg(feature = "bundled-server")]
-    if let Some(Commands::Server { command }) = cli.command {
-        return command::server::run(command);
-    }
-
-    // Build the tokio runtime manually so that the server subcommand above
-    // can run before any threads are spawned.
+    // Build the tokio runtime manually.
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     rt.block_on(async_main(cli))
 }
@@ -242,8 +225,6 @@ async fn dispatch(
             model,
             full_auto,
         } => command::chat::run(server_url, prompt, model, full_auto, context).await?,
-        #[cfg(feature = "bundled-server")]
-        Commands::Server { .. } => unreachable!("handled before dispatch"),
     }
 
     Ok(())

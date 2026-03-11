@@ -39,10 +39,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Lint with clippy
-        run: cargo clippy --workspace --all-targets --features enterprise --exclude metis --no-deps -- -D warnings
-
-      - name: Lint metis CLI with clippy (without bundled-server)
-        run: cargo clippy -p metis --no-default-features --all-targets --no-deps -- -D warnings
+        run: cargo clippy --workspace --all-targets --features enterprise --no-deps -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -82,10 +79,7 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Run tests
-        run: cargo nextest run --workspace --features enterprise --exclude metis --run-ignored all
-
-      - name: Run metis CLI tests (without bundled-server)
-        run: cargo nextest run -p metis --no-default-features --run-ignored all
+        run: cargo nextest run --workspace --features enterprise --run-ignored all
 
   ts-types:
     runs-on: ubuntu-latest
@@ -157,48 +151,6 @@ jobs:
 
       - name: Lint
         run: pnpm lint
-
-  bundled-frontend:
-    runs-on: ubuntu-latest
-    needs: [ts-build]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.88.0
-        with:
-          components: clippy
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Download frontend build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: ts-build-dist
-          path: metis-web/packages
-
-      - name: Check bundled-frontend compiles
-        run: cargo check -p metis-server --features bundled-frontend
-
-      - name: Lint bundled-frontend with clippy
-        run: cargo clippy -p metis-server --features bundled-frontend --no-deps -- -D warnings
-
-      - name: Test bundled-frontend
-        run: cargo nextest run -p metis-server --features bundled-frontend
-
-      - name: Check bundled-server compiles
-        run: cargo check -p metis --features bundled-server
-
-      - name: Lint bundled-server with clippy
-        run: cargo clippy -p metis --features bundled-server --no-deps -- -D warnings
-
-      - name: Test bundled-server
-        run: cargo nextest run -p metis --features bundled-server
 
   e2e:
     runs-on: ubuntu-latest

@@ -10,7 +10,5 @@ pub mod notifications;
 pub mod output;
 pub mod patches;
 pub mod repos;
-#[cfg(feature = "bundled-server")]
-pub mod server;
 pub mod users;
 pub mod utils;

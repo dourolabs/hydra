@@ -7,7 +7,6 @@ edition = "2024"
 postgres = ["sqlx/postgres"]
 kubernetes = ["dep:kube", "dep:k8s-openapi"]
 enterprise = ["postgres", "kubernetes"]
-bundled-frontend = ["dep:rust-embed", "dep:mime_guess"]
 test-utils = ["dep:httpmock", "dep:openssl"]
 vendored-openssl = [
     "git2/vendored-openssl",
@@ -55,8 +54,6 @@ sqlx = { version = "0.7", default-features = false, features = [
 openssl-sys = { workspace = true }
 httpmock = { version = "0.7", optional = true }
 openssl = { version = "0.10", optional = true }
-rust-embed = { version = "8", optional = true }
-mime_guess = { version = "2", optional = true }
 
 [dev-dependencies]
 serde_urlencoded = "0.7"
