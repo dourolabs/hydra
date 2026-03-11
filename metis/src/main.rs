@@ -131,6 +131,7 @@ enum Commands {
         full_auto: bool,
     },
     /// Manage the local metis server lifecycle.
+    #[cfg(feature = "bundled-server")]
     Server {
         #[command(subcommand)]
         command: command::server::ServerCommand,
@@ -144,6 +145,7 @@ async fn main() -> Result<()> {
     // The `server` subcommand manages the local server lifecycle and does not
     // need an authenticated client. Handle it early to avoid prompting for
     // auth tokens or contacting a remote server.
+    #[cfg(feature = "bundled-server")]
     if let Some(Commands::Server { command }) = cli.command {
         return command::server::run(command);
     }
@@ -232,6 +234,7 @@ async fn dispatch(
             model,
             full_auto,
         } => command::chat::run(server_url, prompt, model, full_auto, context).await?,
+        #[cfg(feature = "bundled-server")]
         Commands::Server { .. } => unreachable!("handled before dispatch"),
     }
 

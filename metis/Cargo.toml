@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+default = ["bundled-server"]
+bundled-server = ["dep:metis-server", "metis-server/bundled-frontend"]
 vendored-openssl = [
     "git2/vendored-openssl",
     "openssl-sys/vendored",
@@ -47,9 +49,10 @@ thiserror = "1.0"
 unicode-width = "0.1.14"
 octocrab = "0.49"
 openssl-sys = { workspace = true }
+metis-server = { path = "../metis-server", optional = true }
 
 [dev-dependencies]
 httpmock = "0.7"
-metis-server = { path = "../metis-server", features = ["test-utils"] }
+metis-server = { path = "../metis-server", features = ["test-utils", "bundled-frontend"] }
 jsonwebtoken = "10"
 openssl = "0.10"
