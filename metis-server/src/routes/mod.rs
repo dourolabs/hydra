@@ -5,14 +5,10 @@ pub mod agents;
 pub mod auth;
 pub mod documents;
 pub mod events;
-#[cfg(feature = "bundled-frontend")]
-pub mod frontend;
 pub mod github;
 pub mod issues;
 pub mod jobs;
 pub mod labels;
-#[cfg(feature = "bundled-frontend")]
-pub mod local_auth;
 pub mod login;
 pub mod merge_queues;
 pub mod messages;
