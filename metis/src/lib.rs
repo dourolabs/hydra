@@ -2,6 +2,7 @@
 
 pub mod build_cache;
 mod claude_formatter;
+pub mod cli;
 pub mod client;
 pub mod command;
 pub mod config;
