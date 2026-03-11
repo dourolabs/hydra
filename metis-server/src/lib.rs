@@ -402,6 +402,9 @@ pub async fn run() -> anyhow::Result<()> {
 }
 
 /// Create a default user actor for local auth mode.
+///
+/// When `auth_token_file` is set in the config, the generated auth token is
+/// written to that path so the CLI can pick it up.
 pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
     let username = Username::from(
         config
@@ -409,7 +412,7 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
             .local_username()
             .context("setup_local_auth called without local auth config")?,
     );
-    let (actor, _auth_token) = Actor::new_for_user(username.clone());
+    let (actor, auth_token) = Actor::new_for_user(username.clone());
     let system_actor = ActorRef::System {
         worker_name: "local-auth-setup".into(),
         on_behalf_of: None,
@@ -436,6 +439,27 @@ pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> a
                 .context("failed to update local user with GitHub token")?;
         }
         Err(err) => return Err(err.into()),
+    }
+
+    // Write the auth token to a file if auth_token_file is configured.
+    if let Some(path) = config.auth.auth_token_file() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create directory for auth token at {}",
+                    parent.display()
+                )
+            })?;
+        }
+        std::fs::write(path, &auth_token)
+            .with_context(|| format!("failed to write auth token to {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("failed to set permissions on {}", path.display()))?;
+        }
+        info!("auth token written to {}", path.display());
     }
 
     info!("local auth configured");
