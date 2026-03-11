@@ -376,25 +376,9 @@ async fn run_server_with_bff() -> Result<()> {
 
     let bff_app = crate::bff::build_bff_router(bff_state);
 
-    // Start background scheduler and automation runner via run_with_state's
-    // internal plumbing. We need to replicate this because we're using a custom router.
-    let scheduler = metis_server::background::start_background_scheduler(state.clone());
-    let (automation_shutdown_tx, automation_shutdown_rx) = tokio::sync::watch::channel(false);
-    let automation_handle =
-        metis_server::policy::runner::spawn_automation_runner(state, automation_shutdown_rx);
-
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
-    let addr = listener.local_addr()?;
-    tracing::info!("metis single-player listening on http://{addr}");
-    println!("metis single-player listening on http://{addr}");
 
-    let serve_result = axum::serve(listener, bff_app).await;
-    scheduler.shutdown().await;
-    let _ = automation_shutdown_tx.send(true);
-    let _ = automation_handle.await;
-    serve_result?;
-
-    Ok(())
+    metis_server::run_with_state(state, listener, bff_app).await
 }
 
 // ---------------------------------------------------------------------------
