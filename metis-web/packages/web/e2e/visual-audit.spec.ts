@@ -28,6 +28,16 @@ async function captureScreenshot(
   await page.setViewportSize(viewport);
   // Allow layout to settle after viewport change
   await page.waitForTimeout(500);
+
+  // Disable CSS animations before taking the screenshot. Nested fadeIn
+  // animations (on .main and .page) can compound and re-trigger at the
+  // compositor level during fullPage capture, causing a dark tint overlay.
+  await page.addStyleTag({
+    content: "*, *::before, *::after { animation: none !important; }",
+  });
+  // Allow one frame for the style to take effect
+  await page.waitForTimeout(50);
+
   await page.screenshot({
     path: path.join(SCREENSHOT_DIR, `${prefix}-${pageName}.png`),
     fullPage: true,
