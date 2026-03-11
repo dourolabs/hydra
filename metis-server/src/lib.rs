@@ -46,18 +46,149 @@ use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 
-pub async fn run_with_state(
-    state: AppState,
-    listener: tokio::net::TcpListener,
-) -> anyhow::Result<()> {
-    // Run scheduler-backed workers for background processing (jobs, agents, GitHub poller)
-    let scheduler = start_background_scheduler(state.clone());
+/// Build an `AppState` from an `AppConfig`.
+///
+/// This initializes the store, job engine, secret manager, and constructs the
+/// shared application state. In local auth mode it also creates the default
+/// user and writes the auth token file.
+pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> {
+    let service_state = ServiceState::default();
 
-    // Start automation runner (event-driven side effects from the policy engine)
-    let (automation_shutdown_tx, automation_shutdown_rx) = tokio::sync::watch::channel(false);
-    let automation_handle =
-        crate::policy::runner::spawn_automation_runner(state.clone(), automation_shutdown_rx);
+    info!(
+        auth_mode = %app_config.auth,
+        storage = %app_config.storage,
+        job_engine = %app_config.job_engine,
+        "starting server"
+    );
 
+    let github_app = match app_config.auth.github_app() {
+        Some(gh) => build_github_app_client(gh)?,
+        None => None,
+    };
+
+    // Initialize store based on configured storage backend
+    let store: Arc<dyn Store> = match &app_config.storage {
+        StorageConfig::Sqlite { sqlite_path } => {
+            let db_url = format!("sqlite:{sqlite_path}?mode=rwc");
+            let pool = SqliteStore::init_pool(&db_url)
+                .await
+                .context("failed to initialize SQLite pool")?;
+            SqliteStore::run_migrations(&pool)
+                .await
+                .context("failed to run SQLite migrations")?;
+            info!(path = %sqlite_path, "connected to SQLite and applied migrations");
+            Arc::new(SqliteStore::new(pool))
+        }
+        StorageConfig::Postgres { database } => {
+            #[cfg(feature = "postgres")]
+            {
+                let postgres_pool = postgres_v2::init_pool(database)
+                    .await?
+                    .context("database.url is required for postgres storage backend")?;
+                postgres_v2::run_migrations(&postgres_pool).await?;
+                info!("connected to Postgres and applied migrations");
+
+                // Run migration from v1 to v2 in case there is unmigrated data
+                let migration_result = migration::migrate_v1_to_v2(&postgres_pool).await?;
+                if migration_result.total() > 0 {
+                    info!(
+                        total = migration_result.total(),
+                        issues = migration_result.issues_migrated,
+                        patches = migration_result.patches_migrated,
+                        tasks = migration_result.tasks_migrated,
+                        users = migration_result.users_migrated,
+                        actors = migration_result.actors_migrated,
+                        repositories = migration_result.repositories_migrated,
+                        documents = migration_result.documents_migrated,
+                        "migrated data from v1 to v2 tables"
+                    );
+                }
+                Arc::new(PostgresStoreV2::new(postgres_pool))
+            }
+            #[cfg(not(feature = "postgres"))]
+            {
+                let _ = database;
+                anyhow::bail!(
+                    "PostgreSQL storage backend requires the 'postgres' Cargo feature. \
+                     Rebuild with `--features postgres`."
+                );
+            }
+        }
+        StorageConfig::Memory => {
+            info!("using in-memory store");
+            Arc::new(MemoryStore::new())
+        }
+    };
+
+    // In local auth mode, create a default user actor.
+    if app_config.auth.is_local() {
+        setup_local_auth(&app_config, store.as_ref()).await?;
+    }
+
+    // Create job engine based on configured backend
+    let job_engine: Arc<dyn crate::job_engine::JobEngine> = match &app_config.job_engine {
+        JobEngineConfig::Local => {
+            let hostname = app_config.metis.server_hostname.trim();
+            let server_url = if hostname.is_empty() {
+                "http://host.docker.internal:8080".to_string()
+            } else {
+                format!("http://{hostname}")
+            };
+            let engine = LocalDockerJobEngine::new(server_url)
+                .await
+                .context("failed to initialize local Docker job engine")?;
+            info!("using local Docker job engine");
+            Arc::new(engine)
+        }
+        #[cfg(feature = "kubernetes")]
+        JobEngineConfig::Kubernetes { kubernetes } => {
+            let kube_client = build_kube_client(kubernetes).await?;
+            let engine = KubernetesJobEngine {
+                namespace: app_config.metis.namespace.clone(),
+                server_hostname: app_config.metis.server_hostname.clone(),
+                client: kube_client,
+                image_pull_secrets: kubernetes.image_pull_secrets.clone(),
+            };
+            info!("using Kubernetes job engine");
+            Arc::new(engine)
+        }
+        #[cfg(not(feature = "kubernetes"))]
+        JobEngineConfig::Kubernetes { .. } => {
+            anyhow::bail!(
+                "Kubernetes job engine requires the 'kubernetes' Cargo feature. Rebuild with --features kubernetes"
+            );
+        }
+    };
+
+    // Initialize SecretManager from config (mandatory)
+    let secret_manager = Arc::new(
+        SecretManager::from_base64(&app_config.metis.secret_encryption_key)
+            .context("invalid metis.METIS_SECRET_ENCRYPTION_KEY")?,
+    );
+    info!("secret encryption enabled");
+
+    let state = AppState::new(
+        Arc::new(app_config),
+        github_app,
+        Arc::new(service_state),
+        store,
+        job_engine,
+        secret_manager,
+    );
+
+    // Ensure the 'inbox' label exists (recurse=false, hidden=true).
+    state.ensure_inbox_label().await;
+
+    Ok(state)
+}
+
+/// Build the base Axum router with all metis API routes.
+///
+/// The returned router has public routes (health check, login) and
+/// authenticated routes (issues, patches, jobs, etc.) but does **not** have
+/// state applied. Call `.with_state(state)` after merging any additional
+/// routes your application needs.
+pub fn build_router(state: &AppState) -> Router<AppState> {
     let public_routes = Router::new()
         .route("/health", get(health_check))
         .route("/v1/login", post(routes::login::login))
@@ -246,16 +377,31 @@ pub async fn run_with_state(
         ));
 
     #[allow(unused_mut)]
-    let mut app = Router::new().merge(public_routes).merge(protected_routes);
+    let mut router = Router::new().merge(public_routes).merge(protected_routes);
 
     #[cfg(feature = "bundled-frontend")]
     {
-        app = app
+        router = router
             .route("/v1/local-auth", get(routes::local_auth::local_auth))
             .merge(routes::frontend::router());
     }
 
-    let app = app.with_state(state);
+    router
+}
+
+pub async fn run_with_state(
+    state: AppState,
+    listener: tokio::net::TcpListener,
+) -> anyhow::Result<()> {
+    // Run scheduler-backed workers for background processing (jobs, agents, GitHub poller)
+    let scheduler = start_background_scheduler(state.clone());
+
+    // Start automation runner (event-driven side effects from the policy engine)
+    let (automation_shutdown_tx, automation_shutdown_rx) = tokio::sync::watch::channel(false);
+    let automation_handle =
+        crate::policy::runner::spawn_automation_runner(state.clone(), automation_shutdown_rx);
+
+    let app = build_router(&state).with_state(state);
 
     let addr = listener.local_addr()?;
 
@@ -276,132 +422,8 @@ pub async fn run() -> anyhow::Result<()> {
 
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
-    let service_state = ServiceState::default();
 
-    info!(
-        auth_mode = %app_config.auth,
-        storage = %app_config.storage,
-        job_engine = %app_config.job_engine,
-        "starting server"
-    );
-
-    let github_app = match app_config.auth.github_app() {
-        Some(gh) => build_github_app_client(gh)?,
-        None => None,
-    };
-
-    // Initialize store based on configured storage backend
-    let store: Arc<dyn Store> = match &app_config.storage {
-        StorageConfig::Sqlite { sqlite_path } => {
-            let db_url = format!("sqlite:{sqlite_path}?mode=rwc");
-            let pool = SqliteStore::init_pool(&db_url)
-                .await
-                .context("failed to initialize SQLite pool")?;
-            SqliteStore::run_migrations(&pool)
-                .await
-                .context("failed to run SQLite migrations")?;
-            info!(path = %sqlite_path, "connected to SQLite and applied migrations");
-            Arc::new(SqliteStore::new(pool))
-        }
-        StorageConfig::Postgres { database } => {
-            #[cfg(feature = "postgres")]
-            {
-                let postgres_pool = postgres_v2::init_pool(database)
-                    .await?
-                    .context("database.url is required for postgres storage backend")?;
-                postgres_v2::run_migrations(&postgres_pool).await?;
-                info!("connected to Postgres and applied migrations");
-
-                // Run migration from v1 to v2 in case there is unmigrated data
-                let migration_result = migration::migrate_v1_to_v2(&postgres_pool).await?;
-                if migration_result.total() > 0 {
-                    info!(
-                        total = migration_result.total(),
-                        issues = migration_result.issues_migrated,
-                        patches = migration_result.patches_migrated,
-                        tasks = migration_result.tasks_migrated,
-                        users = migration_result.users_migrated,
-                        actors = migration_result.actors_migrated,
-                        repositories = migration_result.repositories_migrated,
-                        documents = migration_result.documents_migrated,
-                        "migrated data from v1 to v2 tables"
-                    );
-                }
-                Arc::new(PostgresStoreV2::new(postgres_pool))
-            }
-            #[cfg(not(feature = "postgres"))]
-            {
-                let _ = database;
-                anyhow::bail!(
-                    "PostgreSQL storage backend requires the 'postgres' Cargo feature. \
-                     Rebuild with `--features postgres`."
-                );
-            }
-        }
-        StorageConfig::Memory => {
-            info!("using in-memory store");
-            Arc::new(MemoryStore::new())
-        }
-    };
-
-    // In local auth mode, create a default user actor.
-    if app_config.auth.is_local() {
-        setup_local_auth(&app_config, store.as_ref()).await?;
-    }
-
-    // Create job engine based on configured backend
-    let job_engine: Arc<dyn crate::job_engine::JobEngine> = match &app_config.job_engine {
-        JobEngineConfig::Local => {
-            let hostname = app_config.metis.server_hostname.trim();
-            let server_url = if hostname.is_empty() {
-                "http://host.docker.internal:8080".to_string()
-            } else {
-                format!("http://{hostname}")
-            };
-            let engine = LocalDockerJobEngine::new(server_url)
-                .await
-                .context("failed to initialize local Docker job engine")?;
-            info!("using local Docker job engine");
-            Arc::new(engine)
-        }
-        #[cfg(feature = "kubernetes")]
-        JobEngineConfig::Kubernetes { kubernetes } => {
-            let kube_client = build_kube_client(kubernetes).await?;
-            let engine = KubernetesJobEngine {
-                namespace: app_config.metis.namespace.clone(),
-                server_hostname: app_config.metis.server_hostname.clone(),
-                client: kube_client,
-                image_pull_secrets: kubernetes.image_pull_secrets.clone(),
-            };
-            info!("using Kubernetes job engine");
-            Arc::new(engine)
-        }
-        #[cfg(not(feature = "kubernetes"))]
-        JobEngineConfig::Kubernetes { .. } => {
-            anyhow::bail!(
-                "Kubernetes job engine requires the 'kubernetes' Cargo feature. Rebuild with --features kubernetes"
-            );
-        }
-    };
-
-    // Initialize SecretManager from config (mandatory)
-    let secret_manager = Arc::new(
-        SecretManager::from_base64(&app_config.metis.secret_encryption_key)
-            .context("invalid metis.METIS_SECRET_ENCRYPTION_KEY")?,
-    );
-    info!("secret encryption enabled");
-
-    let state = AppState::new(
-        Arc::new(app_config),
-        github_app,
-        Arc::new(service_state),
-        store,
-        job_engine,
-        secret_manager,
-    );
-
-    // Ensure the 'inbox' label exists (recurse=false, hidden=true).
-    state.ensure_inbox_label().await;
+    let state = build_app_state(app_config).await?;
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 
@@ -412,7 +434,7 @@ pub async fn run() -> anyhow::Result<()> {
 ///
 /// When `auth_token_file` is set in the config, the generated auth token is
 /// written to that path so the CLI can pick it up.
-pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
+pub async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
     let username = Username::from(
         config
             .auth
