@@ -164,10 +164,18 @@ export function useSSE(): SSEConnectionState {
       } else if (entity_type === "job" || eventType.startsWith("job_")) {
         const record = entity as unknown as JobSummaryRecord;
         const spawnedFrom = record.task?.spawned_from;
+        const isTerminal = record.task?.status === "complete" || record.task?.status === "failed" || record.task?.status === "unknown";
 
         // SSE now sends summary records; invalidate the detail cache instead of direct-setting.
         queryClient.invalidateQueries({ queryKey: ["job", entity_id] });
-        upsertInList(queryClient, ["allJobs"], jobList, wrapJobs, jobRecordId, entity_id, record);
+
+        // allJobs only contains active (non-terminal) jobs. Remove jobs that
+        // transition to a terminal status; upsert otherwise.
+        if (isTerminal) {
+          removeFromList(queryClient, ["allJobs"], jobList, wrapJobs, jobRecordId, entity_id);
+        } else {
+          upsertInList(queryClient, ["allJobs"], jobList, wrapJobs, jobRecordId, entity_id, record);
+        }
 
         if (spawnedFrom) {
           upsertInList(queryClient, ["jobs", spawnedFrom], jobList, wrapJobs, jobRecordId, entity_id, record);
