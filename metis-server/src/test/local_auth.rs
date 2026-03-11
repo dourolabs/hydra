@@ -1,6 +1,6 @@
 use crate::{
     config::AuthConfig,
-    domain::users::Username,
+    domain::{actors::AuthToken, users::Username},
     setup_local_auth,
     store::{MemoryStore, ReadOnlyStore},
     test_utils::test_app_config,
@@ -88,6 +88,41 @@ async fn setup_local_auth_uses_custom_username() -> anyhow::Result<()> {
     let username = Username::from("alice");
     let user = store.as_ref().get_user(&username, false).await?;
     assert_eq!(user.item.username, username);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn setup_local_auth_writes_token_file() -> anyhow::Result<()> {
+    let tmp_dir = tempfile::TempDir::new()?;
+    let token_path = tmp_dir.path().join("auth-token");
+
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: None,
+        auth_token_file: Some(token_path.clone()),
+    };
+
+    let store = Arc::new(MemoryStore::new());
+    setup_local_auth(&config, store.as_ref()).await?;
+
+    // Token file should exist and be non-empty.
+    let token_contents = std::fs::read_to_string(&token_path)?;
+    assert!(!token_contents.is_empty());
+
+    // The file contents should be a valid auth token that matches the stored actor.
+    let actor = store.as_ref().get_actor("u-local").await?;
+    let parsed_token = AuthToken::parse(&token_contents)?;
+    assert!(actor.item.verify_auth_token(&parsed_token));
+
+    // On Unix, verify the file permissions are 0o600.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = std::fs::metadata(&token_path)?;
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    }
 
     Ok(())
 }
