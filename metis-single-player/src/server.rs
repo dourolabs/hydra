@@ -3,6 +3,7 @@ use std::{
     io::{self, BufRead, Write},
     path::Path,
     process::Command,
+    sync::Arc,
     thread,
     time::Duration,
 };
@@ -290,10 +291,10 @@ fn start_server_in_process() -> Result<()> {
                     libc::close(log_fd);
                 }
 
-                // Build a new tokio runtime and run the server.
+                // Build a new tokio runtime and run the server with BFF.
                 let rt = tokio::runtime::Runtime::new()
                     .expect("failed to create tokio runtime for in-process server");
-                let result = rt.block_on(metis_server::run());
+                let result = rt.block_on(run_server_with_bff());
                 if let Err(e) = result {
                     eprintln!("metis-server exited with error: {e:#}");
                     std::process::exit(1);
@@ -318,6 +319,80 @@ fn start_server_in_process() -> Result<()> {
              Please run `metis-server` as a separate process."
         );
     }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// run server with BFF
+// ---------------------------------------------------------------------------
+
+/// Start the metis server with the BFF layer (auth routes, API proxy,
+/// embedded frontend, auto-login). This replaces the plain `metis_server::run()`
+/// to add the single-player-specific features.
+async fn run_server_with_bff() -> Result<()> {
+    tracing_subscriber::fmt::init();
+
+    let config_path = metis_server::config_path();
+    let app_config = metis_server::config::AppConfig::load(&config_path)?;
+
+    // Read the auth token for auto-login.
+    let auto_login_token = match app_config.auth.auth_token_file() {
+        Some(path) => {
+            // The token file may not exist yet on first startup — wait briefly.
+            let max_wait = Duration::from_secs(10);
+            let poll = Duration::from_millis(200);
+            let start = std::time::Instant::now();
+            loop {
+                if path.exists() {
+                    let token = fs::read_to_string(path)
+                        .with_context(|| format!("failed to read {}", path.display()))?;
+                    let token = token.trim().to_string();
+                    if !token.is_empty() {
+                        break token;
+                    }
+                }
+                if start.elapsed() > max_wait {
+                    bail!(
+                        "auth_token_file {} not found after server init; auto-login unavailable",
+                        path.display()
+                    );
+                }
+                tokio::time::sleep(poll).await;
+            }
+        }
+        None => bail!("auth_token_file is required for single-player mode auto-login"),
+    };
+
+    let state = metis_server::build_app_state(app_config).await?;
+
+    // Build the internal metis-server router with state applied.
+    let inner_app = metis_server::build_router(&state).with_state(state.clone());
+
+    let bff_state = crate::bff::BffState {
+        auto_login_token: Arc::new(auto_login_token),
+        inner_app,
+    };
+
+    let bff_app = crate::bff::build_bff_router(bff_state);
+
+    // Start background scheduler and automation runner via run_with_state's
+    // internal plumbing. We need to replicate this because we're using a custom router.
+    let scheduler = metis_server::background::start_background_scheduler(state.clone());
+    let (automation_shutdown_tx, automation_shutdown_rx) = tokio::sync::watch::channel(false);
+    let automation_handle =
+        metis_server::policy::runner::spawn_automation_runner(state, automation_shutdown_rx);
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    let addr = listener.local_addr()?;
+    tracing::info!("metis single-player listening on http://{addr}");
+    println!("metis single-player listening on http://{addr}");
+
+    let serve_result = axum::serve(listener, bff_app).await;
+    scheduler.shutdown().await;
+    let _ = automation_shutdown_tx.send(true);
+    let _ = automation_handle.await;
+    serve_result?;
 
     Ok(())
 }
