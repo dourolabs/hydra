@@ -23,7 +23,6 @@ async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
         store.clone(),
         Arc::new(MockJobEngine::new()),
         test_secret_manager(),
-        None,
     );
 
     for name in agent_names {

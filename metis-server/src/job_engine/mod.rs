@@ -4,12 +4,10 @@ use std::collections::HashMap;
 
 use crate::{domain::actors::Actor, store::StoreError};
 
-#[cfg(feature = "kubernetes")]
-mod kubernetes_job_engine;
 mod local_docker_job_engine;
 
 #[cfg(feature = "kubernetes")]
-pub use kubernetes_job_engine::KubernetesJobEngine;
+pub use crate::ee::job_engine::KubernetesJobEngine;
 pub use local_docker_job_engine::LocalDockerJobEngine;
 pub use metis_common::TaskId;
 
@@ -98,7 +96,6 @@ pub trait JobEngine: Send + Sync {
     /// * `memory_limit` - Memory limit for the job container
     /// * `cpu_request` - CPU request for the job container
     /// * `memory_request` - Memory request for the job container
-    /// * `secrets` - Kubernetes secret names to mount as envFrom sources
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if creation fails
@@ -113,7 +110,6 @@ pub trait JobEngine: Send + Sync {
         memory_limit: String,
         cpu_request: String,
         memory_request: String,
-        secrets: Option<&[String]>,
     ) -> Result<(), JobEngineError>;
 
     /// Lists all jobs matching the given label selector.

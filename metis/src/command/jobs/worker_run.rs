@@ -8,7 +8,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
-    constants::{ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ISSUE_ID},
+    constants::{ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ISSUE_ID},
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     IssueId, TaskId,
@@ -29,9 +29,6 @@ pub async fn run(
     client: &dyn MetisClientInterface,
     job: TaskId,
     dest: PathBuf,
-    openai_api_key: Option<String>,
-    anthropic_api_key: Option<String>,
-    claude_code_oauth_token: Option<String>,
     issue_id: Option<IssueId>,
     use_tempdir: bool,
     commands: &dyn WorkerCommands,
@@ -57,12 +54,6 @@ pub async fn run(
     };
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
-    if let Some(token) = claude_code_oauth_token
-        .as_ref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        execution_env.insert(ENV_CLAUDE_CODE_OAUTH_TOKEN.to_string(), token.clone());
-    }
     let worker_home_dir = resolve_worker_home_dir();
     let issue_branch_id = issue_id
         .as_ref()
@@ -188,9 +179,6 @@ pub async fn run(
         .run(
             &prompt,
             model.as_deref(),
-            openai_api_key.clone(),
-            anthropic_api_key.clone(),
-            claude_code_oauth_token.clone(),
             &repo_path,
             &execution_env,
             &output_path,

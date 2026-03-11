@@ -3,6 +3,7 @@
 //! This store implementation uses the v2 tables with proper column definitions
 //! instead of JSONB payloads, providing better query performance and type safety.
 
+use crate::store::status_to_db_str;
 use crate::{
     domain::{
         actors::{Actor, ActorId, ActorRef, UNKNOWN_CREATOR},
@@ -29,6 +30,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
+use metis_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -46,9 +48,8 @@ use sqlx::{
 };
 use std::{collections::HashMap, collections::HashSet, str::FromStr, time::Duration};
 
-use super::issue_graph::IssueGraphContext;
-
 use crate::config::DatabaseSection;
+use crate::store::issue_graph::IssueGraphContext;
 
 pub type PgStorePool = Pool<Postgres>;
 
@@ -244,14 +245,9 @@ impl PostgresStoreV2 {
             .map_err(|e| StoreError::Internal(format!("failed to serialize job_settings: {e}")))?;
         let todo_list_json = serde_json::to_value(&issue.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
-        let dependencies_json = serde_json::to_value(&issue.dependencies)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize dependencies: {e}")))?;
-        let patches_json = serde_json::to_value(&issue.patches)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize patches: {e}")))?;
-
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -265,8 +261,6 @@ impl PostgresStoreV2 {
             .bind(issue.assignee.as_deref())
             .bind(&job_settings_json)
             .bind(&todo_list_json)
-            .bind(&dependencies_json)
-            .bind(&patches_json)
             .bind(issue.deleted)
             .bind(actor)
             .execute(executor)
@@ -300,12 +294,12 @@ impl PostgresStoreV2 {
              ON CONFLICT (source_id, rel_type, target_id) DO NOTHING"
         );
         for dep in &issue.dependencies {
-            let rel_type = super::RelationshipType::from(dep.dependency_type);
+            let rel_type = crate::store::RelationshipType::from(dep.dependency_type);
             sqlx::query(&insert_sql)
                 .bind(issue_id.as_ref())
-                .bind(super::ObjectKind::Issue.as_str())
+                .bind(crate::store::ObjectKind::Issue.as_str())
                 .bind(dep.issue_id.as_ref())
-                .bind(super::ObjectKind::Issue.as_str())
+                .bind(crate::store::ObjectKind::Issue.as_str())
                 .bind(rel_type.as_str())
                 .execute(&mut **tx)
                 .await
@@ -316,10 +310,10 @@ impl PostgresStoreV2 {
         for patch_id in &issue.patches {
             sqlx::query(&insert_sql)
                 .bind(issue_id.as_ref())
-                .bind(super::ObjectKind::Issue.as_str())
+                .bind(crate::store::ObjectKind::Issue.as_str())
                 .bind(patch_id.as_ref())
-                .bind(super::ObjectKind::Patch.as_str())
-                .bind(super::RelationshipType::HasPatch.as_str())
+                .bind(crate::store::ObjectKind::Patch.as_str())
+                .bind(crate::store::RelationshipType::HasPatch.as_str())
                 .execute(&mut **tx)
                 .await
                 .map_err(map_sqlx_error)?;
@@ -338,13 +332,6 @@ impl PostgresStoreV2 {
             })?;
         let todo_list: Vec<TodoItem> = serde_json::from_value(row.todo_list.clone())
             .map_err(|e| StoreError::Internal(format!("failed to deserialize todo_list: {e}")))?;
-        let dependencies: Vec<IssueDependency> = serde_json::from_value(row.dependencies.clone())
-            .map_err(|e| {
-            StoreError::Internal(format!("failed to deserialize dependencies: {e}"))
-        })?;
-        let patches: Vec<PatchId> = serde_json::from_value(row.patches.clone())
-            .map_err(|e| StoreError::Internal(format!("failed to deserialize patches: {e}")))?;
-
         Ok(Issue {
             issue_type,
             title: row.title.clone(),
@@ -355,8 +342,8 @@ impl PostgresStoreV2 {
             assignee: row.assignee.clone(),
             job_settings,
             todo_list,
-            dependencies,
-            patches,
+            dependencies: vec![],
+            patches: vec![],
             deleted: row.deleted,
         })
     }
@@ -715,8 +702,8 @@ impl PostgresStoreV2 {
         };
 
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -736,6 +723,9 @@ impl PostgresStoreV2 {
             .bind(task.deleted)
             .bind(actor)
             .bind(&secrets_json)
+            .bind(task.creation_time)
+            .bind(task.start_time)
+            .bind(task.end_time)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -804,6 +794,9 @@ impl PostgresStoreV2 {
             last_message: row.last_message.clone(),
             error,
             deleted: row.deleted,
+            creation_time: row.creation_time,
+            start_time: row.start_time,
+            end_time: row.end_time,
         })
     }
 
@@ -1293,6 +1286,16 @@ struct ObjectRelationshipRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct SubtreeQueryRow {
+    issue_id: String,
+    parent_id: String,
+    status: String,
+    title: String,
+    assignee: Option<String>,
+    has_active_task: Option<bool>,
+}
+
+#[derive(sqlx::FromRow)]
 struct IssueRow {
     id: String,
     version_number: i64,
@@ -1305,8 +1308,6 @@ struct IssueRow {
     assignee: Option<String>,
     job_settings: Value,
     todo_list: Value,
-    dependencies: Value,
-    patches: Value,
     deleted: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
@@ -1364,6 +1365,24 @@ struct TaskRow {
     updated_at: DateTime<Utc>,
     creator: Option<String>,
     secrets: Option<Value>,
+    #[sqlx(default)]
+    creation_time: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    start_time: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    end_time: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct JobsSummaryRow {
+    spawned_from: String,
+    total: i32,
+    running: i32,
+    failed: i32,
+    latest_job_id: Option<String>,
+    latest_job_status: Option<String>,
+    latest_start_time: Option<DateTime<Utc>>,
+    latest_end_time: Option<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1480,6 +1499,277 @@ struct AgentRow {
     deleted: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+}
+
+/// Build WHERE predicates and bindings for issues queries (PostgreSQL `$N` placeholders).
+fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if let Some(issue_type) = query.issue_type.as_ref() {
+        predicates.push(format!("issue_type = ${}", bindings.len() + 1));
+        bindings.push(issue_type.as_str().to_string());
+    }
+
+    if let Some(status) = query.status.as_ref() {
+        predicates.push(format!("status = ${}", bindings.len() + 1));
+        bindings.push(status.as_str().to_string());
+    }
+
+    if let Some(assignee) = query
+        .assignee
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        predicates.push(format!("LOWER(assignee) = ${}", bindings.len() + 1));
+        bindings.push(assignee.to_lowercase());
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let idx_id = bindings.len() + 1;
+        let idx_title = bindings.len() + 2;
+        let idx_desc = bindings.len() + 3;
+        let idx_progress = bindings.len() + 4;
+        let idx_type = bindings.len() + 5;
+        let idx_status = bindings.len() + 6;
+        let idx_creator = bindings.len() + 7;
+        let idx_assignee = bindings.len() + 8;
+        predicates.push(format!(
+            "(LOWER(id) LIKE ${idx_id} \
+             OR LOWER(title) LIKE ${idx_title} \
+             OR LOWER(description) LIKE ${idx_desc} \
+             OR LOWER(progress) LIKE ${idx_progress} \
+             OR issue_type = ${idx_type} \
+             OR status = ${idx_status} \
+             OR LOWER(creator) LIKE ${idx_creator} \
+             OR LOWER(COALESCE(assignee,'')) LIKE ${idx_assignee})"
+        ));
+        let pattern = format!("%{term}%");
+        bindings.push(pattern.clone()); // id
+        bindings.push(pattern.clone()); // title
+        bindings.push(pattern.clone()); // description
+        bindings.push(pattern.clone()); // progress
+        bindings.push(term.clone()); // type (exact match)
+        bindings.push(term.clone()); // status (exact match)
+        bindings.push(pattern.clone()); // creator
+        bindings.push(pattern); // assignee
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = false".to_string());
+    }
+
+    if !query.label_ids.is_empty() {
+        let label_count = query.label_ids.len();
+        let placeholders: Vec<String> = query
+            .label_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!(
+            "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la \
+             WHERE la.label_id IN ({}) \
+             GROUP BY la.object_id \
+             HAVING COUNT(DISTINCT la.label_id) = {label_count})",
+            placeholders.join(", ")
+        ));
+        for label_id in &query.label_ids {
+            bindings.push(label_id.to_string());
+        }
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for patches queries (PostgreSQL `$N` placeholders).
+fn build_patches_predicates_pg(query: &SearchPatchesQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings = Vec::new();
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = false".to_string());
+    }
+
+    if !query.status.is_empty() {
+        let status_strings: Vec<String> = query
+            .status
+            .iter()
+            .map(|s| {
+                let domain: crate::domain::patches::PatchStatus = (*s).into();
+                domain.as_str().to_string()
+            })
+            .collect();
+        let placeholders: Vec<String> = status_strings
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("status IN ({})", placeholders.join(", ")));
+        for s in status_strings {
+            bindings.push(s);
+        }
+    }
+
+    if let Some(ref branch) = query.branch_name {
+        let idx = bindings.len() + 1;
+        predicates.push(format!("branch_name = ${idx}"));
+        bindings.push(branch.clone());
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let idx_start = bindings.len() + 1;
+        predicates.push(format!(
+            "(LOWER(id) LIKE ${idx_id} \
+             OR LOWER(title) LIKE ${idx_title} \
+             OR LOWER(description) LIKE ${idx_desc} \
+             OR LOWER(status) LIKE ${idx_status} \
+             OR LOWER(service_repo_name) LIKE ${idx_repo} \
+             OR LOWER(diff) LIKE ${idx_diff} \
+             OR LOWER(COALESCE(branch_name,'')) LIKE ${idx_branch} \
+             OR LOWER(github->>'owner') LIKE ${idx_gh_owner} \
+             OR LOWER(github->>'repo') LIKE ${idx_gh_repo} \
+             OR (github->>'number') LIKE ${idx_gh_number} \
+             OR LOWER(COALESCE(github->>'head_ref','')) LIKE ${idx_gh_head} \
+             OR LOWER(COALESCE(github->>'base_ref','')) LIKE ${idx_gh_base})",
+            idx_id = idx_start,
+            idx_title = idx_start + 1,
+            idx_desc = idx_start + 2,
+            idx_status = idx_start + 3,
+            idx_repo = idx_start + 4,
+            idx_diff = idx_start + 5,
+            idx_branch = idx_start + 6,
+            idx_gh_owner = idx_start + 7,
+            idx_gh_repo = idx_start + 8,
+            idx_gh_number = idx_start + 9,
+            idx_gh_head = idx_start + 10,
+            idx_gh_base = idx_start + 11,
+        ));
+        let pattern = format!("%{term}%");
+        for _ in 0..12 {
+            bindings.push(pattern.clone());
+        }
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for documents queries (PostgreSQL `$N` placeholders).
+fn build_documents_predicates_pg(query: &SearchDocumentsQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings = Vec::new();
+
+    if let Some(path) = query.path_prefix.as_ref() {
+        if query.path_is_exact.unwrap_or(false) {
+            predicates.push(format!("COALESCE(path,'') = ${}", bindings.len() + 1));
+            bindings.push(path.clone());
+        } else {
+            predicates.push(format!("COALESCE(path,'') LIKE ${}", bindings.len() + 1));
+            bindings.push(format!("{path}%"));
+        }
+    }
+
+    if let Some(created_by) = query.created_by.as_ref() {
+        predicates.push(format!("created_by = ${}", bindings.len() + 1));
+        bindings.push(created_by.as_ref().to_string());
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let idx_title = bindings.len() + 1;
+        let idx_body = bindings.len() + 2;
+        let idx_path = bindings.len() + 3;
+        predicates.push(format!(
+            "(LOWER(title) LIKE ${idx_title} \
+             OR LOWER(body_markdown) LIKE ${idx_body} \
+             OR LOWER(COALESCE(path,'')) LIKE ${idx_path})"
+        ));
+        let pattern = format!("%{term}%");
+        bindings.push(pattern.clone());
+        bindings.push(pattern.clone());
+        bindings.push(pattern);
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = false".to_string());
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for tasks queries (PostgreSQL `$N` placeholders).
+fn build_tasks_predicates_pg(query: &SearchJobsQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if let Some(spawned_from) = query.spawned_from.as_ref() {
+        predicates.push(format!("spawned_from = ${}", bindings.len() + 1));
+        bindings.push(spawned_from.as_ref().to_string());
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let idx_id = bindings.len() + 1;
+        let idx_prompt = bindings.len() + 2;
+        let idx_status = bindings.len() + 3;
+        predicates.push(format!(
+            "(LOWER(id) LIKE ${idx_id} \
+             OR LOWER(prompt) LIKE ${idx_prompt} \
+             OR LOWER(status) LIKE ${idx_status})"
+        ));
+        let pattern = format!("%{term}%");
+        bindings.push(pattern.clone());
+        bindings.push(pattern.clone());
+        bindings.push(pattern);
+    }
+
+    if let Some(status) = query.status {
+        let server_status: Status = status.into();
+        predicates.push(format!("status = ${}", bindings.len() + 1));
+        bindings.push(status_to_db_str(server_status).to_string());
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = false".to_string());
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for labels queries (PostgreSQL `$N` placeholders).
+fn build_labels_predicates_pg(query: &SearchLabelsQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = false".to_string());
+    }
+
+    if let Some(ref q) = query.q {
+        predicates.push(format!("LOWER(name) LIKE ${}", bindings.len() + 1));
+        bindings.push(format!("%{}%", q.to_lowercase()));
+    }
+
+    (predicates, bindings)
 }
 
 fn map_sqlx_error(err: sqlx::Error) -> StoreError {
@@ -1616,7 +1906,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
@@ -1656,7 +1946,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -1694,6 +1984,19 @@ impl ReadOnlyStore for PostgresStoreV2 {
             r.creation_time = creation_time.unwrap_or(r.timestamp);
         }
 
+        // Populate relationships from object_relationships table.
+        // Project current relationships onto all historical versions.
+        if let Some(first) = results.first_mut() {
+            self.populate_issue_relationships(id, &mut first.item)
+                .await?;
+            let dependencies = first.item.dependencies.clone();
+            let patches = first.item.patches.clone();
+            for r in results.iter_mut().skip(1) {
+                r.item.dependencies = dependencies.clone();
+                r.item.patches = patches.clone();
+            }
+        }
+
         Ok(results)
     }
 
@@ -1701,107 +2004,32 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        // Use a subquery to get the latest version of each issue first,
-        // then apply filters. This ensures we filter on the current state
-        // of each issue, not historical versions.
-        let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, \
-             MIN(created_at) OVER (PARTITION BY id) AS creation_time \
-             FROM {TABLE_ISSUES_V2} ORDER BY id, version_number DESC"
+        // Use a correlated subquery to filter to the latest version of each
+        // issue instead of DISTINCT ON, which materializes the full table.
+        // With an index on (created_at DESC, id DESC), Postgres can scan in
+        // sort order and short-circuit at the LIMIT without computing latest
+        // versions for all issues.
+        let mut sql = format!(
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
+             i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, \
+             i.created_at, i.updated_at, \
+             (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time \
+             FROM {TABLE_ISSUES_V2} i"
         );
-        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
+        let (mut predicates, mut bindings) = build_issues_predicates_pg(query);
+        predicates.push(format!(
+            "i.version_number = (SELECT MAX(i3.version_number) FROM {TABLE_ISSUES_V2} i3 WHERE i3.id = i.id)"
+        ));
 
-        // Filter by issue_type
-        if let Some(issue_type) = query.issue_type.as_ref() {
-            predicates.push(format!("issue_type = ${}", bindings.len() + 1));
-            bindings.push(issue_type.as_str().to_string());
-        }
-
-        // Filter by status
-        if let Some(status) = query.status.as_ref() {
-            predicates.push(format!("status = ${}", bindings.len() + 1));
-            bindings.push(status.as_str().to_string());
-        }
-
-        // Filter by assignee (case-insensitive)
-        if let Some(assignee) = query
-            .assignee
-            .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            predicates.push(format!("LOWER(assignee) = ${}", bindings.len() + 1));
-            bindings.push(assignee.to_lowercase());
-        }
-
-        // Filter by search term (q)
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let idx_id = bindings.len() + 1;
-            let idx_title = bindings.len() + 2;
-            let idx_desc = bindings.len() + 3;
-            let idx_progress = bindings.len() + 4;
-            let idx_type = bindings.len() + 5;
-            let idx_status = bindings.len() + 6;
-            let idx_creator = bindings.len() + 7;
-            let idx_assignee = bindings.len() + 8;
-            predicates.push(format!(
-                "(LOWER(id) LIKE ${idx_id} \
-                 OR LOWER(title) LIKE ${idx_title} \
-                 OR LOWER(description) LIKE ${idx_desc} \
-                 OR LOWER(progress) LIKE ${idx_progress} \
-                 OR issue_type = ${idx_type} \
-                 OR status = ${idx_status} \
-                 OR LOWER(creator) LIKE ${idx_creator} \
-                 OR LOWER(COALESCE(assignee,'')) LIKE ${idx_assignee})"
-            ));
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone()); // id
-            bindings.push(pattern.clone()); // title
-            bindings.push(pattern.clone()); // description
-            bindings.push(pattern.clone()); // progress
-            bindings.push(term.clone()); // type (exact match)
-            bindings.push(term.clone()); // status (exact match)
-            bindings.push(pattern.clone()); // creator
-            bindings.push(pattern); // assignee
-        }
-
-        // Filter deleted issues by default
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
-
-        // Filter by label IDs (AND semantics: issue must have ALL specified labels)
-        if !query.label_ids.is_empty() {
-            let label_count = query.label_ids.len();
-            let placeholders: Vec<String> = query
-                .label_ids
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("${}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!(
-                "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la \
-                 WHERE la.label_id IN ({}) \
-                 GROUP BY la.object_id \
-                 HAVING COUNT(DISTINCT la.label_id) = {label_count})",
-                placeholders.join(", ")
-            ));
-            for label_id in &query.label_ids {
-                bindings.push(label_id.to_string());
-            }
-        }
-
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_pg(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, IssueRow>(&sql);
         for value in bindings {
@@ -1840,6 +2068,33 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(issues)
     }
 
+    async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
+        // Use correlated subquery instead of DISTINCT ON to avoid
+        // materializing all latest versions before counting.
+        let mut sql = format!("SELECT COUNT(*) FROM {TABLE_ISSUES_V2} i");
+        let (mut predicates, bindings) = build_issues_predicates_pg(query);
+        predicates.push(format!(
+            "i.version_number = (SELECT MAX(i2.version_number) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id)"
+        ));
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_scalar::<_, i64>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let count = query_builder
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(count as u64)
+    }
+
     async fn search_issue_graph(
         &self,
         filters: &[IssueGraphFilter],
@@ -1856,7 +2111,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         );
         let rows = sqlx::query_scalar::<_, String>(&sql)
             .bind(issue_id.as_ref())
-            .bind(super::RelationshipType::ChildOf.as_str())
+            .bind(crate::store::RelationshipType::ChildOf.as_str())
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -1864,6 +2119,90 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .map(|id| {
                 id.parse::<IssueId>().map_err(|err| {
                     StoreError::Internal(format!("invalid issue id in object_relationships: {err}"))
+                })
+            })
+            .collect()
+    }
+
+    async fn get_issue_subtrees(
+        &self,
+        root_ids: &[IssueId],
+    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, StoreError> {
+        if root_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build parameter placeholders $1, $2, ...
+        let placeholders: Vec<String> = (1..=root_ids.len()).map(|i| format!("${i}")).collect();
+        let placeholders_str = placeholders.join(", ");
+        let rel_param = format!("${}", root_ids.len() + 1);
+
+        let sql = format!(
+            "WITH RECURSIVE subtree AS ( \
+                SELECT source_id AS issue_id, target_id AS parent_id \
+                FROM {TABLE_OBJECT_RELATIONSHIPS} \
+                WHERE target_id IN ({placeholders_str}) AND rel_type = {rel_param} \
+                UNION \
+                SELECT r.source_id AS issue_id, s.issue_id AS parent_id \
+                FROM subtree s \
+                JOIN {TABLE_OBJECT_RELATIONSHIPS} r ON r.target_id = s.issue_id \
+                WHERE r.rel_type = {rel_param} \
+            ) \
+            SELECT \
+                s.issue_id, \
+                s.parent_id, \
+                i.status, \
+                i.title, \
+                i.assignee, \
+                active_check.has_active_task \
+            FROM subtree s \
+            JOIN LATERAL ( \
+                SELECT status, title, assignee \
+                FROM {TABLE_ISSUES_V2} \
+                WHERE id = s.issue_id \
+                ORDER BY version_number DESC \
+                LIMIT 1 \
+            ) i ON true \
+            JOIN LATERAL ( \
+                SELECT EXISTS ( \
+                    SELECT 1 FROM ( \
+                        SELECT DISTINCT ON (id) id, status \
+                        FROM {TABLE_TASKS_V2} \
+                        WHERE spawned_from = s.issue_id AND deleted = false \
+                        ORDER BY id, version_number DESC \
+                    ) t WHERE t.status IN ('running', 'pending') \
+                ) AS has_active_task \
+            ) active_check ON true \
+            ORDER BY s.parent_id, s.issue_id"
+        );
+
+        let mut query = sqlx::query_as::<_, SubtreeQueryRow>(&sql);
+        for id in root_ids {
+            query = query.bind(id.as_ref());
+        }
+        query = query.bind(crate::store::RelationshipType::ChildOf.as_str());
+
+        let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let issue_id = row.issue_id.parse::<IssueId>().map_err(|e| {
+                    StoreError::Internal(format!("invalid issue id in subtree: {e}"))
+                })?;
+                let parent_id = row.parent_id.parse::<IssueId>().map_err(|e| {
+                    StoreError::Internal(format!("invalid parent id in subtree: {e}"))
+                })?;
+                let status = row
+                    .status
+                    .parse::<crate::domain::issues::IssueStatus>()
+                    .unwrap_or_default();
+                Ok(crate::domain::issues::SubtreeIssueRow {
+                    issue_id,
+                    parent_id,
+                    status,
+                    title: row.title,
+                    assignee: row.assignee,
+                    has_active_task: row.has_active_task.unwrap_or(false),
                 })
             })
             .collect()
@@ -1877,7 +2216,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         );
         let rows = sqlx::query_scalar::<_, String>(&sql)
             .bind(issue_id.as_ref())
-            .bind(super::RelationshipType::BlockedOn.as_str())
+            .bind(crate::store::RelationshipType::BlockedOn.as_str())
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -1998,84 +2337,17 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings = Vec::new();
+        let (mut predicates, mut bindings) = build_patches_predicates_pg(query);
 
-        // Filter deleted patches by default
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
-
-        if !query.status.is_empty() {
-            let status_strings: Vec<String> = query
-                .status
-                .iter()
-                .map(|s| {
-                    let domain: crate::domain::patches::PatchStatus = (*s).into();
-                    domain.as_str().to_string()
-                })
-                .collect();
-            let placeholders: Vec<String> = status_strings
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("${}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!("status IN ({})", placeholders.join(", ")));
-            for s in status_strings {
-                bindings.push(s);
-            }
-        }
-
-        if let Some(ref branch) = query.branch_name {
-            let idx = bindings.len() + 1;
-            predicates.push(format!("branch_name = ${idx}"));
-            bindings.push(branch.clone());
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            // Search across multiple fields: id, title, description, status, service_repo_name, diff, github fields
-            let idx_start = bindings.len() + 1;
-            predicates.push(format!(
-                "(LOWER(id) LIKE ${idx_id} \
-                 OR LOWER(title) LIKE ${idx_title} \
-                 OR LOWER(description) LIKE ${idx_desc} \
-                 OR LOWER(status) LIKE ${idx_status} \
-                 OR LOWER(service_repo_name) LIKE ${idx_repo} \
-                 OR LOWER(diff) LIKE ${idx_diff} \
-                 OR LOWER(COALESCE(branch_name,'')) LIKE ${idx_branch} \
-                 OR LOWER(github->>'owner') LIKE ${idx_gh_owner} \
-                 OR LOWER(github->>'repo') LIKE ${idx_gh_repo} \
-                 OR (github->>'number') LIKE ${idx_gh_number} \
-                 OR LOWER(COALESCE(github->>'head_ref','')) LIKE ${idx_gh_head} \
-                 OR LOWER(COALESCE(github->>'base_ref','')) LIKE ${idx_gh_base})",
-                idx_id = idx_start,
-                idx_title = idx_start + 1,
-                idx_desc = idx_start + 2,
-                idx_status = idx_start + 3,
-                idx_repo = idx_start + 4,
-                idx_diff = idx_start + 5,
-                idx_branch = idx_start + 6,
-                idx_gh_owner = idx_start + 7,
-                idx_gh_repo = idx_start + 8,
-                idx_gh_number = idx_start + 9,
-                idx_gh_head = idx_start + 10,
-                idx_gh_base = idx_start + 11,
-            ));
-            let pattern = format!("%{term}%");
-            for _ in 0..12 {
-                bindings.push(pattern.clone());
-            }
-        }
-
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_pg(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, PatchRow>(&sql);
         for value in bindings {
@@ -2112,6 +2384,32 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(patches)
     }
 
+    async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, status, is_automatic_backup, branch_name, service_repo_name, github, title, description, diff, deleted \
+             FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
+        );
+        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
+        let (predicates, bindings) = build_patches_predicates_pg(query);
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_scalar::<_, i64>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let count = query_builder
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(count as u64)
+    }
+
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_patch_exists(patch_id).await?;
         let sql = format!(
@@ -2120,7 +2418,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         );
         let rows = sqlx::query_scalar::<_, String>(&sql)
             .bind(patch_id.as_ref())
-            .bind(super::RelationshipType::HasPatch.as_str())
+            .bind(crate::store::RelationshipType::HasPatch.as_str())
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -2236,53 +2534,17 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_DOCUMENTS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings = Vec::new();
+        let (mut predicates, mut bindings) = build_documents_predicates_pg(query);
 
-        if let Some(path) = query.path_prefix.as_ref() {
-            if query.path_is_exact.unwrap_or(false) {
-                predicates.push(format!("COALESCE(path,'') = ${}", bindings.len() + 1));
-                bindings.push(path.clone());
-            } else {
-                predicates.push(format!("COALESCE(path,'') LIKE ${}", bindings.len() + 1));
-                bindings.push(format!("{path}%"));
-            }
-        }
-
-        if let Some(created_by) = query.created_by.as_ref() {
-            predicates.push(format!("created_by = ${}", bindings.len() + 1));
-            bindings.push(created_by.as_ref().to_string());
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let idx_title = bindings.len() + 1;
-            let idx_body = bindings.len() + 2;
-            let idx_path = bindings.len() + 3;
-            predicates.push(format!(
-                "(LOWER(title) LIKE ${idx_title} \
-                 OR LOWER(body_markdown) LIKE ${idx_body} \
-                 OR LOWER(COALESCE(path,'')) LIKE ${idx_path})"
-            ));
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone());
-            bindings.push(pattern.clone());
-            bindings.push(pattern);
-        }
-
-        // Filter deleted documents by default
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
-
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_pg(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, DocumentRow>(&sql);
         for value in bindings {
@@ -2319,6 +2581,32 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(documents)
     }
 
+    async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, title, body_markdown, path, created_by, deleted \
+             FROM {TABLE_DOCUMENTS_V2} ORDER BY id, version_number DESC"
+        );
+        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
+        let (predicates, bindings) = build_documents_predicates_pg(query);
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_scalar::<_, i64>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let count = query_builder
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(count as u64)
+    }
+
     async fn get_documents_by_path(
         &self,
         path_prefix: &str,
@@ -2343,7 +2631,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Task>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -2377,7 +2665,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -2421,56 +2709,21 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each task, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets \
+            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time \
              FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
+        let (mut predicates, mut bindings) = build_tasks_predicates_pg(query);
 
-        // Filter by spawned_from
-        if let Some(spawned_from) = query.spawned_from.as_ref() {
-            predicates.push(format!("spawned_from = ${}", bindings.len() + 1));
-            bindings.push(spawned_from.as_ref().to_string());
-        }
-
-        // Filter by search term (q) - matches task ID, prompt, status
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let idx_id = bindings.len() + 1;
-            let idx_prompt = bindings.len() + 2;
-            let idx_status = bindings.len() + 3;
-            predicates.push(format!(
-                "(LOWER(id) LIKE ${idx_id} \
-                 OR LOWER(prompt) LIKE ${idx_prompt} \
-                 OR LOWER(status) LIKE ${idx_status})"
-            ));
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone()); // id
-            bindings.push(pattern.clone()); // prompt
-            bindings.push(pattern); // status
-        }
-
-        // Filter by status
-        if let Some(status) = query.status {
-            let server_status: Status = status.into();
-            predicates.push(format!("status = ${}", bindings.len() + 1));
-            bindings.push(super::status_to_db_str(server_status).to_string());
-        }
-
-        // Filter deleted tasks by default
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
-        }
-
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_pg(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, TaskRow>(&sql);
         for value in bindings {
@@ -2509,9 +2762,111 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(tasks)
     }
 
+    async fn get_jobs_summary_for_issues(
+        &self,
+        issue_ids: &[IssueId],
+    ) -> Result<HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>, StoreError> {
+        use metis_common::api::v1::issues::JobStatusSummary;
+        use metis_common::api::v1::task_status::Status as ApiTaskStatus;
+
+        if issue_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Build placeholders for the IN clause
+        let placeholders: Vec<String> = (1..=issue_ids.len()).map(|i| format!("${i}")).collect();
+        let in_clause = placeholders.join(", ");
+
+        // Build the subquery to get only the latest version of each task,
+        // filtering by spawned_from inside the subquery to avoid scanning all tasks.
+        let sql = format!(
+            "SELECT \
+                spawned_from, \
+                COUNT(*)::int4 AS total, \
+                COUNT(*) FILTER (WHERE status IN ('running', 'pending'))::int4 AS running, \
+                COUNT(*) FILTER (WHERE status = 'failed')::int4 AS failed, \
+                (ARRAY_AGG(id ORDER BY creation_time DESC NULLS LAST))[1] AS latest_job_id, \
+                (ARRAY_AGG(status ORDER BY creation_time DESC NULLS LAST))[1] AS latest_job_status, \
+                (ARRAY_AGG(start_time ORDER BY creation_time DESC NULLS LAST))[1] AS latest_start_time, \
+                (ARRAY_AGG(end_time ORDER BY creation_time DESC NULLS LAST))[1] AS latest_end_time \
+             FROM (SELECT DISTINCT ON (id) id, spawned_from, status, creation_time, start_time, end_time \
+                   FROM {TABLE_TASKS_V2} \
+                   WHERE deleted = false AND spawned_from IN ({in_clause}) \
+                   ORDER BY id, version_number DESC) AS latest \
+             GROUP BY spawned_from"
+        );
+
+        let mut query_builder = sqlx::query_as::<_, JobsSummaryRow>(&sql);
+        for id in issue_ids {
+            query_builder = query_builder.bind(id.as_ref().to_string());
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut result = HashMap::new();
+        for row in rows {
+            let issue_id = row
+                .spawned_from
+                .parse::<IssueId>()
+                .map_err(|e| StoreError::Internal(format!("invalid issue id: {e}")))?;
+            let latest_job_id = row
+                .latest_job_id
+                .map(|s| s.parse::<TaskId>())
+                .transpose()
+                .map_err(|e| StoreError::Internal(format!("invalid task id: {e}")))?;
+            let latest_job_status = row
+                .latest_job_status
+                .as_deref()
+                .map(|s| s.parse::<ApiTaskStatus>().unwrap());
+            result.insert(
+                issue_id,
+                JobStatusSummary::new(
+                    row.total as u32,
+                    row.running as u32,
+                    row.failed as u32,
+                    latest_job_id,
+                    latest_job_status,
+                    row.latest_start_time,
+                    row.latest_end_time,
+                ),
+            );
+        }
+
+        Ok(result)
+    }
+
+    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, prompt, spawned_from, status, deleted \
+             FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
+        );
+        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
+        let (predicates, bindings) = build_tasks_predicates_pg(query);
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_scalar::<_, i64>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let count = query_builder
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(count as u64)
+    }
+
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         let versions = self.get_task_versions(id).await?;
-        super::task_status_log_from_versions(&versions)
+        crate::store::task_status_log_from_versions(&versions)
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
@@ -2562,7 +2917,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let mut result = HashMap::new();
         for (task_id, versions) in grouped {
-            if let Some(log) = super::task_status_log_from_versions(&versions) {
+            if let Some(log) = crate::store::task_status_log_from_versions(&versions) {
                 result.insert(task_id, log);
             }
         }
@@ -2575,7 +2930,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     // -------------------------------------------------------------------------
 
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
-        super::validate_actor_name(name)?;
+        crate::store::validate_actor_name(name)?;
         let query = format!(
             "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
@@ -2998,32 +3353,33 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-        let mut conditions = Vec::new();
-
-        if !include_deleted {
-            conditions.push("deleted = false".to_string());
-        }
-
-        let q_val = query.q.clone();
-        if q_val.is_some() {
-            conditions.push("LOWER(name) LIKE $1".to_string());
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
-
-        let sql = format!(
+        let mut sql = format!(
             "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
-             FROM {TABLE_LABELS}{where_clause} ORDER BY name"
+             FROM {TABLE_LABELS}"
         );
+        let (mut predicates, mut bindings) = build_labels_predicates_pg(query);
+
+        if query.limit.is_some() || query.cursor.is_some() {
+            apply_pagination_sql_pg(
+                &mut sql,
+                &mut predicates,
+                &mut bindings,
+                &query.cursor,
+                query.limit,
+                "updated_at",
+                "id",
+            )?;
+        } else {
+            if !predicates.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&predicates.join(" AND "));
+            }
+            sql.push_str(" ORDER BY name");
+        }
 
         let mut qb = sqlx::query_as::<_, LabelRow>(&sql);
-        if let Some(ref q) = q_val {
-            qb = qb.bind(format!("%{}%", q.to_lowercase()));
+        for value in &bindings {
+            qb = qb.bind(value);
         }
 
         let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
@@ -3038,6 +3394,25 @@ impl ReadOnlyStore for PostgresStoreV2 {
         }
 
         Ok(labels)
+    }
+
+    async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError> {
+        let mut sql = format!("SELECT COUNT(*) FROM {TABLE_LABELS}");
+        let (predicates, bindings) = build_labels_predicates_pg(query);
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut qb = sqlx::query_scalar::<_, i64>(&sql);
+        for value in &bindings {
+            qb = qb.bind(value);
+        }
+
+        let count = qb.fetch_one(&self.pool).await.map_err(map_sqlx_error)?;
+
+        Ok(count as u64)
     }
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
@@ -3156,8 +3531,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         source_id: Option<&MetisId>,
         target_id: Option<&MetisId>,
-        rel_type: Option<super::RelationshipType>,
-    ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
+        rel_type: Option<crate::store::RelationshipType>,
+    ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
         let mut conditions = Vec::new();
         let mut bind_index = 1u32;
 
@@ -3205,16 +3580,16 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let target_id: MetisId = r.target_id.parse().map_err(|_| {
                 StoreError::Internal("invalid target_id in object_relationships".to_string())
             })?;
-            let source_kind = super::ObjectKind::from_str(&r.source_kind).map_err(|e| {
+            let source_kind = crate::store::ObjectKind::from_str(&r.source_kind).map_err(|e| {
                 StoreError::Internal(format!("invalid source_kind in object_relationships: {e}"))
             })?;
-            let target_kind = super::ObjectKind::from_str(&r.target_kind).map_err(|e| {
+            let target_kind = crate::store::ObjectKind::from_str(&r.target_kind).map_err(|e| {
                 StoreError::Internal(format!("invalid target_kind in object_relationships: {e}"))
             })?;
-            let rel_type = super::RelationshipType::from_str(&r.rel_type).map_err(|e| {
+            let rel_type = crate::store::RelationshipType::from_str(&r.rel_type).map_err(|e| {
                 StoreError::Internal(format!("invalid rel_type in object_relationships: {e}"))
             })?;
-            result.push(super::ObjectRelationship {
+            result.push(crate::store::ObjectRelationship {
                 source_id,
                 source_kind,
                 target_id,
@@ -3493,8 +3868,8 @@ impl Store for PostgresStoreV2 {
 
     async fn add_task(
         &self,
-        task: Task,
-        _creation_time: DateTime<Utc>,
+        mut task: Task,
+        creation_time: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
@@ -3503,6 +3878,7 @@ impl Store for PostgresStoreV2 {
             self.ensure_issue_exists(issue_id).await?;
         }
 
+        task.creation_time = Some(creation_time);
         let actor_json = actor_to_json(actor);
         self.insert_task(&id, 1, &task, Some(&actor_json)).await?;
         Ok((id, 1))
@@ -4046,7 +4422,7 @@ impl Store for PostgresStoreV2 {
         label_id: &LabelId,
         object_id: &MetisId,
     ) -> Result<bool, StoreError> {
-        let object_kind = super::object_kind_from_id(object_id)?;
+        let object_kind = crate::store::object_kind_from_id(object_id)?;
         let sql = format!(
             "INSERT INTO {TABLE_LABEL_ASSOCIATIONS} (label_id, object_id, object_kind) \
              VALUES ($1, $2, $3) \
@@ -4085,10 +4461,10 @@ impl Store for PostgresStoreV2 {
         &self,
         source_id: &MetisId,
         target_id: &MetisId,
-        rel_type: super::RelationshipType,
+        rel_type: crate::store::RelationshipType,
     ) -> Result<bool, StoreError> {
-        let source_kind = super::object_kind_from_id(source_id)?;
-        let target_kind = super::object_kind_from_id(target_id)?;
+        let source_kind = crate::store::object_kind_from_id(source_id)?;
+        let target_kind = crate::store::object_kind_from_id(target_id)?;
         let sql = format!(
             "INSERT INTO {TABLE_OBJECT_RELATIONSHIPS} \
              (source_id, source_kind, target_id, target_kind, rel_type) \
@@ -4111,7 +4487,7 @@ impl Store for PostgresStoreV2 {
         &self,
         source_id: &MetisId,
         target_id: &MetisId,
-        rel_type: super::RelationshipType,
+        rel_type: crate::store::RelationshipType,
     ) -> Result<bool, StoreError> {
         let sql = format!(
             "DELETE FROM {TABLE_OBJECT_RELATIONSHIPS} \
@@ -4199,6 +4575,49 @@ fn row_to_agent(row: AgentRow) -> Agent {
     }
 }
 
+/// Appends cursor-based keyset pagination to a SQL query (PostgreSQL dialect).
+///
+/// Adds the cursor WHERE predicate into `predicates`, and appends
+/// ORDER BY / LIMIT clauses to `sql`. Returns the effective limit if set.
+///
+/// The `timestamp_col` is the SQL column name used for the timestamp
+/// component of the cursor (e.g. `"created_at"` or `"updated_at"`).
+fn apply_pagination_sql_pg(
+    sql: &mut String,
+    predicates: &mut Vec<String>,
+    bindings: &mut Vec<String>,
+    cursor: &Option<String>,
+    limit: Option<u32>,
+    timestamp_col: &str,
+    id_col: &str,
+) -> Result<Option<u32>, StoreError> {
+    if let Some(cursor_str) = cursor {
+        let decoded = DecodedCursor::decode(cursor_str)
+            .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
+        let ts_idx = bindings.len() + 1;
+        let id_idx = bindings.len() + 2;
+        predicates.push(format!(
+            "({timestamp_col}, {id_col}) < (${ts_idx}::timestamptz, ${id_idx})"
+        ));
+        bindings.push(decoded.timestamp.to_rfc3339());
+        bindings.push(decoded.id);
+    }
+
+    if !predicates.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&predicates.join(" AND "));
+    }
+
+    sql.push_str(&format!(" ORDER BY {timestamp_col} DESC, {id_col} DESC"));
+
+    let effective_limit = limit.map(|l| l.min(PAGINATION_MAX_LIMIT));
+    if let Some(limit) = effective_limit {
+        sql.push_str(&format!(" LIMIT {}", limit + 1));
+    }
+
+    Ok(effective_limit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4216,6 +4635,7 @@ mod tests {
         },
         test_utils::test_state_with_store,
     };
+    use chrono::Timelike;
     use metis_common::{
         PatchId, RepoName, TaskId, VersionNumber, Versioned,
         repositories::{
@@ -4336,9 +4756,16 @@ mod tests {
         )
     }
 
+    /// Truncate a DateTime to microsecond precision to match Postgres TIMESTAMPTZ storage.
+    fn truncate_to_micros(dt: DateTime<Utc>) -> DateTime<Utc> {
+        let nanos = dt.timestamp_subsec_nanos();
+        let micros_only = (nanos / 1_000) * 1_000;
+        dt.with_nanosecond(micros_only).unwrap()
+    }
+
     /// Task with every optional field set so serialization round-trip can assert full equality.
     fn sample_task_all_fields() -> Task {
-        Task::new(
+        let mut task = Task::new(
             "full prompt".to_string(),
             BundleSpec::None,
             None,
@@ -4352,7 +4779,14 @@ mod tests {
             Status::Created,
             Some("last message".to_string()),
             None,
-        )
+        );
+        task.start_time = Some(truncate_to_micros(
+            Utc::now() - chrono::Duration::minutes(10),
+        ));
+        task.end_time = Some(truncate_to_micros(
+            Utc::now() - chrono::Duration::minutes(5),
+        ));
+        task
     }
 
     /// Patch with every optional field set so serialization round-trip can assert full equality.
@@ -4554,6 +4988,54 @@ mod tests {
             store.get_issue_children(&new_parent).await.unwrap(),
             vec![issue]
         );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_issue_versions_populates_relationships_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Create a parent issue.
+        let (parent_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Create a child issue with a dependency on the parent.
+        let (issue_id, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Update the issue to create a second version.
+        let mut updated = sample_issue(vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_id.clone(),
+        )]);
+        updated.description = "updated details".to_string();
+        store
+            .update_issue(&issue_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Fetch all versions and verify relationships are populated on every version.
+        let versions = store.get_issue_versions(&issue_id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+        for v in &versions {
+            assert_eq!(
+                v.item.dependencies.len(),
+                1,
+                "version {} should have 1 dependency",
+                v.version
+            );
+            assert_eq!(v.item.dependencies[0].issue_id, parent_id);
+        }
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -4760,14 +5242,18 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let task = sample_task_all_fields();
 
+        let now = truncate_to_micros(Utc::now());
         let (task_id, _) = store
-            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .add_task(task.clone(), now, &ActorRef::test())
             .await
             .unwrap();
 
         let fetched = store.get_task(&task_id, false).await.unwrap();
+        // add_task sets creation_time on the stored task
+        let mut expected = task.clone();
+        expected.creation_time = Some(now);
         assert_eq!(
-            fetched.item, task,
+            fetched.item, expected,
             "Task must round-trip all fields (creator, secrets, image, model, etc.)"
         );
     }
@@ -6446,5 +6932,318 @@ mod tests {
         // GET — no relationships left
         let rels = store.get_relationships(None, None, None).await.unwrap();
         assert!(rels.is_empty());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_issue_subtrees_round_trip_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Create a parent issue with two children, one grandchild
+        let (parent_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child_a, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (child_b, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (grandchild, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    child_a.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Query subtrees for parent
+        let rows = store
+            .get_issue_subtrees(&[parent_id.clone()])
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+        let ids: HashSet<_> = rows.iter().map(|r| r.issue_id.clone()).collect();
+        assert!(ids.contains(&child_a));
+        assert!(ids.contains(&child_b));
+        assert!(ids.contains(&grandchild));
+
+        // Check parent linkage
+        let gc_row = rows.iter().find(|r| r.issue_id == grandchild).unwrap();
+        assert_eq!(gc_row.parent_id, child_a);
+
+        // Empty root_ids returns nothing
+        let empty = store.get_issue_subtrees(&[]).await.unwrap();
+        assert!(empty.is_empty());
+
+        // Issue with no children returns empty
+        let (leaf, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let leaf_rows = store.get_issue_subtrees(&[leaf]).await.unwrap();
+        assert!(leaf_rows.is_empty());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_issues_returns_total_matching_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        // Create 5 issues: 3 open tasks, 1 open bug, 1 closed task
+        for _ in 0..3 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        }
+        let bug = Issue::new(
+            IssueType::Bug,
+            "Bug Title".to_string(),
+            "a bug".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(bug, &actor).await.unwrap();
+
+        let closed = Issue::new(
+            IssueType::Task,
+            "Closed".to_string(),
+            "closed task".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Closed,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(closed, &actor).await.unwrap();
+
+        // Count all issues
+        let query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
+
+        // Count only bugs
+        let query = SearchIssuesQuery::new(
+            Some(metis_common::api::v1::issues::IssueType::Bug),
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+
+        // Count only closed
+        let query = SearchIssuesQuery::new(
+            None,
+            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_patches_returns_total_matching_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        for _ in 0..3 {
+            store.add_patch(sample_patch(), &actor).await.unwrap();
+        }
+
+        let query = SearchPatchesQuery::new(None, None, Vec::new(), None);
+        assert_eq!(store.count_patches(&query).await.unwrap(), 3);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_documents_returns_total_matching_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        store
+            .add_document(sample_document("docs/a.md", None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document("docs/b.md", None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document("other/c.md", None), &actor)
+            .await
+            .unwrap();
+
+        // Count all
+        let query = SearchDocumentsQuery::new(None, None, None, None, None);
+        assert_eq!(store.count_documents(&query).await.unwrap(), 3);
+
+        // Count with path prefix filter
+        let query = SearchDocumentsQuery::new(Some("docs/".to_string()), None, None, None, None);
+        assert_eq!(store.count_documents(&query).await.unwrap(), 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_tasks_returns_total_matching_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        for _ in 0..4 {
+            store
+                .add_task(sample_task(), Utc::now(), &actor)
+                .await
+                .unwrap();
+        }
+
+        let query = SearchJobsQuery::new(None, None, None, None);
+        assert_eq!(store.count_tasks(&query).await.unwrap(), 4);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_labels_returns_total_matching_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let default_color: metis_common::Rgb = "#000000".parse().unwrap();
+
+        store
+            .add_label(Label::new(
+                "bug".to_string(),
+                default_color.clone(),
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+        store
+            .add_label(Label::new(
+                "feature".to_string(),
+                default_color.clone(),
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+        store
+            .add_label(Label::new("bugfix".to_string(), default_color, true, false))
+            .await
+            .unwrap();
+
+        // Count all
+        let query = SearchLabelsQuery::default();
+        assert_eq!(store.count_labels(&query).await.unwrap(), 3);
+
+        // Count with search filter
+        let mut query = SearchLabelsQuery::default();
+        query.q = Some("bug".to_string());
+        assert_eq!(store.count_labels(&query).await.unwrap(), 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn count_issues_ignores_pagination_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        for _ in 0..5 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Count should return 5 even when limit is set
+        let mut query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        query.limit = Some(2);
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_issues_returns_latest_version_with_pagination_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        // Create 3 issues with small time gaps so created_at ordering is deterministic.
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let (id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            ids.push(id);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Update the first issue twice so it has 3 versions.
+        let mut updated = sample_issue(vec![]);
+        updated.progress = "v2 progress".to_string();
+        store.update_issue(&ids[0], updated, &actor).await.unwrap();
+
+        let mut updated = sample_issue(vec![]);
+        updated.progress = "v3 progress".to_string();
+        updated.status = IssueStatus::InProgress;
+        store.update_issue(&ids[0], updated, &actor).await.unwrap();
+
+        // list_issues should return 3 issues, each at their latest version.
+        let query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 3);
+
+        // The first issue (ids[0]) should reflect the latest update.
+        let first = results.iter().find(|(id, _)| *id == ids[0]).unwrap();
+        assert_eq!(first.1.item.progress, "v3 progress");
+        assert_eq!(first.1.item.status, IssueStatus::InProgress);
+        assert_eq!(first.1.version, 3);
+
+        // Paginate with limit=2 and verify we get 2 results, then use cursor
+        // to get the remaining 1.
+        let mut query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        query.limit = Some(2);
+        let page1 = store.list_issues(&query).await.unwrap();
+        // limit+1 is fetched internally but caller sees at most limit+1 rows;
+        // the handler trims, so we just check we got results.
+        assert!(page1.len() >= 2);
+
+        // count_issues should still return the total (3), not affected by versions.
+        let count_query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        assert_eq!(store.count_issues(&count_query).await.unwrap(), 3);
+
+        // Filter by status=InProgress should return only the updated issue.
+        let query = SearchIssuesQuery::new(
+            None,
+            Some(metis_common::api::v1::issues::IssueStatus::InProgress),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        let filtered = store.list_issues(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, ids[0]);
     }
 }

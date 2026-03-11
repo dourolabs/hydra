@@ -7,8 +7,8 @@ use k8s_openapi::{
     api::{
         batch::v1::{Job, JobSpec, JobStatus as KubeJobStatus},
         core::v1::{
-            Container, EnvFromSource, EnvVar, LocalObjectReference, Pod, PodSpec, PodTemplateSpec,
-            ResourceRequirements, SecretEnvSource,
+            Container, EnvVar, LocalObjectReference, Pod, PodSpec, PodTemplateSpec,
+            ResourceRequirements,
         },
     },
     apimachinery::pkg::api::resource::Quantity,
@@ -22,8 +22,8 @@ use metis_common::constants::{ENV_METIS_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKE
 use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
-use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
 use crate::domain::actors::Actor;
+use crate::job_engine::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
@@ -83,33 +83,6 @@ fn build_image_pull_secrets(image_pull_secrets: &[String]) -> Option<Vec<LocalOb
         None
     } else {
         Some(secrets)
-    }
-}
-
-fn build_env_from_secrets(secrets: Option<&[String]>) -> Option<Vec<EnvFromSource>> {
-    let secrets = secrets?;
-    let env_from: Vec<EnvFromSource> = secrets
-        .iter()
-        .filter_map(|name| {
-            let trimmed = name.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(EnvFromSource {
-                    secret_ref: Some(SecretEnvSource {
-                        name: Some(trimmed.to_string()),
-                        optional: Some(false),
-                    }),
-                    ..Default::default()
-                })
-            }
-        })
-        .collect();
-
-    if env_from.is_empty() {
-        None
-    } else {
-        Some(env_from)
     }
 }
 
@@ -515,7 +488,6 @@ impl JobEngine for KubernetesJobEngine {
         memory_limit: String,
         cpu_request: String,
         memory_request: String,
-        secrets: Option<&[String]>,
     ) -> Result<(), JobEngineError> {
         let job_name = format!("metis-worker-{metis_id}");
 
@@ -531,8 +503,6 @@ impl JobEngine for KubernetesJobEngine {
             "using actor for job"
         );
 
-        let env_from = build_env_from_secrets(secrets);
-
         let mut container = Container {
             name: "metis-worker".to_string(),
             image: Some(image.to_string()),
@@ -546,7 +516,6 @@ impl JobEngine for KubernetesJobEngine {
                 "--tempdir".to_string(),
             ]),
             env: Some(self.build_env_vars(metis_id, env_vars, auth_token)),
-            env_from,
             ..Default::default()
         };
 
@@ -987,67 +956,5 @@ mod tests {
 
         assert_eq!(metis_job.failure_message.as_deref(), Some("boom"));
         assert_eq!(metis_job.status, JobStatus::Failed);
-    }
-
-    #[test]
-    fn build_env_from_secrets_creates_secret_refs() {
-        let secrets = vec!["db-secret".to_string(), "api-key".to_string()];
-        let env_from = build_env_from_secrets(Some(&secrets)).expect("expected env_from sources");
-
-        assert_eq!(env_from.len(), 2);
-        assert_eq!(
-            env_from[0]
-                .secret_ref
-                .as_ref()
-                .and_then(|s| s.name.as_deref()),
-            Some("db-secret")
-        );
-        assert_eq!(
-            env_from[0].secret_ref.as_ref().and_then(|s| s.optional),
-            Some(false)
-        );
-        assert_eq!(
-            env_from[1]
-                .secret_ref
-                .as_ref()
-                .and_then(|s| s.name.as_deref()),
-            Some("api-key")
-        );
-    }
-
-    #[test]
-    fn build_env_from_secrets_returns_none_for_empty_list() {
-        assert!(build_env_from_secrets(Some(&[])).is_none());
-        assert!(build_env_from_secrets(None).is_none());
-    }
-
-    #[test]
-    fn build_env_from_secrets_skips_blank_names() {
-        let secrets = vec!["valid-secret".to_string(), "   ".to_string()];
-        let env_from = build_env_from_secrets(Some(&secrets)).expect("expected env_from sources");
-
-        assert_eq!(env_from.len(), 1);
-        assert_eq!(
-            env_from[0]
-                .secret_ref
-                .as_ref()
-                .and_then(|s| s.name.as_deref()),
-            Some("valid-secret")
-        );
-    }
-
-    #[test]
-    fn build_env_from_secrets_trims_whitespace() {
-        let secrets = vec!["  trimmed-secret  ".to_string()];
-        let env_from = build_env_from_secrets(Some(&secrets)).expect("expected env_from sources");
-
-        assert_eq!(env_from.len(), 1);
-        assert_eq!(
-            env_from[0]
-                .secret_ref
-                .as_ref()
-                .and_then(|s| s.name.as_deref()),
-            Some("trimmed-secret")
-        );
     }
 }

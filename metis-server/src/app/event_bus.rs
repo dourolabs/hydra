@@ -9,7 +9,7 @@ use crate::domain::{
     patches::Patch,
     users::{User, Username},
 };
-use crate::store::{ReadOnlyStore, Store, StoreError, Task, TaskStatusLog};
+use crate::store::{ReadOnlyStore, RelationshipType, Store, StoreError, Task, TaskStatusLog};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
@@ -1119,6 +1119,67 @@ impl StoreWithEvents {
         Ok(changed)
     }
 
+    // ---- Object relationship mutations ----
+
+    pub async fn add_relationship_with_actor(
+        &self,
+        source_id: &MetisId,
+        target_id: &MetisId,
+        rel_type: RelationshipType,
+        actor: ActorRef,
+    ) -> Result<bool, StoreError> {
+        let changed = self
+            .inner
+            .add_relationship(source_id, target_id, rel_type)
+            .await?;
+        if changed {
+            self.emit_issue_updated_for_relationship(source_id, target_id, actor)
+                .await;
+        }
+        Ok(changed)
+    }
+
+    pub async fn remove_relationship_with_actor(
+        &self,
+        source_id: &MetisId,
+        target_id: &MetisId,
+        rel_type: RelationshipType,
+        actor: ActorRef,
+    ) -> Result<bool, StoreError> {
+        let changed = self
+            .inner
+            .remove_relationship(source_id, target_id, rel_type)
+            .await?;
+        if changed {
+            self.emit_issue_updated_for_relationship(source_id, target_id, actor)
+                .await;
+        }
+        Ok(changed)
+    }
+
+    /// For each side of the relationship that is an Issue, re-fetch the issue
+    /// and emit an `IssueUpdated` event so SSE subscribers see the change.
+    async fn emit_issue_updated_for_relationship(
+        &self,
+        source_id: &MetisId,
+        target_id: &MetisId,
+        actor: ActorRef,
+    ) {
+        for metis_id in [source_id, target_id] {
+            if let Some(issue_id) = metis_id.as_issue_id() {
+                if let Ok(versioned) = self.inner.get_issue(&issue_id, false).await {
+                    let payload = Arc::new(MutationPayload::Issue {
+                        old: Some(versioned.item.clone()),
+                        new: versioned.item,
+                        actor: actor.clone(),
+                    });
+                    self.event_bus
+                        .emit_issue_updated(issue_id, versioned.version, payload);
+                }
+            }
+        }
+    }
+
     // ---- User secret mutations ----
 
     pub async fn set_user_secret(
@@ -1221,6 +1282,10 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.list_issues(query).await
     }
 
+    async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
+        self.inner.count_issues(query).await
+    }
+
     async fn search_issue_graph(
         &self,
         filters: &[IssueGraphFilter],
@@ -1232,6 +1297,13 @@ impl ReadOnlyStore for StoreWithEvents {
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.inner.get_issue_children(issue_id).await
+    }
+
+    async fn get_issue_subtrees(
+        &self,
+        root_ids: &[IssueId],
+    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, StoreError> {
+        self.inner.get_issue_subtrees(root_ids).await
     }
 
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
@@ -1263,6 +1335,10 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.list_patches(query).await
     }
 
+    async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
+        self.inner.count_patches(query).await
+    }
+
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         self.inner.get_issues_for_patch(patch_id).await
     }
@@ -1291,6 +1367,10 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.list_documents(query).await
     }
 
+    async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
+        self.inner.count_documents(query).await
+    }
+
     async fn get_documents_by_path(
         &self,
         path_prefix: &str,
@@ -1317,6 +1397,17 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         self.inner.list_tasks(query).await
+    }
+
+    async fn get_jobs_summary_for_issues(
+        &self,
+        issue_ids: &[IssueId],
+    ) -> Result<HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>, StoreError> {
+        self.inner.get_jobs_summary_for_issues(issue_ids).await
+    }
+
+    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+        self.inner.count_tasks(query).await
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
@@ -1408,6 +1499,10 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
         self.inner.list_labels(query).await
+    }
+
+    async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError> {
+        self.inner.count_labels(query).await
     }
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
@@ -1868,6 +1963,9 @@ mod tests {
             last_message: None,
             error: None,
             deleted: false,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
         };
 
         let (task_id, _) = store
@@ -1891,6 +1989,9 @@ mod tests {
             last_message: Some("doing work".to_string()),
             error: None,
             deleted: false,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
         };
 
         store
@@ -2436,5 +2537,234 @@ mod tests {
 
         // No event should be emitted because the patch doesn't exist
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn add_relationship_with_actor_emits_issue_updated_for_both_sides() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue1 = dummy_issue();
+        let (issue_id1, _) = store
+            .add_issue_with_actor(issue1, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap(); // consume IssueCreated
+
+        let issue2 = dummy_issue();
+        let (issue_id2, _) = store
+            .add_issue_with_actor(issue2, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap(); // consume IssueCreated
+
+        let source_id = MetisId::from(issue_id1.clone());
+        let target_id = MetisId::from(issue_id2.clone());
+
+        let changed = store
+            .add_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::ChildOf,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert!(changed);
+
+        // Should receive IssueUpdated for the source issue
+        let event = rx
+            .recv()
+            .await
+            .expect("should receive IssueUpdated for source");
+        match &event {
+            ServerEvent::IssueUpdated { issue_id, .. } => {
+                assert_eq!(*issue_id, issue_id1);
+            }
+            other => panic!("expected IssueUpdated, got {other:?}"),
+        }
+
+        // Should receive IssueUpdated for the target issue
+        let event = rx
+            .recv()
+            .await
+            .expect("should receive IssueUpdated for target");
+        match &event {
+            ServerEvent::IssueUpdated { issue_id, .. } => {
+                assert_eq!(*issue_id, issue_id2);
+            }
+            other => panic!("expected IssueUpdated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_relationship_duplicate_does_not_emit_event() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue1 = dummy_issue();
+        let (issue_id1, _) = store
+            .add_issue_with_actor(issue1, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let issue2 = dummy_issue();
+        let (issue_id2, _) = store
+            .add_issue_with_actor(issue2, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let source_id = MetisId::from(issue_id1.clone());
+        let target_id = MetisId::from(issue_id2.clone());
+
+        // First add
+        let changed = store
+            .add_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::ChildOf,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert!(changed);
+        let _ = rx.recv().await.unwrap(); // consume IssueUpdated (source)
+        let _ = rx.recv().await.unwrap(); // consume IssueUpdated (target)
+
+        // Second add (duplicate)
+        let changed = store
+            .add_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::ChildOf,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert!(!changed);
+        assert!(
+            rx.try_recv().is_err(),
+            "no event should be emitted for duplicate add"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_relationship_with_actor_emits_issue_updated_for_both_sides() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue1 = dummy_issue();
+        let (issue_id1, _) = store
+            .add_issue_with_actor(issue1, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let issue2 = dummy_issue();
+        let (issue_id2, _) = store
+            .add_issue_with_actor(issue2, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let source_id = MetisId::from(issue_id1.clone());
+        let target_id = MetisId::from(issue_id2.clone());
+
+        // Add relationship first
+        store
+            .add_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::BlockedOn,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap(); // consume IssueUpdated (source)
+        let _ = rx.recv().await.unwrap(); // consume IssueUpdated (target)
+
+        // Now remove it
+        let changed = store
+            .remove_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::BlockedOn,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert!(changed);
+
+        // Should receive IssueUpdated for the source issue
+        let event = rx
+            .recv()
+            .await
+            .expect("should receive IssueUpdated for source");
+        match &event {
+            ServerEvent::IssueUpdated { issue_id, .. } => {
+                assert_eq!(*issue_id, issue_id1);
+            }
+            other => panic!("expected IssueUpdated, got {other:?}"),
+        }
+
+        // Should receive IssueUpdated for the target issue
+        let event = rx
+            .recv()
+            .await
+            .expect("should receive IssueUpdated for target");
+        match &event {
+            ServerEvent::IssueUpdated { issue_id, .. } => {
+                assert_eq!(*issue_id, issue_id2);
+            }
+            other => panic!("expected IssueUpdated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn remove_nonexistent_relationship_does_not_emit_event() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner.clone(), bus.clone());
+        let mut rx = bus.subscribe();
+
+        let issue1 = dummy_issue();
+        let (issue_id1, _) = store
+            .add_issue_with_actor(issue1, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let issue2 = dummy_issue();
+        let (issue_id2, _) = store
+            .add_issue_with_actor(issue2, ActorRef::test())
+            .await
+            .unwrap();
+        let _ = rx.recv().await.unwrap();
+
+        let source_id = MetisId::from(issue_id1.clone());
+        let target_id = MetisId::from(issue_id2.clone());
+
+        let changed = store
+            .remove_relationship_with_actor(
+                &source_id,
+                &target_id,
+                crate::store::RelationshipType::ChildOf,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert!(!changed);
+        assert!(
+            rx.try_recv().is_err(),
+            "no event should be emitted for no-op remove"
+        );
     }
 }

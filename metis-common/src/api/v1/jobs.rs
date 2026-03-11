@@ -390,11 +390,19 @@ impl From<&JobVersionRecord> for JobSummaryRecord {
 #[non_exhaustive]
 pub struct ListJobsResponse {
     pub jobs: Vec<JobSummaryRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<u64>,
 }
 
 impl ListJobsResponse {
     pub fn new(jobs: Vec<JobSummaryRecord>) -> Self {
-        Self { jobs }
+        Self {
+            jobs,
+            next_cursor: None,
+            total_count: None,
+        }
     }
 }
 
@@ -442,6 +450,15 @@ pub struct SearchJobsQuery {
     pub include_deleted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<Status>,
+    /// Maximum number of results to return. When omitted, all results are returned.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Opaque cursor from a previous response's `next_cursor` field.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// When true, include `total_count` in the response.
+    #[serde(default)]
+    pub count: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -470,6 +487,9 @@ impl SearchJobsQuery {
             spawned_from,
             include_deleted,
             status,
+            limit: None,
+            cursor: None,
+            count: None,
         }
     }
 }
@@ -503,6 +523,9 @@ mod tests {
             spawned_from: Some(issue_id.clone()),
             include_deleted: None,
             status: None,
+            limit: None,
+            cursor: None,
+            count: None,
         };
 
         let params = serialize_query_params(&query)

@@ -1,14 +1,14 @@
 use crate::{
     app::{AppState, ServiceState},
-    domain::secrets::SecretManager,
-    domain::users::Username,
-    store::MemoryStore,
+    domain::{actors::ActorRef, jobs::BundleSpec, secrets::SecretManager, users::Username},
+    store::{MemoryStore, Status, Task},
     test::{
         MockJobEngine, TestStateHandles, spawn_test_server_with_state, test_app_config,
         test_client, test_client_without_auth,
     },
 };
-use metis_common::api::v1::secrets::ListSecretsResponse;
+use chrono::Utc;
+use metis_common::api::v1::{self, secrets::ListSecretsResponse};
 use reqwest::StatusCode;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
@@ -26,7 +26,6 @@ fn test_state_with_secrets() -> TestStateHandles {
         store.clone(),
         Arc::new(MockJobEngine::new()),
         test_secret_manager(),
-        None,
     );
     TestStateHandles { state, store }
 }
@@ -316,7 +315,6 @@ fn test_state_with_secrets_and_config() -> TestStateHandles {
         store.clone(),
         Arc::new(MockJobEngine::new()),
         test_secret_manager(),
-        None,
     );
     TestStateHandles { state, store }
 }
@@ -338,7 +336,7 @@ async fn resolve_secrets_user_secret_takes_priority() {
     let mut env_vars = HashMap::new();
     handles
         .state
-        .resolve_secrets_into_env_vars(&username, &mut env_vars)
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &None)
         .await;
 
     // User secret should take priority over config
@@ -359,7 +357,7 @@ async fn resolve_secrets_falls_back_to_config() {
     let mut env_vars = HashMap::new();
     handles
         .state
-        .resolve_secrets_into_env_vars(&username, &mut env_vars)
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &None)
         .await;
 
     assert_eq!(env_vars.get("OPENAI_API_KEY").unwrap(), "global-openai-key");
@@ -388,7 +386,7 @@ async fn resolve_secrets_decryption_failure_falls_back_to_config() {
     let mut env_vars = HashMap::new();
     handles
         .state
-        .resolve_secrets_into_env_vars(&username, &mut env_vars)
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &None)
         .await;
 
     // Decryption fails, so it should fall back to the global config value
@@ -407,13 +405,12 @@ async fn resolve_secrets_no_user_secret_no_config_not_set() {
         store.clone(),
         Arc::new(MockJobEngine::new()),
         test_secret_manager(),
-        None,
     );
     let username = Username::from("dave");
 
     let mut env_vars = HashMap::new();
     state
-        .resolve_secrets_into_env_vars(&username, &mut env_vars)
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &None)
         .await;
 
     // Nothing stored, nothing in config — system secrets should be absent
@@ -423,7 +420,7 @@ async fn resolve_secrets_no_user_secret_no_config_not_set() {
 }
 
 #[tokio::test]
-async fn resolve_secrets_injects_all_user_secrets() {
+async fn resolve_secrets_injects_listed_user_secrets() {
     let handles = test_state_with_secrets_and_config();
     let secret_manager = test_secret_manager();
     let username = Username::from("eve");
@@ -443,15 +440,253 @@ async fn resolve_secrets_injects_all_user_secrets() {
         .await
         .unwrap();
 
+    let filter = Some(vec![
+        "MY_CUSTOM_SECRET".to_string(),
+        "ANOTHER_SECRET".to_string(),
+    ]);
     let mut env_vars = HashMap::new();
     handles
         .state
-        .resolve_secrets_into_env_vars(&username, &mut env_vars)
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &filter)
         .await;
 
-    // Custom user secrets should be injected
+    // Custom user secrets should be injected when listed in filter
     assert_eq!(env_vars.get("MY_CUSTOM_SECRET").unwrap(), "my-custom-value");
     assert_eq!(env_vars.get("ANOTHER_SECRET").unwrap(), "another-value");
     // System secrets should fall back to config
     assert_eq!(env_vars.get("OPENAI_API_KEY").unwrap(), "global-openai-key");
+}
+
+// ---- Task.secrets filtering tests ----
+
+#[tokio::test]
+async fn resolve_secrets_custom_secrets_not_injected_when_filter_is_none() {
+    let handles = test_state_with_secrets_and_config();
+    let secret_manager = test_secret_manager();
+    let username = Username::from("filter-none");
+
+    // Store AI key and custom secret
+    let encrypted_ai = secret_manager.encrypt("user-openai").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "OPENAI_API_KEY", &encrypted_ai)
+        .await
+        .unwrap();
+
+    let encrypted_custom = secret_manager.encrypt("custom-val").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "MY_CUSTOM_SECRET", &encrypted_custom)
+        .await
+        .unwrap();
+
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &None)
+        .await;
+
+    // AI key should be injected
+    assert_eq!(env_vars.get("OPENAI_API_KEY").unwrap(), "user-openai");
+    // Custom secret should NOT be injected
+    assert!(!env_vars.contains_key("MY_CUSTOM_SECRET"));
+}
+
+#[tokio::test]
+async fn resolve_secrets_custom_secrets_injected_when_listed() {
+    let handles = test_state_with_secrets_and_config();
+    let secret_manager = test_secret_manager();
+    let username = Username::from("filter-listed");
+
+    let encrypted = secret_manager.encrypt("custom-val").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "MY_CUSTOM_SECRET", &encrypted)
+        .await
+        .unwrap();
+
+    let filter = Some(vec!["MY_CUSTOM_SECRET".to_string()]);
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &filter)
+        .await;
+
+    assert_eq!(env_vars.get("MY_CUSTOM_SECRET").unwrap(), "custom-val");
+}
+
+#[tokio::test]
+async fn resolve_secrets_ai_keys_always_injected_regardless_of_filter() {
+    let handles = test_state_with_secrets_and_config();
+    let secret_manager = test_secret_manager();
+    let username = Username::from("filter-ai");
+
+    // Store all three AI keys as user secrets
+    let enc1 = secret_manager.encrypt("user-openai").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "OPENAI_API_KEY", &enc1)
+        .await
+        .unwrap();
+
+    let enc2 = secret_manager.encrypt("user-anthropic").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "ANTHROPIC_API_KEY", &enc2)
+        .await
+        .unwrap();
+
+    let enc3 = secret_manager.encrypt("user-claude-oauth").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "CLAUDE_CODE_OAUTH_TOKEN", &enc3)
+        .await
+        .unwrap();
+
+    // Empty filter — no custom secrets requested
+    let filter: Option<Vec<String>> = Some(vec![]);
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &filter)
+        .await;
+
+    // All AI keys should still be injected
+    assert_eq!(env_vars.get("OPENAI_API_KEY").unwrap(), "user-openai");
+    assert_eq!(env_vars.get("ANTHROPIC_API_KEY").unwrap(), "user-anthropic");
+    assert_eq!(
+        env_vars.get("CLAUDE_CODE_OAUTH_TOKEN").unwrap(),
+        "user-claude-oauth"
+    );
+}
+
+#[tokio::test]
+async fn resolve_secrets_mixed_filter_only_listed_custom_secrets_appear() {
+    let handles = test_state_with_secrets_and_config();
+    let secret_manager = test_secret_manager();
+    let username = Username::from("filter-mixed");
+
+    // Store AI key + two custom secrets
+    let enc_ai = secret_manager.encrypt("user-openai").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "OPENAI_API_KEY", &enc_ai)
+        .await
+        .unwrap();
+
+    let enc1 = secret_manager.encrypt("allowed-val").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "ALLOWED_SECRET", &enc1)
+        .await
+        .unwrap();
+
+    let enc2 = secret_manager.encrypt("blocked-val").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "BLOCKED_SECRET", &enc2)
+        .await
+        .unwrap();
+
+    // Only ALLOWED_SECRET in the filter
+    let filter = Some(vec!["ALLOWED_SECRET".to_string()]);
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &filter)
+        .await;
+
+    // AI key always present
+    assert_eq!(env_vars.get("OPENAI_API_KEY").unwrap(), "user-openai");
+    // Listed custom secret present
+    assert_eq!(env_vars.get("ALLOWED_SECRET").unwrap(), "allowed-val");
+    // Unlisted custom secret absent
+    assert!(!env_vars.contains_key("BLOCKED_SECRET"));
+}
+
+// ---- End-to-end integration test: user secret appears in get_job_context ----
+
+#[tokio::test]
+async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
+    let handles = test_state_with_secrets_and_config();
+    let secret_manager = test_secret_manager();
+
+    let creator = Username::from(TEST_USERNAME);
+
+    // Store a user secret for CLAUDE_CODE_OAUTH_TOKEN
+    let encrypted = secret_manager.encrypt("user-oauth-token-value").unwrap();
+    handles
+        .store
+        .set_user_secret(&creator, "CLAUDE_CODE_OAUTH_TOKEN", &encrypted)
+        .await
+        .unwrap();
+
+    // Create a task owned by the test creator
+    let (job_id, _) = handles
+        .store
+        .add_task(
+            Task {
+                prompt: "test prompt".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                creator: creator.clone(),
+                image: Some("test-image:latest".to_string()),
+                model: None,
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+                secrets: None,
+                status: Status::Created,
+                last_message: None,
+                error: None,
+                deleted: false,
+                creation_time: None,
+                start_time: None,
+                end_time: None,
+            },
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+
+    let server = spawn_test_server_with_state(handles.state, handles.store.clone()).await?;
+    let client = test_client();
+
+    // Call get_job_context and verify secrets appear in variables
+    let response = client
+        .get(format!("{}/v1/jobs/{job_id}/context", server.base_url()))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: v1::jobs::WorkerContext = response.json().await?;
+
+    // User's CLAUDE_CODE_OAUTH_TOKEN should override (config has None for this key)
+    assert_eq!(
+        body.variables
+            .get("CLAUDE_CODE_OAUTH_TOKEN")
+            .map(String::as_str),
+        Some("user-oauth-token-value"),
+        "user secret should appear in get_job_context response"
+    );
+
+    // Config fallback keys should also be present
+    assert_eq!(
+        body.variables.get("OPENAI_API_KEY").map(String::as_str),
+        Some("global-openai-key"),
+        "config fallback should be used when no user secret exists"
+    );
+    assert_eq!(
+        body.variables.get("ANTHROPIC_API_KEY").map(String::as_str),
+        Some("global-anthropic-key"),
+        "config fallback should be used when no user secret exists"
+    );
+
+    // METIS_ID should also be set
+    assert_eq!(
+        body.variables.get("METIS_ID").map(String::as_str),
+        Some(job_id.as_ref())
+    );
+
+    Ok(())
 }

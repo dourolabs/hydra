@@ -15,7 +15,10 @@ use axum::{
 };
 use metis_common::{
     MetisId, PatchId,
-    api::v1::{self, ApiError},
+    api::v1::{
+        self, ApiError,
+        pagination::{compute_next_cursor, effective_limit},
+    },
 };
 use reqwest::header::{
     ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, USER_AGENT,
@@ -253,7 +256,8 @@ pub async fn list_patches(
             ApiError::internal(anyhow!("failed to fetch labels: {err}"))
         })?;
 
-    let records: Vec<v1::patches::PatchSummaryRecord> = patches
+    let eff_limit = effective_limit(query.limit);
+    let mut records: Vec<v1::patches::PatchSummaryRecord> = patches
         .into_iter()
         .map(|(id, versioned)| {
             let object_id = MetisId::from(id.clone());
@@ -271,7 +275,26 @@ pub async fn list_patches(
         })
         .collect();
 
-    let response = v1::patches::ListPatchesResponse::new(records);
+    let next_cursor = compute_next_cursor(
+        &mut records,
+        eff_limit,
+        |r| &r.timestamp,
+        |r| r.patch_id.as_ref(),
+    );
+
+    let total_count = if query.count == Some(true) {
+        let count = state
+            .count_patches(&query)
+            .await
+            .map_err(|err| map_patch_error(err, None))?;
+        Some(count)
+    } else {
+        None
+    };
+
+    let mut response = v1::patches::ListPatchesResponse::new(records);
+    response.next_cursor = next_cursor;
+    response.total_count = total_count;
     info!(
         query = ?query.q,
         returned = response.patches.len(),

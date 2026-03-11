@@ -22,6 +22,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
+use metis_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -47,14 +48,8 @@ pub struct MemoryStore {
     documents: DashMap<DocumentId, Vec<Versioned<Document>>>,
     /// Maps repository names to their configurations
     repositories: DashMap<RepoName, Vec<Versioned<Repository>>>,
-    /// Maps parent issue IDs to their child issue IDs declared via child-of dependencies
-    issue_children: DashMap<IssueId, Vec<IssueId>>,
-    /// Maps blocking issue IDs to the issues that are blocked on them
-    issue_blocked_on: DashMap<IssueId, Vec<IssueId>>,
     /// Maps issue IDs to tasks spawned from them
     issue_tasks: DashMap<IssueId, Vec<TaskId>>,
-    /// Maps patch IDs to the issues that reference them
-    patch_issues: DashMap<PatchId, Vec<IssueId>>,
     /// Maps document paths to the document IDs that live under them
     documents_by_path: DashMap<String, HashSet<DocumentId>>,
     /// Maps usernames to their User data
@@ -89,10 +84,7 @@ impl MemoryStore {
             patches: DashMap::new(),
             documents: DashMap::new(),
             repositories: DashMap::new(),
-            issue_children: DashMap::new(),
-            issue_blocked_on: DashMap::new(),
             issue_tasks: DashMap::new(),
-            patch_issues: DashMap::new(),
             documents_by_path: DashMap::new(),
             users: DashMap::new(),
             actors: DashMap::new(),
@@ -182,84 +174,224 @@ impl MemoryStore {
                 .unwrap_or(false)
     }
 
+    /// Returns an iterator over issues matching the query filters (without pagination).
+    fn filter_issues<'a>(
+        &'a self,
+        query: &'a SearchIssuesQuery,
+    ) -> impl Iterator<Item = (IssueId, Versioned<Issue>)> + 'a {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let issue_type_filter: Option<IssueType> = query.issue_type.map(Into::into);
+        let status_filter: Option<IssueStatus> = query.status.map(Into::into);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+        let assignee_filter = query
+            .assignee
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+
+        self.issues.iter().filter_map(move |entry| {
+            let latest = Self::latest_versioned(entry.value())?;
+            if !include_deleted && latest.item.deleted {
+                return None;
+            }
+            let issue_id = entry.key();
+            if !issue_matches(
+                issue_type_filter,
+                status_filter,
+                search_term.as_deref(),
+                assignee_filter,
+                issue_id,
+                &latest.item,
+            ) {
+                return None;
+            }
+            if !query.label_ids.is_empty() {
+                let object_id = MetisId::from(issue_id.clone());
+                let has_all_labels = if let Some(issue_labels) = self.object_labels.get(&object_id)
+                {
+                    query.label_ids.iter().all(|lid| issue_labels.contains(lid))
+                } else {
+                    false
+                };
+                if !has_all_labels {
+                    return None;
+                }
+            }
+            Some((issue_id.clone(), latest))
+        })
+    }
+
+    /// Returns an iterator over patches matching the query filters (without pagination).
+    fn filter_patches<'a>(
+        &'a self,
+        query: &'a SearchPatchesQuery,
+    ) -> impl Iterator<Item = (PatchId, Versioned<Patch>)> + 'a {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+        let status_filter: Vec<crate::domain::patches::PatchStatus> =
+            query.status.iter().copied().map(Into::into).collect();
+
+        self.patches.iter().filter_map(move |entry| {
+            let latest = Self::latest_versioned(entry.value())?;
+            if !include_deleted && latest.item.deleted {
+                return None;
+            }
+            if !status_filter.is_empty() && !status_filter.contains(&latest.item.status) {
+                return None;
+            }
+            if let Some(ref branch) = query.branch_name {
+                if latest.item.branch_name.as_deref() != Some(branch.as_str()) {
+                    return None;
+                }
+            }
+            if !Self::patch_matches(search_term.as_deref(), entry.key(), &latest.item) {
+                return None;
+            }
+            Some((entry.key().clone(), latest))
+        })
+    }
+
+    /// Returns filtered documents matching the query (without pagination).
+    fn filter_documents(
+        &self,
+        query: &SearchDocumentsQuery,
+    ) -> Vec<(DocumentId, Versioned<Document>)> {
+        let mut documents: Vec<(DocumentId, Versioned<Document>)> =
+            if let Some(path) = query.path_prefix.as_deref() {
+                let ids = if query.path_is_exact.unwrap_or(false) {
+                    self.document_ids_with_exact_path(path)
+                } else {
+                    self.document_ids_with_path_prefix(path)
+                };
+                self.documents_from_ids(&ids)
+            } else {
+                self.documents
+                    .iter()
+                    .filter_map(|entry| {
+                        let mut latest = Self::latest_versioned(entry.value())?;
+                        latest.creation_time = entry.value()[0].timestamp;
+                        Some((entry.key().clone(), latest))
+                    })
+                    .collect()
+            };
+
+        if !query.include_deleted.unwrap_or(false) {
+            documents.retain(|(_, versioned)| !versioned.item.deleted);
+        }
+
+        if let Some(created_by) = query.created_by.as_ref() {
+            documents
+                .retain(|(_, versioned)| versioned.item.created_by.as_ref() == Some(created_by));
+        }
+
+        if let Some(search_term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            documents.retain(|(_, versioned)| {
+                versioned.item.title.to_lowercase().contains(&search_term)
+                    || versioned
+                        .item
+                        .body_markdown
+                        .to_lowercase()
+                        .contains(&search_term)
+                    || versioned
+                        .item
+                        .path
+                        .as_deref()
+                        .map(|path| path.to_lowercase().contains(&search_term))
+                        .unwrap_or(false)
+            });
+        }
+
+        documents
+    }
+
+    /// Returns an iterator over tasks matching the query filters (without pagination).
+    fn filter_tasks<'a>(
+        &'a self,
+        query: &'a SearchJobsQuery,
+    ) -> impl Iterator<Item = (TaskId, Versioned<Task>)> + 'a {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+
+        self.tasks.iter().filter_map(move |entry| {
+            let task_id = entry.key();
+            let latest = Self::latest_versioned(entry.value())?;
+
+            if !include_deleted && latest.item.deleted {
+                return None;
+            }
+
+            if let Some(expected_issue) = query.spawned_from.as_ref() {
+                if latest.item.spawned_from.as_ref() != Some(expected_issue) {
+                    return None;
+                }
+            }
+
+            if let Some(expected_status) = query.status {
+                let server_status: Status = expected_status.into();
+                if latest.item.status != server_status {
+                    return None;
+                }
+            }
+
+            if let Some(term) = search_term.as_deref() {
+                let matches_id = task_id.as_ref().to_lowercase().contains(term);
+                let matches_prompt = latest.item.prompt.to_lowercase().contains(term);
+                let matches_status = format!("{:?}", latest.item.status)
+                    .to_lowercase()
+                    .contains(term);
+
+                if !matches_id && !matches_prompt && !matches_status {
+                    return None;
+                }
+            }
+
+            Some((task_id.clone(), latest))
+        })
+    }
+
+    /// Returns filtered labels matching the query (without pagination).
+    fn filter_labels(&self, query: &SearchLabelsQuery) -> Vec<(LabelId, Label)> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let mut results: Vec<(LabelId, Label)> = Vec::new();
+
+        for entry in self.labels.iter() {
+            let label = entry.value();
+
+            if !include_deleted && label.deleted {
+                continue;
+            }
+
+            if let Some(ref q) = query.q {
+                let q_lower = q.to_lowercase();
+                if !label.name.to_lowercase().contains(&q_lower) {
+                    continue;
+                }
+            }
+
+            results.push((entry.key().clone(), label.clone()));
+        }
+
+        results
+    }
+
     /// Updates issue adjacency indexes to match the provided dependency list.
-    fn apply_issue_dependency_delta(
-        &self,
-        issue_id: &IssueId,
-        previous: &[IssueDependency],
-        updated: &[IssueDependency],
-    ) {
-        for dependency in previous {
-            match dependency.dependency_type {
-                IssueDependencyType::ChildOf => {
-                    if let Some(mut children) = self.issue_children.get_mut(&dependency.issue_id) {
-                        children.retain(|child_id| child_id != issue_id);
-                        if children.is_empty() {
-                            drop(children);
-                            self.issue_children.remove(&dependency.issue_id);
-                        }
-                    }
-                }
-                IssueDependencyType::BlockedOn => {
-                    if let Some(mut blocked) = self.issue_blocked_on.get_mut(&dependency.issue_id) {
-                        blocked.retain(|blocked_id| blocked_id != issue_id);
-                        if blocked.is_empty() {
-                            drop(blocked);
-                            self.issue_blocked_on.remove(&dependency.issue_id);
-                        }
-                    }
-                }
-            }
-        }
-
-        for dependency in updated {
-            match dependency.dependency_type {
-                IssueDependencyType::ChildOf => {
-                    let mut children = self
-                        .issue_children
-                        .entry(dependency.issue_id.clone())
-                        .or_default();
-                    if !children.contains(issue_id) {
-                        children.push(issue_id.clone());
-                    }
-                }
-                IssueDependencyType::BlockedOn => {
-                    let mut blocked = self
-                        .issue_blocked_on
-                        .entry(dependency.issue_id.clone())
-                        .or_default();
-                    if !blocked.contains(issue_id) {
-                        blocked.push(issue_id.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    fn apply_issue_patch_delta(
-        &self,
-        issue_id: &IssueId,
-        previous: &[PatchId],
-        updated: &[PatchId],
-    ) {
-        for patch_id in previous {
-            if let Some(mut issues) = self.patch_issues.get_mut(patch_id) {
-                issues.retain(|existing| existing != issue_id);
-                if issues.is_empty() {
-                    drop(issues);
-                    self.patch_issues.remove(patch_id);
-                }
-            }
-        }
-
-        for patch_id in updated {
-            let mut issues = self.patch_issues.entry(patch_id.clone()).or_default();
-            if !issues.contains(issue_id) {
-                issues.push(issue_id.clone());
-            }
-        }
-    }
-
     /// Syncs the object_relationships store for the given issue (delete old + insert new).
     fn sync_issue_relationships(&self, issue_id: &IssueId, issue: &Issue) {
         let source_id = MetisId::from(issue_id.clone());
@@ -308,6 +440,21 @@ impl MemoryStore {
                 },
             );
         }
+    }
+
+    /// Returns source IDs for relationships where target_id matches and rel_type matches.
+    /// This is a "reverse" lookup: e.g., find all issues that have a ChildOf relationship
+    /// pointing at `target_id` (i.e., children of `target_id`).
+    fn get_sources_by_target_and_type(
+        &self,
+        target_id: &MetisId,
+        rel_type: super::RelationshipType,
+    ) -> Vec<MetisId> {
+        self.object_relationships
+            .iter()
+            .filter(|entry| entry.key().2 == *target_id && entry.key().1 == rel_type)
+            .map(|entry| entry.key().0.clone())
+            .collect()
     }
 
     fn index_document_path(&self, document_id: &DocumentId, path: Option<&str>) {
@@ -483,56 +630,28 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-        let issue_type_filter: Option<IssueType> = query.issue_type.map(Into::into);
-        let status_filter: Option<IssueStatus> = query.status.map(Into::into);
-        let search_term = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty());
-        let assignee_filter = query
-            .assignee
-            .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty());
-
-        Ok(self
-            .issues
-            .iter()
-            .filter_map(|entry| {
-                let mut latest = Self::latest_versioned(entry.value())?;
-                if !include_deleted && latest.item.deleted {
-                    return None;
-                }
-                let issue_id = entry.key();
-                if !issue_matches(
-                    issue_type_filter,
-                    status_filter,
-                    search_term.as_deref(),
-                    assignee_filter,
-                    issue_id,
-                    &latest.item,
-                ) {
-                    return None;
-                }
-                // Filter by label IDs (AND semantics: issue must have ALL specified labels)
-                if !query.label_ids.is_empty() {
-                    let object_id = MetisId::from(issue_id.clone());
-                    let has_all_labels =
-                        if let Some(issue_labels) = self.object_labels.get(&object_id) {
-                            query.label_ids.iter().all(|lid| issue_labels.contains(lid))
-                        } else {
-                            false
-                        };
-                    if !has_all_labels {
-                        return None;
-                    }
-                }
-                latest.creation_time = entry.value()[0].timestamp;
-                Some((issue_id.clone(), latest))
+        let items: Vec<_> = self
+            .filter_issues(query)
+            .map(|(issue_id, mut latest)| {
+                latest.creation_time = self
+                    .issues
+                    .get(&issue_id)
+                    .map(|e| e.value()[0].timestamp)
+                    .unwrap_or(latest.timestamp);
+                (issue_id, latest)
             })
-            .collect())
+            .collect();
+        apply_memory_pagination(
+            items,
+            |(_id, v)| v.timestamp,
+            |(id, _v)| id.as_ref(),
+            &query.cursor,
+            query.limit,
+        )
+    }
+
+    async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
+        Ok(self.filter_issues(query).count() as u64)
     }
 
     async fn search_issue_graph(
@@ -543,21 +662,24 @@ impl ReadOnlyStore for MemoryStore {
             return Ok(HashSet::new());
         }
 
-        let mut forward = HashMap::new();
-        forward.insert(
-            IssueDependencyType::ChildOf,
-            self.issue_children
-                .iter()
-                .map(|entry| (entry.key().clone(), entry.value().clone()))
-                .collect(),
-        );
-        forward.insert(
-            IssueDependencyType::BlockedOn,
-            self.issue_blocked_on
-                .iter()
-                .map(|entry| (entry.key().clone(), entry.value().clone()))
-                .collect(),
-        );
+        // Build forward maps from object_relationships (target -> [sources])
+        let mut forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
+            HashMap::new();
+        for dep_type in [IssueDependencyType::ChildOf, IssueDependencyType::BlockedOn] {
+            let rel_type = super::RelationshipType::from(dep_type);
+            let mut map: HashMap<IssueId, Vec<IssueId>> = HashMap::new();
+            for entry in self.object_relationships.iter() {
+                if entry.key().1 == rel_type {
+                    if let (Ok(target_id), Ok(source_id)) = (
+                        IssueId::try_from(entry.key().2.clone()),
+                        IssueId::try_from(entry.key().0.clone()),
+                    ) {
+                        map.entry(target_id).or_default().push(source_id);
+                    }
+                }
+            }
+            forward.insert(dep_type, map);
+        }
 
         let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
             HashMap::new();
@@ -587,25 +709,93 @@ impl ReadOnlyStore for MemoryStore {
     }
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        match self.issues.get(issue_id) {
-            Some(_) => Ok(self
-                .issue_children
-                .get(issue_id)
-                .map(|entry| entry.value().clone())
-                .unwrap_or_default()),
-            None => Err(StoreError::IssueNotFound(issue_id.clone())),
+        if !self.issues.contains_key(issue_id) {
+            return Err(StoreError::IssueNotFound(issue_id.clone()));
         }
+        let target_id = MetisId::from(issue_id.clone());
+        let children: Vec<IssueId> = self
+            .get_sources_by_target_and_type(&target_id, super::RelationshipType::ChildOf)
+            .into_iter()
+            .filter_map(|id| IssueId::try_from(id).ok())
+            .collect();
+        Ok(children)
+    }
+
+    async fn get_issue_subtrees(
+        &self,
+        root_ids: &[IssueId],
+    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, StoreError> {
+        let mut result = Vec::new();
+        // BFS traversal for each root
+        for root_id in root_ids {
+            let mut queue = std::collections::VecDeque::new();
+            queue.push_back(root_id.clone());
+
+            while let Some(parent_id) = queue.pop_front() {
+                let parent_meta_id = MetisId::from(parent_id.clone());
+                let children: Vec<IssueId> = self
+                    .get_sources_by_target_and_type(
+                        &parent_meta_id,
+                        super::RelationshipType::ChildOf,
+                    )
+                    .into_iter()
+                    .filter_map(|id| IssueId::try_from(id).ok())
+                    .collect();
+
+                for child_id in children {
+                    // Get latest version of child issue
+                    if let Some(versions) = self.issues.get(&child_id) {
+                        if let Some(latest) = Self::latest_versioned(versions.value()) {
+                            let status = latest.item.status;
+                            let has_active_task = self
+                                .issue_tasks
+                                .get(&child_id)
+                                .map(|task_ids| {
+                                    task_ids.value().iter().any(|tid| {
+                                        self.tasks
+                                            .get(tid)
+                                            .and_then(|versions| {
+                                                Self::latest_versioned(versions.value())
+                                            })
+                                            .is_some_and(|v| {
+                                                matches!(
+                                                    v.item.status,
+                                                    super::Status::Running | super::Status::Pending
+                                                )
+                                            })
+                                    })
+                                })
+                                .unwrap_or(false);
+
+                            result.push(crate::domain::issues::SubtreeIssueRow {
+                                issue_id: child_id.clone(),
+                                parent_id: parent_id.clone(),
+                                status,
+                                title: latest.item.title.clone(),
+                                assignee: latest.item.assignee.clone(),
+                                has_active_task,
+                            });
+
+                            queue.push_back(child_id);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(result)
     }
 
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
-        match self.issues.get(issue_id) {
-            Some(_) => Ok(self
-                .issue_blocked_on
-                .get(issue_id)
-                .map(|entry| entry.value().clone())
-                .unwrap_or_default()),
-            None => Err(StoreError::IssueNotFound(issue_id.clone())),
+        if !self.issues.contains_key(issue_id) {
+            return Err(StoreError::IssueNotFound(issue_id.clone()));
         }
+        let target_id = MetisId::from(issue_id.clone());
+        let blocked: Vec<IssueId> = self
+            .get_sources_by_target_and_type(&target_id, super::RelationshipType::BlockedOn)
+            .into_iter()
+            .filter_map(|id| IssueId::try_from(id).ok())
+            .collect();
+        Ok(blocked)
     }
 
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
@@ -655,50 +845,41 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-        let search_term = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty());
-
-        let status_filter: Vec<crate::domain::patches::PatchStatus> =
-            query.status.iter().copied().map(Into::into).collect();
-
-        Ok(self
-            .patches
-            .iter()
-            .filter_map(|entry| {
-                let mut latest = Self::latest_versioned(entry.value())?;
-                if !include_deleted && latest.item.deleted {
-                    return None;
-                }
-                if !status_filter.is_empty() && !status_filter.contains(&latest.item.status) {
-                    return None;
-                }
-                if let Some(ref branch) = query.branch_name {
-                    if latest.item.branch_name.as_deref() != Some(branch.as_str()) {
-                        return None;
-                    }
-                }
-                if !Self::patch_matches(search_term.as_deref(), entry.key(), &latest.item) {
-                    return None;
-                }
-                latest.creation_time = entry.value()[0].timestamp;
-                Some((entry.key().clone(), latest))
+        let items: Vec<_> = self
+            .filter_patches(query)
+            .map(|(patch_id, mut latest)| {
+                latest.creation_time = self
+                    .patches
+                    .get(&patch_id)
+                    .map(|e| e.value()[0].timestamp)
+                    .unwrap_or(latest.timestamp);
+                (patch_id, latest)
             })
-            .collect())
+            .collect();
+        apply_memory_pagination(
+            items,
+            |(_id, v)| v.timestamp,
+            |(id, _v)| id.as_ref(),
+            &query.cursor,
+            query.limit,
+        )
+    }
+
+    async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
+        Ok(self.filter_patches(query).count() as u64)
     }
 
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
-        match self.patches.get(patch_id) {
-            Some(_) => Ok(self
-                .patch_issues
-                .get(patch_id)
-                .map(|entry| entry.value().clone())
-                .unwrap_or_default()),
-            None => Err(StoreError::PatchNotFound(patch_id.clone())),
+        if !self.patches.contains_key(patch_id) {
+            return Err(StoreError::PatchNotFound(patch_id.clone()));
         }
+        let target_id = MetisId::from(patch_id.clone());
+        let issues: Vec<IssueId> = self
+            .get_sources_by_target_and_type(&target_id, super::RelationshipType::HasPatch)
+            .into_iter()
+            .filter_map(|id| IssueId::try_from(id).ok())
+            .collect();
+        Ok(issues)
     }
 
     async fn get_document(
@@ -739,59 +920,18 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        let mut documents: Vec<(DocumentId, Versioned<Document>)> =
-            if let Some(path) = query.path_prefix.as_deref() {
-                let ids = if query.path_is_exact.unwrap_or(false) {
-                    self.document_ids_with_exact_path(path)
-                } else {
-                    self.document_ids_with_path_prefix(path)
-                };
-                self.documents_from_ids(&ids)
-            } else {
-                self.documents
-                    .iter()
-                    .filter_map(|entry| {
-                        let mut latest = Self::latest_versioned(entry.value())?;
-                        latest.creation_time = entry.value()[0].timestamp;
-                        Some((entry.key().clone(), latest))
-                    })
-                    .collect()
-            };
+        let documents = self.filter_documents(query);
+        apply_memory_pagination(
+            documents,
+            |(_id, v)| v.timestamp,
+            |(id, _v)| id.as_ref(),
+            &query.cursor,
+            query.limit,
+        )
+    }
 
-        // Filter deleted documents unless include_deleted is true
-        if !query.include_deleted.unwrap_or(false) {
-            documents.retain(|(_, versioned)| !versioned.item.deleted);
-        }
-
-        if let Some(created_by) = query.created_by.as_ref() {
-            documents
-                .retain(|(_, versioned)| versioned.item.created_by.as_ref() == Some(created_by));
-        }
-
-        if let Some(search_term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            documents.retain(|(_, versioned)| {
-                versioned.item.title.to_lowercase().contains(&search_term)
-                    || versioned
-                        .item
-                        .body_markdown
-                        .to_lowercase()
-                        .contains(&search_term)
-                    || versioned
-                        .item
-                        .path
-                        .as_deref()
-                        .map(|path| path.to_lowercase().contains(&search_term))
-                        .unwrap_or(false)
-            });
-        }
-
-        documents.sort_by(|(left, _), (right, _)| left.cmp(right));
-        Ok(documents)
+    async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
+        Ok(self.filter_documents(query).len() as u64)
     }
 
     async fn get_documents_by_path(
@@ -831,56 +971,112 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-        let search_term = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty());
+        let items: Vec<_> = self.filter_tasks(query).collect();
+        apply_memory_pagination(
+            items,
+            |(_id, v)| v.timestamp,
+            |(id, _v)| id.as_ref(),
+            &query.cursor,
+            query.limit,
+        )
+    }
 
-        Ok(self
-            .tasks
-            .iter()
-            .filter_map(|entry| {
-                let task_id = entry.key();
-                let latest = Self::latest_versioned(entry.value())?;
+    async fn get_jobs_summary_for_issues(
+        &self,
+        issue_ids: &[IssueId],
+    ) -> Result<HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>, StoreError> {
+        use metis_common::api::v1::issues::JobStatusSummary;
+        use metis_common::api::v1::task_status::Status as ApiTaskStatus;
 
-                // Filter by deleted status
-                if !include_deleted && latest.item.deleted {
-                    return None;
+        if issue_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let issue_id_set: std::collections::HashSet<&IssueId> = issue_ids.iter().collect();
+
+        // Collect relevant task data as owned values to avoid DashMap lifetime issues
+        struct TaskInfo {
+            task_id: TaskId,
+            issue_id: IssueId,
+            status: Status,
+            creation_time: Option<chrono::DateTime<chrono::Utc>>,
+            start_time: Option<chrono::DateTime<chrono::Utc>>,
+            end_time: Option<chrono::DateTime<chrono::Utc>>,
+        }
+
+        let mut task_infos = Vec::new();
+        for entry in self.tasks.iter() {
+            let task_id = entry.key().clone();
+            let Some(latest) = Self::latest_versioned(entry.value()) else {
+                continue;
+            };
+            if latest.item.deleted {
+                continue;
+            }
+            if let Some(spawned_from) = latest.item.spawned_from.as_ref() {
+                if issue_id_set.contains(spawned_from) {
+                    task_infos.push(TaskInfo {
+                        task_id,
+                        issue_id: spawned_from.clone(),
+                        status: latest.item.status,
+                        creation_time: latest.item.creation_time,
+                        start_time: latest.item.start_time,
+                        end_time: latest.item.end_time,
+                    });
                 }
+            }
+        }
 
-                // Filter by spawned_from
-                if let Some(expected_issue) = query.spawned_from.as_ref() {
-                    if latest.item.spawned_from.as_ref() != Some(expected_issue) {
-                        return None;
-                    }
-                }
+        // Group by issue
+        let mut tasks_by_issue: HashMap<IssueId, Vec<&TaskInfo>> = HashMap::new();
+        for info in &task_infos {
+            tasks_by_issue
+                .entry(info.issue_id.clone())
+                .or_default()
+                .push(info);
+        }
 
-                // Filter by status
-                if let Some(expected_status) = query.status {
-                    let server_status: Status = expected_status.into();
-                    if latest.item.status != server_status {
-                        return None;
-                    }
-                }
+        let mut result = HashMap::new();
+        for (issue_id, tasks) in tasks_by_issue {
+            let total = tasks.len() as u32;
+            let running = tasks
+                .iter()
+                .filter(|t| matches!(t.status, Status::Running | Status::Pending))
+                .count() as u32;
+            let failed = tasks.iter().filter(|t| t.status == Status::Failed).count() as u32;
 
-                // Filter by text search (matches task ID, prompt, status - NOT notes)
-                if let Some(term) = search_term.as_deref() {
-                    let matches_id = task_id.as_ref().to_lowercase().contains(term);
-                    let matches_prompt = latest.item.prompt.to_lowercase().contains(term);
-                    let matches_status = format!("{:?}", latest.item.status)
-                        .to_lowercase()
-                        .contains(term);
+            let latest = tasks.iter().max_by_key(|t| t.creation_time);
+            let (latest_job_id, latest_job_status, latest_start_time, latest_end_time) =
+                if let Some(t) = latest {
+                    (
+                        Some(t.task_id.clone()),
+                        Some(ApiTaskStatus::from(t.status)),
+                        t.start_time,
+                        t.end_time,
+                    )
+                } else {
+                    (None, None, None, None)
+                };
 
-                    if !matches_id && !matches_prompt && !matches_status {
-                        return None;
-                    }
-                }
+            result.insert(
+                issue_id,
+                JobStatusSummary::new(
+                    total,
+                    running,
+                    failed,
+                    latest_job_id,
+                    latest_job_status,
+                    latest_start_time,
+                    latest_end_time,
+                ),
+            );
+        }
 
-                Some((task_id.clone(), latest))
-            })
-            .collect())
+        Ok(result)
+    }
+
+    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+        Ok(self.filter_tasks(query).count() as u64)
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
@@ -1168,28 +1364,24 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
+        let mut results = self.filter_labels(query);
 
-        let mut results: Vec<(LabelId, Label)> = Vec::new();
-        for entry in self.labels.iter() {
-            let label = entry.value();
-
-            if !include_deleted && label.deleted {
-                continue;
-            }
-
-            if let Some(ref q) = query.q {
-                let q_lower = q.to_lowercase();
-                if !label.name.to_lowercase().contains(&q_lower) {
-                    continue;
-                }
-            }
-
-            results.push((entry.key().clone(), label.clone()));
+        if query.limit.is_some() || query.cursor.is_some() {
+            apply_memory_pagination(
+                results,
+                |(_id, label)| label.updated_at,
+                |(id, _label)| id.as_ref(),
+                &query.cursor,
+                query.limit,
+            )
+        } else {
+            results.sort_by(|(_, a), (_, b)| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            Ok(results)
         }
+    }
 
-        results.sort_by(|a, b| a.1.name.cmp(&b.1.name));
-        Ok(results)
+    async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError> {
+        Ok(self.filter_labels(query).len() as u64)
     }
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
@@ -1366,12 +1558,10 @@ impl Store for MemoryStore {
         actor: &ActorRef,
     ) -> Result<(IssueId, VersionNumber), StoreError> {
         let id = IssueId::new();
-        let new_dependencies = issue.dependencies.clone();
-        let new_patches = issue.patches.clone();
 
-        self.validate_dependencies(&new_dependencies)?;
+        self.validate_dependencies(&issue.dependencies)?;
 
-        // Dual-write: sync object_relationships
+        // Sync object_relationships
         self.sync_issue_relationships(&id, &issue);
 
         self.issues.insert(
@@ -1379,12 +1569,6 @@ impl Store for MemoryStore {
             vec![Self::versioned_now_with_actor(issue, 1, actor)],
         );
 
-        if !new_dependencies.is_empty() {
-            self.apply_issue_dependency_delta(&id, &[], &new_dependencies);
-        }
-        if !new_patches.is_empty() {
-            self.apply_issue_patch_delta(&id, &[], &new_patches);
-        }
         Ok((id, 1))
     }
 
@@ -1394,22 +1578,13 @@ impl Store for MemoryStore {
         issue: Issue,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        let (previous_dependencies, previous_patches) = match self.issues.get(id) {
-            Some(entry) => match entry.value().last() {
-                Some(latest) => (
-                    latest.item.dependencies.clone(),
-                    latest.item.patches.clone(),
-                ),
-                None => return Err(StoreError::IssueNotFound(id.clone())),
-            },
-            None => return Err(StoreError::IssueNotFound(id.clone())),
-        };
-        let updated_dependencies = issue.dependencies.clone();
-        let updated_patches = issue.patches.clone();
+        if !self.issues.contains_key(id) {
+            return Err(StoreError::IssueNotFound(id.clone()));
+        }
 
-        self.validate_dependencies(&updated_dependencies)?;
+        self.validate_dependencies(&issue.dependencies)?;
 
-        // Dual-write: sync object_relationships
+        // Sync object_relationships
         self.sync_issue_relationships(id, &issue);
 
         let next_version = if let Some(mut versions) = self.issues.get_mut(id) {
@@ -1420,12 +1595,6 @@ impl Store for MemoryStore {
             return Err(StoreError::IssueNotFound(id.clone()));
         };
 
-        if !previous_dependencies.is_empty() || !updated_dependencies.is_empty() {
-            self.apply_issue_dependency_delta(id, &previous_dependencies, &updated_dependencies);
-        }
-        if !previous_patches.is_empty() || !updated_patches.is_empty() {
-            self.apply_issue_patch_delta(id, &previous_patches, &updated_patches);
-        }
         Ok(next_version)
     }
 
@@ -1536,13 +1705,14 @@ impl Store for MemoryStore {
 
     async fn add_task(
         &self,
-        task: Task,
+        mut task: Task,
         creation_time: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
         let id = TaskId::new();
         let spawned_from = task.spawned_from.clone();
 
+        task.creation_time = Some(creation_time);
         self.tasks.insert(
             id.clone(),
             vec![Self::versioned_at_with_actor(task, 1, creation_time, actor)],
@@ -1988,6 +2158,44 @@ fn issue_matches(
     }
 
     true
+}
+
+/// Applies in-memory cursor-based pagination to a list of items.
+///
+/// Sorts by (timestamp DESC, id DESC), applies cursor filter, then limits results.
+/// Fetches limit+1 items so callers can detect whether a next page exists.
+fn apply_memory_pagination<T>(
+    mut items: Vec<T>,
+    get_timestamp: impl Fn(&T) -> DateTime<Utc>,
+    get_id: impl Fn(&T) -> &str,
+    cursor: &Option<String>,
+    limit: Option<u32>,
+) -> Result<Vec<T>, StoreError> {
+    // Sort by timestamp DESC, id DESC
+    items.sort_by(|a, b| {
+        get_timestamp(b)
+            .cmp(&get_timestamp(a))
+            .then_with(|| get_id(b).cmp(get_id(a)))
+    });
+
+    // Apply cursor filter (keep only items that come after cursor in DESC order)
+    if let Some(cursor_str) = cursor {
+        let decoded = DecodedCursor::decode(cursor_str)
+            .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
+        items.retain(|item| {
+            let ts = get_timestamp(item);
+            let id = get_id(item);
+            (ts, id) < (decoded.timestamp, decoded.id.as_str())
+        });
+    }
+
+    // Apply limit (take one extra for next_cursor detection)
+    if let Some(limit) = limit {
+        let effective = (limit.min(PAGINATION_MAX_LIMIT) + 1) as usize;
+        items.truncate(effective);
+    }
+
+    Ok(items)
 }
 
 #[cfg(test)]
@@ -3073,13 +3281,17 @@ mod tests {
         let store = MemoryStore::new();
 
         let task = spawn_task();
+        let now = Utc::now();
         let (task_id, _) = store
-            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .add_task(task.clone(), now, &ActorRef::test())
             .await
             .unwrap();
 
         let fetched = store.get_task(&task_id, false).await.unwrap();
-        assert_versioned(&fetched, &task, 1);
+        // add_task sets creation_time on the stored task
+        let mut expected = task.clone();
+        expected.creation_time = Some(now);
+        assert_versioned(&fetched, &expected, 1);
         assert_eq!(
             store.get_task(&task_id, false).await.unwrap().item.status,
             Status::Created
@@ -5852,7 +6064,7 @@ mod tests {
         query.q = Some("bug".to_string());
         let results = store.list_labels(&query).await.unwrap();
         assert_eq!(results.len(), 2);
-        // Results sorted by name
+        // Results sorted by name (no pagination params)
         assert_eq!(results[0].1.name, "bug");
         assert_eq!(results[1].1.name, "bugfix");
     }
@@ -5879,9 +6091,344 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 3);
+        // Without pagination params, sorted alphabetically by name
         assert_eq!(results[0].1.name, "alpha");
         assert_eq!(results[1].1.name, "middle");
         assert_eq!(results[2].1.name, "zebra");
+    }
+
+    // ---- Pagination integration tests ----
+
+    #[tokio::test]
+    async fn issues_pagination_returns_correct_pages() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        // Create 5 issues with delays for distinct timestamps
+        for _ in 0..5 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Page 1: limit=2, store returns limit+1 items
+        let mut query = SearchIssuesQuery::default();
+        query.limit = Some(2);
+        let page1 = store.list_issues(&query).await.unwrap();
+        assert_eq!(page1.len(), 3);
+
+        let cursor = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page1[1].1.timestamp,
+            id: page1[1].0.to_string(),
+        }
+        .encode();
+
+        // Page 2: use cursor, limit=2
+        let mut query2 = SearchIssuesQuery::default();
+        query2.limit = Some(2);
+        query2.cursor = Some(cursor);
+        let page2 = store.list_issues(&query2).await.unwrap();
+        assert_eq!(page2.len(), 3);
+
+        let cursor2 = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page2[1].1.timestamp,
+            id: page2[1].0.to_string(),
+        }
+        .encode();
+
+        // Page 3: only 1 item remaining (no extra = last page)
+        let mut query3 = SearchIssuesQuery::default();
+        query3.limit = Some(2);
+        query3.cursor = Some(cursor2);
+        let page3 = store.list_issues(&query3).await.unwrap();
+        assert_eq!(page3.len(), 1);
+
+        // No overlap: collect all IDs across pages
+        let all_ids: Vec<_> = page1[..2]
+            .iter()
+            .chain(page2[..2].iter())
+            .chain(page3.iter())
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(all_ids.len(), 5);
+        let unique: HashSet<_> = all_ids.iter().collect();
+        assert_eq!(unique.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn issues_pagination_without_limit_returns_all() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..3 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        }
+
+        let results = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn patches_pagination_returns_correct_pages() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..5 {
+            store.add_patch(sample_patch(), &actor).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let mut query = SearchPatchesQuery::default();
+        query.limit = Some(2);
+        let page1 = store.list_patches(&query).await.unwrap();
+        assert_eq!(page1.len(), 3);
+
+        let cursor = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page1[1].1.timestamp,
+            id: page1[1].0.to_string(),
+        }
+        .encode();
+
+        let mut query2 = SearchPatchesQuery::default();
+        query2.limit = Some(2);
+        query2.cursor = Some(cursor);
+        let page2 = store.list_patches(&query2).await.unwrap();
+        assert_eq!(page2.len(), 3);
+
+        let cursor2 = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page2[1].1.timestamp,
+            id: page2[1].0.to_string(),
+        }
+        .encode();
+
+        let mut query3 = SearchPatchesQuery::default();
+        query3.limit = Some(2);
+        query3.cursor = Some(cursor2);
+        let page3 = store.list_patches(&query3).await.unwrap();
+        assert_eq!(page3.len(), 1);
+
+        let all_ids: Vec<_> = page1[..2]
+            .iter()
+            .chain(page2[..2].iter())
+            .chain(page3.iter())
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(all_ids.len(), 5);
+        let unique: HashSet<_> = all_ids.iter().collect();
+        assert_eq!(unique.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn documents_pagination_returns_correct_pages() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for i in 0..5 {
+            store
+                .add_document(sample_document(Some(&format!("doc_{i}.md")), None), &actor)
+                .await
+                .unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let mut query = SearchDocumentsQuery::default();
+        query.limit = Some(2);
+        let page1 = store.list_documents(&query).await.unwrap();
+        assert_eq!(page1.len(), 3);
+
+        let cursor = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page1[1].1.timestamp,
+            id: page1[1].0.to_string(),
+        }
+        .encode();
+
+        let mut query2 = SearchDocumentsQuery::default();
+        query2.limit = Some(2);
+        query2.cursor = Some(cursor);
+        let page2 = store.list_documents(&query2).await.unwrap();
+        assert_eq!(page2.len(), 3);
+
+        let cursor2 = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page2[1].1.timestamp,
+            id: page2[1].0.to_string(),
+        }
+        .encode();
+
+        let mut query3 = SearchDocumentsQuery::default();
+        query3.limit = Some(2);
+        query3.cursor = Some(cursor2);
+        let page3 = store.list_documents(&query3).await.unwrap();
+        assert_eq!(page3.len(), 1);
+
+        let all_ids: Vec<_> = page1[..2]
+            .iter()
+            .chain(page2[..2].iter())
+            .chain(page3.iter())
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(all_ids.len(), 5);
+        let unique: HashSet<_> = all_ids.iter().collect();
+        assert_eq!(unique.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn jobs_pagination_returns_correct_pages() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..5 {
+            store
+                .add_task(spawn_task(), Utc::now(), &actor)
+                .await
+                .unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let mut query = SearchJobsQuery::default();
+        query.limit = Some(2);
+        let page1 = store.list_tasks(&query).await.unwrap();
+        assert_eq!(page1.len(), 3);
+
+        let cursor = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page1[1].1.timestamp,
+            id: page1[1].0.to_string(),
+        }
+        .encode();
+
+        let mut query2 = SearchJobsQuery::default();
+        query2.limit = Some(2);
+        query2.cursor = Some(cursor);
+        let page2 = store.list_tasks(&query2).await.unwrap();
+        assert_eq!(page2.len(), 3);
+
+        let cursor2 = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page2[1].1.timestamp,
+            id: page2[1].0.to_string(),
+        }
+        .encode();
+
+        let mut query3 = SearchJobsQuery::default();
+        query3.limit = Some(2);
+        query3.cursor = Some(cursor2);
+        let page3 = store.list_tasks(&query3).await.unwrap();
+        assert_eq!(page3.len(), 1);
+
+        let all_ids: Vec<_> = page1[..2]
+            .iter()
+            .chain(page2[..2].iter())
+            .chain(page3.iter())
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(all_ids.len(), 5);
+        let unique: HashSet<_> = all_ids.iter().collect();
+        assert_eq!(unique.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn labels_pagination_returns_correct_pages() {
+        let store = MemoryStore::new();
+
+        // Create 5 labels with delays to ensure distinct millisecond timestamps
+        let names = ["alpha", "bravo", "charlie", "delta", "echo"];
+        for name in &names {
+            store
+                .add_label(sample_label(name, "#000000"))
+                .await
+                .unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Page 1: limit=2, should get 2+1 items (limit+1 pattern)
+        let mut query = SearchLabelsQuery::default();
+        query.limit = Some(2);
+        let page1 = store.list_labels(&query).await.unwrap();
+        assert_eq!(page1.len(), 3);
+
+        // Simulate what the route handler does: truncate to limit and encode cursor
+        let cursor = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page1[1].1.updated_at,
+            id: page1[1].0.to_string(),
+        }
+        .encode();
+
+        // Page 2: use cursor, limit=2
+        let mut query2 = SearchLabelsQuery::default();
+        query2.limit = Some(2);
+        query2.cursor = Some(cursor);
+        let page2 = store.list_labels(&query2).await.unwrap();
+        assert_eq!(page2.len(), 3);
+
+        let cursor2 = metis_common::api::v1::pagination::DecodedCursor {
+            timestamp: page2[1].1.updated_at,
+            id: page2[1].0.to_string(),
+        }
+        .encode();
+
+        // Page 3: use cursor2, limit=2
+        let mut query3 = SearchLabelsQuery::default();
+        query3.limit = Some(2);
+        query3.cursor = Some(cursor2);
+        let page3 = store.list_labels(&query3).await.unwrap();
+        // Only 1 item remaining (no extra item = last page)
+        assert_eq!(page3.len(), 1);
+
+        // Verify no overlap: collect all names across pages
+        let all_names: Vec<String> = page1[..2]
+            .iter()
+            .chain(page2[..2].iter())
+            .chain(page3.iter())
+            .map(|(_, l)| l.name.clone())
+            .collect();
+        assert_eq!(all_names.len(), 5);
+        let unique: std::collections::HashSet<_> = all_names.iter().collect();
+        assert_eq!(unique.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn labels_pagination_without_limit_returns_all() {
+        let store = MemoryStore::new();
+
+        for name in &["alpha", "bravo", "charlie"] {
+            store
+                .add_label(sample_label(name, "#000000"))
+                .await
+                .unwrap();
+        }
+
+        // No limit = all results, backward compat
+        let results = store
+            .list_labels(&SearchLabelsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        // Sorted alphabetically by name when no pagination
+        assert_eq!(results[0].1.name, "alpha");
+        assert_eq!(results[1].1.name, "bravo");
+        assert_eq!(results[2].1.name, "charlie");
+    }
+
+    #[tokio::test]
+    async fn labels_pagination_with_limit_sorts_by_updated_at() {
+        let store = MemoryStore::new();
+
+        store
+            .add_label(sample_label("zebra", "#000000"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("alpha", "#111111"))
+            .await
+            .unwrap();
+
+        let mut query = SearchLabelsQuery::default();
+        query.limit = Some(10);
+        let results = store.list_labels(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+        // With pagination, sorted by updated_at DESC (most recently created first)
+        assert_eq!(results[0].1.name, "alpha");
+        assert_eq!(results[1].1.name, "zebra");
     }
 
     // ---- Agent tests ----
@@ -6059,5 +6606,214 @@ mod tests {
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.prompt_path, "new/path");
         assert!(!fetched.deleted);
+    }
+
+    // --- count_* method tests ---
+
+    #[tokio::test]
+    async fn count_issues_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        // Create 5 issues: 3 open tasks, 1 open bug, 1 closed task
+        for _ in 0..3 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        }
+        let bug = Issue::new(
+            IssueType::Bug,
+            "Bug Title".to_string(),
+            "a bug".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(bug, &actor).await.unwrap();
+
+        let closed = Issue::new(
+            IssueType::Task,
+            "Closed".to_string(),
+            "closed task".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Closed,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(closed, &actor).await.unwrap();
+
+        // Count all issues
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
+
+        // Count only bugs
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            Some(metis_common::api::v1::issues::IssueType::Bug),
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+
+        // Count only closed
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn count_patches_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..3 {
+            store.add_patch(sample_patch(), &actor).await.unwrap();
+        }
+
+        let query =
+            metis_common::api::v1::patches::SearchPatchesQuery::new(None, None, Vec::new(), None);
+        assert_eq!(store.count_patches(&query).await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn count_documents_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        store
+            .add_document(sample_document(Some("docs/a.md"), None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document(Some("docs/b.md"), None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document(Some("other/c.md"), None), &actor)
+            .await
+            .unwrap();
+
+        // Count all
+        let query = metis_common::api::v1::documents::SearchDocumentsQuery::new(
+            None, None, None, None, None,
+        );
+        assert_eq!(store.count_documents(&query).await.unwrap(), 3);
+
+        // Count with path prefix filter
+        let query = metis_common::api::v1::documents::SearchDocumentsQuery::new(
+            Some("docs/".to_string()),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(store.count_documents(&query).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn count_tasks_returns_total_matching() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..4 {
+            store
+                .add_task(spawn_task(), Utc::now(), &actor)
+                .await
+                .unwrap();
+        }
+
+        let query = metis_common::api::v1::jobs::SearchJobsQuery::new(None, None, None, None);
+        assert_eq!(store.count_tasks(&query).await.unwrap(), 4);
+    }
+
+    #[tokio::test]
+    async fn count_labels_returns_total_matching() {
+        use crate::domain::labels::Label as DomainLabel;
+        use metis_common::Rgb;
+
+        let store = MemoryStore::new();
+        let default_color: Rgb = "#000000".parse().unwrap();
+
+        store
+            .add_label(DomainLabel::new(
+                "bug".to_string(),
+                default_color.clone(),
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+        store
+            .add_label(DomainLabel::new(
+                "feature".to_string(),
+                default_color.clone(),
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+        store
+            .add_label(DomainLabel::new(
+                "bugfix".to_string(),
+                default_color,
+                true,
+                false,
+            ))
+            .await
+            .unwrap();
+
+        // Count all
+        let query = metis_common::api::v1::labels::SearchLabelsQuery::default();
+        assert_eq!(store.count_labels(&query).await.unwrap(), 3);
+
+        // Count with search filter
+        let mut query = metis_common::api::v1::labels::SearchLabelsQuery::default();
+        query.q = Some("bug".to_string());
+        assert_eq!(store.count_labels(&query).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn count_issues_ignores_pagination() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+
+        for _ in 0..5 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Count should return 5 even when limit is set
+        let mut query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        query.limit = Some(2);
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
     }
 }

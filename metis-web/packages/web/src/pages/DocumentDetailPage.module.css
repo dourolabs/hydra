@@ -50,7 +50,7 @@
 .metaValue {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 2px;
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   font-family: var(--font-family-mono);

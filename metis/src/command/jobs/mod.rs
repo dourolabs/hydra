@@ -9,12 +9,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use metis_common::{
-    activity_log_for_job_versions,
-    constants::{
-        ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID, ENV_OPENAI_API_KEY,
-    },
-    jobs::Task,
-    IssueId, MetisId, RelativeVersionNumber, TaskId, Versioned,
+    activity_log_for_job_versions, constants::ENV_METIS_ISSUE_ID, jobs::Task, IssueId, MetisId,
+    RelativeVersionNumber, TaskId, Versioned,
 };
 use std::{
     io::{self, Write},
@@ -123,24 +119,6 @@ pub enum JobsCommand {
         /// Destination directory where the context will be extracted/copied.
         #[arg(value_name = "PATH")]
         path: PathBuf,
-        /// API key to pass to Codex (defaults to OPENAI_API_KEY).
-        #[arg(long = "openai-api-key", value_name = "KEY", env = ENV_OPENAI_API_KEY)]
-        openai_api_key: Option<String>,
-        /// API key to pass to Claude (defaults to ANTHROPIC_API_KEY).
-        #[arg(
-            long = "anthropic-api-key",
-            value_name = "KEY",
-            env = ENV_ANTHROPIC_API_KEY
-        )]
-        anthropic_api_key: Option<String>,
-        /// OAuth token to pass to Claude Code (defaults to CLAUDE_CODE_OAUTH_TOKEN).
-        #[arg(
-            long = "claude-code-oauth-token",
-            value_name = "TOKEN",
-            env = ENV_CLAUDE_CODE_OAUTH_TOKEN
-        )]
-        claude_code_oauth_token: Option<String>,
-
         #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_METIS_ISSUE_ID)]
         issue_id: Option<IssueId>,
 
@@ -183,26 +161,11 @@ pub async fn run(
         JobsCommand::WorkerRun {
             job,
             path,
-            openai_api_key,
-            anthropic_api_key,
-            claude_code_oauth_token,
             issue_id,
             tempdir,
         } => {
             let commands = ModelAwareCommands::default();
-            worker_run::run(
-                client,
-                job,
-                path,
-                openai_api_key,
-                anthropic_api_key,
-                claude_code_oauth_token,
-                issue_id,
-                tempdir,
-                &commands,
-                context,
-            )
-            .await?
+            worker_run::run(client, job, path, issue_id, tempdir, &commands, context).await?
         }
     }
 

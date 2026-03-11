@@ -4,6 +4,7 @@ pub mod app;
 pub mod background;
 pub mod config;
 pub mod domain;
+pub mod ee;
 pub mod job_engine;
 pub mod merge_queue;
 pub mod policy;
@@ -60,7 +61,6 @@ pub async fn run_with_state(
     let public_routes = Router::new()
         .route("/health", get(health_check))
         .route("/v1/login", post(routes::login::login))
-        .route("/v1/local-auth", get(routes::local_auth::local_auth))
         .route(
             "/v1/github/app/client-id",
             get(routes::github::get_github_app_client_id),
@@ -250,7 +250,9 @@ pub async fn run_with_state(
 
     #[cfg(feature = "bundled-frontend")]
     {
-        app = app.merge(routes::frontend::router());
+        app = app
+            .route("/v1/local-auth", get(routes::local_auth::local_auth))
+            .merge(routes::frontend::router());
     }
 
     let app = app.with_state(state);
@@ -343,11 +345,9 @@ pub async fn run() -> anyhow::Result<()> {
     };
 
     // In local auth mode, create a default user actor.
-    let local_auth_token = if app_config.auth.is_local() {
-        Some(setup_local_auth(&app_config, store.as_ref()).await?)
-    } else {
-        None
-    };
+    if app_config.auth.is_local() {
+        setup_local_auth(&app_config, store.as_ref()).await?;
+    }
 
     // Create job engine based on configured backend
     let job_engine: Arc<dyn crate::job_engine::JobEngine> = match &app_config.job_engine {
@@ -398,7 +398,6 @@ pub async fn run() -> anyhow::Result<()> {
         store,
         job_engine,
         secret_manager,
-        local_auth_token,
     );
 
     // Ensure the 'inbox' label exists (recurse=false, hidden=true).
@@ -409,11 +408,11 @@ pub async fn run() -> anyhow::Result<()> {
     run_with_state(state, listener).await
 }
 
-/// Create a default user actor for local auth mode and return the auth token.
-pub(crate) async fn setup_local_auth(
-    config: &AppConfig,
-    store: &dyn Store,
-) -> anyhow::Result<String> {
+/// Create a default user actor for local auth mode.
+///
+/// When `auth_token_file` is set in the config, the generated auth token is
+/// written to that path so the CLI can pick it up.
+pub(crate) async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
     let username = Username::from(
         config
             .auth
@@ -449,8 +448,29 @@ pub(crate) async fn setup_local_auth(
         Err(err) => return Err(err.into()),
     }
 
+    // Write the auth token to a file if auth_token_file is configured.
+    if let Some(path) = config.auth.auth_token_file() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create directory for auth token at {}",
+                    parent.display()
+                )
+            })?;
+        }
+        std::fs::write(path, &auth_token)
+            .with_context(|| format!("failed to write auth token to {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("failed to set permissions on {}", path.display()))?;
+        }
+        info!("auth token written to {}", path.display());
+    }
+
     info!("local auth configured");
-    Ok(auth_token)
+    Ok(())
 }
 
 async fn health_check() -> Json<serde_json::Value> {

@@ -7,11 +7,21 @@ export interface CopyButtonProps {
 }
 
 export function CopyButton({ value, onCopied }: CopyButtonProps) {
-  const handleClick = useCallback(() => {
-    navigator.clipboard.writeText(value).then(() => {
-      onCopied?.();
-    });
-  }, [value, onCopied]);
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      navigator.clipboard.writeText(value).then(
+        () => {
+          onCopied?.();
+        },
+        (err) => {
+          console.error("Failed to copy to clipboard:", err);
+        },
+      );
+    },
+    [value, onCopied],
+  );
 
   return (
     <button

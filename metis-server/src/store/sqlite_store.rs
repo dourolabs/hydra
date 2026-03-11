@@ -19,6 +19,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
+use metis_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
@@ -109,6 +110,16 @@ struct ObjectRelationshipRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct SubtreeQueryRow {
+    issue_id: String,
+    parent_id: String,
+    status: String,
+    title: String,
+    assignee: Option<String>,
+    has_active_task: bool,
+}
+
+#[derive(sqlx::FromRow)]
 struct IssueRow {
     id: String,
     version_number: i64,
@@ -121,8 +132,6 @@ struct IssueRow {
     assignee: Option<String>,
     job_settings: String,
     todo_list: String,
-    dependencies: String,
-    patches: String,
     deleted: bool,
     actor: Option<String>,
     created_at: String,
@@ -199,6 +208,22 @@ struct TaskRow {
     updated_at: String,
     #[sqlx(default)]
     creation_time: Option<String>,
+    #[sqlx(default)]
+    start_time: Option<String>,
+    #[sqlx(default)]
+    end_time: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct JobsSummaryRow {
+    spawned_from: String,
+    total: i64,
+    running: i64,
+    failed: i64,
+    latest_job_id: Option<String>,
+    latest_job_status: Option<String>,
+    latest_start_time: Option<String>,
+    latest_end_time: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -553,14 +578,9 @@ impl SqliteStore {
             .map_err(|e| StoreError::Internal(format!("failed to serialize job_settings: {e}")))?;
         let todo_list_json = serde_json::to_string(&issue.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
-        let dependencies_json = serde_json::to_string(&issue.dependencies)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize dependencies: {e}")))?;
-        let patches_json = serde_json::to_string(&issue.patches)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize patches: {e}")))?;
-
         sqlx::query(
-            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
+            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"
         )
         .bind(id.as_ref())
         .bind(version_number)
@@ -573,8 +593,6 @@ impl SqliteStore {
         .bind(issue.assignee.as_deref())
         .bind(&job_settings_json)
         .bind(&todo_list_json)
-        .bind(&dependencies_json)
-        .bind(&patches_json)
         .bind(issue.deleted)
         .bind(actor)
         .execute(executor)
@@ -865,12 +883,15 @@ impl SqliteStore {
             })
             .transpose()?;
         let status_str = super::status_to_db_str(task.status);
+        let creation_time_str = task.creation_time.map(|t| t.to_rfc3339());
+        let start_time_str = task.start_time.map(|t| t.to_rfc3339());
+        let end_time_str = task.end_time.map(|t| t.to_rfc3339());
 
         if let Some(ts) = created_at {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, created_at, creation_time, start_time, end_time)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)"
                 )
             )
             .bind(id.as_ref())
@@ -891,14 +912,17 @@ impl SqliteStore {
             .bind(actor)
             .bind(&secrets_json)
             .bind(ts)
+            .bind(creation_time_str.as_deref())
+            .bind(start_time_str.as_deref())
+            .bind(end_time_str.as_deref())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
         } else {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, prompt, context, spawned_from, creator, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)"
                 )
             )
             .bind(id.as_ref())
@@ -918,6 +942,9 @@ impl SqliteStore {
             .bind(task.deleted)
             .bind(actor)
             .bind(&secrets_json)
+            .bind(creation_time_str.as_deref())
+            .bind(start_time_str.as_deref())
+            .bind(end_time_str.as_deref())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -972,6 +999,22 @@ impl SqliteStore {
         };
         let creator = Username::from(row.creator.as_deref().unwrap_or(UNKNOWN_CREATOR));
 
+        let creation_time = row
+            .creation_time
+            .as_deref()
+            .map(parse_sqlite_timestamp)
+            .transpose()?;
+        let start_time = row
+            .start_time
+            .as_deref()
+            .map(parse_sqlite_timestamp)
+            .transpose()?;
+        let end_time = row
+            .end_time
+            .as_deref()
+            .map(parse_sqlite_timestamp)
+            .transpose()?;
+
         Ok(Task {
             prompt: row.prompt.clone(),
             context,
@@ -987,6 +1030,9 @@ impl SqliteStore {
             last_message: row.last_message.clone(),
             error,
             deleted: row.deleted,
+            creation_time,
+            start_time,
+            end_time,
         })
     }
 
@@ -1029,13 +1075,6 @@ impl SqliteStore {
         })?;
         let todo_list: Vec<TodoItem> = serde_json::from_str(&row.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize todo_list: {e}")))?;
-        let dependencies: Vec<IssueDependency> =
-            serde_json::from_str(&row.dependencies).map_err(|e| {
-                StoreError::Internal(format!("failed to deserialize dependencies: {e}"))
-            })?;
-        let patches: Vec<PatchId> = serde_json::from_str(&row.patches)
-            .map_err(|e| StoreError::Internal(format!("failed to deserialize patches: {e}")))?;
-
         Ok(Issue {
             issue_type,
             title: row.title.clone(),
@@ -1046,8 +1085,8 @@ impl SqliteStore {
             assignee: row.assignee.clone(),
             job_settings,
             todo_list,
-            dependencies,
-            patches,
+            dependencies: vec![],
+            patches: vec![],
             deleted: row.deleted,
         })
     }
@@ -1400,6 +1439,271 @@ impl SqliteStore {
     }
 }
 
+/// Build WHERE predicates and bindings for issues queries (SQLite `?N` placeholders).
+fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if let Some(issue_type) = query.issue_type.as_ref() {
+        bindings.push(issue_type.as_str().to_string());
+        predicates.push(format!("issue_type = ?{}", bindings.len()));
+    }
+
+    if let Some(status) = query.status.as_ref() {
+        bindings.push(status.as_str().to_string());
+        predicates.push(format!("status = ?{}", bindings.len()));
+    }
+
+    if let Some(assignee) = query
+        .assignee
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
+        bindings.push(assignee.to_lowercase());
+        predicates.push(format!("LOWER(assignee) = ?{}", bindings.len()));
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
+    {
+        let pattern = format!("%{term}%");
+        let start = bindings.len() + 1;
+        bindings.push(pattern.clone()); // id
+        bindings.push(pattern.clone()); // title
+        bindings.push(pattern.clone()); // description
+        bindings.push(pattern.clone()); // progress
+        bindings.push(term.clone()); // type (exact)
+        bindings.push(term.clone()); // status (exact)
+        bindings.push(pattern.clone()); // creator
+        bindings.push(pattern); // assignee
+        predicates.push(format!(
+            "(LOWER(id) LIKE ?{s0} OR LOWER(title) LIKE ?{s1} OR LOWER(description) LIKE ?{s2} OR LOWER(progress) LIKE ?{s3} OR issue_type = ?{s4} OR status = ?{s5} OR LOWER(creator) LIKE ?{s6} OR LOWER(COALESCE(assignee,'')) LIKE ?{s7})",
+            s0 = start,
+            s1 = start + 1,
+            s2 = start + 2,
+            s3 = start + 3,
+            s4 = start + 4,
+            s5 = start + 5,
+            s6 = start + 6,
+            s7 = start + 7,
+        ));
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = 0".to_string());
+    }
+
+    if !query.label_ids.is_empty() {
+        let label_count = query.label_ids.len();
+        let placeholders: Vec<String> = query
+            .label_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!(
+            "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la WHERE la.label_id IN ({}) GROUP BY la.object_id HAVING COUNT(DISTINCT la.label_id) = {label_count})",
+            placeholders.join(", ")
+        ));
+        for label_id in &query.label_ids {
+            bindings.push(label_id.to_string());
+        }
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for patches queries (SQLite `?N` placeholders).
+fn build_patches_predicates_sqlite(query: &SearchPatchesQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = 0".to_string());
+    }
+
+    if !query.status.is_empty() {
+        let status_strings: Vec<String> = query
+            .status
+            .iter()
+            .map(|s| {
+                let domain: crate::domain::patches::PatchStatus = (*s).into();
+                domain.as_str().to_string()
+            })
+            .collect();
+        let placeholders: Vec<String> = status_strings
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("status IN ({})", placeholders.join(", ")));
+        for s in status_strings {
+            bindings.push(s);
+        }
+    }
+
+    if let Some(ref branch) = query.branch_name {
+        bindings.push(branch.clone());
+        predicates.push(format!("branch_name = ?{}", bindings.len()));
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let pattern = format!("%{term}%");
+        let start = bindings.len() + 1;
+        for _ in 0..12 {
+            bindings.push(pattern.clone());
+        }
+        predicates.push(format!(
+            "(LOWER(id) LIKE ?{s0} \
+             OR LOWER(title) LIKE ?{s1} \
+             OR LOWER(description) LIKE ?{s2} \
+             OR LOWER(status) LIKE ?{s3} \
+             OR LOWER(service_repo_name) LIKE ?{s4} \
+             OR LOWER(diff) LIKE ?{s5} \
+             OR LOWER(COALESCE(branch_name,'')) LIKE ?{s6} \
+             OR LOWER(COALESCE(json_extract(github,'$.owner'),'')) LIKE ?{s7} \
+             OR LOWER(COALESCE(json_extract(github,'$.repo'),'')) LIKE ?{s8} \
+             OR CAST(json_extract(github,'$.number') AS TEXT) LIKE ?{s9} \
+             OR LOWER(COALESCE(json_extract(github,'$.head_ref'),'')) LIKE ?{s10} \
+             OR LOWER(COALESCE(json_extract(github,'$.base_ref'),'')) LIKE ?{s11})",
+            s0 = start,
+            s1 = start + 1,
+            s2 = start + 2,
+            s3 = start + 3,
+            s4 = start + 4,
+            s5 = start + 5,
+            s6 = start + 6,
+            s7 = start + 7,
+            s8 = start + 8,
+            s9 = start + 9,
+            s10 = start + 10,
+            s11 = start + 11,
+        ));
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for documents queries (SQLite `?N` placeholders).
+fn build_documents_predicates_sqlite(query: &SearchDocumentsQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if let Some(path) = query.path_prefix.as_ref() {
+        if query.path_is_exact.unwrap_or(false) {
+            bindings.push(path.clone());
+            predicates.push(format!("COALESCE(path,'') = ?{}", bindings.len()));
+        } else {
+            bindings.push(format!("{path}%"));
+            predicates.push(format!("COALESCE(path,'') LIKE ?{}", bindings.len()));
+        }
+    }
+
+    if let Some(created_by) = query.created_by.as_ref() {
+        bindings.push(created_by.as_ref().to_string());
+        predicates.push(format!("created_by = ?{}", bindings.len()));
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let pattern = format!("%{term}%");
+        let start = bindings.len() + 1;
+        bindings.push(pattern.clone());
+        bindings.push(pattern.clone());
+        bindings.push(pattern);
+        predicates.push(format!(
+            "(LOWER(title) LIKE ?{s0} \
+             OR LOWER(body_markdown) LIKE ?{s1} \
+             OR LOWER(COALESCE(path,'')) LIKE ?{s2})",
+            s0 = start,
+            s1 = start + 1,
+            s2 = start + 2,
+        ));
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = 0".to_string());
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for tasks queries (SQLite `?N` placeholders).
+/// Uses `t.` column prefix since tasks queries join against the table alias `t`.
+fn build_tasks_predicates_sqlite(query: &SearchJobsQuery) -> (Vec<String>, Vec<String>) {
+    use crate::domain::task_status::Status;
+
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if let Some(spawned_from) = query.spawned_from.as_ref() {
+        bindings.push(spawned_from.as_ref().to_string());
+        predicates.push(format!("t.spawned_from = ?{}", bindings.len()));
+    }
+
+    if let Some(term) = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    {
+        let pattern = format!("%{term}%");
+        bindings.push(pattern.clone());
+        let idx_id = bindings.len();
+        bindings.push(pattern.clone());
+        let idx_prompt = bindings.len();
+        bindings.push(pattern);
+        let idx_status = bindings.len();
+        predicates.push(format!(
+            "(LOWER(t.id) LIKE ?{idx_id} \
+             OR LOWER(t.prompt) LIKE ?{idx_prompt} \
+             OR LOWER(t.status) LIKE ?{idx_status})"
+        ));
+    }
+
+    if let Some(status) = query.status {
+        let server_status: Status = status.into();
+        bindings.push(super::status_to_db_str(server_status).to_string());
+        predicates.push(format!("t.status = ?{}", bindings.len()));
+    }
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("t.deleted = 0".to_string());
+    }
+
+    (predicates, bindings)
+}
+
+/// Build WHERE predicates and bindings for labels queries (SQLite `?N` placeholders).
+fn build_labels_predicates_sqlite(query: &SearchLabelsQuery) -> (Vec<String>, Vec<String>) {
+    let mut predicates = Vec::new();
+    let mut bindings: Vec<String> = Vec::new();
+
+    if !query.include_deleted.unwrap_or(false) {
+        predicates.push("deleted = 0".to_string());
+    }
+
+    if let Some(ref q) = query.q {
+        bindings.push(format!("%{}%", q.to_lowercase()));
+        predicates.push(format!("LOWER(name) LIKE ?{}", bindings.len()));
+    }
+
+    (predicates, bindings)
+}
+
 fn actor_to_json_string(actor: &ActorRef) -> String {
     serde_json::to_string(actor).expect("ActorRef serialization should not fail")
 }
@@ -1529,7 +1833,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let row = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
@@ -1575,7 +1879,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let rows = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, actor, created_at, updated_at, NULL AS creation_time
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, job_settings, todo_list, deleted, actor, created_at, updated_at, NULL AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
              ORDER BY version_number"
@@ -1622,90 +1926,24 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         // SQLite doesn't have DISTINCT ON; use a subquery with MAX(version_number) instead
         let subquery = format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.dependencies, i.patches, i.deleted, i.actor, i.created_at, i.updated_at,
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, i.created_at, i.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time
              FROM {TABLE_ISSUES_V2} i
              INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_ISSUES_V2} GROUP BY id) latest
              ON i.id = latest.id AND i.version_number = latest.max_vn"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
+        let (mut predicates, mut bindings) = build_issues_predicates_sqlite(query);
 
-        if let Some(issue_type) = query.issue_type.as_ref() {
-            bindings.push(issue_type.as_str().to_string());
-            predicates.push(format!("issue_type = ?{}", bindings.len()));
-        }
-
-        if let Some(status) = query.status.as_ref() {
-            bindings.push(status.as_str().to_string());
-            predicates.push(format!("status = ?{}", bindings.len()));
-        }
-
-        if let Some(assignee) = query
-            .assignee
-            .as_ref()
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-        {
-            bindings.push(assignee.to_lowercase());
-            predicates.push(format!("LOWER(assignee) = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|v| v.trim().to_lowercase())
-            .filter(|v| !v.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            let start = bindings.len() + 1;
-            bindings.push(pattern.clone()); // id
-            bindings.push(pattern.clone()); // title
-            bindings.push(pattern.clone()); // description
-            bindings.push(pattern.clone()); // progress
-            bindings.push(term.clone()); // type (exact)
-            bindings.push(term.clone()); // status (exact)
-            bindings.push(pattern.clone()); // creator
-            bindings.push(pattern); // assignee
-            predicates.push(format!(
-                "(LOWER(id) LIKE ?{s0} OR LOWER(title) LIKE ?{s1} OR LOWER(description) LIKE ?{s2} OR LOWER(progress) LIKE ?{s3} OR issue_type = ?{s4} OR status = ?{s5} OR LOWER(creator) LIKE ?{s6} OR LOWER(COALESCE(assignee,'')) LIKE ?{s7})",
-                s0 = start,
-                s1 = start + 1,
-                s2 = start + 2,
-                s3 = start + 3,
-                s4 = start + 4,
-                s5 = start + 5,
-                s6 = start + 6,
-                s7 = start + 7,
-            ));
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = 0".to_string());
-        }
-
-        if !query.label_ids.is_empty() {
-            let label_count = query.label_ids.len();
-            let placeholders: Vec<String> = query
-                .label_ids
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!(
-                "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la WHERE la.label_id IN ({}) GROUP BY la.object_id HAVING COUNT(DISTINCT la.label_id) = {label_count})",
-                placeholders.join(", ")
-            ));
-            for label_id in &query.label_ids {
-                bindings.push(label_id.to_string());
-            }
-        }
-
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_sqlite(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, IssueRow>(&sql);
         for value in &bindings {
@@ -1751,6 +1989,34 @@ impl ReadOnlyStore for SqliteStore {
         Ok(issues)
     }
 
+    async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
+        let subquery = format!(
+            "SELECT i.id, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.deleted, i.created_at
+             FROM {TABLE_ISSUES_V2} i
+             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_ISSUES_V2} GROUP BY id) latest
+             ON i.id = latest.id AND i.version_number = latest.max_vn"
+        );
+        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
+        let (predicates, bindings) = build_issues_predicates_sqlite(query);
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_scalar::<_, i64>(&sql);
+        for value in &bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let count = query_builder
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(count as u64)
+    }
+
     async fn search_issue_graph(
         &self,
         filters: &[IssueGraphFilter],
@@ -1775,6 +2041,87 @@ impl ReadOnlyStore for SqliteStore {
             .map(|id| {
                 id.parse::<IssueId>().map_err(|err| {
                     StoreError::Internal(format!("invalid issue id in object_relationships: {err}"))
+                })
+            })
+            .collect()
+    }
+
+    async fn get_issue_subtrees(
+        &self,
+        root_ids: &[IssueId],
+    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, StoreError> {
+        if root_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // SQLite uses ?1, ?2, ... for positional params
+        let placeholders: Vec<String> = (1..=root_ids.len()).map(|i| format!("?{i}")).collect();
+        let placeholders_str = placeholders.join(", ");
+        let rel_param = format!("?{}", root_ids.len() + 1);
+
+        let sql = format!(
+            "WITH RECURSIVE subtree AS ( \
+                SELECT source_id AS issue_id, target_id AS parent_id \
+                FROM {TABLE_OBJECT_RELATIONSHIPS} \
+                WHERE target_id IN ({placeholders_str}) AND rel_type = {rel_param} \
+                UNION \
+                SELECT r.source_id AS issue_id, s.issue_id AS parent_id \
+                FROM subtree s \
+                JOIN {TABLE_OBJECT_RELATIONSHIPS} r ON r.target_id = s.issue_id \
+                WHERE r.rel_type = {rel_param} \
+            ) \
+            SELECT \
+                s.issue_id, \
+                s.parent_id, \
+                i.status, \
+                i.title, \
+                i.assignee, \
+                EXISTS ( \
+                    SELECT 1 FROM {TABLE_TASKS_V2} t \
+                    WHERE t.spawned_from = s.issue_id \
+                    AND t.status IN ('running', 'pending') \
+                    AND t.version_number = ( \
+                        SELECT MAX(t2.version_number) FROM {TABLE_TASKS_V2} t2 WHERE t2.id = t.id \
+                    ) \
+                ) AS has_active_task \
+            FROM subtree s \
+            JOIN ( \
+                SELECT id, status, title, assignee \
+                FROM {TABLE_ISSUES_V2} \
+                WHERE version_number = ( \
+                    SELECT MAX(i2.version_number) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = {TABLE_ISSUES_V2}.id \
+                ) \
+            ) i ON i.id = s.issue_id \
+            ORDER BY s.parent_id, s.issue_id"
+        );
+
+        let mut query = sqlx::query_as::<_, SubtreeQueryRow>(&sql);
+        for id in root_ids {
+            query = query.bind(id.as_ref());
+        }
+        query = query.bind(super::RelationshipType::ChildOf.as_str());
+
+        let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let issue_id = row.issue_id.parse::<IssueId>().map_err(|e| {
+                    StoreError::Internal(format!("invalid issue id in subtree: {e}"))
+                })?;
+                let parent_id = row.parent_id.parse::<IssueId>().map_err(|e| {
+                    StoreError::Internal(format!("invalid parent id in subtree: {e}"))
+                })?;
+                let status = row
+                    .status
+                    .parse::<crate::domain::issues::IssueStatus>()
+                    .unwrap_or_default();
+                Ok(crate::domain::issues::SubtreeIssueRow {
+                    issue_id,
+                    parent_id,
+                    status,
+                    title: row.title,
+                    assignee: row.assignee,
+                    has_active_task: row.has_active_task,
                 })
             })
             .collect()
@@ -1908,83 +2255,17 @@ impl ReadOnlyStore for SqliteStore {
              ON p.id = latest.id AND p.version_number = latest.max_vn"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
+        let (mut predicates, mut bindings) = build_patches_predicates_sqlite(query);
 
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = 0".to_string());
-        }
-
-        if !query.status.is_empty() {
-            let status_strings: Vec<String> = query
-                .status
-                .iter()
-                .map(|s| {
-                    let domain: crate::domain::patches::PatchStatus = (*s).into();
-                    domain.as_str().to_string()
-                })
-                .collect();
-            let placeholders: Vec<String> = status_strings
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
-                .collect();
-            predicates.push(format!("status IN ({})", placeholders.join(", ")));
-            for s in status_strings {
-                bindings.push(s);
-            }
-        }
-
-        if let Some(ref branch) = query.branch_name {
-            bindings.push(branch.clone());
-            predicates.push(format!("branch_name = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            let start = bindings.len() + 1;
-            // id, title, description, status, service_repo_name, diff, branch_name,
-            // github JSON sub-fields: owner, repo, number, head_ref, base_ref
-            for _ in 0..12 {
-                bindings.push(pattern.clone());
-            }
-            predicates.push(format!(
-                "(LOWER(id) LIKE ?{s0} \
-                 OR LOWER(title) LIKE ?{s1} \
-                 OR LOWER(description) LIKE ?{s2} \
-                 OR LOWER(status) LIKE ?{s3} \
-                 OR LOWER(service_repo_name) LIKE ?{s4} \
-                 OR LOWER(diff) LIKE ?{s5} \
-                 OR LOWER(COALESCE(branch_name,'')) LIKE ?{s6} \
-                 OR LOWER(COALESCE(json_extract(github,'$.owner'),'')) LIKE ?{s7} \
-                 OR LOWER(COALESCE(json_extract(github,'$.repo'),'')) LIKE ?{s8} \
-                 OR CAST(json_extract(github,'$.number') AS TEXT) LIKE ?{s9} \
-                 OR LOWER(COALESCE(json_extract(github,'$.head_ref'),'')) LIKE ?{s10} \
-                 OR LOWER(COALESCE(json_extract(github,'$.base_ref'),'')) LIKE ?{s11})",
-                s0 = start,
-                s1 = start + 1,
-                s2 = start + 2,
-                s3 = start + 3,
-                s4 = start + 4,
-                s5 = start + 5,
-                s6 = start + 6,
-                s7 = start + 7,
-                s8 = start + 8,
-                s9 = start + 9,
-                s10 = start + 10,
-                s11 = start + 11,
-            ));
-        }
-
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_sqlite(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, PatchRow>(&sql);
         for value in &bindings {
@@ -2026,6 +2307,34 @@ impl ReadOnlyStore for SqliteStore {
         }
 
         Ok(patches)
+    }
+
+    async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
+        let subquery = format!(
+            "SELECT p.id, p.status, p.is_automatic_backup, p.branch_name, p.service_repo_name, p.github, p.title, p.description, p.diff, p.deleted
+             FROM {TABLE_PATCHES_V2} p
+             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_PATCHES_V2} GROUP BY id) latest
+             ON p.id = latest.id AND p.version_number = latest.max_vn"
+        );
+        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
+        let (predicates, bindings) = build_patches_predicates_sqlite(query);
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_scalar::<_, i64>(&sql);
+        for value in &bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let count = query_builder
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(count as u64)
     }
 
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
@@ -2152,53 +2461,17 @@ impl ReadOnlyStore for SqliteStore {
              ON d.id = latest.id AND d.version_number = latest.max_vn"
         );
         let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
+        let (mut predicates, mut bindings) = build_documents_predicates_sqlite(query);
 
-        if let Some(path) = query.path_prefix.as_ref() {
-            if query.path_is_exact.unwrap_or(false) {
-                bindings.push(path.clone());
-                predicates.push(format!("COALESCE(path,'') = ?{}", bindings.len()));
-            } else {
-                bindings.push(format!("{path}%"));
-                predicates.push(format!("COALESCE(path,'') LIKE ?{}", bindings.len()));
-            }
-        }
-
-        if let Some(created_by) = query.created_by.as_ref() {
-            bindings.push(created_by.as_ref().to_string());
-            predicates.push(format!("created_by = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            let start = bindings.len() + 1;
-            bindings.push(pattern.clone());
-            bindings.push(pattern.clone());
-            bindings.push(pattern);
-            predicates.push(format!(
-                "(LOWER(title) LIKE ?{s0} \
-                 OR LOWER(body_markdown) LIKE ?{s1} \
-                 OR LOWER(COALESCE(path,'')) LIKE ?{s2})",
-                s0 = start,
-                s1 = start + 1,
-                s2 = start + 2,
-            ));
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = 0".to_string());
-        }
-
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_sqlite(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "created_at",
+            "id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, DocumentRow>(&sql);
         for value in &bindings {
@@ -2242,6 +2515,34 @@ impl ReadOnlyStore for SqliteStore {
         Ok(documents)
     }
 
+    async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
+        let subquery = format!(
+            "SELECT d.id, d.title, d.body_markdown, d.path, d.created_by, d.deleted
+             FROM {TABLE_DOCUMENTS_V2} d
+             INNER JOIN (SELECT id, MAX(version_number) AS max_vn FROM {TABLE_DOCUMENTS_V2} GROUP BY id) latest
+             ON d.id = latest.id AND d.version_number = latest.max_vn"
+        );
+        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
+        let (predicates, bindings) = build_documents_predicates_sqlite(query);
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_scalar::<_, i64>(&sql);
+        for value in &bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let count = query_builder
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(count as u64)
+    }
+
     async fn get_documents_by_path(
         &self,
         path_prefix: &str,
@@ -2264,7 +2565,7 @@ impl ReadOnlyStore for SqliteStore {
         let row = sqlx::query_as::<_, TaskRow>(
             &format!(
                 "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at,
-                 (SELECT MIN(created_at) FROM {TABLE_TASKS_V2} WHERE id = ?1) AS creation_time
+                 creation_time, start_time, end_time
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number DESC
@@ -2286,7 +2587,7 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
         let rows = sqlx::query_as::<_, TaskRow>(
             &format!(
-                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, NULL AS creation_time
+                "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number"
@@ -2320,53 +2621,22 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         let mut sql = format!(
             "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.creator, t.deleted, t.actor, t.created_at, t.updated_at, \
-             (SELECT MIN(created_at) FROM {TABLE_TASKS_V2} WHERE id = t.id) AS creation_time \
+             t.creation_time, t.start_time, t.end_time \
              FROM {TABLE_TASKS_V2} t \
              INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
              ON t.id = latest.id AND t.version_number = latest.max_version"
         );
-        let mut predicates = Vec::new();
-        let mut bindings: Vec<String> = Vec::new();
+        let (mut predicates, mut bindings) = build_tasks_predicates_sqlite(query);
 
-        if let Some(spawned_from) = query.spawned_from.as_ref() {
-            bindings.push(spawned_from.as_ref().to_string());
-            predicates.push(format!("t.spawned_from = ?{}", bindings.len()));
-        }
-
-        if let Some(term) = query
-            .q
-            .as_ref()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty())
-        {
-            let pattern = format!("%{term}%");
-            bindings.push(pattern.clone());
-            let idx_id = bindings.len();
-            bindings.push(pattern.clone());
-            let idx_prompt = bindings.len();
-            bindings.push(pattern);
-            let idx_status = bindings.len();
-            predicates.push(format!(
-                "(LOWER(t.id) LIKE ?{idx_id} \
-                 OR LOWER(t.prompt) LIKE ?{idx_prompt} \
-                 OR LOWER(t.status) LIKE ?{idx_status})"
-            ));
-        }
-
-        if let Some(status) = query.status {
-            let server_status: Status = status.into();
-            bindings.push(super::status_to_db_str(server_status).to_string());
-            predicates.push(format!("t.status = ?{}", bindings.len()));
-        }
-
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("t.deleted = 0".to_string());
-        }
-
-        if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&predicates.join(" AND "));
-        }
+        apply_pagination_sql_sqlite(
+            &mut sql,
+            &mut predicates,
+            &mut bindings,
+            &query.cursor,
+            query.limit,
+            "t.created_at",
+            "t.id",
+        )?;
 
         let mut query_builder = sqlx::query_as::<_, TaskRow>(&sql);
         for value in &bindings {
@@ -2388,6 +2658,125 @@ impl ReadOnlyStore for SqliteStore {
         Ok(tasks)
     }
 
+    async fn get_jobs_summary_for_issues(
+        &self,
+        issue_ids: &[IssueId],
+    ) -> Result<HashMap<IssueId, metis_common::api::v1::issues::JobStatusSummary>, StoreError> {
+        use metis_common::api::v1::issues::JobStatusSummary;
+        use metis_common::api::v1::task_status::Status as ApiTaskStatus;
+
+        if issue_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let placeholders: Vec<String> = (1..=issue_ids.len()).map(|i| format!("?{i}")).collect();
+
+        // Single query using a window function to identify the latest job per issue,
+        // then aggregate counts and latest job details together.
+        let sql = format!(
+            "SELECT \
+                spawned_from, \
+                COUNT(*) AS total, \
+                SUM(CASE WHEN status IN ('running', 'pending') THEN 1 ELSE 0 END) AS running, \
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed, \
+                MAX(CASE WHEN rn = 1 THEN id END) AS latest_job_id, \
+                MAX(CASE WHEN rn = 1 THEN status END) AS latest_job_status, \
+                MAX(CASE WHEN rn = 1 THEN start_time END) AS latest_start_time, \
+                MAX(CASE WHEN rn = 1 THEN end_time END) AS latest_end_time \
+             FROM ( \
+                SELECT t.id, t.spawned_from, t.status, t.start_time, t.end_time, \
+                       ROW_NUMBER() OVER (PARTITION BY t.spawned_from ORDER BY t.creation_time DESC NULLS LAST) AS rn \
+                FROM {TABLE_TASKS_V2} t \
+                INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
+                ON t.id = latest.id AND t.version_number = latest.max_version \
+                WHERE t.deleted = 0 AND t.spawned_from IN ({placeholders}) \
+             ) \
+             GROUP BY spawned_from",
+            placeholders = placeholders.join(", ")
+        );
+
+        let mut query_builder = sqlx::query_as::<_, JobsSummaryRow>(&sql);
+        for id in issue_ids {
+            query_builder = query_builder.bind(id.as_ref().to_string());
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut result = HashMap::new();
+        for row in &rows {
+            let issue_id = row
+                .spawned_from
+                .parse::<IssueId>()
+                .map_err(|e| StoreError::Internal(format!("invalid issue id: {e}")))?;
+
+            let latest_job_id = row
+                .latest_job_id
+                .as_deref()
+                .map(|s| {
+                    s.parse::<TaskId>()
+                        .map_err(|e| StoreError::Internal(format!("invalid task id: {e}")))
+                })
+                .transpose()?;
+            let latest_job_status = row
+                .latest_job_status
+                .as_deref()
+                .map(|s| s.parse::<ApiTaskStatus>().unwrap());
+            let latest_start_time = row
+                .latest_start_time
+                .as_deref()
+                .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+            let latest_end_time = row
+                .latest_end_time
+                .as_deref()
+                .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok());
+
+            result.insert(
+                issue_id,
+                JobStatusSummary::new(
+                    row.total as u32,
+                    row.running as u32,
+                    row.failed as u32,
+                    latest_job_id,
+                    latest_job_status,
+                    latest_start_time,
+                    latest_end_time,
+                ),
+            );
+        }
+
+        Ok(result)
+    }
+
+    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+        let mut sql = format!(
+            "SELECT COUNT(*) \
+             FROM {TABLE_TASKS_V2} t \
+             INNER JOIN (SELECT id, MAX(version_number) AS max_version FROM {TABLE_TASKS_V2} GROUP BY id) latest \
+             ON t.id = latest.id AND t.version_number = latest.max_version"
+        );
+        let (predicates, bindings) = build_tasks_predicates_sqlite(query);
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_scalar::<_, i64>(&sql);
+        for value in &bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let count = query_builder
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(count as u64)
+    }
+
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         let versions = self.get_task_versions(id).await?;
         super::task_status_log_from_versions(&versions)
@@ -2405,7 +2794,7 @@ impl ReadOnlyStore for SqliteStore {
         // SQLite doesn't support ANY($1), so we build a query with placeholders
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, NULL AS creation_time \
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time \
              FROM {TABLE_TASKS_V2} \
              WHERE id IN ({}) \
              ORDER BY id, version_number",
@@ -2884,32 +3273,34 @@ impl ReadOnlyStore for SqliteStore {
         &self,
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
-        let mut conditions = Vec::new();
+        let (mut predicates, mut bindings) = build_labels_predicates_sqlite(query);
 
-        if !include_deleted {
-            conditions.push("deleted = 0".to_string());
-        }
-
-        let q_val = query.q.clone();
-        if q_val.is_some() {
-            conditions.push("LOWER(name) LIKE ?1".to_string());
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
-
-        let sql = format!(
+        let mut sql = format!(
             "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
-             FROM {TABLE_LABELS}{where_clause} ORDER BY name"
+             FROM {TABLE_LABELS}"
         );
 
+        if query.limit.is_some() || query.cursor.is_some() {
+            apply_pagination_sql_sqlite(
+                &mut sql,
+                &mut predicates,
+                &mut bindings,
+                &query.cursor,
+                query.limit,
+                "updated_at",
+                "id",
+            )?;
+        } else {
+            if !predicates.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&predicates.join(" AND "));
+            }
+            sql.push_str(" ORDER BY name");
+        }
+
         let mut qb = sqlx::query_as::<_, LabelRow>(&sql);
-        if let Some(ref q) = q_val {
-            qb = qb.bind(format!("%{}%", q.to_lowercase()));
+        for value in &bindings {
+            qb = qb.bind(value);
         }
 
         let rows = qb.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
@@ -2924,6 +3315,26 @@ impl ReadOnlyStore for SqliteStore {
         }
 
         Ok(labels)
+    }
+
+    async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError> {
+        let (predicates, bindings) = build_labels_predicates_sqlite(query);
+
+        let mut sql = format!("SELECT COUNT(*) FROM {TABLE_LABELS}");
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut qb = sqlx::query_scalar::<_, i64>(&sql);
+        for value in &bindings {
+            qb = qb.bind(value);
+        }
+
+        let count = qb.fetch_one(&self.pool).await.map_err(map_sqlx_error)?;
+
+        Ok(count as u64)
     }
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
@@ -3343,7 +3754,7 @@ impl Store for SqliteStore {
 
     async fn add_task(
         &self,
-        task: Task,
+        mut task: Task,
         creation_time: DateTime<Utc>,
         actor: &ActorRef,
     ) -> Result<(TaskId, VersionNumber), StoreError> {
@@ -3353,6 +3764,7 @@ impl Store for SqliteStore {
             self.ensure_issue_exists(issue_id).await?;
         }
 
+        task.creation_time = Some(creation_time);
         let actor_json = actor_to_json_string(actor);
         let created_at = creation_time.to_rfc3339();
         self.insert_task(&id, 1, &task, Some(&actor_json), Some(&created_at))
@@ -3945,6 +4357,41 @@ impl Store for SqliteStore {
             .map_err(map_sqlx_error)?;
         Ok(())
     }
+}
+
+/// Appends cursor-based keyset pagination to a SQL query (SQLite dialect).
+///
+/// Same as `apply_pagination_sql_pg` but uses `?` placeholders.
+fn apply_pagination_sql_sqlite(
+    sql: &mut String,
+    predicates: &mut Vec<String>,
+    bindings: &mut Vec<String>,
+    cursor: &Option<String>,
+    limit: Option<u32>,
+    timestamp_col: &str,
+    id_col: &str,
+) -> Result<Option<u32>, StoreError> {
+    if let Some(cursor_str) = cursor {
+        let decoded = DecodedCursor::decode(cursor_str)
+            .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
+        predicates.push(format!("({timestamp_col}, {id_col}) < (?, ?)"));
+        bindings.push(decoded.timestamp.to_rfc3339());
+        bindings.push(decoded.id);
+    }
+
+    if !predicates.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&predicates.join(" AND "));
+    }
+
+    sql.push_str(&format!(" ORDER BY {timestamp_col} DESC, {id_col} DESC"));
+
+    let effective_limit = limit.map(|l| l.min(PAGINATION_MAX_LIMIT));
+    if let Some(limit) = effective_limit {
+        sql.push_str(&format!(" LIMIT {}", limit + 1));
+    }
+
+    Ok(effective_limit)
 }
 
 #[cfg(test)]
@@ -5273,15 +5720,19 @@ mod tests {
     async fn task_add_and_get() {
         let store = create_test_store().await;
         let task = spawn_task();
+        let now = Utc::now();
 
         let (task_id, version) = store
-            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .add_task(task.clone(), now, &ActorRef::test())
             .await
             .unwrap();
         assert_eq!(version, 1);
 
         let fetched = store.get_task(&task_id, false).await.unwrap();
-        assert_versioned(&fetched, &task, 1);
+        // add_task sets creation_time on the stored task
+        let mut expected = task.clone();
+        expected.creation_time = Some(now);
+        assert_versioned(&fetched, &expected, 1);
         assert_eq!(fetched.item.status, Status::Created);
     }
 
@@ -5549,13 +6000,17 @@ mod tests {
             }),
         );
 
+        let now = Utc::now();
         let (task_id, _) = store
-            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .add_task(task.clone(), now, &ActorRef::test())
             .await
             .unwrap();
 
         let fetched = store.get_task(&task_id, false).await.unwrap();
-        assert_eq!(fetched.item, task, "Task must round-trip all fields");
+        // add_task sets creation_time on the stored task
+        let mut expected = task.clone();
+        expected.creation_time = Some(now);
+        assert_eq!(fetched.item, expected, "Task must round-trip all fields");
     }
 
     #[tokio::test]
@@ -5965,6 +6420,7 @@ mod tests {
         query.q = Some("bug".to_string());
         let results = store.list_labels(&query).await.unwrap();
         assert_eq!(results.len(), 2);
+        // Results sorted by name (no pagination params)
         assert_eq!(results[0].1.name, "bug");
         assert_eq!(results[1].1.name, "bugfix");
     }
@@ -5991,6 +6447,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 3);
+        // Without pagination params, sorted alphabetically by name
         assert_eq!(results[0].1.name, "alpha");
         assert_eq!(results[1].1.name, "middle");
         assert_eq!(results[2].1.name, "zebra");
@@ -6533,5 +6990,328 @@ mod tests {
 
         let bob_names = store.list_user_secret_names(&bob).await.unwrap();
         assert_eq!(bob_names, vec!["key_b"]);
+    }
+
+    // ---- Subtree tests ----
+
+    #[tokio::test]
+    async fn get_issue_subtrees_empty_for_no_children() {
+        let store = create_test_store().await;
+        let (root_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let rows = store.get_issue_subtrees(&[root_id]).await.unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_returns_direct_children() {
+        let store = create_test_store().await;
+        let (parent_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child_id, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let rows = store
+            .get_issue_subtrees(&[parent_id.clone()])
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].issue_id, child_id);
+        assert_eq!(rows[0].parent_id, parent_id);
+        assert_eq!(rows[0].title, "Test Title");
+        assert!(!rows[0].has_active_task);
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_returns_transitive_descendants() {
+        let store = create_test_store().await;
+        let (root, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    root.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (grandchild, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    child.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let rows = store.get_issue_subtrees(&[root.clone()]).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        let ids: Vec<_> = rows.iter().map(|r| r.issue_id.clone()).collect();
+        assert!(ids.contains(&child));
+        assert!(ids.contains(&grandchild));
+
+        // Check parent linkage
+        let child_row = rows.iter().find(|r| r.issue_id == child).unwrap();
+        assert_eq!(child_row.parent_id, root);
+        let gc_row = rows.iter().find(|r| r.issue_id == grandchild).unwrap();
+        assert_eq!(gc_row.parent_id, child);
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_multiple_roots() {
+        let store = create_test_store().await;
+        let (root_a, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (root_b, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (child_a, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    root_a.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let (child_b, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    root_b.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let rows = store
+            .get_issue_subtrees(&[root_a.clone(), root_b.clone()])
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        let ids: Vec<_> = rows.iter().map(|r| r.issue_id.clone()).collect();
+        assert!(ids.contains(&child_a));
+        assert!(ids.contains(&child_b));
+    }
+
+    #[tokio::test]
+    async fn get_issue_subtrees_empty_root_ids() {
+        let store = create_test_store().await;
+        let rows = store.get_issue_subtrees(&[]).await.unwrap();
+        assert!(rows.is_empty());
+    }
+
+    // ---- Count tests ----
+
+    #[tokio::test]
+    async fn count_issues_returns_total_matching() {
+        let store = create_test_store().await;
+        let actor = ActorRef::test();
+
+        // Create 5 issues: 3 open tasks, 1 open bug, 1 closed task
+        for _ in 0..3 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        }
+        let bug = Issue::new(
+            IssueType::Bug,
+            "Bug Title".to_string(),
+            "a bug".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(bug, &actor).await.unwrap();
+
+        let closed = Issue::new(
+            IssueType::Task,
+            "Closed".to_string(),
+            "closed task".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Closed,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(closed, &actor).await.unwrap();
+
+        // Count all issues
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
+
+        // Count only bugs
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            Some(metis_common::api::v1::issues::IssueType::Bug),
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+
+        // Count only closed
+        let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn count_patches_returns_total_matching() {
+        let store = create_test_store().await;
+        let actor = ActorRef::test();
+
+        for _ in 0..3 {
+            store.add_patch(sample_patch(), &actor).await.unwrap();
+        }
+
+        let query =
+            metis_common::api::v1::patches::SearchPatchesQuery::new(None, None, Vec::new(), None);
+        assert_eq!(store.count_patches(&query).await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn count_documents_returns_total_matching() {
+        let store = create_test_store().await;
+        let actor = ActorRef::test();
+
+        store
+            .add_document(sample_document(Some("docs/a.md"), None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document(Some("docs/b.md"), None), &actor)
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document(Some("other/c.md"), None), &actor)
+            .await
+            .unwrap();
+
+        // Count all
+        let query = metis_common::api::v1::documents::SearchDocumentsQuery::new(
+            None, None, None, None, None,
+        );
+        assert_eq!(store.count_documents(&query).await.unwrap(), 3);
+
+        // Count with path prefix filter
+        let query = metis_common::api::v1::documents::SearchDocumentsQuery::new(
+            Some("docs/".to_string()),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(store.count_documents(&query).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn count_tasks_returns_total_matching() {
+        let store = create_test_store().await;
+        let actor = ActorRef::test();
+
+        for _ in 0..4 {
+            store
+                .add_task(spawn_task(), Utc::now(), &actor)
+                .await
+                .unwrap();
+        }
+
+        let query = metis_common::api::v1::jobs::SearchJobsQuery::new(None, None, None, None);
+        assert_eq!(store.count_tasks(&query).await.unwrap(), 4);
+    }
+
+    #[tokio::test]
+    async fn count_labels_returns_total_matching() {
+        let store = create_test_store().await;
+
+        store
+            .add_label(sample_label("bug", "#000000"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("feature", "#000000"))
+            .await
+            .unwrap();
+        store
+            .add_label(sample_label("bugfix", "#000000"))
+            .await
+            .unwrap();
+
+        // Count all
+        let query = SearchLabelsQuery::default();
+        assert_eq!(store.count_labels(&query).await.unwrap(), 3);
+
+        // Count with search filter
+        let mut query = SearchLabelsQuery::default();
+        query.q = Some("bug".to_string());
+        assert_eq!(store.count_labels(&query).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn count_issues_ignores_pagination() {
+        let store = create_test_store().await;
+        let actor = ActorRef::test();
+
+        for _ in 0..5 {
+            store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // Count should return 5 even when limit is set
+        let mut query = metis_common::api::v1::issues::SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        query.limit = Some(2);
+        assert_eq!(store.count_issues(&query).await.unwrap(), 5);
     }
 }

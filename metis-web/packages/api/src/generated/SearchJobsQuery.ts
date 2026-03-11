@@ -7,4 +7,16 @@ export type SearchJobsQuery = {
   spawned_from?: IssueId | null;
   include_deleted: boolean | null;
   status?: Status | null;
+  /**
+   * Maximum number of results to return. When omitted, all results are returned.
+   */
+  limit: number | null;
+  /**
+   * Opaque cursor from a previous response's `next_cursor` field.
+   */
+  cursor: string | null;
+  /**
+   * When true, include `total_count` in the response.
+   */
+  count: boolean | null;
 };

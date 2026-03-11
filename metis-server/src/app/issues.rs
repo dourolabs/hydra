@@ -131,6 +131,19 @@ impl AppState {
         store.list_issues(query).await
     }
 
+    pub async fn get_issue_subtrees(
+        &self,
+        root_ids: &[IssueId],
+    ) -> Result<Vec<crate::domain::issues::SubtreeIssueRow>, crate::store::StoreError> {
+        let store = self.store.as_ref();
+        store.get_issue_subtrees(root_ids).await
+    }
+
+    pub async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
+        let store = self.store.as_ref();
+        store.count_issues(query).await
+    }
+
     pub async fn upsert_issue(
         &self,
         issue_id: Option<IssueId>,

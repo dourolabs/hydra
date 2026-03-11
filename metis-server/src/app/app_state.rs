@@ -22,8 +22,6 @@ pub struct AppState {
     pub job_engine: Arc<dyn JobEngine>,
     pub(crate) policy_engine: Arc<crate::policy::PolicyEngine>,
     pub secret_manager: Arc<SecretManager>,
-    /// Auth token for the local user, set only in local auth mode.
-    pub(crate) local_auth_token: Option<String>,
 }
 
 impl AppState {
@@ -34,7 +32,6 @@ impl AppState {
         store: Arc<dyn Store>,
         job_engine: Arc<dyn JobEngine>,
         secret_manager: Arc<SecretManager>,
-        local_auth_token: Option<String>,
     ) -> Self {
         let event_bus = Arc::new(EventBus::new());
         let policy_engine = Self::build_policy_engine(config.policies.as_ref());
@@ -46,7 +43,6 @@ impl AppState {
             job_engine,
             policy_engine: Arc::new(policy_engine),
             secret_manager,
-            local_auth_token,
         }
     }
 

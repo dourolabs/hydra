@@ -191,6 +191,10 @@ impl AppState {
         self.store.list_labels(query).await
     }
 
+    pub async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError> {
+        self.store.count_labels(query).await
+    }
+
     pub async fn add_label_association(
         &self,
         label_id: &LabelId,

@@ -1,4 +1,5 @@
 use crate::domain::actors::{Actor, ActorRef};
+use crate::domain::issues::SubtreeIssueRow;
 use crate::domain::issues::TodoItem;
 use crate::{
     app::{AppState, UpdateTodoListError, UpsertIssueError},
@@ -12,9 +13,13 @@ use axum::{
 };
 use metis_common::{
     IssueId, MetisId,
-    api::v1::{ApiError, issues as api_issues},
+    api::v1::{
+        ApiError, issues as api_issues,
+        pagination::{compute_next_cursor, effective_limit},
+    },
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use tracing::{error, info};
 
 #[derive(Debug, Deserialize)]
@@ -298,18 +303,34 @@ pub async fn list_issues(
         issues
     };
 
-    // Batch-fetch labels for all issues in a single query
+    // Batch-fetch labels and jobs summary concurrently
     let object_ids: Vec<MetisId> = issues
         .iter()
         .map(|(id, _)| MetisId::from(id.clone()))
         .collect();
-    let labels_map = state
-        .get_labels_for_objects(&object_ids)
-        .await
-        .map_err(|err| {
-            error!(error = %err, "failed to batch-fetch labels for issues");
-            ApiError::internal(anyhow!("failed to fetch labels: {err}"))
-        })?;
+
+    let wants_jobs_summary = query.include_job_status.unwrap_or(false);
+
+    let (labels_map, jobs_summary_map) = tokio::try_join!(
+        async {
+            state
+                .get_labels_for_objects(&object_ids)
+                .await
+                .map_err(|err| {
+                    error!(error = %err, "failed to batch-fetch labels for issues");
+                    ApiError::internal(anyhow!("failed to fetch labels: {err}"))
+                })
+        },
+        async {
+            if wants_jobs_summary {
+                build_jobs_summary_map(&state, &issues).await
+            } else {
+                Ok(HashMap::new())
+            }
+        },
+    )?;
+
+    let eff_limit = effective_limit(query.limit);
 
     let mut filtered: Vec<api_issues::IssueSummaryRecord> = Vec::new();
     for (id, versioned) in issues {
@@ -318,18 +339,78 @@ pub async fn list_issues(
 
         let api_issue: api_issues::Issue = versioned.item.into();
         let summary = api_issues::IssueSummary::from(&api_issue);
-        filtered.push(api_issues::IssueSummaryRecord::new(
-            id,
+        let mut record = api_issues::IssueSummaryRecord::new(
+            id.clone(),
             versioned.version,
             versioned.timestamp,
             summary,
             versioned.actor,
             versioned.creation_time,
             labels,
-        ));
+        );
+        if wants_jobs_summary {
+            record.jobs_summary = jobs_summary_map.get(&id).cloned();
+        }
+        filtered.push(record);
     }
 
-    let response = api_issues::ListIssuesResponse::new(filtered);
+    let next_cursor = compute_next_cursor(
+        &mut filtered,
+        eff_limit,
+        |r| &r.timestamp,
+        |r| r.issue_id.as_ref(),
+    );
+
+    // If include_subtree is set, fetch and attach subtrees post-pagination
+    if query.include_subtree {
+        let root_ids: Vec<_> = filtered.iter().map(|r| r.issue_id.clone()).collect();
+        let subtree_rows = state.get_issue_subtrees(&root_ids).await.map_err(|err| {
+            error!(error = %err, "failed to fetch issue subtrees");
+            ApiError::internal(anyhow!("failed to fetch issue subtrees: {err}"))
+        })?;
+        let subtree_map = assemble_subtrees(&root_ids, subtree_rows);
+        for record in &mut filtered {
+            record.subtree = Some(
+                subtree_map
+                    .get(&record.issue_id)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
+    }
+
+    // Compute total_count when count=true
+    let total_count = if query.count == Some(true) {
+        if graph_matches.is_some() {
+            // When graph filters are active, we need to fetch all matching issues
+            // (without pagination) and apply the graph filter to get the correct count.
+            let mut count_query = query.clone();
+            count_query.limit = None;
+            count_query.cursor = None;
+            let all_issues = state
+                .list_issues_with_query(&count_query)
+                .await
+                .map_err(|err| map_issue_error(err, None))?;
+            let graph_allowed = graph_matches.as_ref().unwrap();
+            let count = all_issues
+                .iter()
+                .filter(|(id, _)| graph_allowed.contains(id))
+                .count() as u64;
+            Some(count)
+        } else {
+            let count = state
+                .count_issues(&query)
+                .await
+                .map_err(|err| map_issue_error(err, None))?;
+            Some(count)
+        }
+    } else {
+        None
+    };
+
+    let mut response = api_issues::ListIssuesResponse::new(filtered);
+    response.next_cursor = next_cursor;
+    response.total_count = total_count;
     info!(
         issue_type = ?query.issue_type,
         status = ?query.status,
@@ -432,6 +513,28 @@ pub async fn set_todo_item_status(
         todo_list.into_iter().map(Into::into).collect(),
     );
     Ok(Json(response))
+}
+
+/// Build a map of IssueId → JobStatusSummary using store-level aggregation.
+async fn build_jobs_summary_map(
+    state: &AppState,
+    issues: &[(
+        IssueId,
+        metis_common::Versioned<crate::domain::issues::Issue>,
+    )],
+) -> Result<HashMap<IssueId, api_issues::JobStatusSummary>, ApiError> {
+    let issue_ids: Vec<IssueId> = issues.iter().map(|(id, _)| id.clone()).collect();
+    if issue_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    state
+        .get_jobs_summary_for_issues(&issue_ids)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to fetch jobs summary");
+            ApiError::internal(anyhow!("failed to fetch jobs summary: {err}"))
+        })
 }
 
 fn map_graph_filter_error(err: StoreError) -> ApiError {
@@ -577,4 +680,144 @@ pub async fn delete_issue(
         labels,
     );
     Ok(Json(response))
+}
+
+/// Assembles flat subtree rows into nested tree structures keyed by root issue ID.
+fn assemble_subtrees(
+    root_ids: &[IssueId],
+    rows: Vec<SubtreeIssueRow>,
+) -> HashMap<IssueId, Vec<api_issues::SubtreeIssue>> {
+    // Build a map from parent_id -> list of children rows
+    let mut children_map: HashMap<IssueId, Vec<SubtreeIssueRow>> = HashMap::new();
+    for row in rows {
+        children_map
+            .entry(row.parent_id.clone())
+            .or_default()
+            .push(row);
+    }
+
+    // Recursively build nested SubtreeIssue nodes
+    fn build_children(
+        parent_id: &IssueId,
+        children_map: &HashMap<IssueId, Vec<SubtreeIssueRow>>,
+    ) -> Vec<api_issues::SubtreeIssue> {
+        let Some(children) = children_map.get(parent_id) else {
+            return Vec::new();
+        };
+        children
+            .iter()
+            .map(|row| {
+                api_issues::SubtreeIssue::new(
+                    row.issue_id.clone(),
+                    row.status.into(),
+                    row.has_active_task,
+                    row.assignee.clone(),
+                    row.title.clone(),
+                    build_children(&row.issue_id, children_map),
+                )
+            })
+            .collect()
+    }
+
+    let mut result = HashMap::new();
+    for root_id in root_ids {
+        result.insert(root_id.clone(), build_children(root_id, &children_map));
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::issues::IssueStatus;
+
+    fn row(issue: &IssueId, parent: &IssueId, title: &str) -> SubtreeIssueRow {
+        SubtreeIssueRow {
+            issue_id: issue.clone(),
+            parent_id: parent.clone(),
+            status: IssueStatus::Open,
+            title: title.to_string(),
+            assignee: None,
+            has_active_task: false,
+        }
+    }
+
+    #[test]
+    fn assemble_subtrees_empty_rows() {
+        let root = IssueId::new();
+        let result = assemble_subtrees(&[root.clone()], vec![]);
+        assert_eq!(result[&root].len(), 0);
+    }
+
+    #[test]
+    fn assemble_subtrees_single_child() {
+        let root = IssueId::new();
+        let child = IssueId::new();
+        let rows = vec![row(&child, &root, "child")];
+        let result = assemble_subtrees(&[root.clone()], rows);
+        assert_eq!(result[&root].len(), 1);
+        assert_eq!(result[&root][0].issue_id, child);
+        assert!(result[&root][0].children.is_empty());
+    }
+
+    #[test]
+    fn assemble_subtrees_multiple_levels() {
+        let root = IssueId::new();
+        let child = IssueId::new();
+        let grandchild = IssueId::new();
+        let rows = vec![
+            row(&child, &root, "child"),
+            row(&grandchild, &child, "grandchild"),
+        ];
+        let result = assemble_subtrees(&[root.clone()], rows);
+        assert_eq!(result[&root].len(), 1);
+        assert_eq!(result[&root][0].children.len(), 1);
+        assert_eq!(result[&root][0].children[0].issue_id, grandchild);
+    }
+
+    #[test]
+    fn assemble_subtrees_multiple_roots() {
+        let root_a = IssueId::new();
+        let root_b = IssueId::new();
+        let child_a = IssueId::new();
+        let child_b = IssueId::new();
+        let rows = vec![
+            row(&child_a, &root_a, "child_a"),
+            row(&child_b, &root_b, "child_b"),
+        ];
+        let result = assemble_subtrees(&[root_a.clone(), root_b.clone()], rows);
+        assert_eq!(result[&root_a].len(), 1);
+        assert_eq!(result[&root_a][0].issue_id, child_a);
+        assert_eq!(result[&root_b].len(), 1);
+        assert_eq!(result[&root_b][0].issue_id, child_b);
+    }
+
+    #[test]
+    fn assemble_subtrees_preserves_has_active_task() {
+        let root = IssueId::new();
+        let child = IssueId::new();
+        let rows = vec![SubtreeIssueRow {
+            issue_id: child.clone(),
+            parent_id: root.clone(),
+            status: IssueStatus::InProgress,
+            title: "active child".to_string(),
+            assignee: Some("alice".to_string()),
+            has_active_task: true,
+        }];
+        let result = assemble_subtrees(&[root.clone()], rows);
+        assert!(result[&root][0].has_active_task);
+        assert_eq!(result[&root][0].assignee, Some("alice".to_string()));
+        assert_eq!(result[&root][0].status, api_issues::IssueStatus::InProgress);
+    }
+
+    #[test]
+    fn assemble_subtrees_root_with_no_children() {
+        let root_with_children = IssueId::new();
+        let root_without = IssueId::new();
+        let child = IssueId::new();
+        let rows = vec![row(&child, &root_with_children, "child")];
+        let result = assemble_subtrees(&[root_with_children.clone(), root_without.clone()], rows);
+        assert_eq!(result[&root_with_children].len(), 1);
+        assert_eq!(result[&root_without].len(), 0);
+    }
 }

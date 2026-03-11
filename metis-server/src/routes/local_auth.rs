@@ -12,13 +12,12 @@ pub struct LocalAuthResponse {
 pub async fn local_auth(
     State(state): State<AppState>,
 ) -> Result<Json<LocalAuthResponse>, ApiError> {
-    let token = state
-        .local_auth_token
-        .as_ref()
-        .ok_or_else(|| {
-            ApiError::bad_request("local-auth is only available when auth_mode is 'local'")
-        })?
-        .clone();
+    let path = state.config.auth.auth_token_file().ok_or_else(|| {
+        ApiError::bad_request("local-auth is only available when auth_token_file is configured")
+    })?;
+
+    let token = std::fs::read_to_string(path)
+        .map_err(|_| ApiError::bad_request("auth token file not found or unreadable"))?;
 
     Ok(Json(LocalAuthResponse { token }))
 }

@@ -1,3 +1,4 @@
+use crate::domain::issues::SubtreeIssueRow;
 use crate::domain::{
     actors::{Actor, ActorError, ActorId, ActorRef},
     agents::Agent,
@@ -13,7 +14,7 @@ use crate::domain::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
-use metis_common::api::v1::issues::SearchIssuesQuery;
+use metis_common::api::v1::issues::{JobStatusSummary, SearchIssuesQuery};
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
@@ -28,12 +29,12 @@ use metis_common::{
 use std::collections::{HashMap, HashSet};
 use std::{fmt, str::FromStr};
 
-mod issue_graph;
+pub(crate) mod issue_graph;
 mod memory_store;
 #[cfg(feature = "postgres")]
-pub mod migration;
+pub use crate::ee::store::migration;
 #[cfg(feature = "postgres")]
-pub mod postgres_v2;
+pub use crate::ee::store::postgres_v2;
 pub mod sqlite_store;
 
 pub use crate::domain::jobs::Task;
@@ -304,6 +305,9 @@ pub trait ReadOnlyStore: Send + Sync {
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError>;
 
+    /// Counts issues matching the search query, ignoring pagination (cursor/limit).
+    async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError>;
+
     /// Applies dependency graph filters and returns the matching issue IDs.
     ///
     /// Filters are intersected, and any filter referencing a missing issue
@@ -315,6 +319,15 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
+
+    /// Returns the full descendant subtree (as flat rows) for each of the given root issue IDs.
+    ///
+    /// Each row represents a descendant issue with its immediate parent in the tree.
+    /// The caller assembles the flat rows into a nested tree structure.
+    async fn get_issue_subtrees(
+        &self,
+        root_ids: &[IssueId],
+    ) -> Result<Vec<SubtreeIssueRow>, StoreError>;
 
     /// Lists all issues that are blocked on the provided issue.
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
@@ -343,6 +356,9 @@ pub trait ReadOnlyStore: Send + Sync {
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError>;
 
+    /// Counts patches matching the search query, ignoring pagination (cursor/limit).
+    async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError>;
+
     /// Lists all issues that reference the provided patch ID.
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError>;
 
@@ -369,6 +385,9 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError>;
+
+    /// Counts documents matching the search query, ignoring pagination (cursor/limit).
+    async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError>;
 
     /// Returns documents that start with the provided path prefix.
     async fn get_documents_by_path(
@@ -411,6 +430,21 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
+
+    /// Computes job status summaries for a batch of issues.
+    ///
+    /// Returns a map from IssueId to JobStatusSummary for each issue that has
+    /// at least one task. Issues with no tasks are omitted from the result.
+    ///
+    /// Implementations should use SQL aggregation (GROUP BY) where possible
+    /// to avoid loading all task rows into memory.
+    async fn get_jobs_summary_for_issues(
+        &self,
+        issue_ids: &[IssueId],
+    ) -> Result<HashMap<IssueId, JobStatusSummary>, StoreError>;
+
+    /// Counts tasks matching the search query, ignoring pagination (cursor/limit).
+    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError>;
 
     /// Gets the status log for a task by its TaskId.
     ///
@@ -516,6 +550,9 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError>;
+
+    /// Counts labels matching the search query, ignoring pagination (cursor/limit).
+    async fn count_labels(&self, query: &SearchLabelsQuery) -> Result<u64, StoreError>;
 
     /// Finds a label by its name (case-insensitive).
     ///

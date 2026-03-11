@@ -393,6 +393,15 @@ pub struct SearchPatchesQuery {
     /// Filter patches by exact branch name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
+    /// Maximum number of results to return. When omitted, all results are returned.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Opaque cursor from a previous response's `next_cursor` field.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// When true, include `total_count` in the response.
+    #[serde(default)]
+    pub count: Option<bool>,
 }
 
 impl SearchPatchesQuery {
@@ -407,6 +416,9 @@ impl SearchPatchesQuery {
             include_deleted,
             status,
             branch_name,
+            limit: None,
+            cursor: None,
+            count: None,
         }
     }
 }
@@ -589,11 +601,19 @@ impl From<&PatchVersionRecord> for PatchSummaryRecord {
 #[non_exhaustive]
 pub struct ListPatchesResponse {
     pub patches: Vec<PatchSummaryRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<u64>,
 }
 
 impl ListPatchesResponse {
     pub fn new(patches: Vec<PatchSummaryRecord>) -> Self {
-        Self { patches }
+        Self {
+            patches,
+            next_cursor: None,
+            total_count: None,
+        }
     }
 }
 
@@ -624,6 +644,9 @@ mod tests {
             include_deleted: None,
             status: Vec::new(),
             branch_name: None,
+            limit: None,
+            cursor: None,
+            count: None,
         };
 
         let params = serialize_query_params(&query)

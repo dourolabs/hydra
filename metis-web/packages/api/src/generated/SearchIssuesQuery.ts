@@ -13,4 +13,24 @@ export type SearchIssuesQuery = {
    * Filter issues by label IDs (comma-separated in query string).
    */
   labels: string;
+  /**
+   * Maximum number of results to return. When omitted, all results are returned.
+   */
+  limit: number | null;
+  /**
+   * Opaque cursor from a previous response's `next_cursor` field.
+   */
+  cursor: string | null;
+  /**
+   * When true, each returned issue includes its full descendant subtree.
+   */
+  include_subtree: boolean;
+  /**
+   * When true, include a `JobStatusSummary` per issue in the response.
+   */
+  include_job_status: boolean | null;
+  /**
+   * When true, include `total_count` in the response.
+   */
+  count: boolean | null;
 };

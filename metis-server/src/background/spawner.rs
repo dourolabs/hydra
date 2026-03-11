@@ -20,7 +20,11 @@ use metis_common::{IssueId, VersionNumber};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::str::FromStr;
+use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// Shared spawn attempt state that persists across scheduler iterations.
+pub type SharedSpawnAttempts = Arc<RwLock<HashMap<IssueId, SpawnAttempt>>>;
 
 pub const ISSUE_ID_ENV_VAR: &str = "METIS_ISSUE_ID";
 pub const AGENT_NAME_ENV_VAR: &str = "METIS_AGENT_NAME";
@@ -32,7 +36,7 @@ pub trait Spawner: Send + Sync {
 }
 
 #[derive(Clone, Debug)]
-struct SpawnAttempt {
+pub struct SpawnAttempt {
     status: IssueStatus,
     attempts: i32,
     children_snapshot: HashMap<IssueId, VersionNumber>,
@@ -40,14 +44,14 @@ struct SpawnAttempt {
 
 pub struct AgentQueue {
     pub agent: crate::domain::agents::Agent,
-    spawn_attempts: RwLock<HashMap<IssueId, SpawnAttempt>>,
+    spawn_attempts: SharedSpawnAttempts,
 }
 
 impl AgentQueue {
-    pub fn new(agent: crate::domain::agents::Agent) -> Self {
+    pub fn new(agent: crate::domain::agents::Agent, spawn_attempts: SharedSpawnAttempts) -> Self {
         Self {
             agent,
-            spawn_attempts: RwLock::new(HashMap::new()),
+            spawn_attempts,
         }
     }
 
@@ -371,15 +375,26 @@ mod tests {
         Username::from("spawner")
     }
 
+    fn shared_attempts() -> SharedSpawnAttempts {
+        Arc::new(RwLock::new(HashMap::new()))
+    }
+
     fn queue(agent_name: &str) -> AgentQueue {
+        queue_with_attempts(agent_name, shared_attempts())
+    }
+
+    fn queue_with_attempts(agent_name: &str, attempts: SharedSpawnAttempts) -> AgentQueue {
         use crate::domain::agents::Agent;
-        AgentQueue::new(Agent::new(
-            agent_name.to_string(),
-            format!("/agents/{agent_name}/prompt.md"),
-            DEFAULT_AGENT_MAX_TRIES,
-            DEFAULT_AGENT_MAX_SIMULTANEOUS,
-            false,
-        ))
+        AgentQueue::new(
+            Agent::new(
+                agent_name.to_string(),
+                format!("/agents/{agent_name}/prompt.md"),
+                DEFAULT_AGENT_MAX_TRIES,
+                DEFAULT_AGENT_MAX_SIMULTANEOUS,
+                false,
+            ),
+            attempts,
+        )
     }
 
     async fn seed_agent_prompt(
@@ -763,13 +778,16 @@ mod tests {
 
         let q = {
             use crate::domain::agents::Agent;
-            AgentQueue::new(Agent::new(
-                "assignment".to_string(),
-                "/agents/assignment/prompt.md".to_string(),
-                DEFAULT_AGENT_MAX_TRIES,
-                DEFAULT_AGENT_MAX_SIMULTANEOUS,
-                true,
-            ))
+            AgentQueue::new(
+                Agent::new(
+                    "assignment".to_string(),
+                    "/agents/assignment/prompt.md".to_string(),
+                    DEFAULT_AGENT_MAX_TRIES,
+                    DEFAULT_AGENT_MAX_SIMULTANEOUS,
+                    true,
+                ),
+                shared_attempts(),
+            )
         };
         let tasks = q.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
@@ -1080,6 +1098,9 @@ mod tests {
                     last_message: None,
                     error: None,
                     deleted: false,
+                    creation_time: None,
+                    start_time: None,
+                    end_time: None,
                 },
                 Utc::now(),
                 &ActorRef::test(),
@@ -1164,6 +1185,9 @@ mod tests {
                     last_message: None,
                     error: None,
                     deleted: false,
+                    creation_time: None,
+                    start_time: None,
+                    end_time: None,
                 },
                 Utc::now(),
                 &ActorRef::test(),
@@ -1439,7 +1463,7 @@ mod tests {
             true,
         );
 
-        let queue = AgentQueue::new(agent);
+        let queue = AgentQueue::new(agent, shared_attempts());
 
         assert_eq!(queue.agent.name, "test-agent");
         assert_eq!(queue.agent.prompt_path, "/agents/test-agent/prompt.md");
@@ -1838,6 +1862,58 @@ mod tests {
 
         // Spawning should still be blocked after max_tries even with new messages.
         assert!(queue.spawn(&handles.state).await?.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shared_spawn_attempts_persist_across_queue_instances() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        handles
+            .store
+            .add_issue(
+                issue(
+                    "Persistent counter",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Share the same spawn attempts across two AgentQueue instances
+        // (simulating two scheduler iterations).
+        let attempts = shared_attempts();
+
+        let mut queue1 = queue_with_attempts("agent-a", attempts.clone());
+        queue1.agent.max_tries = 2;
+
+        // First iteration: spawns one task (attempt 1 of 2).
+        let mut tasks = queue1.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        record_completed_task(&handles, tasks.remove(0)).await?;
+
+        // Second iteration: new AgentQueue with same shared state.
+        let mut queue2 = queue_with_attempts("agent-a", attempts.clone());
+        queue2.agent.max_tries = 2;
+
+        // Should still spawn (attempt 2 of 2).
+        let mut tasks = queue2.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        record_completed_task(&handles, tasks.remove(0)).await?;
+
+        // Third iteration: new AgentQueue, same shared state.
+        let mut queue3 = queue_with_attempts("agent-a", attempts);
+        queue3.agent.max_tries = 2;
+
+        // Should be blocked (max_tries=2 reached across iterations).
+        let tasks = queue3.spawn(&handles.state).await?;
+        assert!(
+            tasks.is_empty(),
+            "expected no tasks after max_tries reached across queue instances"
+        );
 
         Ok(())
     }

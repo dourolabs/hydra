@@ -64,7 +64,6 @@ pub fn test_state_with_github_urls_and_allowed_orgs(
         store.clone(),
         Arc::new(MockJobEngine::new()),
         test_secret_manager(),
-        None,
     );
 
     TestStateHandles { state, store }

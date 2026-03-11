@@ -4,4 +4,8 @@ import type { LabelRecord } from "./LabelRecord";
 /**
  * Response body for listing labels.
  */
-export type ListLabelsResponse = { labels: Array<LabelRecord> };
+export type ListLabelsResponse = {
+  labels: Array<LabelRecord>;
+  next_cursor?: string | null;
+  total_count?: bigint | null;
+};

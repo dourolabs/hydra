@@ -51,9 +51,6 @@ pub trait WorkerCommands: Send + Sync {
         &self,
         prompt: &str,
         model: Option<&str>,
-        openai_api_key: Option<String>,
-        anthropic_api_key: Option<String>,
-        claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
@@ -175,14 +172,12 @@ impl WorkerCommands for CodexCommands {
         &self,
         prompt: &str,
         model: Option<&str>,
-        openai_api_key: Option<String>,
-        _anthropic_api_key: Option<String>,
-        _claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
     ) -> Result<String> {
-        self.login(openai_api_key.as_deref()).await?;
+        let openai_api_key = env.get(ENV_OPENAI_API_KEY).map(|s| s.as_str());
+        self.login(openai_api_key).await?;
         Self::run_codex(prompt, model, working_dir, env, output_path)
             .await
             .with_context(|| "failed to execute codex for worker context")
@@ -193,8 +188,6 @@ impl ClaudeCommands {
     async fn run_claude(
         prompt: &str,
         model: Option<&str>,
-        anthropic_api_key: Option<String>,
-        claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
@@ -205,13 +198,16 @@ impl ClaudeCommands {
                 .with_context(|| format!("failed to create claude output directory {dir:?}"))?;
         }
 
-        let anthropic_api_key = anthropic_api_key.filter(|value| !value.trim().is_empty());
-        let claude_code_oauth_token =
-            claude_code_oauth_token.filter(|value| !value.trim().is_empty());
+        let has_anthropic_key = env
+            .get(ENV_ANTHROPIC_API_KEY)
+            .is_some_and(|v| !v.trim().is_empty());
+        let has_oauth_token = env
+            .get(ENV_CLAUDE_CODE_OAUTH_TOKEN)
+            .is_some_and(|v| !v.trim().is_empty());
 
-        if anthropic_api_key.is_none() && claude_code_oauth_token.is_none() {
+        if !has_anthropic_key && !has_oauth_token {
             return Err(anyhow!(
-                "Either {ENV_CLAUDE_CODE_OAUTH_TOKEN} or {ENV_ANTHROPIC_API_KEY} must be provided via CLI flags or environment"
+                "Either {ENV_CLAUDE_CODE_OAUTH_TOKEN} or {ENV_ANTHROPIC_API_KEY} must be provided in the job context environment"
             ));
         }
 
@@ -228,12 +224,6 @@ impl ClaudeCommands {
         command.current_dir(working_dir).envs(env);
         #[cfg(unix)]
         command.process_group(0);
-        if let Some(key) = anthropic_api_key.as_ref() {
-            command.env(ENV_ANTHROPIC_API_KEY, key);
-        }
-        if let Some(token) = claude_code_oauth_token.as_ref() {
-            command.env(ENV_CLAUDE_CODE_OAUTH_TOKEN, token);
-        }
 
         command.arg(prompt);
 
@@ -384,24 +374,13 @@ impl WorkerCommands for ClaudeCommands {
         &self,
         prompt: &str,
         model: Option<&str>,
-        _openai_api_key: Option<String>,
-        anthropic_api_key: Option<String>,
-        claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
     ) -> Result<String> {
-        Self::run_claude(
-            prompt,
-            model,
-            anthropic_api_key,
-            claude_code_oauth_token,
-            working_dir,
-            env,
-            output_path,
-        )
-        .await
-        .with_context(|| "failed to execute claude for worker context")
+        Self::run_claude(prompt, model, working_dir, env, output_path)
+            .await
+            .with_context(|| "failed to execute claude for worker context")
     }
 }
 
@@ -411,9 +390,6 @@ impl WorkerCommands for ModelAwareCommands {
         &self,
         prompt: &str,
         model: Option<&str>,
-        openai_api_key: Option<String>,
-        anthropic_api_key: Option<String>,
-        claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
@@ -421,30 +397,12 @@ impl WorkerCommands for ModelAwareCommands {
         match model.filter(|value| is_claude_model(value)) {
             Some(_) => {
                 self.claude
-                    .run(
-                        prompt,
-                        model,
-                        openai_api_key,
-                        anthropic_api_key,
-                        claude_code_oauth_token.clone(),
-                        working_dir,
-                        env,
-                        output_path,
-                    )
+                    .run(prompt, model, working_dir, env, output_path)
                     .await
             }
             None => {
                 self.codex
-                    .run(
-                        prompt,
-                        model,
-                        openai_api_key,
-                        anthropic_api_key,
-                        claude_code_oauth_token,
-                        working_dir,
-                        env,
-                        output_path,
-                    )
+                    .run(prompt, model, working_dir, env, output_path)
                     .await
             }
         }

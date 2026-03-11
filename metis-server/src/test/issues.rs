@@ -1304,3 +1304,57 @@ async fn get_issue_version_out_of_range_negative_offset_returns_400() -> anyhow:
 
     Ok(())
 }
+
+#[tokio::test]
+async fn list_issues_count_true_returns_total_count() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create 3 issues
+    for desc in ["first", "second", "third"] {
+        client
+            .post(format!("{}/v1/issues", server.base_url()))
+            .json(&UpsertIssueRequest::new(
+                issue(
+                    IssueType::Task,
+                    desc,
+                    default_user(),
+                    String::new(),
+                    IssueStatus::Open,
+                    None,
+                    Vec::new(),
+                    vec![],
+                    Vec::new(),
+                )
+                .into(),
+                None,
+            ))
+            .send()
+            .await?;
+    }
+
+    // Without count param, total_count should be absent
+    let resp: ListIssuesResponse = client
+        .get(format!("{}/v1/issues?limit=2", server.base_url()))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(resp.issues.len(), 2);
+    assert!(resp.total_count.is_none());
+
+    // With count=true, total_count should be present and equal 3
+    let resp: ListIssuesResponse = client
+        .get(format!(
+            "{}/v1/issues?limit=2&count=true",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(resp.issues.len(), 2);
+    assert_eq!(resp.total_count, Some(3));
+
+    Ok(())
+}

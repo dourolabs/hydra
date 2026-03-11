@@ -8,7 +8,11 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use metis_common::{TaskId, api::v1};
+use metis_common::{
+    TaskId,
+    api::v1,
+    api::v1::pagination::{compute_next_cursor, effective_limit},
+};
 use tracing::{error, info};
 
 pub use metis_common::api::v1::ApiError;
@@ -75,23 +79,12 @@ pub async fn list_jobs(
         ApiError::internal(format!("Failed to list tasks: {err}"))
     })?;
 
-    // Batch-fetch status logs to compute timing fields
-    let task_ids: Vec<TaskId> = tasks.iter().map(|(id, _)| id.clone()).collect();
-    let status_logs = state.get_status_logs(&task_ids).await.map_err(|err| {
-        error!(error = %err, "failed to fetch status logs for timing");
-        ApiError::internal(format!("Failed to fetch status logs: {err}"))
-    })?;
-
-    // Build summary records with timing fields, sorted by version timestamp
+    // Timing fields (creation_time, start_time, end_time) are denormalized
+    // on the task and flow through the domain→API conversion automatically.
     let mut summaries: Vec<v1::jobs::JobSummaryRecord> = tasks
         .into_iter()
         .map(|(task_id, versioned_task)| {
-            let mut api_task: v1::jobs::Task = versioned_task.item.into();
-            if let Some(log) = status_logs.get(&task_id) {
-                api_task.creation_time = log.creation_time();
-                api_task.start_time = log.start_time();
-                api_task.end_time = log.end_time();
-            }
+            let api_task: v1::jobs::Task = versioned_task.item.into();
             let full_record = v1::jobs::JobVersionRecord::new(
                 task_id,
                 versioned_task.version,
@@ -103,8 +96,19 @@ pub async fn list_jobs(
         })
         .collect();
 
-    // Sort by version timestamp, most recent first
-    summaries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    // The store already sorts by timestamp DESC when pagination is active.
+    // When no limit is set, sort client-side for backward compat.
+    let eff_limit = effective_limit(query.limit);
+    if eff_limit.is_none() {
+        summaries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    }
+
+    let next_cursor = compute_next_cursor(
+        &mut summaries,
+        eff_limit,
+        |r| &r.timestamp,
+        |r| r.job_id.as_ref(),
+    );
 
     info!(
         namespace = %namespace,
@@ -112,7 +116,19 @@ pub async fn list_jobs(
         "list_jobs completed successfully"
     );
 
-    let response = v1::jobs::ListJobsResponse::new(summaries);
+    let total_count = if query.count == Some(true) {
+        let count = state.count_tasks(&query).await.map_err(|err| {
+            error!(error = %err, "failed to count tasks");
+            ApiError::internal(format!("Failed to count tasks: {err}"))
+        })?;
+        Some(count)
+    } else {
+        None
+    };
+
+    let mut response = v1::jobs::ListJobsResponse::new(summaries);
+    response.next_cursor = next_cursor;
+    response.total_count = total_count;
     Ok(Json(response))
 }
 

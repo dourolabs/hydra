@@ -607,7 +607,6 @@ impl TestHarnessBuilder {
             store.clone(),
             engine.clone(),
             test_secret_manager(),
-            None,
         );
 
         // Override the policy engine if a custom patch_workflow config was provided.

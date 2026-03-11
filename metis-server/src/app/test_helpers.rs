@@ -59,7 +59,6 @@ pub fn state_with_default_model(model: &str) -> AppState {
         Arc::new(MemoryStore::new()),
         Arc::new(MockJobEngine::new()),
         crate::test_utils::test_secret_manager(),
-        None,
     )
 }
 
