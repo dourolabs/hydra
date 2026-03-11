@@ -167,6 +167,9 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Download frontend build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -178,6 +181,9 @@ jobs:
 
       - name: Lint bundled-frontend with clippy
         run: cargo clippy -p metis-server --features bundled-frontend --no-deps -- -D warnings
+
+      - name: Test bundled-frontend
+        run: cargo nextest run -p metis-server --features bundled-frontend
 
   e2e:
     runs-on: ubuntu-latest
