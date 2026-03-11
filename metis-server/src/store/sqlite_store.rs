@@ -5691,6 +5691,103 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn task_list_filters_by_multiple_statuses() {
+        let store = create_test_store().await;
+
+        // Create three tasks - they all start as Created
+        let (task1_id, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (task2_id, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (task3_id, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let (task4_id, _) = store
+            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Transition task2 to Running
+        let mut running = spawn_task();
+        running.status = Status::Running;
+        store
+            .update_task(&task2_id, running, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Transition task3 to Complete
+        let mut complete = spawn_task();
+        complete.status = Status::Complete;
+        store
+            .update_task(&task3_id, complete, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Transition task4 to Failed
+        let mut failed = spawn_task();
+        failed.status = Status::Failed;
+        store
+            .update_task(&task4_id, failed, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Filter by multiple statuses: Created and Running
+        let query = SearchJobsQuery::new(
+            None,
+            None,
+            None,
+            vec![
+                metis_common::task_status::Status::Created,
+                metis_common::task_status::Status::Running,
+            ],
+        );
+        let tasks = store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 2);
+        let ids: Vec<_> = tasks.iter().map(|(id, _)| id.clone()).collect();
+        assert!(ids.contains(&task1_id));
+        assert!(ids.contains(&task2_id));
+
+        // Filter by single status: Complete
+        let query = SearchJobsQuery::new(
+            None,
+            None,
+            None,
+            vec![metis_common::task_status::Status::Complete],
+        );
+        let tasks = store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].0, task3_id);
+
+        // Empty status vec returns all tasks (no filter)
+        let query = SearchJobsQuery::new(None, None, None, vec![]);
+        let tasks = store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 4);
+
+        // Filter by three statuses: Running, Complete, Failed
+        let query = SearchJobsQuery::new(
+            None,
+            None,
+            None,
+            vec![
+                metis_common::task_status::Status::Running,
+                metis_common::task_status::Status::Complete,
+                metis_common::task_status::Status::Failed,
+            ],
+        );
+        let tasks = store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 3);
+        let ids: Vec<_> = tasks.iter().map(|(id, _)| id.clone()).collect();
+        assert!(ids.contains(&task2_id));
+        assert!(ids.contains(&task3_id));
+        assert!(ids.contains(&task4_id));
+    }
+
+    #[tokio::test]
     async fn task_soft_delete_and_list_filtering() {
         let store = create_test_store().await;
 
