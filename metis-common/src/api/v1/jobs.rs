@@ -443,8 +443,10 @@ where
 {
     let s = statuses
         .iter()
-        .map(|status| serde_json::to_value(status).unwrap_or_default())
-        .map(|v| v.as_str().unwrap_or("unknown").to_string())
+        .map(|status| {
+            let v = serde_json::to_value(status).expect("Status serializes to JSON");
+            v.as_str().expect("Status serializes to string").to_string()
+        })
         .collect::<Vec<_>>()
         .join(",");
     serializer.serialize_str(&s)
