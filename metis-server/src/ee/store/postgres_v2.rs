@@ -4979,6 +4979,146 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
+    async fn task_list_filters_by_multiple_statuses_v2(pool: PgStorePool) {
+        let store = Arc::new(PostgresStoreV2::new(pool));
+        let handles = test_state_with_store(store.clone());
+        let (issue_id, _) = handles
+            .store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Create four tasks under the same issue
+        let mut task1 = sample_task();
+        task1.spawned_from = Some(issue_id.clone());
+        let (task1_id, _) = handles
+            .store
+            .add_task(task1, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task2 = sample_task();
+        task2.spawned_from = Some(issue_id.clone());
+        let (task2_id, _) = handles
+            .store
+            .add_task(task2, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task3 = sample_task();
+        task3.spawned_from = Some(issue_id.clone());
+        let (task3_id, _) = handles
+            .store
+            .add_task(task3, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task4 = sample_task();
+        task4.spawned_from = Some(issue_id.clone());
+        let (task4_id, _) = handles
+            .store
+            .add_task(task4, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Transition task2 to Running
+        handles
+            .state
+            .transition_task_to_pending(&task2_id, ActorRef::test())
+            .await
+            .unwrap();
+        handles
+            .state
+            .transition_task_to_running(&task2_id, ActorRef::test())
+            .await
+            .unwrap();
+
+        // Transition task3 to Complete
+        handles
+            .state
+            .transition_task_to_pending(&task3_id, ActorRef::test())
+            .await
+            .unwrap();
+        handles
+            .state
+            .transition_task_to_running(&task3_id, ActorRef::test())
+            .await
+            .unwrap();
+        handles
+            .state
+            .transition_task_to_completion(&task3_id, Ok(()), Some("done".into()), ActorRef::test())
+            .await
+            .unwrap();
+
+        // Transition task4 to Failed
+        handles
+            .state
+            .transition_task_to_pending(&task4_id, ActorRef::test())
+            .await
+            .unwrap();
+        handles
+            .state
+            .transition_task_to_running(&task4_id, ActorRef::test())
+            .await
+            .unwrap();
+        handles
+            .state
+            .transition_task_to_completion(
+                &task4_id,
+                Err(TaskError::JobEngineError {
+                    reason: "error".to_string(),
+                }),
+                None,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        // Filter by multiple statuses: Created and Running
+        let query = SearchJobsQuery::new(
+            None,
+            None,
+            None,
+            vec![Status::Created.into(), Status::Running.into()],
+        );
+        let tasks = handles.store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 2);
+        let ids: Vec<_> = tasks.into_iter().map(|(id, _)| id).collect();
+        assert!(ids.contains(&task1_id));
+        assert!(ids.contains(&task2_id));
+
+        // Filter by single status: Complete
+        let query = SearchJobsQuery::new(None, None, None, vec![Status::Complete.into()]);
+        let tasks = handles.store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].0, task3_id);
+
+        // Empty status vec returns all tasks (no filter)
+        let query = SearchJobsQuery::new(None, None, None, vec![]);
+        let tasks = handles.store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 4);
+
+        // Filter by three statuses: Running, Complete, Failed
+        let query = SearchJobsQuery::new(
+            None,
+            None,
+            None,
+            vec![
+                Status::Running.into(),
+                Status::Complete.into(),
+                Status::Failed.into(),
+            ],
+        );
+        let tasks = handles.store.list_tasks(&query).await.unwrap();
+        assert_eq!(tasks.len(), 3);
+        let ids: Vec<_> = tasks.into_iter().map(|(id, _)| id).collect();
+        assert!(ids.contains(&task2_id));
+        assert!(ids.contains(&task3_id));
+        assert!(ids.contains(&task4_id));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn documents_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
         let (doc_id, _) = store
