@@ -245,10 +245,17 @@ pub async fn run_with_state(
             routes::auth::require_auth,
         ));
 
-    let app = Router::new()
-        .merge(public_routes)
-        .merge(protected_routes)
-        .with_state(state);
+    #[allow(unused_mut)]
+    let mut app = Router::new().merge(public_routes).merge(protected_routes);
+
+    #[cfg(feature = "bundled-frontend")]
+    {
+        app = app
+            .route("/v1/local-auth", get(routes::local_auth::local_auth))
+            .merge(routes::frontend::router());
+    }
+
+    let app = app.with_state(state);
 
     let addr = listener.local_addr()?;
 
