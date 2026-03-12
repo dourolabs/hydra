@@ -175,7 +175,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             }
             let local_server_url = format!("http://{local_hostname}");
             info!("using local process job engine");
-            let engine = Arc::new(LocalJobEngine::new(local_server_url));
+            let engine = Arc::new(LocalJobEngine::new(local_server_url, None));
             engine.start_reaper();
             engine
         }
