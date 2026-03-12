@@ -336,35 +336,28 @@ async fn run_server_with_bff() -> Result<()> {
     let config_path = metis_server::config_path();
     let app_config = metis_server::config::AppConfig::load(&config_path)?;
 
-    // Read the auth token for auto-login.
-    let auto_login_token = match app_config.auth.auth_token_file() {
+    // Resolve the auth token file path before moving app_config into build_app_state.
+    let auth_token_path = app_config.auth.auth_token_file().map(|p| p.to_path_buf());
+
+    // Build app state first — this calls setup_local_auth() which writes the auth token file.
+    let state = metis_server::build_app_state(app_config).await?;
+
+    // Now read the auth token for auto-login (the file was created by build_app_state).
+    let auto_login_token = match auth_token_path {
         Some(path) => {
-            // The token file may not exist yet on first startup — wait briefly.
-            let max_wait = Duration::from_secs(10);
-            let poll = Duration::from_millis(200);
-            let start = std::time::Instant::now();
-            loop {
-                if path.exists() {
-                    let token = fs::read_to_string(path)
-                        .with_context(|| format!("failed to read {}", path.display()))?;
-                    let token = token.trim().to_string();
-                    if !token.is_empty() {
-                        break token;
-                    }
-                }
-                if start.elapsed() > max_wait {
-                    bail!(
-                        "auth_token_file {} not found after server init; auto-login unavailable",
-                        path.display()
-                    );
-                }
-                tokio::time::sleep(poll).await;
+            let token = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read auth token from {}", path.display()))?;
+            let token = token.trim().to_string();
+            if token.is_empty() {
+                bail!(
+                    "auth_token_file {} is empty after server init; auto-login unavailable",
+                    path.display()
+                );
             }
+            token
         }
         None => bail!("auth_token_file is required for single-player mode auto-login"),
     };
-
-    let state = metis_server::build_app_state(app_config).await?;
 
     // Build the internal metis-server router with state applied.
     let inner_app = metis_server::build_router(&state).with_state(state.clone());
