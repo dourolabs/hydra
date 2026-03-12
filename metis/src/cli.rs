@@ -233,7 +233,10 @@ pub fn resolve_config_path(cli: &Cli) -> PathBuf {
 pub fn load_app_config(config_path: &Path) -> Result<AppConfig> {
     let resolved_path = config::expand_path(config_path);
     if !resolved_path.exists() {
-        config::create_default_config(&resolved_path)?;
+        anyhow::bail!(
+            "No configuration file found at '{}'. Run 'metis server init' or create a config file with your server URL.",
+            resolved_path.display()
+        );
     }
 
     AppConfig::load(&resolved_path)
@@ -256,10 +259,8 @@ pub fn resolve_server_url(cli: &Cli, app_config: &AppConfig) -> Result<String> {
 mod tests {
     use super::*;
     use crate::command::agents::AgentsCommand;
-    use crate::config::default_app_config;
-    use crate::constants::DEFAULT_SERVER_URL;
+    use crate::config::empty_app_config;
     use clap::Parser;
-    use std::fs;
     use tempfile::tempdir;
 
     fn base_cli() -> Cli {
@@ -282,23 +283,24 @@ mod tests {
             ..base_cli()
         };
 
-        let config = default_app_config();
+        let config = empty_app_config();
         let server_url = resolve_server_url(&cli, &config).expect("resolve server url");
         assert_eq!(server_url, "http://localhost:9000");
     }
 
     #[test]
-    fn load_config_missing_without_server_url_creates_default() {
+    fn load_config_missing_errors_with_helpful_message() {
         let temp = tempdir().expect("tempdir");
         let missing_path = temp.path().join("missing.toml");
-        let config = load_app_config(&missing_path).expect("default config should be created");
-        let server_url = config.default_server().expect("default server");
-        assert_eq!(server_url.url, DEFAULT_SERVER_URL);
-
-        let contents = fs::read_to_string(missing_path).expect("read default config");
+        let err = load_app_config(&missing_path).unwrap_err();
+        let msg = err.to_string();
         assert!(
-            contents.contains(DEFAULT_SERVER_URL),
-            "default config missing server url"
+            msg.contains("No configuration file found"),
+            "expected helpful error, got: {msg}"
+        );
+        assert!(
+            msg.contains("metis server init"),
+            "expected init hint, got: {msg}"
         );
     }
 
