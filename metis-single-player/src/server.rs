@@ -117,17 +117,10 @@ fn cmd_init() -> Result<()> {
     let token_path = expand_path(AUTH_TOKEN_PATH);
     let auth_token = wait_for_auth_token(&token_path)?;
 
-    // Write the CLI config with only the local server entry (no staging/default server).
     let cli_config_path = expand_path(Path::new(DEFAULT_CONFIG_FILE));
-    let cli_config = config::AppConfig::single_server(LOCAL_SERVER_URL, &auth_token);
-    if let Some(dir) = cli_config_path.parent() {
-        fs::create_dir_all(dir).with_context(|| {
-            format!(
-                "failed to create configuration directory '{}'",
-                dir.display()
-            )
-        })?;
-    }
+    config::store_auth_token(&cli_config_path, LOCAL_SERVER_URL, &auth_token)?;
+    let mut cli_config = config::AppConfig::load(&cli_config_path)?;
+    cli_config.set_default_server(LOCAL_SERVER_URL)?;
     cli_config.write_to(&cli_config_path)?;
     println!("CLI configured with auth token for {LOCAL_SERVER_URL}");
 
@@ -734,15 +727,20 @@ mod tests {
     }
 
     #[test]
-    fn single_server_config_contains_only_local_server() {
+    fn store_auth_token_and_set_default_marks_local_server() {
         let dir = std::env::temp_dir().join(format!("metis-test-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let config_path = dir.join("config.toml");
         // Clean up any previous run.
         let _ = fs::remove_file(&config_path);
 
-        // Simulate what cmd_init does: create a single-server config directly.
-        let cli_config = config::AppConfig::single_server(LOCAL_SERVER_URL, "test-token");
+        // Simulate what cmd_init does: store auth token then set default server.
+        config::store_auth_token(&config_path, LOCAL_SERVER_URL, "test-token")
+            .expect("store auth token");
+        let mut cli_config = config::AppConfig::load(&config_path).expect("load config");
+        cli_config
+            .set_default_server(LOCAL_SERVER_URL)
+            .expect("set default server");
         cli_config.write_to(&config_path).expect("write config");
 
         // Reload and verify only one server entry exists.
