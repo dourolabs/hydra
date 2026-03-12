@@ -310,7 +310,7 @@ async fn forward_to_internal(
         if name == header::AUTHORIZATION
             && builder
                 .headers_ref()
-                .map_or(false, |h| h.contains_key(header::AUTHORIZATION))
+                .is_some_and(|h| h.contains_key(header::AUTHORIZATION))
         {
             continue;
         }
