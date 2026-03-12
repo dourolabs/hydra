@@ -22,7 +22,7 @@ use crate::background::start_background_scheduler;
 #[cfg(feature = "kubernetes")]
 use crate::config::build_kube_client;
 use crate::config::{AppConfig, GithubAppSection, JobEngineConfig, StorageConfig};
-use crate::domain::actors::{Actor, ActorRef};
+use crate::domain::actors::{Actor, ActorRef, AuthToken};
 use crate::domain::secrets::SecretManager;
 use crate::domain::users::{User, Username};
 #[cfg(feature = "kubernetes")]
@@ -452,7 +452,23 @@ pub async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::
             .local_username()
             .context("setup_local_auth called without local auth config")?,
     );
-    let (actor, auth_token) = Actor::new_for_user(username.clone());
+
+    // Reuse the existing auth token if the token file already exists, so the
+    // CLI config stays valid across server restarts.
+    let existing_token = config
+        .auth
+        .auth_token_file()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .filter(|t| !t.trim().is_empty());
+
+    let (actor, auth_token) = if let Some(ref token) = existing_token {
+        let parsed =
+            AuthToken::parse(token).context("existing auth token file has invalid format")?;
+        Actor::new_for_user_with_raw_token(username.clone(), parsed.raw_token())
+    } else {
+        Actor::new_for_user(username.clone())
+    };
+
     let system_actor = ActorRef::System {
         worker_name: "local-auth-setup".into(),
         on_behalf_of: None,

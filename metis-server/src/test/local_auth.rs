@@ -2,7 +2,7 @@ use crate::{
     config::AuthConfig,
     domain::{actors::AuthToken, users::Username},
     setup_local_auth,
-    store::{MemoryStore, ReadOnlyStore},
+    store::{MemoryStore, ReadOnlyStore, Store},
     test_utils::test_app_config,
 };
 use std::sync::Arc;
@@ -123,6 +123,48 @@ async fn setup_local_auth_writes_token_file() -> anyhow::Result<()> {
         let metadata = std::fs::metadata(&token_path)?;
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     }
+
+    Ok(())
+}
+
+/// Simulates a server restart: calling `setup_local_auth` twice with the same
+/// token file should keep the auth token stable so the CLI config remains valid.
+#[tokio::test]
+async fn setup_local_auth_preserves_token_across_restart() -> anyhow::Result<()> {
+    let tmp_dir = tempfile::TempDir::new()?;
+    let token_path = tmp_dir.path().join("auth-token");
+
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_test_token".to_string(),
+        username: None,
+        auth_token_file: Some(token_path.clone()),
+    };
+
+    // First start: generates a fresh token and writes it to the file.
+    let store: Arc<MemoryStore> = Arc::new(MemoryStore::new());
+    setup_local_auth(&config, store.as_ref() as &dyn Store).await?;
+
+    let token_after_first = std::fs::read_to_string(&token_path)?;
+    assert!(!token_after_first.is_empty());
+
+    // Second start (restart): should reuse the existing token from the file.
+    let store2: Arc<MemoryStore> = Arc::new(MemoryStore::new());
+    setup_local_auth(&config, store2.as_ref() as &dyn Store).await?;
+
+    let token_after_second = std::fs::read_to_string(&token_path)?;
+    assert_eq!(
+        token_after_first, token_after_second,
+        "auth token should be stable across server restarts"
+    );
+
+    // The actor in the new store should accept the original token.
+    let actor = store2.as_ref().get_actor("u-local").await?;
+    let parsed = AuthToken::parse(&token_after_first)?;
+    assert!(
+        actor.item.verify_auth_token(&parsed),
+        "actor should verify the persisted token after restart"
+    );
 
     Ok(())
 }
