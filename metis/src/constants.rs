@@ -6,9 +6,6 @@
 /// Base directory for CLI assets (`~/.local/share/metis`).
 pub const METIS_DIR: &str = "~/.local/share/metis";
 
-/// The default server URL used when no config is provided.
-pub const DEFAULT_SERVER_URL: &str = "http://metis-staging.monster-vibes.ts.net";
-
 /// The output text file name (`output.txt`) used when capturing codex output for a job.
 pub const OUTPUT_TXT_FILE: &str = "output.txt";
 

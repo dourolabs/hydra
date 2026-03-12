@@ -1,4 +1,3 @@
-use crate::constants::DEFAULT_SERVER_URL;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -164,37 +163,25 @@ pub fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
     }
 }
 
-pub fn default_app_config() -> AppConfig {
-    AppConfig {
-        servers: vec![ServerSection {
-            url: DEFAULT_SERVER_URL.to_string(),
-            auth_token: None,
-            default: true,
-        }],
-    }
-}
-
-pub fn create_default_config(resolved_path: &Path) -> Result<()> {
-    if let Some(dir) = resolved_path.parent() {
-        fs::create_dir_all(dir).with_context(|| {
-            format!(
-                "failed to create configuration directory '{}'",
-                dir.display()
-            )
-        })?;
-    }
-
-    default_app_config().write_to(resolved_path)?;
-
-    Ok(())
+pub fn empty_app_config() -> AppConfig {
+    AppConfig { servers: vec![] }
 }
 
 pub fn store_auth_token(config_path: &Path, server_url: &str, auth_token: &str) -> Result<()> {
     let resolved_path = expand_path(config_path);
-    if !resolved_path.exists() {
-        create_default_config(&resolved_path)?;
-    }
-    let mut config = AppConfig::load(&resolved_path)?;
+    let mut config = if resolved_path.exists() {
+        AppConfig::load(&resolved_path)?
+    } else {
+        if let Some(dir) = resolved_path.parent() {
+            fs::create_dir_all(dir).with_context(|| {
+                format!(
+                    "failed to create configuration directory '{}'",
+                    dir.display()
+                )
+            })?;
+        }
+        empty_app_config()
+    };
     config.upsert_server_token(server_url, auth_token.to_string())?;
     config.write_to(&resolved_path)?;
     Ok(())
