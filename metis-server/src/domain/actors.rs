@@ -91,24 +91,6 @@ impl Actor {
         (actor, auth_token)
     }
 
-    /// Create a user actor that reuses an existing raw token instead of
-    /// generating a new one. The returned formatted token will match what
-    /// `new_for_user` would have produced for the same raw value.
-    pub fn new_for_user_with_raw_token(username: Username, raw_token: &str) -> (Actor, String) {
-        let auth_token_hash = Self::hash_auth_token(raw_token);
-        let auth_token_salt = Uuid::new_v4().to_string();
-        let creator = username.clone();
-        let actor_id = ActorId::Username(username.into());
-        let actor = Actor {
-            auth_token_hash,
-            auth_token_salt,
-            actor_id,
-            creator,
-        };
-        let auth_token = Self::format_auth_token(&actor, raw_token);
-        (actor, auth_token)
-    }
-
     pub fn name(&self) -> String {
         self.actor_id.to_string()
     }

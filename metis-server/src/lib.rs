@@ -22,7 +22,7 @@ use crate::background::start_background_scheduler;
 #[cfg(feature = "kubernetes")]
 use crate::config::build_kube_client;
 use crate::config::{AppConfig, GithubAppSection, JobEngineConfig, StorageConfig};
-use crate::domain::actors::{Actor, ActorRef, AuthToken};
+use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::secrets::SecretManager;
 use crate::domain::users::{User, Username};
 #[cfg(feature = "kubernetes")]
@@ -453,34 +453,29 @@ pub async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::
             .context("setup_local_auth called without local auth config")?,
     );
 
-    // Reuse the existing auth token if the token file already exists, so the
-    // CLI config stays valid across server restarts.
-    let existing_token = config
-        .auth
-        .auth_token_file()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .filter(|t| !t.trim().is_empty());
+    let actor_name = format!("u-{username}");
 
-    let (actor, auth_token) = if let Some(ref token) = existing_token {
-        let parsed =
-            AuthToken::parse(token).context("existing auth token file has invalid format")?;
-        Actor::new_for_user_with_raw_token(username.clone(), parsed.raw_token())
-    } else {
-        Actor::new_for_user(username.clone())
-    };
+    // If the actor already exists in the store, the token file is already
+    // valid from the initial setup — nothing to do.
+    match store.get_actor(&actor_name).await {
+        Ok(_) => {
+            info!("local auth actor already exists in store, skipping setup");
+            return Ok(());
+        }
+        Err(StoreError::ActorNotFound(_)) => {
+            // First run — create actor below.
+        }
+        Err(err) => return Err(err.into()),
+    }
+
+    let (actor, auth_token) = Actor::new_for_user(username.clone());
 
     let system_actor = ActorRef::System {
         worker_name: "local-auth-setup".into(),
         on_behalf_of: None,
     };
 
-    match store.add_actor(actor.clone(), &system_actor).await {
-        Ok(()) => {}
-        Err(StoreError::ActorAlreadyExists(_)) => {
-            store.update_actor(actor.clone(), &system_actor).await?;
-        }
-        Err(err) => return Err(err.into()),
-    }
+    store.add_actor(actor.clone(), &system_actor).await?;
 
     let user = User::new(
         username, None, // no GitHub user ID for PAT-based local mode
@@ -488,12 +483,7 @@ pub async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::
     );
     match store.add_user(user.clone(), &system_actor).await {
         Ok(()) => {}
-        Err(StoreError::UserAlreadyExists(_)) => {
-            store
-                .update_user(user, &system_actor)
-                .await
-                .context("failed to update local user with GitHub token")?;
-        }
+        Err(StoreError::UserAlreadyExists(_)) => {}
         Err(err) => return Err(err.into()),
     }
 
