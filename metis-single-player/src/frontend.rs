@@ -30,21 +30,6 @@ async fn serve_asset(Path(path): Path<String>) -> impl IntoResponse {
     serve_file(&path)
 }
 
-/// Serve the SPA index.html fallback. Used by the BFF when a `/v1/*` request
-/// arrives without a Bearer token (i.e. browser navigation).
-pub fn serve_spa_fallback() -> Response {
-    match FrontendAssets::get("index.html") {
-        Some(index) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/html")
-            .body(Body::from(index.data.to_vec()))
-            .unwrap(),
-        None => Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::from("frontend not found"))
-            .unwrap(),
-    }
-}
 
 fn serve_file(path: &str) -> Response {
     match FrontendAssets::get(path) {

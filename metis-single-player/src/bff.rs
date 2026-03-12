@@ -48,10 +48,10 @@ pub fn build_bff_router(bff_state: BffState) -> Router {
         .route("/", axum::routing::any(api_proxy_root))
         .with_state(bff_state.clone());
 
-    // /v1/* routes: Bearer token auth for CLI access, SPA fallback otherwise.
+    // /v1/* routes: transparent pass-through to the inner server.
     let v1_routes = Router::new()
-        .route("/*path", axum::routing::any(v1_bearer_proxy))
-        .route("/", axum::routing::any(v1_bearer_proxy_root))
+        .route("/*path", axum::routing::any(v1_pass_through))
+        .route("/", axum::routing::any(v1_pass_through_root))
         .with_state(bff_state.clone());
 
     let frontend = crate::frontend::router();
@@ -216,86 +216,26 @@ async fn auth_me(State(bff): State<BffState>, jar: CookieJar) -> impl IntoRespon
 }
 
 // ---------------------------------------------------------------------------
-// CLI proxy: /v1/* with Bearer auth -> internal /v1/*
-// Falls back to SPA when no Bearer header is present.
+// /v1/* pass-through: transparent mirror of the inner server routes.
 // ---------------------------------------------------------------------------
 
-async fn v1_bearer_proxy(
+async fn v1_pass_through(
     State(bff): State<BffState>,
     axum::extract::Path(path): axum::extract::Path<String>,
     request: Request<Body>,
 ) -> Response {
-    bearer_proxy_or_spa(bff, &format!("/v1/{path}"), request).await
+    forward_to_internal(bff, &format!("/v1/{path}"), None, request).await
 }
 
-async fn v1_bearer_proxy_root(State(bff): State<BffState>, request: Request<Body>) -> Response {
-    bearer_proxy_or_spa(bff, "/v1", request).await
-}
-
-/// If the request carries an `Authorization: Bearer <token>` header, forward it
-/// directly to the internal server. Otherwise, serve the SPA (index.html) so
-/// browsers navigating to `/v1/...` still get the frontend.
-async fn bearer_proxy_or_spa(
-    bff: BffState,
-    target_path: &str,
-    original: Request<Body>,
+async fn v1_pass_through_root(
+    State(bff): State<BffState>,
+    request: Request<Body>,
 ) -> Response {
-    // Extract the Bearer token from the Authorization header.
-    let bearer_token = original
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .filter(|v| v.starts_with("Bearer "))
-        .map(|v| v[7..].to_string());
-
-    let token = match bearer_token {
-        Some(t) => t,
-        None => return crate::frontend::serve_spa_fallback(),
-    };
-
-    // Build a new request to the internal server.
-    let uri = if let Some(query) = original.uri().query() {
-        format!("{target_path}?{query}")
-    } else {
-        target_path.to_string()
-    };
-
-    let method = original.method().clone();
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(&uri)
-        .header(header::AUTHORIZATION, format!("Bearer {token}"));
-
-    for (name, value) in original.headers() {
-        if name == header::HOST || name == header::COOKIE || name == header::AUTHORIZATION {
-            continue;
-        }
-        builder = builder.header(name, value);
-    }
-
-    let internal_req = match builder.body(original.into_body()) {
-        Ok(req) => req,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({ "error": "failed to build request" })),
-            )
-                .into_response();
-        }
-    };
-
-    match bff.inner_app.clone().oneshot(internal_req).await {
-        Ok(response) => response,
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(serde_json::json!({ "error": "internal error" })),
-        )
-            .into_response(),
-    }
+    forward_to_internal(bff, "/v1", None, request).await
 }
 
 // ---------------------------------------------------------------------------
-// API proxy: /api/v1/* -> internal /v1/*
+// API proxy: /api/v1/* -> internal /v1/* (cookie-to-Bearer translation)
 // ---------------------------------------------------------------------------
 
 async fn api_proxy(
@@ -304,23 +244,6 @@ async fn api_proxy(
     axum::extract::Path(path): axum::extract::Path<String>,
     request: Request<Body>,
 ) -> impl IntoResponse {
-    proxy_to_internal(bff, jar, &format!("/v1/{path}"), request).await
-}
-
-async fn api_proxy_root(
-    State(bff): State<BffState>,
-    jar: CookieJar,
-    request: Request<Body>,
-) -> impl IntoResponse {
-    proxy_to_internal(bff, jar, "/v1", request).await
-}
-
-async fn proxy_to_internal(
-    bff: BffState,
-    jar: CookieJar,
-    target_path: &str,
-    original: Request<Body>,
-) -> Response {
     let token = match jar.get(COOKIE_NAME) {
         Some(cookie) => cookie.value().to_string(),
         None => {
@@ -331,8 +254,43 @@ async fn proxy_to_internal(
                 .into_response();
         }
     };
+    forward_to_internal(bff, &format!("/v1/{path}"), Some(token), request).await
+}
 
-    // Build a new request to the internal server with the Bearer token.
+async fn api_proxy_root(
+    State(bff): State<BffState>,
+    jar: CookieJar,
+    request: Request<Body>,
+) -> impl IntoResponse {
+    let token = match jar.get(COOKIE_NAME) {
+        Some(cookie) => cookie.value().to_string(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({ "error": "not authenticated" })),
+            )
+                .into_response();
+        }
+    };
+    forward_to_internal(bff, "/v1", Some(token), request).await
+}
+
+// ---------------------------------------------------------------------------
+// Shared request-forwarding helper
+// ---------------------------------------------------------------------------
+
+/// Forward a request to the inner server at `target_path`.
+///
+/// If `override_token` is `Some`, the Authorization header is set to
+/// `Bearer <token>` (used by `/api/v1/*` cookie-to-Bearer translation).
+/// If `None`, the original Authorization header (if any) is passed through
+/// as-is (used by `/v1/*` transparent mirror).
+async fn forward_to_internal(
+    bff: BffState,
+    target_path: &str,
+    override_token: Option<String>,
+    original: Request<Body>,
+) -> Response {
     let uri = if let Some(query) = original.uri().query() {
         format!("{target_path}?{query}")
     } else {
@@ -340,14 +298,21 @@ async fn proxy_to_internal(
     };
 
     let method = original.method().clone();
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(&uri)
-        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    let mut builder = Request::builder().method(method).uri(&uri);
 
-    // Copy relevant headers from the original request.
+    // Set the Authorization header: either override with token or pass through.
+    if let Some(token) = override_token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+
     for (name, value) in original.headers() {
-        if name == header::HOST || name == header::COOKIE || name == header::AUTHORIZATION {
+        if name == header::HOST || name == header::COOKIE {
+            continue;
+        }
+        // Skip Authorization if we're overriding it.
+        if name == header::AUTHORIZATION && builder.headers_ref()
+            .map_or(false, |h| h.contains_key(header::AUTHORIZATION))
+        {
             continue;
         }
         builder = builder.header(name, value);
@@ -652,7 +617,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v1_without_bearer_falls_through_to_spa() {
+    async fn v1_without_bearer_returns_401() {
         let app = build_bff_router(test_bff_state());
 
         let req = Request::builder()
@@ -662,22 +627,9 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        // Without Bearer auth, the response should be a SPA fallback (HTML) or 404
-        // if no frontend assets are embedded (test environment).
-        let status = response.status();
-        assert!(
-            status == StatusCode::OK || status == StatusCode::NOT_FOUND,
-            "expected OK (SPA) or NOT_FOUND, got {status}"
-        );
-
-        if status == StatusCode::OK {
-            let ct = response
-                .headers()
-                .get(header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            assert!(ct.contains("text/html"), "expected HTML, got {ct}");
-        }
+        // Without auth, the request is forwarded to the inner server which
+        // returns 401 Unauthorized.
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
