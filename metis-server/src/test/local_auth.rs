@@ -2,7 +2,7 @@ use crate::{
     config::AuthConfig,
     domain::{actors::AuthToken, users::Username},
     setup_local_auth,
-    store::{MemoryStore, ReadOnlyStore, Store},
+    store::{MemoryStore, ReadOnlyStore},
     test_utils::test_app_config,
 };
 use std::sync::Arc;
@@ -127,8 +127,8 @@ async fn setup_local_auth_writes_token_file() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Simulates a server restart: calling `setup_local_auth` twice with the same
-/// token file should keep the auth token stable so the CLI config remains valid.
+/// Calling setup_local_auth twice with the same persistent store should reuse
+/// the existing actor and leave the token file unchanged.
 #[tokio::test]
 async fn setup_local_auth_preserves_token_across_restart() -> anyhow::Result<()> {
     let tmp_dir = tempfile::TempDir::new()?;
@@ -141,16 +141,16 @@ async fn setup_local_auth_preserves_token_across_restart() -> anyhow::Result<()>
         auth_token_file: Some(token_path.clone()),
     };
 
-    // First start: generates a fresh token and writes it to the file.
-    let store: Arc<MemoryStore> = Arc::new(MemoryStore::new());
-    setup_local_auth(&config, store.as_ref() as &dyn Store).await?;
+    // First call: creates actor and writes token file.
+    let store = Arc::new(MemoryStore::new());
+    setup_local_auth(&config, store.as_ref()).await?;
 
     let token_after_first = std::fs::read_to_string(&token_path)?;
     assert!(!token_after_first.is_empty());
 
-    // Second start (restart): should reuse the existing token from the file.
-    let store2: Arc<MemoryStore> = Arc::new(MemoryStore::new());
-    setup_local_auth(&config, store2.as_ref() as &dyn Store).await?;
+    // Second call with the SAME store: actor exists, so setup is skipped
+    // and the token file remains unchanged.
+    setup_local_auth(&config, store.as_ref()).await?;
 
     let token_after_second = std::fs::read_to_string(&token_path)?;
     assert_eq!(
@@ -158,8 +158,8 @@ async fn setup_local_auth_preserves_token_across_restart() -> anyhow::Result<()>
         "auth token should be stable across server restarts"
     );
 
-    // The actor in the new store should accept the original token.
-    let actor = store2.as_ref().get_actor("u-local").await?;
+    // The actor in the store should still verify the original token.
+    let actor = store.as_ref().get_actor("u-local").await?;
     let parsed = AuthToken::parse(&token_after_first)?;
     assert!(
         actor.item.verify_auth_token(&parsed),
