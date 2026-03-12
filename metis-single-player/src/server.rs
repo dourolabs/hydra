@@ -78,6 +78,9 @@ fn cmd_init() -> Result<()> {
     // Prompt for GitHub PAT.
     let github_pat = prompt_github_pat()?;
 
+    // Prompt for job engine choice.
+    let job_engine = prompt_job_engine()?;
+
     // Generate a random 32-byte encryption key (base64-encoded).
     let encryption_key = generate_encryption_key();
 
@@ -96,6 +99,7 @@ fn cmd_init() -> Result<()> {
         &github_pat,
         &db_path,
         &auth_token_path_expanded,
+        &job_engine,
     );
     fs::write(&config_path, &config_content)
         .with_context(|| format!("failed to write config to {}", config_path.display()))?;
@@ -115,8 +119,14 @@ fn cmd_init() -> Result<()> {
     config::store_auth_token(&cli_config_path, LOCAL_SERVER_URL, &auth_token)?;
     println!("CLI configured with auth token for {LOCAL_SERVER_URL}");
 
+    let engine_label = if job_engine == "local" {
+        "Docker"
+    } else {
+        "Local"
+    };
     println!();
     println!("Metis is running! Dashboard: {LOCAL_SERVER_URL}");
+    println!("Job engine: {engine_label}");
     println!();
     println!("Next steps:");
     println!("  metis issues list              # list issues");
@@ -125,6 +135,71 @@ fn cmd_init() -> Result<()> {
     println!("  metis server stop               # stop the server");
 
     Ok(())
+}
+
+/// Check whether Docker is available by running `docker info`.
+fn is_docker_available() -> bool {
+    Command::new("docker")
+        .arg("info")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Prompt the user to choose between Docker and Local job engines.
+/// Returns `"local"` for Docker or `"local_process"` for Local.
+fn prompt_job_engine() -> Result<String> {
+    let docker_available = is_docker_available();
+
+    let docker_status = if docker_available {
+        "available"
+    } else {
+        "not detected"
+    };
+    let default_choice = if docker_available { "1" } else { "2" };
+
+    eprintln!();
+    eprintln!("Select job engine:");
+    eprintln!("  1) Docker (recommended) - runs jobs in isolated containers [{docker_status}]");
+    eprintln!("  2) Local - runs jobs directly on this computer (less isolation)");
+    eprint!("Choice [{default_choice}]: ");
+    io::stderr().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    let choice = if input.is_empty() {
+        default_choice
+    } else {
+        input
+    };
+
+    match choice {
+        "1" => {
+            if !docker_available {
+                eprintln!();
+                eprintln!(
+                    "Warning: Docker was not detected on this system. \
+                     Please install Docker (https://docs.docker.com/get-docker/) \
+                     and ensure it is running before starting jobs."
+                );
+                eprintln!();
+            }
+            Ok("local".to_string())
+        }
+        "2" => Ok("local_process".to_string()),
+        _ => {
+            eprintln!("Invalid choice '{choice}', using default ({default_choice}).");
+            if docker_available {
+                Ok("local".to_string())
+            } else {
+                Ok("local_process".to_string())
+            }
+        }
+    }
 }
 
 fn prompt_github_pat() -> Result<String> {
@@ -175,6 +250,7 @@ fn render_server_config(
     github_pat: &str,
     db_path: &Path,
     auth_token_path: &Path,
+    job_engine: &str,
 ) -> String {
     let config = ServerInitConfig {
         metis: InitMetisSection {
@@ -185,7 +261,7 @@ fn render_server_config(
         auth_token_file: auth_token_path.display().to_string(),
         storage_backend: "sqlite".to_string(),
         sqlite_path: db_path.display().to_string(),
-        job_engine: "local".to_string(),
+        job_engine: job_engine.to_string(),
         job: InitJobSection {
             default_image: "metis-worker:latest".to_string(),
         },
@@ -555,6 +631,7 @@ mod tests {
             "ghp_test123",
             Path::new("/tmp/test.db"),
             Path::new("/tmp/auth-token"),
+            "local",
         );
 
         // Verify the generated YAML contains all expected fields.
@@ -588,6 +665,31 @@ mod tests {
         assert!(matches!(
             app_config.job_engine,
             metis_server::config::JobEngineConfig::Local
+        ));
+    }
+
+    #[test]
+    fn render_server_config_local_process_engine() {
+        use base64::Engine;
+        let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
+
+        let config = render_server_config(
+            &encryption_key,
+            "ghp_test123",
+            Path::new("/tmp/test.db"),
+            Path::new("/tmp/auth-token"),
+            "local_process",
+        );
+
+        assert!(config.contains("job_engine: local_process"));
+
+        use metis_server::config::AppConfig;
+        let app_config: AppConfig = serde_yaml_ng::from_str(&config)
+            .expect("generated config should deserialize into AppConfig");
+
+        assert!(matches!(
+            app_config.job_engine,
+            metis_server::config::JobEngineConfig::LocalProcess
         ));
     }
 
