@@ -38,6 +38,10 @@ pub struct LocalJobEngine {
     processes: DashMap<TaskId, ProcessInfo>,
     /// Temp directory for log files.
     log_dir: std::path::PathBuf,
+    /// Optional custom spawn command (program, args). When set, this replaces
+    /// the default `current_exe() jobs worker-run <id> . --tempdir` command.
+    /// Useful for testing with dummy commands like `/bin/true` or `/bin/false`.
+    spawn_command: Option<(std::path::PathBuf, Vec<String>)>,
 }
 
 impl LocalJobEngine {
@@ -48,7 +52,17 @@ impl LocalJobEngine {
             server_url,
             processes: DashMap::new(),
             log_dir,
+            spawn_command: None,
         }
+    }
+
+    /// Set a custom spawn command for testing. When set, this replaces the
+    /// default `current_exe() jobs worker-run ...` command with the given
+    /// program and arguments.
+    #[cfg(test)]
+    pub fn with_spawn_command(mut self, program: std::path::PathBuf, args: Vec<String>) -> Self {
+        self.spawn_command = Some((program, args));
+        self
     }
 
     fn build_env_vars(
@@ -132,9 +146,22 @@ impl JobEngine for LocalJobEngine {
             return Err(JobEngineError::AlreadyExists(metis_id.clone()));
         }
 
-        let exe = std::env::current_exe().map_err(|e| {
-            JobEngineError::Internal(format!("Failed to determine current executable: {e}"))
-        })?;
+        let (exe, args) = match &self.spawn_command {
+            Some((program, args)) => (program.clone(), args.clone()),
+            None => {
+                let exe = std::env::current_exe().map_err(|e| {
+                    JobEngineError::Internal(format!("Failed to determine current executable: {e}"))
+                })?;
+                let args = vec![
+                    "jobs".to_string(),
+                    "worker-run".to_string(),
+                    metis_id.as_ref().to_string(),
+                    ".".to_string(),
+                    "--tempdir".to_string(),
+                ];
+                (exe, args)
+            }
+        };
 
         let log_path = self.log_file_path(metis_id);
         let log_file = std::fs::File::create(&log_path)
@@ -146,7 +173,7 @@ impl JobEngine for LocalJobEngine {
         let env = self.build_env_vars(metis_id, auth_token, env_vars);
 
         let mut child = Command::new(&exe)
-            .args(["jobs", "worker-run", metis_id.as_ref(), ".", "--tempdir"])
+            .args(&args)
             .envs(&env)
             .stdout(std::process::Stdio::from(log_file))
             .stderr(std::process::Stdio::from(stderr_log_file))
@@ -519,5 +546,486 @@ mod tests {
 
         let jobs = engine.list_jobs().await.unwrap();
         assert_eq!(jobs.len(), 2);
+    }
+
+    // ── Integration tests using configurable spawn command ───────────
+
+    use crate::domain::actors::Actor;
+    use crate::domain::users::Username;
+
+    fn make_actor() -> (Actor, String) {
+        Actor::new_for_task(TaskId::new(), Username::from("test-user"))
+    }
+
+    fn dummy_env() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
+    fn make_failing_engine() -> LocalJobEngine {
+        LocalJobEngine::new("http://localhost:0".to_string())
+            .with_spawn_command(std::path::PathBuf::from("/bin/false"), vec![])
+    }
+
+    fn make_succeeding_engine() -> LocalJobEngine {
+        LocalJobEngine::new("http://localhost:0".to_string())
+            .with_spawn_command(std::path::PathBuf::from("/bin/true"), vec![])
+    }
+
+    fn make_echo_engine() -> LocalJobEngine {
+        LocalJobEngine::new("http://localhost:0".to_string()).with_spawn_command(
+            std::path::PathBuf::from("/bin/sh"),
+            vec![
+                "-c".to_string(),
+                "echo 'line 1'; echo 'line 2'; echo 'line 3'".to_string(),
+            ],
+        )
+    }
+
+    async fn wait_for_exit(engine: &LocalJobEngine, metis_id: &TaskId) {
+        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(10);
+        loop {
+            let job = engine.find_job_by_metis_id(metis_id).await.unwrap();
+            if job.status != JobStatus::Running {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                panic!("timed out waiting for subprocess to exit");
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn integration_create_job_spawns_and_tracks_process() {
+        let engine = make_failing_engine();
+        let metis_id = TaskId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        let job = engine.find_job_by_metis_id(&metis_id).await.unwrap();
+        assert_eq!(job.id, metis_id);
+        assert!(job.creation_time.is_some());
+        assert!(job.start_time.is_some());
+    }
+
+    #[tokio::test]
+    async fn integration_create_job_rejects_duplicate() {
+        let engine = make_failing_engine();
+        let metis_id = TaskId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        let result = engine
+            .create_job(
+                &metis_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(JobEngineError::AlreadyExists(_))),
+            "duplicate create_job should return AlreadyExists"
+        );
+    }
+
+    #[tokio::test]
+    async fn integration_subprocess_failure_transitions_to_failed() {
+        let engine = make_failing_engine();
+        let metis_id = TaskId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        wait_for_exit(&engine, &metis_id).await;
+
+        let job = engine.find_job_by_metis_id(&metis_id).await.unwrap();
+        assert_eq!(job.status, JobStatus::Failed);
+        assert!(job.completion_time.is_some());
+        assert!(job.failure_message.is_some());
+    }
+
+    #[tokio::test]
+    async fn integration_subprocess_success_transitions_to_complete() {
+        let engine = make_succeeding_engine();
+        let metis_id = TaskId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        wait_for_exit(&engine, &metis_id).await;
+
+        let job = engine.find_job_by_metis_id(&metis_id).await.unwrap();
+        assert_eq!(job.status, JobStatus::Complete);
+        assert!(job.completion_time.is_some());
+        assert!(job.failure_message.is_none());
+    }
+
+    #[tokio::test]
+    async fn integration_get_logs_returns_content_after_exit() {
+        let engine = make_echo_engine();
+        let metis_id = TaskId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        wait_for_exit(&engine, &metis_id).await;
+
+        let logs = engine.get_logs(&metis_id, None).await.unwrap();
+        assert!(
+            logs.contains("line 1"),
+            "logs should contain subprocess output"
+        );
+    }
+
+    #[tokio::test]
+    async fn integration_get_logs_respects_tail_lines() {
+        let engine = make_echo_engine();
+        let metis_id = TaskId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        wait_for_exit(&engine, &metis_id).await;
+
+        let tail_1 = engine.get_logs(&metis_id, Some(1)).await.unwrap();
+        assert_eq!(
+            tail_1.lines().count(),
+            1,
+            "tail_lines=1 should return exactly 1 line"
+        );
+        assert!(
+            tail_1.contains("line 3"),
+            "tail should return the last line"
+        );
+    }
+
+    #[tokio::test]
+    async fn integration_get_logs_not_found_for_unknown_job() {
+        let engine = make_failing_engine();
+        let result = engine.get_logs(&TaskId::new(), None).await;
+        assert!(matches!(result, Err(JobEngineError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn integration_list_jobs_includes_created_jobs() {
+        let engine = make_failing_engine();
+        let id1 = TaskId::new();
+        let id2 = TaskId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &id1,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+        engine
+            .create_job(
+                &id2,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        let jobs = engine.list_jobs().await.unwrap();
+        assert_eq!(jobs.len(), 2);
+
+        let ids: Vec<&TaskId> = jobs.iter().map(|j| &j.id).collect();
+        assert!(ids.contains(&&id1));
+        assert!(ids.contains(&&id2));
+    }
+
+    #[tokio::test]
+    async fn integration_list_jobs_returns_empty_when_no_jobs() {
+        let engine = make_failing_engine();
+        let jobs = engine.list_jobs().await.unwrap();
+        assert!(jobs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn integration_find_job_not_found_for_unknown_id() {
+        let engine = make_failing_engine();
+        let result = engine.find_job_by_metis_id(&TaskId::new()).await;
+        assert!(matches!(result, Err(JobEngineError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn integration_kill_job_removes_from_tracking() {
+        let engine = make_failing_engine();
+        let metis_id = TaskId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert!(engine.find_job_by_metis_id(&metis_id).await.is_ok());
+
+        engine.kill_job(&metis_id).await.unwrap();
+
+        let result = engine.find_job_by_metis_id(&metis_id).await;
+        assert!(matches!(result, Err(JobEngineError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn integration_kill_job_not_found_for_unknown_id() {
+        let engine = make_failing_engine();
+        let result = engine.kill_job(&TaskId::new()).await;
+        assert!(matches!(result, Err(JobEngineError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn integration_kill_job_removes_from_list() {
+        let engine = make_failing_engine();
+        let id1 = TaskId::new();
+        let id2 = TaskId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &id1,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+        engine
+            .create_job(
+                &id2,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        engine.kill_job(&id1).await.unwrap();
+
+        let jobs = engine.list_jobs().await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].id, id2);
+    }
+
+    #[tokio::test]
+    async fn integration_get_logs_stream_returns_content() {
+        use futures::StreamExt;
+
+        let engine = make_echo_engine();
+        let metis_id = TaskId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        wait_for_exit(&engine, &metis_id).await;
+
+        let mut rx = engine.get_logs_stream(&metis_id, false).unwrap();
+
+        let mut chunks = Vec::new();
+        while let Some(chunk) = rx.next().await {
+            chunks.push(chunk);
+        }
+
+        assert!(!chunks.is_empty(), "stream should return log content");
+    }
+
+    #[tokio::test]
+    async fn integration_get_logs_stream_not_found_for_unknown_job() {
+        let engine = make_failing_engine();
+        let result = engine.get_logs_stream(&TaskId::new(), false);
+        assert!(matches!(result, Err(JobEngineError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn integration_completion_time_set_after_exit() {
+        let engine = make_failing_engine();
+        let metis_id = TaskId::new();
+        let (actor, token) = make_actor();
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                &token,
+                "unused-image",
+                &dummy_env(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        wait_for_exit(&engine, &metis_id).await;
+
+        let job = engine.find_job_by_metis_id(&metis_id).await.unwrap();
+        assert!(job.completion_time.is_some());
+        assert!(job.creation_time.unwrap() <= job.completion_time.unwrap());
+    }
+
+    #[tokio::test]
+    async fn integration_create_job_passes_env_vars() {
+        let engine = LocalJobEngine::new("http://test-server:8080".to_string())
+            .with_spawn_command(std::path::PathBuf::from("/bin/true"), vec![]);
+        let metis_id = TaskId::new();
+        let (actor, token) = make_actor();
+
+        let mut env = HashMap::new();
+        env.insert("CUSTOM_VAR".to_string(), "custom_value".to_string());
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                &token,
+                "unused-image",
+                &env,
+                "500m".to_string(),
+                "1Gi".to_string(),
+                "500m".to_string(),
+                "1Gi".to_string(),
+            )
+            .await
+            .unwrap();
+
+        let job = engine.find_job_by_metis_id(&metis_id).await.unwrap();
+        assert_eq!(job.id, metis_id);
     }
 }
