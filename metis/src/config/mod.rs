@@ -63,6 +63,15 @@ impl AppConfig {
             .and_then(|server| server.auth_token.as_deref()))
     }
 
+    pub fn set_default_server(&mut self, url: &str) -> Result<()> {
+        let target = parse_server_url(url)?;
+        for server in &mut self.servers {
+            let server_url = parse_server_url(&server.url)?;
+            server.default = server_url == target;
+        }
+        Ok(())
+    }
+
     pub fn upsert_server_token(&mut self, url: &str, token: String) -> Result<()> {
         let target = parse_server_url(url)?;
         for server in &mut self.servers {
@@ -215,6 +224,34 @@ mod tests {
         };
         let server = config.default_server().expect("default server");
         assert_eq!(server.url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn set_default_server_marks_correct_server() {
+        let mut config = AppConfig {
+            servers: vec![
+                ServerSection {
+                    url: "http://staging.example.com".to_string(),
+                    auth_token: None,
+                    default: true,
+                },
+                ServerSection {
+                    url: "http://127.0.0.1:8080".to_string(),
+                    auth_token: Some("tok".to_string()),
+                    default: false,
+                },
+            ],
+        };
+
+        config
+            .set_default_server("http://127.0.0.1:8080")
+            .expect("set default");
+
+        assert!(!config.servers[0].default);
+        assert!(config.servers[1].default);
+
+        let default = config.default_server().expect("default server");
+        assert_eq!(default.url, "http://127.0.0.1:8080");
     }
 
     #[test]
