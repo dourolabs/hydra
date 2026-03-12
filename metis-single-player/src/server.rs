@@ -117,9 +117,12 @@ fn cmd_init() -> Result<()> {
     let token_path = expand_path(AUTH_TOKEN_PATH);
     let auth_token = wait_for_auth_token(&token_path)?;
 
-    // Write the auth token to the CLI config.
+    // Write the auth token to the CLI config and set the local server as default.
     let cli_config_path = expand_path(Path::new(DEFAULT_CONFIG_FILE));
     config::store_auth_token(&cli_config_path, LOCAL_SERVER_URL, &auth_token)?;
+    let mut cli_config = config::AppConfig::load(&cli_config_path)?;
+    cli_config.set_default_server(LOCAL_SERVER_URL)?;
+    cli_config.write_to(&cli_config_path)?;
     println!("CLI configured with auth token for {LOCAL_SERVER_URL}");
 
     let engine_label = if job_engine == "docker" {
@@ -722,6 +725,33 @@ mod tests {
             metis_server::config::JobEngineConfig::Local
         ));
         assert_eq!(app_config.metis.server_hostname, "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn store_auth_token_and_set_default_marks_local_server() {
+        let dir = std::env::temp_dir().join(format!("metis-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let config_path = dir.join("config.toml");
+        // Clean up any previous run.
+        let _ = fs::remove_file(&config_path);
+
+        // Simulate what cmd_init does: store token then set default.
+        config::store_auth_token(&config_path, LOCAL_SERVER_URL, "test-token")
+            .expect("store auth token");
+        let mut cli_config = config::AppConfig::load(&config_path).expect("load config");
+        cli_config
+            .set_default_server(LOCAL_SERVER_URL)
+            .expect("set default");
+        cli_config.write_to(&config_path).expect("write config");
+
+        // Reload and verify.
+        let reloaded = config::AppConfig::load(&config_path).expect("reload config");
+        let default = reloaded.default_server().expect("default server");
+        assert_eq!(default.url, LOCAL_SERVER_URL);
+        assert_eq!(default.auth_token.as_deref(), Some("test-token"));
+
+        // Clean up.
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
