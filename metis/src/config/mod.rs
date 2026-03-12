@@ -274,10 +274,9 @@ mod tests {
         let err = config
             .set_default_server("http://nonexistent.example.com")
             .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("no server found matching URL: http://nonexistent.example.com"),
-        );
+        assert!(err
+            .to_string()
+            .contains("no server found matching URL: http://nonexistent.example.com"),);
         // Original server should still be default (unchanged)
         assert!(config.servers[0].default);
     }
