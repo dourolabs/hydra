@@ -1,5 +1,5 @@
 use crate::constants::DEFAULT_SERVER_URL;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -65,6 +65,13 @@ impl AppConfig {
 
     pub fn set_default_server(&mut self, url: &str) -> Result<()> {
         let target = parse_server_url(url)?;
+        let has_match = self
+            .servers
+            .iter()
+            .any(|s| parse_server_url(&s.url).ok() == Some(target.clone()));
+        if !has_match {
+            bail!("no server found matching URL: {url}");
+        }
         for server in &mut self.servers {
             let server_url = parse_server_url(&server.url)?;
             server.default = server_url == target;
@@ -252,6 +259,27 @@ mod tests {
 
         let default = config.default_server().expect("default server");
         assert_eq!(default.url, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn set_default_server_errors_on_unknown_url() {
+        let mut config = AppConfig {
+            servers: vec![ServerSection {
+                url: "http://staging.example.com".to_string(),
+                auth_token: None,
+                default: true,
+            }],
+        };
+
+        let err = config
+            .set_default_server("http://nonexistent.example.com")
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("no server found matching URL: http://nonexistent.example.com"),
+        );
+        // Original server should still be default (unchanged)
+        assert!(config.servers[0].default);
     }
 
     #[test]
