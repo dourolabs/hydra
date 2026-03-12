@@ -45,24 +45,18 @@ pub struct LocalJobEngine {
 }
 
 impl LocalJobEngine {
-    pub fn new(server_url: String) -> Self {
+    pub fn new(
+        server_url: String,
+        spawn_command: Option<(std::path::PathBuf, Vec<String>)>,
+    ) -> Self {
         let log_dir = std::env::temp_dir().join("metis-local-jobs");
         let _ = std::fs::create_dir_all(&log_dir);
         Self {
             server_url,
             processes: DashMap::new(),
             log_dir,
-            spawn_command: None,
+            spawn_command,
         }
-    }
-
-    /// Set a custom spawn command for testing. When set, this replaces the
-    /// default `current_exe() jobs worker-run ...` command with the given
-    /// program and arguments.
-    #[cfg(test)]
-    pub fn with_spawn_command(mut self, program: std::path::PathBuf, args: Vec<String>) -> Self {
-        self.spawn_command = Some((program, args));
-        self
     }
 
     fn build_env_vars(
@@ -396,7 +390,7 @@ mod tests {
     use super::*;
 
     fn make_engine() -> LocalJobEngine {
-        LocalJobEngine::new("http://localhost:8080".to_string())
+        LocalJobEngine::new("http://localhost:8080".to_string(), None)
     }
 
     fn insert_process(
@@ -442,7 +436,7 @@ mod tests {
 
     #[test]
     fn build_env_vars_omits_empty_server_url() {
-        let engine = LocalJobEngine::new("".to_string());
+        let engine = LocalJobEngine::new("".to_string(), None);
         let metis_id = TaskId::new();
         let env = engine.build_env_vars(&metis_id, "tok", &HashMap::new());
 
@@ -562,22 +556,29 @@ mod tests {
     }
 
     fn make_failing_engine() -> LocalJobEngine {
-        LocalJobEngine::new("http://localhost:0".to_string())
-            .with_spawn_command(std::path::PathBuf::from("/bin/false"), vec![])
+        LocalJobEngine::new(
+            "http://localhost:0".to_string(),
+            Some((std::path::PathBuf::from("/bin/false"), vec![])),
+        )
     }
 
     fn make_succeeding_engine() -> LocalJobEngine {
-        LocalJobEngine::new("http://localhost:0".to_string())
-            .with_spawn_command(std::path::PathBuf::from("/bin/true"), vec![])
+        LocalJobEngine::new(
+            "http://localhost:0".to_string(),
+            Some((std::path::PathBuf::from("/bin/true"), vec![])),
+        )
     }
 
     fn make_echo_engine() -> LocalJobEngine {
-        LocalJobEngine::new("http://localhost:0".to_string()).with_spawn_command(
-            std::path::PathBuf::from("/bin/sh"),
-            vec![
-                "-c".to_string(),
-                "echo 'line 1'; echo 'line 2'; echo 'line 3'".to_string(),
-            ],
+        LocalJobEngine::new(
+            "http://localhost:0".to_string(),
+            Some((
+                std::path::PathBuf::from("/bin/sh"),
+                vec![
+                    "-c".to_string(),
+                    "echo 'line 1'; echo 'line 2'; echo 'line 3'".to_string(),
+                ],
+            )),
         )
     }
 
@@ -1002,8 +1003,10 @@ mod tests {
 
     #[tokio::test]
     async fn integration_create_job_passes_env_vars() {
-        let engine = LocalJobEngine::new("http://test-server:8080".to_string())
-            .with_spawn_command(std::path::PathBuf::from("/bin/true"), vec![]);
+        let engine = LocalJobEngine::new(
+            "http://test-server:8080".to_string(),
+            Some((std::path::PathBuf::from("/bin/true"), vec![])),
+        );
         let metis_id = TaskId::new();
         let (actor, token) = make_actor();
 
