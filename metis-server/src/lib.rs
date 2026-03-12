@@ -44,7 +44,7 @@ use metis_common::constants::ENV_METIS_CONFIG;
 use octocrab::Octocrab;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
-use tracing::info;
+use tracing::{info, warn};
 
 /// Build an `AppState` from an `AppConfig`.
 ///
@@ -134,11 +134,20 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             } else {
                 format!("http://{hostname}")
             };
-            let engine = LocalDockerJobEngine::new(server_url)
-                .await
-                .context("failed to initialize local Docker job engine")?;
-            info!("using local Docker job engine");
-            Arc::new(engine)
+            match LocalDockerJobEngine::new(server_url).await {
+                Ok(engine) => {
+                    info!("using local Docker job engine");
+                    Arc::new(engine)
+                }
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        "Docker is not available. Running without job engine -- \
+                         jobs will not be executed. Install Docker to enable job execution."
+                    );
+                    Arc::new(NoOpJobEngine)
+                }
+            }
         }
         #[cfg(feature = "kubernetes")]
         JobEngineConfig::Kubernetes { kubernetes } => {
