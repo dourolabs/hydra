@@ -1,12 +1,12 @@
 mod harness;
 
-use std::collections::HashMap;
 use anyhow::Result;
 use metis_common::TaskId;
 use metis_server::{
     domain::actors::Actor,
     job_engine::{JobEngine, JobEngineError, JobStatus, LocalJobEngine},
 };
+use std::collections::HashMap;
 
 fn make_actor() -> (Actor, String) {
     Actor::new_for_task(
