@@ -60,6 +60,7 @@ pub fn build_bff_router(bff_state: BffState) -> Router {
         .nest("/auth", auth_routes)
         .nest("/api/v1", api_routes)
         .nest("/v1", v1_routes)
+        .route("/health", get(health_proxy).with_state(bff_state.clone()))
         .fallback_service(frontend)
         .layer(middleware::from_fn_with_state(
             bff_state,
@@ -213,6 +214,14 @@ async fn auth_me(State(bff): State<BffState>, jar: CookieJar) -> impl IntoRespon
         serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
 
     axum::Json(user).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Health check proxy
+// ---------------------------------------------------------------------------
+
+async fn health_proxy(State(bff): State<BffState>, request: Request<Body>) -> Response {
+    forward_to_internal(bff, "/health", None, request).await
 }
 
 // ---------------------------------------------------------------------------
@@ -644,6 +653,38 @@ mod tests {
 
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn health_returns_ok_json() {
+        let app = build_bff_router(test_bff_state());
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .expect("should have content-type")
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            content_type.contains("application/json"),
+            "expected application/json, got {content_type}"
+        );
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body, serde_json::json!({"status": "ok"}));
     }
 
     #[tokio::test]
