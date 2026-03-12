@@ -57,6 +57,7 @@ pub fn build_bff_router(bff_state: BffState) -> Router {
     let frontend = crate::frontend::router();
 
     Router::new()
+        .route("/health", get(health_check))
         .nest("/auth", auth_routes)
         .nest("/api/v1", api_routes)
         .nest("/v1", v1_routes)
@@ -339,6 +340,14 @@ async fn forward_to_internal(
 }
 
 // ---------------------------------------------------------------------------
+// Health check
+// ---------------------------------------------------------------------------
+
+async fn health_check() -> impl IntoResponse {
+    axum::Json(serde_json::json!({ "status": "ok" }))
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -368,6 +377,26 @@ mod tests {
             auto_login_token: Arc::new("test-token".to_string()),
             inner_app,
         }
+    }
+
+    #[tokio::test]
+    async fn health_returns_ok_json() {
+        let app = build_bff_router(test_bff_state());
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body, serde_json::json!({ "status": "ok" }));
     }
 
     #[tokio::test]
