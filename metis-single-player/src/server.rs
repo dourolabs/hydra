@@ -185,7 +185,7 @@ fn render_server_config(
         auth_token_file: auth_token_path.display().to_string(),
         storage_backend: "sqlite".to_string(),
         sqlite_path: db_path.display().to_string(),
-        job_engine: "local".to_string(),
+        job_engine: "docker".to_string(),
         job: InitJobSection {
             default_image: "metis-worker:latest".to_string(),
         },
@@ -562,7 +562,7 @@ mod tests {
         assert!(config.contains("ghp_test123"));
         assert!(config.contains("auth_mode: local"));
         assert!(config.contains("storage_backend: sqlite"));
-        assert!(config.contains("job_engine: local"));
+        assert!(config.contains("job_engine: docker"));
         assert!(config.contains("/tmp/test.db"));
         assert!(config.contains("/tmp/auth-token"));
         assert!(config.contains("default_image:"));
@@ -587,7 +587,7 @@ mod tests {
         ));
         assert!(matches!(
             app_config.job_engine,
-            metis_server::config::JobEngineConfig::Local
+            metis_server::config::JobEngineConfig::Docker
         ));
     }
 
