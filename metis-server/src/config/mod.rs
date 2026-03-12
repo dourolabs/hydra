@@ -71,9 +71,9 @@ pub enum JobEngineConfig {
     /// Kubernetes-based job execution (for production / multi-player mode).
     #[serde(rename = "kubernetes")]
     Kubernetes { kubernetes: KubernetesSection },
-    /// No-op job engine that does not run any jobs.
-    #[serde(rename = "noop")]
-    Noop,
+    /// Local process-based job execution (runs worker-run as host subprocess).
+    #[serde(rename = "local_process")]
+    LocalProcess,
 }
 
 impl Default for JobEngineConfig {
@@ -87,7 +87,7 @@ impl fmt::Display for JobEngineConfig {
         match self {
             Self::Local => write!(f, "local"),
             Self::Kubernetes { .. } => write!(f, "kubernetes"),
-            Self::Noop => write!(f, "noop"),
+            Self::LocalProcess => write!(f, "local_process"),
         }
     }
 }

@@ -27,7 +27,7 @@ use crate::domain::secrets::SecretManager;
 use crate::domain::users::{User, Username};
 #[cfg(feature = "kubernetes")]
 use crate::job_engine::KubernetesJobEngine;
-use crate::job_engine::{LocalDockerJobEngine, NoOpJobEngine};
+use crate::job_engine::{LocalDockerJobEngine, LocalJobEngine};
 use crate::store::{MemoryStore, Store, StoreError, sqlite_store::SqliteStore};
 #[cfg(feature = "postgres")]
 use crate::store::{
@@ -44,7 +44,7 @@ use metis_common::constants::ENV_METIS_CONFIG;
 use octocrab::Octocrab;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
-use tracing::{info, warn};
+use tracing::info;
 
 /// Build an `AppState` from an `AppConfig`.
 ///
@@ -140,12 +140,10 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                     Arc::new(engine)
                 }
                 Err(err) => {
-                    warn!(
-                        error = %err,
-                        "Docker is not available. Running without job engine -- \
-                         jobs will not be executed. Install Docker to enable job execution."
+                    anyhow::bail!(
+                        "Docker is not available ({err}). Install Docker or use \
+                         job_engine: \"local_process\" in your config.",
                     );
-                    Arc::new(NoOpJobEngine)
                 }
             }
         }
@@ -167,9 +165,17 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 "Kubernetes job engine requires the 'kubernetes' Cargo feature. Rebuild with --features kubernetes"
             );
         }
-        JobEngineConfig::Noop => {
-            info!("using no-op job engine (jobs will not run)");
-            Arc::new(NoOpJobEngine)
+        JobEngineConfig::LocalProcess => {
+            let local_hostname = app_config.metis.server_hostname.trim();
+            if local_hostname.is_empty() {
+                anyhow::bail!(
+                    "metis.server_hostname must be configured when using \
+                     job_engine: \"local_process\""
+                );
+            }
+            let local_server_url = format!("http://{local_hostname}");
+            info!("using local process job engine");
+            Arc::new(LocalJobEngine::new(local_server_url))
         }
     };
 
