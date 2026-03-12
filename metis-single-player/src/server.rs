@@ -337,10 +337,7 @@ async fn run_server_with_bff() -> Result<()> {
     let app_config = metis_server::config::AppConfig::load(&config_path)?;
 
     // Resolve the auth token file path before moving app_config into build_app_state.
-    let auth_token_path = app_config
-        .auth
-        .auth_token_file()
-        .map(|p| p.to_path_buf());
+    let auth_token_path = app_config.auth.auth_token_file().map(|p| p.to_path_buf());
 
     // Build app state first — this calls setup_local_auth() which writes the auth token file.
     let state = metis_server::build_app_state(app_config).await?;
