@@ -119,7 +119,7 @@ fn cmd_init() -> Result<()> {
     config::store_auth_token(&cli_config_path, LOCAL_SERVER_URL, &auth_token)?;
     println!("CLI configured with auth token for {LOCAL_SERVER_URL}");
 
-    let engine_label = if job_engine == "local" {
+    let engine_label = if job_engine == "docker" {
         "Docker"
     } else {
         "Local"
@@ -149,7 +149,7 @@ fn is_docker_available() -> bool {
 }
 
 /// Prompt the user to choose between Docker and Local job engines.
-/// Returns `"local"` for Docker or `"local_process"` for Local.
+/// Returns `"docker"` for Docker or `"local"` for Local.
 fn prompt_job_engine() -> Result<String> {
     let docker_available = is_docker_available();
 
@@ -188,15 +188,15 @@ fn prompt_job_engine() -> Result<String> {
                 );
                 eprintln!();
             }
-            Ok("local".to_string())
+            Ok("docker".to_string())
         }
-        "2" => Ok("local_process".to_string()),
+        "2" => Ok("local".to_string()),
         _ => {
             eprintln!("Invalid choice '{choice}', using default ({default_choice}).");
             if docker_available {
-                Ok("local".to_string())
+                Ok("docker".to_string())
             } else {
-                Ok("local_process".to_string())
+                Ok("local".to_string())
             }
         }
     }
@@ -631,7 +631,7 @@ mod tests {
             "ghp_test123",
             Path::new("/tmp/test.db"),
             Path::new("/tmp/auth-token"),
-            "local",
+            "docker",
         );
 
         // Verify the generated YAML contains all expected fields.
@@ -639,7 +639,7 @@ mod tests {
         assert!(config.contains("ghp_test123"));
         assert!(config.contains("auth_mode: local"));
         assert!(config.contains("storage_backend: sqlite"));
-        assert!(config.contains("job_engine: local"));
+        assert!(config.contains("job_engine: docker"));
         assert!(config.contains("/tmp/test.db"));
         assert!(config.contains("/tmp/auth-token"));
         assert!(config.contains("default_image:"));
@@ -664,12 +664,12 @@ mod tests {
         ));
         assert!(matches!(
             app_config.job_engine,
-            metis_server::config::JobEngineConfig::Local
+            metis_server::config::JobEngineConfig::Docker
         ));
     }
 
     #[test]
-    fn render_server_config_local_process_engine() {
+    fn render_server_config_local_engine() {
         use base64::Engine;
         let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
 
@@ -678,10 +678,10 @@ mod tests {
             "ghp_test123",
             Path::new("/tmp/test.db"),
             Path::new("/tmp/auth-token"),
-            "local_process",
+            "local",
         );
 
-        assert!(config.contains("job_engine: local_process"));
+        assert!(config.contains("job_engine: local"));
 
         use metis_server::config::AppConfig;
         let app_config: AppConfig = serde_yaml_ng::from_str(&config)
@@ -689,7 +689,7 @@ mod tests {
 
         assert!(matches!(
             app_config.job_engine,
-            metis_server::config::JobEngineConfig::LocalProcess
+            metis_server::config::JobEngineConfig::Local
         ));
     }
 

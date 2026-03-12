@@ -127,7 +127,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
 
     // Create job engine based on configured backend
     let job_engine: Arc<dyn crate::job_engine::JobEngine> = match &app_config.job_engine {
-        JobEngineConfig::Local => {
+        JobEngineConfig::Docker => {
             let hostname = app_config.metis.server_hostname.trim();
             let server_url = if hostname.is_empty() {
                 "http://host.docker.internal:8080".to_string()
@@ -142,7 +142,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 Err(err) => {
                     anyhow::bail!(
                         "Docker is not available ({err}). Install Docker or use \
-                         job_engine: \"local_process\" in your config.",
+                         job_engine: \"local\" in your config.",
                     );
                 }
             }
@@ -165,12 +165,12 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 "Kubernetes job engine requires the 'kubernetes' Cargo feature. Rebuild with --features kubernetes"
             );
         }
-        JobEngineConfig::LocalProcess => {
+        JobEngineConfig::Local => {
             let local_hostname = app_config.metis.server_hostname.trim();
             if local_hostname.is_empty() {
                 anyhow::bail!(
                     "metis.server_hostname must be configured when using \
-                     job_engine: \"local_process\""
+                     job_engine: \"local\""
                 );
             }
             let local_server_url = format!("http://{local_hostname}");
