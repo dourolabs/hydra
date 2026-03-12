@@ -66,28 +66,28 @@ impl fmt::Display for StorageConfig {
 #[serde(tag = "job_engine")]
 pub enum JobEngineConfig {
     /// Local Docker-based job execution (default for single-player mode).
-    #[serde(rename = "local")]
-    Local,
+    #[serde(rename = "docker")]
+    Docker,
     /// Kubernetes-based job execution (for production / multi-player mode).
     #[serde(rename = "kubernetes")]
     Kubernetes { kubernetes: KubernetesSection },
     /// Local process-based job execution (runs worker-run as host subprocess).
-    #[serde(rename = "local_process")]
-    LocalProcess,
+    #[serde(rename = "local")]
+    Local,
 }
 
 impl Default for JobEngineConfig {
     fn default() -> Self {
-        Self::Local
+        Self::Docker
     }
 }
 
 impl fmt::Display for JobEngineConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Local => write!(f, "local"),
+            Self::Docker => write!(f, "docker"),
             Self::Kubernetes { .. } => write!(f, "kubernetes"),
-            Self::LocalProcess => write!(f, "local_process"),
+            Self::Local => write!(f, "local"),
         }
     }
 }
