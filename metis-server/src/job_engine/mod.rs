@@ -5,11 +5,13 @@ use std::collections::HashMap;
 use crate::{domain::actors::Actor, store::StoreError};
 
 mod local_docker_job_engine;
+mod noop_job_engine;
 
 #[cfg(feature = "kubernetes")]
 pub use crate::ee::job_engine::KubernetesJobEngine;
 pub use local_docker_job_engine::LocalDockerJobEngine;
 pub use metis_common::TaskId;
+pub use noop_job_engine::NoOpJobEngine;
 
 /// Represents the lifecycle state of a Metis job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

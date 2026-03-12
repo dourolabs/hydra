@@ -27,7 +27,7 @@ use crate::domain::secrets::SecretManager;
 use crate::domain::users::{User, Username};
 #[cfg(feature = "kubernetes")]
 use crate::job_engine::KubernetesJobEngine;
-use crate::job_engine::LocalDockerJobEngine;
+use crate::job_engine::{LocalDockerJobEngine, NoOpJobEngine};
 use crate::store::{MemoryStore, Store, StoreError, sqlite_store::SqliteStore};
 #[cfg(feature = "postgres")]
 use crate::store::{
@@ -157,6 +157,10 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             anyhow::bail!(
                 "Kubernetes job engine requires the 'kubernetes' Cargo feature. Rebuild with --features kubernetes"
             );
+        }
+        JobEngineConfig::Noop => {
+            info!("using no-op job engine (jobs will not run)");
+            Arc::new(NoOpJobEngine)
         }
     };
 
