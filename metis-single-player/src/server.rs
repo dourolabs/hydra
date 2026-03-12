@@ -110,6 +110,9 @@ fn cmd_init() -> Result<()> {
     println!("Starting server...");
     start_server_in_process()?;
 
+    // Poll /health to verify the server is actually running before continuing.
+    wait_for_server_healthy()?;
+
     // Wait for the auth token file to appear (the server writes it on startup).
     let token_path = expand_path(AUTH_TOKEN_PATH);
     let auth_token = wait_for_auth_token(&token_path)?;
@@ -236,6 +239,7 @@ struct ServerInitConfig {
 
 #[derive(serde::Serialize)]
 struct InitMetisSection {
+    server_hostname: String,
     #[serde(rename = "METIS_SECRET_ENCRYPTION_KEY")]
     secret_encryption_key: String,
 }
@@ -254,6 +258,7 @@ fn render_server_config(
 ) -> String {
     let config = ServerInitConfig {
         metis: InitMetisSection {
+            server_hostname: "127.0.0.1:8080".to_string(),
             secret_encryption_key: encryption_key.to_string(),
         },
         auth_mode: "local".to_string(),
@@ -294,6 +299,29 @@ fn wait_for_auth_token(token_path: &Path) -> Result<String> {
         "Timed out waiting for auth token at {}. \
          The server may have failed to start — check logs with `metis server logs`.",
         token_path.display()
+    );
+}
+
+fn wait_for_server_healthy() -> Result<()> {
+    let max_wait = Duration::from_secs(30);
+    let poll_interval = Duration::from_millis(500);
+    let start = std::time::Instant::now();
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()?;
+
+    while start.elapsed() < max_wait {
+        match client.get(format!("{LOCAL_SERVER_URL}/health")).send() {
+            Ok(resp) if resp.status().is_success() => return Ok(()),
+            _ => {}
+        }
+        thread::sleep(poll_interval);
+    }
+
+    bail!(
+        "Server failed to start — /health did not respond within 30 seconds. \
+         Check logs with `metis server logs`."
     );
 }
 
@@ -644,6 +672,7 @@ mod tests {
         assert!(config.contains("/tmp/auth-token"));
         assert!(config.contains("default_image:"));
         assert!(config.contains("# Metis server configuration"));
+        assert!(config.contains("server_hostname: 127.0.0.1:8080"));
 
         // Round-trip: deserialize the generated YAML back into AppConfig.
         use metis_server::config::AppConfig;
@@ -682,6 +711,7 @@ mod tests {
         );
 
         assert!(config.contains("job_engine: local"));
+        assert!(config.contains("server_hostname: 127.0.0.1:8080"));
 
         use metis_server::config::AppConfig;
         let app_config: AppConfig = serde_yaml_ng::from_str(&config)
@@ -691,6 +721,7 @@ mod tests {
             app_config.job_engine,
             metis_server::config::JobEngineConfig::Local
         ));
+        assert_eq!(app_config.metis.server_hostname, "127.0.0.1:8080");
     }
 
     #[test]
