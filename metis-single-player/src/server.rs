@@ -729,10 +729,7 @@ mod tests {
 
     #[test]
     fn store_auth_token_and_set_default_marks_local_server() {
-        let dir = std::env::temp_dir().join(format!(
-            "metis-test-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("metis-test-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let config_path = dir.join("config.toml");
         // Clean up any previous run.
@@ -741,8 +738,7 @@ mod tests {
         // Simulate what cmd_init does: store token then set default.
         config::store_auth_token(&config_path, LOCAL_SERVER_URL, "test-token")
             .expect("store auth token");
-        let mut cli_config =
-            config::AppConfig::load(&config_path).expect("load config");
+        let mut cli_config = config::AppConfig::load(&config_path).expect("load config");
         cli_config
             .set_default_server(LOCAL_SERVER_URL)
             .expect("set default");
