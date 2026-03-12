@@ -382,6 +382,7 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
 pub async fn run_with_state(
     state: AppState,
     listener: tokio::net::TcpListener,
+    app: Router,
 ) -> anyhow::Result<()> {
     // Run scheduler-backed workers for background processing (jobs, agents, GitHub poller)
     let scheduler = start_background_scheduler(state.clone());
@@ -389,9 +390,7 @@ pub async fn run_with_state(
     // Start automation runner (event-driven side effects from the policy engine)
     let (automation_shutdown_tx, automation_shutdown_rx) = tokio::sync::watch::channel(false);
     let automation_handle =
-        crate::policy::runner::spawn_automation_runner(state.clone(), automation_shutdown_rx);
-
-    let app = build_router(&state).with_state(state);
+        crate::policy::runner::spawn_automation_runner(state, automation_shutdown_rx);
 
     let addr = listener.local_addr()?;
 
@@ -415,9 +414,10 @@ pub async fn run() -> anyhow::Result<()> {
 
     let state = build_app_state(app_config).await?;
 
+    let app = build_router(&state).with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 
-    run_with_state(state, listener).await
+    run_with_state(state, listener, app).await
 }
 
 /// Create a default user actor for local auth mode.

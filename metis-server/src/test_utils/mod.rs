@@ -241,8 +241,8 @@ pub async fn spawn_test_server_with_state(
     seed_test_actor(store.as_ref()).await?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
-    let server_state = state.clone();
-    let handle = tokio::spawn(async move { run_with_state(server_state, listener).await });
+    let app = crate::build_router(&state).with_state(state.clone());
+    let handle = tokio::spawn(async move { run_with_state(state, listener, app).await });
     let server = TestServer {
         address: addr.to_string(),
         handle,
