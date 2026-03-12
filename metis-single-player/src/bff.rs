@@ -48,11 +48,18 @@ pub fn build_bff_router(bff_state: BffState) -> Router {
         .route("/", axum::routing::any(api_proxy_root))
         .with_state(bff_state.clone());
 
+    // /v1/* routes: transparent pass-through to the inner server.
+    let v1_routes = Router::new()
+        .route("/*path", axum::routing::any(v1_pass_through))
+        .route("/", axum::routing::any(v1_pass_through_root))
+        .with_state(bff_state.clone());
+
     let frontend = crate::frontend::router();
 
     Router::new()
         .nest("/auth", auth_routes)
         .nest("/api/v1", api_routes)
+        .nest("/v1", v1_routes)
         .fallback_service(frontend)
         .layer(middleware::from_fn_with_state(
             bff_state,
@@ -209,7 +216,23 @@ async fn auth_me(State(bff): State<BffState>, jar: CookieJar) -> impl IntoRespon
 }
 
 // ---------------------------------------------------------------------------
-// API proxy: /api/v1/* -> internal /v1/*
+// /v1/* pass-through: transparent mirror of the inner server routes.
+// ---------------------------------------------------------------------------
+
+async fn v1_pass_through(
+    State(bff): State<BffState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+    request: Request<Body>,
+) -> Response {
+    forward_to_internal(bff, &format!("/v1/{path}"), None, request).await
+}
+
+async fn v1_pass_through_root(State(bff): State<BffState>, request: Request<Body>) -> Response {
+    forward_to_internal(bff, "/v1", None, request).await
+}
+
+// ---------------------------------------------------------------------------
+// API proxy: /api/v1/* -> internal /v1/* (cookie-to-Bearer translation)
 // ---------------------------------------------------------------------------
 
 async fn api_proxy(
@@ -218,23 +241,6 @@ async fn api_proxy(
     axum::extract::Path(path): axum::extract::Path<String>,
     request: Request<Body>,
 ) -> impl IntoResponse {
-    proxy_to_internal(bff, jar, &format!("/v1/{path}"), request).await
-}
-
-async fn api_proxy_root(
-    State(bff): State<BffState>,
-    jar: CookieJar,
-    request: Request<Body>,
-) -> impl IntoResponse {
-    proxy_to_internal(bff, jar, "/v1", request).await
-}
-
-async fn proxy_to_internal(
-    bff: BffState,
-    jar: CookieJar,
-    target_path: &str,
-    original: Request<Body>,
-) -> Response {
     let token = match jar.get(COOKIE_NAME) {
         Some(cookie) => cookie.value().to_string(),
         None => {
@@ -245,8 +251,43 @@ async fn proxy_to_internal(
                 .into_response();
         }
     };
+    forward_to_internal(bff, &format!("/v1/{path}"), Some(token), request).await
+}
 
-    // Build a new request to the internal server with the Bearer token.
+async fn api_proxy_root(
+    State(bff): State<BffState>,
+    jar: CookieJar,
+    request: Request<Body>,
+) -> impl IntoResponse {
+    let token = match jar.get(COOKIE_NAME) {
+        Some(cookie) => cookie.value().to_string(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({ "error": "not authenticated" })),
+            )
+                .into_response();
+        }
+    };
+    forward_to_internal(bff, "/v1", Some(token), request).await
+}
+
+// ---------------------------------------------------------------------------
+// Shared request-forwarding helper
+// ---------------------------------------------------------------------------
+
+/// Forward a request to the inner server at `target_path`.
+///
+/// If `override_token` is `Some`, the Authorization header is set to
+/// `Bearer <token>` (used by `/api/v1/*` cookie-to-Bearer translation).
+/// If `None`, the original Authorization header (if any) is passed through
+/// as-is (used by `/v1/*` transparent mirror).
+async fn forward_to_internal(
+    bff: BffState,
+    target_path: &str,
+    override_token: Option<String>,
+    original: Request<Body>,
+) -> Response {
     let uri = if let Some(query) = original.uri().query() {
         format!("{target_path}?{query}")
     } else {
@@ -254,14 +295,23 @@ async fn proxy_to_internal(
     };
 
     let method = original.method().clone();
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(&uri)
-        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    let mut builder = Request::builder().method(method).uri(&uri);
 
-    // Copy relevant headers from the original request.
+    // Set the Authorization header: either override with token or pass through.
+    if let Some(token) = override_token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+
     for (name, value) in original.headers() {
-        if name == header::HOST || name == header::COOKIE || name == header::AUTHORIZATION {
+        if name == header::HOST || name == header::COOKIE {
+            continue;
+        }
+        // Skip Authorization if we're overriding it.
+        if name == header::AUTHORIZATION
+            && builder
+                .headers_ref()
+                .map_or(false, |h| h.contains_key(header::AUTHORIZATION))
+        {
             continue;
         }
         builder = builder.header(name, value);
@@ -524,6 +574,71 @@ mod tests {
         let req = Request::builder()
             .method("GET")
             .uri("/api/v1/whoami")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn v1_bearer_returns_json() {
+        let handles = metis_server::test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let actor = metis_server::test_utils::test_actor();
+        let system_ref = metis_server::domain::actors::ActorRef::test();
+        let _ = store.add_actor(actor, &system_ref).await;
+
+        let inner_app = metis_server::build_router(&handles.state).with_state(handles.state);
+        let token = metis_server::test_utils::test_auth_token();
+        let bff_state = BffState {
+            auto_login_token: Arc::new("unused".to_string()),
+            inner_app,
+        };
+        let app = build_bff_router(bff_state);
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/whoami")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(body.get("actor").is_some());
+    }
+
+    #[tokio::test]
+    async fn v1_without_bearer_returns_401() {
+        let app = build_bff_router(test_bff_state());
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/whoami")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        // Without auth, the request is forwarded to the inner server which
+        // returns 401 Unauthorized.
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn v1_bearer_invalid_token_returns_401() {
+        let app = build_bff_router(test_bff_state());
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/whoami")
+            .header(header::AUTHORIZATION, "Bearer bad-token")
             .body(Body::empty())
             .unwrap();
 
