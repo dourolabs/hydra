@@ -48,11 +48,18 @@ pub fn build_bff_router(bff_state: BffState) -> Router {
         .route("/", axum::routing::any(api_proxy_root))
         .with_state(bff_state.clone());
 
+    // /v1/* routes: Bearer token auth for CLI access, SPA fallback otherwise.
+    let v1_routes = Router::new()
+        .route("/*path", axum::routing::any(v1_bearer_proxy))
+        .route("/", axum::routing::any(v1_bearer_proxy_root))
+        .with_state(bff_state.clone());
+
     let frontend = crate::frontend::router();
 
     Router::new()
         .nest("/auth", auth_routes)
         .nest("/api/v1", api_routes)
+        .nest("/v1", v1_routes)
         .fallback_service(frontend)
         .layer(middleware::from_fn_with_state(
             bff_state,
@@ -206,6 +213,85 @@ async fn auth_me(State(bff): State<BffState>, jar: CookieJar) -> impl IntoRespon
         serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
 
     axum::Json(user).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// CLI proxy: /v1/* with Bearer auth -> internal /v1/*
+// Falls back to SPA when no Bearer header is present.
+// ---------------------------------------------------------------------------
+
+async fn v1_bearer_proxy(
+    State(bff): State<BffState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+    request: Request<Body>,
+) -> Response {
+    bearer_proxy_or_spa(bff, &format!("/v1/{path}"), request).await
+}
+
+async fn v1_bearer_proxy_root(State(bff): State<BffState>, request: Request<Body>) -> Response {
+    bearer_proxy_or_spa(bff, "/v1", request).await
+}
+
+/// If the request carries an `Authorization: Bearer <token>` header, forward it
+/// directly to the internal server. Otherwise, serve the SPA (index.html) so
+/// browsers navigating to `/v1/...` still get the frontend.
+async fn bearer_proxy_or_spa(
+    bff: BffState,
+    target_path: &str,
+    original: Request<Body>,
+) -> Response {
+    // Extract the Bearer token from the Authorization header.
+    let bearer_token = original
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| v.starts_with("Bearer "))
+        .map(|v| v[7..].to_string());
+
+    let token = match bearer_token {
+        Some(t) => t,
+        None => return crate::frontend::serve_spa_fallback(),
+    };
+
+    // Build a new request to the internal server.
+    let uri = if let Some(query) = original.uri().query() {
+        format!("{target_path}?{query}")
+    } else {
+        target_path.to_string()
+    };
+
+    let method = original.method().clone();
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(&uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+
+    for (name, value) in original.headers() {
+        if name == header::HOST || name == header::COOKIE || name == header::AUTHORIZATION {
+            continue;
+        }
+        builder = builder.header(name, value);
+    }
+
+    let internal_req = match builder.body(original.into_body()) {
+        Ok(req) => req,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": "failed to build request" })),
+            )
+                .into_response();
+        }
+    };
+
+    match bff.inner_app.clone().oneshot(internal_req).await {
+        Ok(response) => response,
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(serde_json::json!({ "error": "internal error" })),
+        )
+            .into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +610,84 @@ mod tests {
         let req = Request::builder()
             .method("GET")
             .uri("/api/v1/whoami")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn v1_bearer_returns_json() {
+        let handles = metis_server::test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let actor = metis_server::test_utils::test_actor();
+        let system_ref = metis_server::domain::actors::ActorRef::test();
+        let _ = store.add_actor(actor, &system_ref).await;
+
+        let inner_app = metis_server::build_router(&handles.state).with_state(handles.state);
+        let token = metis_server::test_utils::test_auth_token();
+        let bff_state = BffState {
+            auto_login_token: Arc::new("unused".to_string()),
+            inner_app,
+        };
+        let app = build_bff_router(bff_state);
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/whoami")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(body.get("actor").is_some());
+    }
+
+    #[tokio::test]
+    async fn v1_without_bearer_falls_through_to_spa() {
+        let app = build_bff_router(test_bff_state());
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/whoami")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        // Without Bearer auth, the response should be a SPA fallback (HTML) or 404
+        // if no frontend assets are embedded (test environment).
+        let status = response.status();
+        assert!(
+            status == StatusCode::OK || status == StatusCode::NOT_FOUND,
+            "expected OK (SPA) or NOT_FOUND, got {status}"
+        );
+
+        if status == StatusCode::OK {
+            let ct = response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            assert!(ct.contains("text/html"), "expected HTML, got {ct}");
+        }
+    }
+
+    #[tokio::test]
+    async fn v1_bearer_invalid_token_returns_401() {
+        let app = build_bff_router(test_bff_state());
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/whoami")
+            .header(header::AUTHORIZATION, "Bearer bad-token")
             .body(Body::empty())
             .unwrap();
 
