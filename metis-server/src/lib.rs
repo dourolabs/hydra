@@ -27,7 +27,7 @@ use crate::domain::secrets::SecretManager;
 use crate::domain::users::{User, Username};
 #[cfg(feature = "kubernetes")]
 use crate::job_engine::KubernetesJobEngine;
-use crate::job_engine::{LocalDockerJobEngine, NoOpJobEngine};
+use crate::job_engine::{LocalDockerJobEngine, LocalJobEngine};
 use crate::store::{MemoryStore, Store, StoreError, sqlite_store::SqliteStore};
 #[cfg(feature = "postgres")]
 use crate::store::{
@@ -142,10 +142,10 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 Err(err) => {
                     warn!(
                         error = %err,
-                        "Docker is not available. Running without job engine -- \
-                         jobs will not be executed. Install Docker to enable job execution."
+                        "Docker is not available. Falling back to local process job engine. \
+                         Install Docker for better isolation."
                     );
-                    Arc::new(NoOpJobEngine)
+                    Arc::new(LocalJobEngine::new("http://localhost:8080".to_string()))
                 }
             }
         }
@@ -167,9 +167,9 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 "Kubernetes job engine requires the 'kubernetes' Cargo feature. Rebuild with --features kubernetes"
             );
         }
-        JobEngineConfig::Noop => {
-            info!("using no-op job engine (jobs will not run)");
-            Arc::new(NoOpJobEngine)
+        JobEngineConfig::LocalProcess => {
+            info!("using local process job engine");
+            Arc::new(LocalJobEngine::new("http://localhost:8080".to_string()))
         }
     };
 
