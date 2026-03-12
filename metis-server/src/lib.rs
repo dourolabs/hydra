@@ -151,7 +151,9 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                         "Docker is not available. Falling back to local process job engine. \
                          Install Docker for better isolation."
                     );
-                    Arc::new(LocalJobEngine::new(local_server_url))
+                    let engine = Arc::new(LocalJobEngine::new(local_server_url));
+                    engine.start_reaper();
+                    engine
                 }
             }
         }
@@ -181,7 +183,9 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 format!("http://{local_hostname}")
             };
             info!("using local process job engine");
-            Arc::new(LocalJobEngine::new(local_server_url))
+            let engine = Arc::new(LocalJobEngine::new(local_server_url));
+            engine.start_reaper();
+            engine
         }
     };
 
