@@ -98,6 +98,17 @@ impl AppConfig {
         Ok(())
     }
 
+    /// Create a config with a single server entry marked as default.
+    pub fn single_server(url: &str, auth_token: &str) -> Self {
+        AppConfig {
+            servers: vec![ServerSection {
+                url: url.to_string(),
+                auth_token: Some(auth_token.to_string()),
+                default: true,
+            }],
+        }
+    }
+
     pub fn write_to(&self, path: &Path) -> Result<()> {
         let contents = toml::to_string_pretty(self).context("failed to serialize configuration")?;
         fs::write(path, contents)
