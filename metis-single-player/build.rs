@@ -50,7 +50,7 @@ fn main() {
     }
 
     let status = Command::new("pnpm")
-        .args(["--filter", "@metis/web", "build"])
+        .args(["--filter", "@metis/web...", "build"])
         .current_dir(&web_dir)
         .status();
 
