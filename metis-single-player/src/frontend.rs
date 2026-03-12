@@ -30,7 +30,6 @@ async fn serve_asset(Path(path): Path<String>) -> impl IntoResponse {
     serve_file(&path)
 }
 
-
 fn serve_file(path: &str) -> Response {
     match FrontendAssets::get(path) {
         Some(file) => {
