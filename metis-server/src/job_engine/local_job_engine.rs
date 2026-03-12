@@ -8,6 +8,7 @@ use futures::channel::mpsc;
 use metis_common::constants::{ENV_METIS_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
@@ -24,9 +25,10 @@ enum ProcessStatus {
 /// Metadata tracked for each subprocess managed by this engine.
 struct ProcessInfo {
     creation_time: DateTime<Utc>,
+    completion_time: Arc<Mutex<Option<DateTime<Utc>>>>,
     log_file: std::path::PathBuf,
     status_rx: tokio::sync::watch::Receiver<ProcessStatus>,
-    pid: u32,
+    pid: Option<u32>,
 }
 
 /// A job engine that runs worker-run as host subprocesses without Docker.
@@ -71,7 +73,7 @@ impl LocalJobEngine {
         self.log_dir.join(format!("{metis_id}.log"))
     }
 
-    fn build_metis_job(&self, metis_id: &TaskId) -> Result<MetisJob, JobEngineError> {
+    async fn build_metis_job(&self, metis_id: &TaskId) -> Result<MetisJob, JobEngineError> {
         let info = self
             .processes
             .get(metis_id)
@@ -90,15 +92,14 @@ impl LocalJobEngine {
             None
         };
 
+        let completion_time = *info.completion_time.lock().await;
+
         Ok(MetisJob {
             id: metis_id.clone(),
             status,
             creation_time: Some(info.creation_time),
             start_time: Some(info.creation_time),
-            completion_time: match status {
-                JobStatus::Complete | JobStatus::Failed => Some(Utc::now()),
-                _ => None,
-            },
+            completion_time,
             failure_message,
         })
     }
@@ -153,23 +154,25 @@ impl JobEngine for LocalJobEngine {
             .spawn()
             .map_err(|e| JobEngineError::Internal(format!("Failed to spawn subprocess: {e}")))?;
 
-        let pid = child.id().unwrap_or(0);
+        let pid = child.id();
         let creation_time = Utc::now();
 
         let (status_tx, status_rx) = tokio::sync::watch::channel(ProcessStatus::Running);
         let status_tx = Arc::new(status_tx);
+        let completion_time = Arc::new(Mutex::new(None));
 
         self.processes.insert(
             metis_id.clone(),
             ProcessInfo {
                 creation_time,
+                completion_time: completion_time.clone(),
                 log_file: log_path,
                 status_rx,
                 pid,
             },
         );
 
-        info!(metis_id = %metis_id, pid = pid, "local subprocess spawned");
+        info!(metis_id = %metis_id, pid = ?pid, "local subprocess spawned");
 
         // Spawn a background task to wait on the child process and update status.
         let task_id = metis_id.clone();
@@ -181,6 +184,7 @@ impl JobEngine for LocalJobEngine {
                     } else {
                         ProcessStatus::Failed
                     };
+                    *completion_time.lock().await = Some(Utc::now());
                     let _ = status_tx.send(new_status);
                     info!(
                         metis_id = %task_id,
@@ -189,6 +193,7 @@ impl JobEngine for LocalJobEngine {
                     );
                 }
                 Err(e) => {
+                    *completion_time.lock().await = Some(Utc::now());
                     let _ = status_tx.send(ProcessStatus::Failed);
                     error!(
                         metis_id = %task_id,
@@ -205,11 +210,12 @@ impl JobEngine for LocalJobEngine {
     async fn list_jobs(&self) -> Result<Vec<MetisJob>, JobEngineError> {
         let mut jobs = Vec::new();
 
-        for entry in self.processes.iter() {
-            match self.build_metis_job(entry.key()) {
+        let keys: Vec<TaskId> = self.processes.iter().map(|e| e.key().clone()).collect();
+        for key in keys {
+            match self.build_metis_job(&key).await {
                 Ok(job) => jobs.push(job),
                 Err(e) => {
-                    warn!(metis_id = %entry.key(), error = %e, "skipping process in list");
+                    warn!(metis_id = %key, error = %e, "skipping process in list");
                 }
             }
         }
@@ -224,7 +230,7 @@ impl JobEngine for LocalJobEngine {
     }
 
     async fn find_job_by_metis_id(&self, metis_id: &TaskId) -> Result<MetisJob, JobEngineError> {
-        self.build_metis_job(metis_id)
+        self.build_metis_job(metis_id).await
     }
 
     async fn get_logs(
@@ -334,24 +340,184 @@ impl JobEngine for LocalJobEngine {
         let is_running = *info.status_rx.borrow() == ProcessStatus::Running;
         drop(info);
 
-        if pid > 0 && is_running {
-            // Send SIGTERM for graceful shutdown.
-            let _ = Self::send_signal(pid, "-TERM").await;
+        if let Some(pid) = pid {
+            if is_running {
+                // Send SIGTERM for graceful shutdown.
+                let _ = Self::send_signal(pid, "-TERM").await;
 
-            // Give the process a moment to exit gracefully.
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                // Give the process a moment to exit gracefully.
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-            // Check if still running and send SIGKILL.
-            if let Some(info) = self.processes.get(metis_id) {
-                if *info.status_rx.borrow() == ProcessStatus::Running {
-                    let _ = Self::send_signal(pid, "-KILL").await;
+                // Check if still running and send SIGKILL.
+                if let Some(info) = self.processes.get(metis_id) {
+                    if *info.status_rx.borrow() == ProcessStatus::Running {
+                        let _ = Self::send_signal(pid, "-KILL").await;
+                    }
                 }
             }
         }
 
         self.processes.remove(metis_id);
-        info!(metis_id = %metis_id, pid = pid, "local subprocess killed");
+        info!(metis_id = %metis_id, pid = ?pid, "local subprocess killed");
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_engine() -> LocalJobEngine {
+        LocalJobEngine::new("http://localhost:8080".to_string())
+    }
+
+    fn insert_process(
+        engine: &LocalJobEngine,
+        metis_id: &TaskId,
+        status: ProcessStatus,
+        pid: Option<u32>,
+    ) {
+        let (tx, rx) = tokio::sync::watch::channel(status);
+        let completion_time = Arc::new(Mutex::new(if status != ProcessStatus::Running {
+            Some(Utc::now())
+        } else {
+            None
+        }));
+        let _ = tx; // keep sender alive via the watch channel internals
+        engine.processes.insert(
+            metis_id.clone(),
+            ProcessInfo {
+                creation_time: Utc::now(),
+                completion_time,
+                log_file: engine.log_file_path(metis_id),
+                status_rx: rx,
+                pid,
+            },
+        );
+    }
+
+    #[test]
+    fn build_env_vars_includes_metis_vars() {
+        let engine = make_engine();
+        let metis_id = TaskId::new();
+        let extra = HashMap::from([("CUSTOM".to_string(), "value".to_string())]);
+        let env = engine.build_env_vars(&metis_id, "test-token", &extra);
+
+        assert_eq!(env.get(ENV_METIS_ID).unwrap(), &metis_id.to_string());
+        assert_eq!(env.get(ENV_METIS_TOKEN).unwrap(), "test-token");
+        assert_eq!(
+            env.get(ENV_METIS_SERVER_URL).unwrap(),
+            "http://localhost:8080"
+        );
+        assert_eq!(env.get("CUSTOM").unwrap(), "value");
+    }
+
+    #[test]
+    fn build_env_vars_omits_empty_server_url() {
+        let engine = LocalJobEngine::new("".to_string());
+        let metis_id = TaskId::new();
+        let env = engine.build_env_vars(&metis_id, "tok", &HashMap::new());
+
+        assert!(!env.contains_key(ENV_METIS_SERVER_URL));
+    }
+
+    #[tokio::test]
+    async fn build_metis_job_maps_running_status() {
+        let engine = make_engine();
+        let metis_id = TaskId::new();
+        insert_process(&engine, &metis_id, ProcessStatus::Running, Some(123));
+
+        let job = engine.build_metis_job(&metis_id).await.unwrap();
+        assert_eq!(job.status, JobStatus::Running);
+        assert!(job.completion_time.is_none());
+        assert!(job.failure_message.is_none());
+    }
+
+    #[tokio::test]
+    async fn build_metis_job_maps_complete_status() {
+        let engine = make_engine();
+        let metis_id = TaskId::new();
+        insert_process(&engine, &metis_id, ProcessStatus::Complete, Some(123));
+
+        let job = engine.build_metis_job(&metis_id).await.unwrap();
+        assert_eq!(job.status, JobStatus::Complete);
+        assert!(job.completion_time.is_some());
+        assert!(job.failure_message.is_none());
+    }
+
+    #[tokio::test]
+    async fn build_metis_job_maps_failed_status() {
+        let engine = make_engine();
+        let metis_id = TaskId::new();
+        insert_process(&engine, &metis_id, ProcessStatus::Failed, Some(123));
+
+        let job = engine.build_metis_job(&metis_id).await.unwrap();
+        assert_eq!(job.status, JobStatus::Failed);
+        assert!(job.completion_time.is_some());
+        assert!(job.failure_message.is_some());
+    }
+
+    #[tokio::test]
+    async fn build_metis_job_returns_not_found_for_unknown_id() {
+        let engine = make_engine();
+        let metis_id = TaskId::new();
+
+        let result = engine.build_metis_job(&metis_id).await;
+        assert!(matches!(result, Err(JobEngineError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn completion_time_is_stable_across_queries() {
+        let engine = make_engine();
+        let metis_id = TaskId::new();
+        insert_process(&engine, &metis_id, ProcessStatus::Complete, Some(123));
+
+        let job1 = engine.build_metis_job(&metis_id).await.unwrap();
+        let job2 = engine.build_metis_job(&metis_id).await.unwrap();
+        assert_eq!(job1.completion_time, job2.completion_time);
+    }
+
+    #[tokio::test]
+    async fn kill_job_removes_process() {
+        let engine = make_engine();
+        let metis_id = TaskId::new();
+        // Use None pid to avoid actually sending signals.
+        insert_process(&engine, &metis_id, ProcessStatus::Running, None);
+
+        engine.kill_job(&metis_id).await.unwrap();
+        assert!(engine.processes.get(&metis_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn kill_job_with_none_pid_does_not_send_signals() {
+        let engine = make_engine();
+        let metis_id = TaskId::new();
+        insert_process(&engine, &metis_id, ProcessStatus::Running, None);
+
+        // Should succeed without attempting to signal PID 0.
+        let result = engine.kill_job(&metis_id).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn kill_job_returns_not_found_for_unknown_id() {
+        let engine = make_engine();
+        let metis_id = TaskId::new();
+
+        let result = engine.kill_job(&metis_id).await;
+        assert!(matches!(result, Err(JobEngineError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn list_jobs_returns_tracked_processes() {
+        let engine = make_engine();
+        let id1 = TaskId::new();
+        let id2 = TaskId::new();
+        insert_process(&engine, &id1, ProcessStatus::Running, Some(1));
+        insert_process(&engine, &id2, ProcessStatus::Complete, Some(2));
+
+        let jobs = engine.list_jobs().await.unwrap();
+        assert_eq!(jobs.len(), 2);
     }
 }

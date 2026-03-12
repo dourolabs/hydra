@@ -140,12 +140,18 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                     Arc::new(engine)
                 }
                 Err(err) => {
+                    let local_hostname = app_config.metis.server_hostname.trim();
+                    let local_server_url = if local_hostname.is_empty() {
+                        "http://localhost:8080".to_string()
+                    } else {
+                        format!("http://{local_hostname}")
+                    };
                     warn!(
                         error = %err,
                         "Docker is not available. Falling back to local process job engine. \
                          Install Docker for better isolation."
                     );
-                    Arc::new(LocalJobEngine::new("http://localhost:8080".to_string()))
+                    Arc::new(LocalJobEngine::new(local_server_url))
                 }
             }
         }
@@ -168,8 +174,14 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             );
         }
         JobEngineConfig::LocalProcess => {
+            let local_hostname = app_config.metis.server_hostname.trim();
+            let local_server_url = if local_hostname.is_empty() {
+                "http://localhost:8080".to_string()
+            } else {
+                format!("http://{local_hostname}")
+            };
             info!("using local process job engine");
-            Arc::new(LocalJobEngine::new("http://localhost:8080".to_string()))
+            Arc::new(LocalJobEngine::new(local_server_url))
         }
     };
 
