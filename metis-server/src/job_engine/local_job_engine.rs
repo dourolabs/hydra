@@ -2,17 +2,23 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use dashmap::DashMap;
 use futures::channel::mpsc;
 use metis_common::constants::{ENV_METIS_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
 use crate::domain::actors::Actor;
+
+/// How long completed/failed process entries are kept before being reaped.
+const COMPLETED_PROCESS_TTL: TimeDelta = TimeDelta::hours(1);
+
+/// How often the reaper task runs.
+const REAP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 /// Tracks the runtime status of a local subprocess.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +108,81 @@ impl LocalJobEngine {
             completion_time,
             failure_message,
         })
+    }
+
+    /// Remove completed/failed process entries older than the given TTL.
+    ///
+    /// Also deletes the associated log file on disk for each removed entry.
+    async fn reap_completed_processes(&self, ttl: TimeDelta) {
+        let now = Utc::now();
+        let mut reaped = 0u32;
+
+        // Collect keys to reap first, then remove individually.
+        // (DashMap::retain is synchronous and we need async lock access for completion_time.)
+        let keys: Vec<TaskId> = self.processes.iter().map(|e| e.key().clone()).collect();
+
+        for key in keys {
+            let should_reap = {
+                let Some(info) = self.processes.get(&key) else {
+                    continue;
+                };
+                let status = *info.status_rx.borrow();
+                if status == ProcessStatus::Running {
+                    false
+                } else {
+                    let completion_time = *info.completion_time.lock().await;
+                    matches!(completion_time, Some(t) if now - t > ttl)
+                }
+            };
+
+            if should_reap {
+                if let Some((_, info)) = self.processes.remove(&key) {
+                    if let Err(e) = std::fs::remove_file(&info.log_file) {
+                        if e.kind() != std::io::ErrorKind::NotFound {
+                            warn!(
+                                task_id = %key,
+                                error = %e,
+                                "failed to remove log file during reap"
+                            );
+                        }
+                    }
+                    let completion_time = *info.completion_time.lock().await;
+                    let age = completion_time.map(|t| now - t);
+                    debug!(
+                        task_id = %key,
+                        age_secs = ?age.map(|a| a.num_seconds()),
+                        "reaped completed process entry"
+                    );
+                    reaped += 1;
+                }
+            }
+        }
+
+        if reaped > 0 {
+            info!(reaped_count = reaped, "reaped completed process entries");
+        }
+    }
+
+    /// Spawn a background task that periodically reaps completed process entries.
+    ///
+    /// The task holds a `Weak` reference to the engine and stops automatically
+    /// when the engine is dropped.
+    pub fn start_reaper(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(REAP_INTERVAL);
+            // The first tick completes immediately; skip it so the first reap
+            // happens after one full interval.
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let Some(engine) = weak.upgrade() else {
+                    debug!("LocalJobEngine dropped, stopping reaper task");
+                    break;
+                };
+                engine.reap_completed_processes(COMPLETED_PROCESS_TTL).await;
+            }
+        });
     }
 
     /// Send a signal to a process by PID using the `kill` command.
@@ -519,5 +600,94 @@ mod tests {
 
         let jobs = engine.list_jobs().await.unwrap();
         assert_eq!(jobs.len(), 2);
+    }
+
+    fn insert_process_with_completion_time(
+        engine: &LocalJobEngine,
+        metis_id: &TaskId,
+        status: ProcessStatus,
+        completion_time: Option<DateTime<Utc>>,
+    ) {
+        let (_tx, rx) = tokio::sync::watch::channel(status);
+        engine.processes.insert(
+            metis_id.clone(),
+            ProcessInfo {
+                creation_time: Utc::now(),
+                completion_time: Arc::new(Mutex::new(completion_time)),
+                log_file: engine.log_file_path(metis_id),
+                status_rx: rx,
+                pid: None,
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn reap_removes_completed_entries_past_ttl() {
+        let engine = make_engine();
+        let old_completed = TaskId::new();
+        let recent_completed = TaskId::new();
+        let running = TaskId::new();
+        let old_failed = TaskId::new();
+
+        // Create log files so we can verify cleanup.
+        let _ = std::fs::create_dir_all(&engine.log_dir);
+        std::fs::write(engine.log_file_path(&old_completed), "log").unwrap();
+        std::fs::write(engine.log_file_path(&old_failed), "log").unwrap();
+
+        // Completed 2 hours ago — should be reaped with a 1-second TTL.
+        let two_hours_ago = Utc::now() - TimeDelta::hours(2);
+        insert_process_with_completion_time(
+            &engine,
+            &old_completed,
+            ProcessStatus::Complete,
+            Some(two_hours_ago),
+        );
+
+        // Completed just now — should NOT be reaped with a 1-hour TTL.
+        insert_process_with_completion_time(
+            &engine,
+            &recent_completed,
+            ProcessStatus::Complete,
+            Some(Utc::now()),
+        );
+
+        // Still running — should never be reaped.
+        insert_process_with_completion_time(&engine, &running, ProcessStatus::Running, None);
+
+        // Failed 2 hours ago — should be reaped.
+        insert_process_with_completion_time(
+            &engine,
+            &old_failed,
+            ProcessStatus::Failed,
+            Some(two_hours_ago),
+        );
+
+        // Use a short TTL of 1 second so only the "2 hours ago" entries are reaped.
+        engine.reap_completed_processes(TimeDelta::seconds(1)).await;
+
+        // Old completed and old failed should be removed.
+        assert!(engine.processes.get(&old_completed).is_none());
+        assert!(engine.processes.get(&old_failed).is_none());
+
+        // Recent completed and running should remain.
+        assert!(engine.processes.get(&recent_completed).is_some());
+        assert!(engine.processes.get(&running).is_some());
+
+        // Log files for reaped entries should be deleted.
+        assert!(!engine.log_file_path(&old_completed).exists());
+        assert!(!engine.log_file_path(&old_failed).exists());
+    }
+
+    #[tokio::test]
+    async fn reap_does_not_remove_entries_without_completion_time() {
+        let engine = make_engine();
+        let id = TaskId::new();
+
+        // Failed but no completion_time set yet — should not be reaped.
+        insert_process_with_completion_time(&engine, &id, ProcessStatus::Failed, None);
+
+        engine.reap_completed_processes(TimeDelta::seconds(0)).await;
+
+        assert!(engine.processes.get(&id).is_some());
     }
 }
