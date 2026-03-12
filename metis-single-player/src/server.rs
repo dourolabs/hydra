@@ -184,14 +184,11 @@ fn prompt_job_engine() -> Result<String> {
                 eprintln!(
                     "Warning: Docker was not detected on this system. \
                      Please install Docker (https://docs.docker.com/get-docker/) \
-                     and ensure it is running, then run `metis server init` again."
+                     and ensure it is running before starting jobs."
                 );
-                eprintln!("Falling back to Local job engine.");
                 eprintln!();
-                Ok("local_process".to_string())
-            } else {
-                Ok("local".to_string())
             }
+            Ok("local".to_string())
         }
         "2" => Ok("local_process".to_string()),
         _ => {
