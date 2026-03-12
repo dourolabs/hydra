@@ -227,10 +227,7 @@ async fn v1_pass_through(
     forward_to_internal(bff, &format!("/v1/{path}"), None, request).await
 }
 
-async fn v1_pass_through_root(
-    State(bff): State<BffState>,
-    request: Request<Body>,
-) -> Response {
+async fn v1_pass_through_root(State(bff): State<BffState>, request: Request<Body>) -> Response {
     forward_to_internal(bff, "/v1", None, request).await
 }
 
@@ -310,8 +307,10 @@ async fn forward_to_internal(
             continue;
         }
         // Skip Authorization if we're overriding it.
-        if name == header::AUTHORIZATION && builder.headers_ref()
-            .map_or(false, |h| h.contains_key(header::AUTHORIZATION))
+        if name == header::AUTHORIZATION
+            && builder
+                .headers_ref()
+                .map_or(false, |h| h.contains_key(header::AUTHORIZATION))
         {
             continue;
         }
