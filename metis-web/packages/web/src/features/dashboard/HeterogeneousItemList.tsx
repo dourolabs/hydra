@@ -9,7 +9,7 @@ import styles from "./HeterogeneousItemList.module.css";
 
 interface HeterogeneousItemListProps {
   items: WorkItem[];
-  jobsByIssue: Map<string, JobSummaryRecord[]>;
+  sessionsByIssue: Map<string, JobSummaryRecord[]>;
   childStatusMap: Map<string, ChildStatus[]>;
   isActiveMap: Map<string, boolean>;
   isLoading: boolean;
@@ -38,7 +38,7 @@ function sortByLastUpdated(a: WorkItem, b: WorkItem): number {
 
 export function HeterogeneousItemList({
   items,
-  jobsByIssue,
+  sessionsByIssue,
   childStatusMap,
   isActiveMap,
   isLoading,
@@ -135,9 +135,9 @@ export function HeterogeneousItemList({
                 <ItemRow
                   key={`${item.kind}-${item.id}`}
                   item={item}
-                  jobs={
+                  sessions={
                     item.kind === "issue"
-                      ? jobsByIssue.get(item.id)
+                      ? sessionsByIssue.get(item.id)
                       : undefined
                   }
                   childStatuses={
@@ -165,9 +165,9 @@ export function HeterogeneousItemList({
                 <ItemRow
                   key={`${item.kind}-${item.id}`}
                   item={item}
-                  jobs={
+                  sessions={
                     item.kind === "issue"
-                      ? jobsByIssue.get(item.id)
+                      ? sessionsByIssue.get(item.id)
                       : undefined
                   }
                   childStatuses={
@@ -195,7 +195,7 @@ export function HeterogeneousItemList({
                 <ItemRow
                   key={`${item.kind}-${item.id}`}
                   item={item}
-                  jobs={undefined}
+                  sessions={undefined}
                   filterRootId={filterRootId}
 
                 />

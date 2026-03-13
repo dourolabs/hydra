@@ -18,7 +18,7 @@ Three-package monorepo managed with pnpm workspaces:
 
 Always check these modules before writing new helpers:
 
-- **`statusMapping.ts`** — `normalizeIssueStatus()`, `normalizeJobStatus()`, `normalizePatchStatus()`, `normalizeCiState()` for normalizing API entity statuses to `BadgeStatus` values. Each normalizer converts domain-specific status strings (e.g., PascalCase patch statuses) to kebab-case Badge variants without lossy mapping.
+- **`statusMapping.ts`** — `normalizeIssueStatus()`, `normalizeSessionStatus()`, `normalizePatchStatus()`, `normalizeCiState()` for normalizing API entity statuses to `BadgeStatus` values. Each normalizer converts domain-specific status strings (e.g., PascalCase patch statuses) to kebab-case Badge variants without lossy mapping.
 - **`time.ts`** — `formatDuration()`, `getRuntime()` for time formatting. All time-related formatting should go here.
 - **`text.ts`** — `descriptionSnippet()` for truncating descriptions to preview length.
 - **`actors.ts`** _(planned)_ — Will contain `actorDisplayName()`, `actorAvatarName()` for rendering actor references. Until created, check for inline actor formatting logic and consolidate here.
@@ -34,7 +34,7 @@ features/<name>/
   └── use<Entity>.ts           # React Query hook
 ```
 
-Current feature modules: `auth`, `issues`, `jobs`, `patches`.
+Current feature modules: `auth`, `issues`, `sessions`, `patches`.
 
 **Hook pattern** — All data-fetching hooks wrap React Query:
 ```ts
@@ -162,7 +162,7 @@ Each screenshot is named `{viewport}-{page}.png`, for example:
 
 #### Pages captured
 
-Login, dashboard, issue detail, patch detail, documents list, document detail, settings, and job log page.
+Login, dashboard, issue detail, patch detail, documents list, document detail, settings, and session log page.
 
 ### Contract tests
 

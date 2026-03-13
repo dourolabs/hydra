@@ -9,7 +9,7 @@ export function createEventRoutes(store: Store): Hono {
   app.get("/v1/events", (c) => {
     const typesFilter = c.req.query("types")?.split(",").filter(Boolean);
     const issueIdsFilter = c.req.query("issue_ids")?.split(",").filter(Boolean);
-    const jobIdsFilter = c.req.query("job_ids")?.split(",").filter(Boolean);
+    const sessionIdsFilter = c.req.query("session_ids")?.split(",").filter(Boolean);
     const patchIdsFilter = c.req.query("patch_ids")?.split(",").filter(Boolean);
     const documentIdsFilter = c.req.query("document_ids")?.split(",").filter(Boolean);
 
@@ -19,7 +19,7 @@ export function createEventRoutes(store: Store): Hono {
     function matchesFilter(event: StoreEvent): boolean {
       if (typesFilter && !typesFilter.includes(event.eventType)) return false;
       if (issueIdsFilter && event.entityType === "issues" && !issueIdsFilter.includes(event.entityId)) return false;
-      if (jobIdsFilter && event.entityType === "jobs" && !jobIdsFilter.includes(event.entityId)) return false;
+      if (sessionIdsFilter && event.entityType === "sessions" && !sessionIdsFilter.includes(event.entityId)) return false;
       if (patchIdsFilter && event.entityType === "patches" && !patchIdsFilter.includes(event.entityId)) return false;
       if (documentIdsFilter && event.entityType === "documents" && !documentIdsFilter.includes(event.entityId)) return false;
       return true;

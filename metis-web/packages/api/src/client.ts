@@ -148,44 +148,44 @@ export class MetisApiClient {
   }
 
   // ---------------------------------------------------------------------------
-  // Jobs
+  // Sessions
   // ---------------------------------------------------------------------------
 
-  /** POST /v1/jobs */
-  createJob(request: CreateJobRequest): Promise<CreateJobResponse> {
-    return this.post("/v1/jobs", request);
+  /** POST /v1/sessions */
+  createSession(request: CreateJobRequest): Promise<CreateJobResponse> {
+    return this.post("/v1/sessions", request);
   }
 
-  /** GET /v1/jobs */
-  listJobs(query?: Partial<SearchJobsQuery>): Promise<ListJobsResponse> {
-    return this.get("/v1/jobs", query as Record<string, unknown>);
+  /** GET /v1/sessions */
+  listSessions(query?: Partial<SearchJobsQuery>): Promise<ListJobsResponse> {
+    return this.get("/v1/sessions", query as Record<string, unknown>);
   }
 
-  /** GET /v1/jobs/:jobId */
-  getJob(jobId: string): Promise<JobVersionRecord> {
-    return this.get(`/v1/jobs/${encodeURIComponent(jobId)}`);
+  /** GET /v1/sessions/:sessionId */
+  getSession(sessionId: string): Promise<JobVersionRecord> {
+    return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}`);
   }
 
-  /** GET /v1/jobs/:jobId/versions/:version */
-  getJobVersion(jobId: string, version: number): Promise<JobVersionRecord> {
+  /** GET /v1/sessions/:sessionId/versions/:version */
+  getSessionVersion(sessionId: string, version: number): Promise<JobVersionRecord> {
     return this.get(
-      `/v1/jobs/${encodeURIComponent(jobId)}/versions/${encodeURIComponent(String(version))}`,
+      `/v1/sessions/${encodeURIComponent(sessionId)}/versions/${encodeURIComponent(String(version))}`,
     );
   }
 
-  /** DELETE /v1/jobs/:jobId */
-  killJob(jobId: string): Promise<KillJobResponse> {
-    return this.del(`/v1/jobs/${encodeURIComponent(jobId)}`);
+  /** DELETE /v1/sessions/:sessionId */
+  killSession(sessionId: string): Promise<KillJobResponse> {
+    return this.del(`/v1/sessions/${encodeURIComponent(sessionId)}`);
   }
 
   /**
-   * GET /v1/jobs/:jobId/logs
+   * GET /v1/sessions/:sessionId/logs
    *
    * Returns the raw Response so callers can read it as text or stream SSE.
    * For streaming logs set `query.watch = true`.
    */
-  async getJobLogs(jobId: string, query?: Partial<LogsQuery>): Promise<Response> {
-    let url = `${this.baseUrl}/v1/jobs/${encodeURIComponent(jobId)}/logs`;
+  async getSessionLogs(sessionId: string, query?: Partial<LogsQuery>): Promise<Response> {
+    let url = `${this.baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/logs`;
     if (query) {
       const params = toSearchParams(query as Record<string, unknown>);
       const qs = params.toString();
@@ -198,19 +198,19 @@ export class MetisApiClient {
     return response;
   }
 
-  /** POST /v1/jobs/:jobId/status */
-  setJobStatus(jobId: string, status: JobStatusUpdate): Promise<SetJobStatusResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobId)}/status`, status);
+  /** POST /v1/sessions/:sessionId/status */
+  setSessionStatus(sessionId: string, status: JobStatusUpdate): Promise<SetJobStatusResponse> {
+    return this.post(`/v1/sessions/${encodeURIComponent(sessionId)}/status`, status);
   }
 
-  /** GET /v1/jobs/:jobId/context */
-  getJobContext(jobId: string): Promise<WorkerContext> {
-    return this.get(`/v1/jobs/${encodeURIComponent(jobId)}/context`);
+  /** GET /v1/sessions/:sessionId/context */
+  getSessionContext(sessionId: string): Promise<WorkerContext> {
+    return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/context`);
   }
 
-  /** GET /v1/jobs/:jobId/versions */
-  listJobVersions(jobId: string): Promise<ListJobVersionsResponse> {
-    return this.get(`/v1/jobs/${encodeURIComponent(jobId)}/versions`);
+  /** GET /v1/sessions/:sessionId/versions */
+  listSessionVersions(sessionId: string): Promise<ListJobVersionsResponse> {
+    return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/versions`);
   }
 
   // ---------------------------------------------------------------------------

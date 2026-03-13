@@ -90,9 +90,9 @@ const issueList = (r: ListIssuesResponse) => r.issues;
 const wrapIssues = (items: IssueSummaryRecord[]): ListIssuesResponse => ({ issues: items });
 const issueRecordId = (r: IssueSummaryRecord) => r.issue_id;
 
-const jobList = (r: ListJobsResponse) => r.jobs;
-const wrapJobs = (items: JobSummaryRecord[]): ListJobsResponse => ({ jobs: items });
-const jobRecordId = (r: JobSummaryRecord) => r.job_id;
+const sessionList = (r: ListJobsResponse) => r.jobs;
+const wrapSessions = (items: JobSummaryRecord[]): ListJobsResponse => ({ jobs: items });
+const sessionRecordId = (r: JobSummaryRecord) => r.job_id;
 
 const patchList = (r: ListPatchesResponse) => r.patches;
 const wrapPatches = (items: PatchSummaryRecord[]): ListPatchesResponse => ({ patches: items });
@@ -124,9 +124,9 @@ export function useSSE(): SSEConnectionState {
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         queryClient.invalidateQueries({ queryKey: ["issues"] });
         queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
-      } else if (entity_type === "job" || eventType.startsWith("job_")) {
-        queryClient.invalidateQueries({ queryKey: ["jobs"] });
-        queryClient.invalidateQueries({ queryKey: ["allJobs"] });
+      } else if (entity_type === "job" || entity_type === "sessions" || eventType.startsWith("job_")) {
+        queryClient.invalidateQueries({ queryKey: ["sessions"] });
+        queryClient.invalidateQueries({ queryKey: ["allSessions"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         queryClient.invalidateQueries({ queryKey: ["patches"] });
         queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
@@ -161,26 +161,26 @@ export function useSSE(): SSEConnectionState {
           upsertInList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id, record);
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
         }
-      } else if (entity_type === "job" || eventType.startsWith("job_")) {
+      } else if (entity_type === "job" || entity_type === "sessions" || eventType.startsWith("job_")) {
         const record = entity as unknown as JobSummaryRecord;
         const spawnedFrom = record.task?.spawned_from;
         const isTerminal = record.task?.status === "complete" || record.task?.status === "failed" || record.task?.status === "unknown";
 
         // SSE now sends summary records; invalidate the detail cache instead of direct-setting.
-        queryClient.invalidateQueries({ queryKey: ["job", entity_id] });
+        queryClient.invalidateQueries({ queryKey: ["session", entity_id] });
 
-        // allJobs only contains active (non-terminal) jobs. Remove jobs that
+        // allSessions only contains active (non-terminal) sessions. Remove sessions that
         // transition to a terminal status; upsert otherwise.
         if (isTerminal) {
-          removeFromList(queryClient, ["allJobs"], jobList, wrapJobs, jobRecordId, entity_id);
+          removeFromList(queryClient, ["allSessions"], sessionList, wrapSessions, sessionRecordId, entity_id);
         } else {
-          upsertInList(queryClient, ["allJobs"], jobList, wrapJobs, jobRecordId, entity_id, record);
+          upsertInList(queryClient, ["allSessions"], sessionList, wrapSessions, sessionRecordId, entity_id, record);
         }
 
         if (spawnedFrom) {
-          upsertInList(queryClient, ["jobs", spawnedFrom], jobList, wrapJobs, jobRecordId, entity_id, record);
+          upsertInList(queryClient, ["sessions", spawnedFrom], sessionList, wrapSessions, sessionRecordId, entity_id, record);
         } else {
-          queryClient.invalidateQueries({ queryKey: ["jobs"] });
+          queryClient.invalidateQueries({ queryKey: ["sessions"] });
         }
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         if (eventType === "patch_deleted") {
@@ -188,9 +188,7 @@ export function useSSE(): SSEConnectionState {
           removeFromList(queryClient, ["patches"], patchList, wrapPatches, patchRecordId, entity_id);
         } else {
           const record = entity as unknown as PatchSummaryRecord;
-          // SSE now carries summary records — update list cache directly
           upsertInList(queryClient, ["patches"], patchList, wrapPatches, patchRecordId, entity_id, record);
-          // Detail cache uses full PatchVersionRecord; invalidate so it refetches
           queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
         }
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
@@ -199,7 +197,6 @@ export function useSSE(): SSEConnectionState {
           removeFromList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id);
         } else {
           const record = entity as unknown as DocumentSummaryRecord;
-          // Invalidate the detail cache since SSE now carries summary data only
           queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
           upsertInList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id, record);
         }
@@ -212,8 +209,8 @@ export function useSSE(): SSEConnectionState {
 
   const invalidateAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["issues"] });
-    queryClient.invalidateQueries({ queryKey: ["jobs"] });
-    queryClient.invalidateQueries({ queryKey: ["allJobs"] });
+    queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    queryClient.invalidateQueries({ queryKey: ["allSessions"] });
     queryClient.invalidateQueries({ queryKey: ["patches"] });
     queryClient.invalidateQueries({ queryKey: ["documents"] });
     queryClient.invalidateQueries({ queryKey: ["labels"] });

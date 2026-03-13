@@ -8,7 +8,7 @@ import { useIssue } from "./useIssue";
 import { IssueRelatedIssues } from "./IssueRelatedIssues";
 import { IssueActivity } from "./IssueActivity";
 import { IssueUpdateModal } from "./IssueUpdateModal";
-import { JobList } from "../jobs/JobList";
+import { SessionList } from "../sessions/SessionList";
 import { PatchList } from "../patches/PatchList";
 import { PatchPreview } from "./PatchPreview";
 import { DocumentPreview } from "./DocumentPreview";
@@ -40,7 +40,7 @@ interface IssueDetailProps {
 
 const TABS = [
   { id: "related", label: "Related Issues" },
-  { id: "jobs", label: "Jobs" },
+  { id: "sessions", label: "Sessions" },
   { id: "patches", label: "Patches" },
   { id: "activity", label: "Activity" },
   { id: "metadata", label: "Metadata" },
@@ -155,7 +155,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
         </Panel>
       )}
 
-      {/* Tabbed sections: Related Issues, Jobs, Patches, Activity, Metadata */}
+      {/* Tabbed sections: Related Issues, Sessions, Patches, Activity, Metadata */}
       <Panel
         header={
           <Tabs
@@ -169,7 +169,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
           {activeTab === "related" && (
             <IssueRelatedIssues issueId={record.issue_id} />
           )}
-          {activeTab === "jobs" && <JobList issueId={record.issue_id} />}
+          {activeTab === "sessions" && <SessionList issueId={record.issue_id} />}
           {activeTab === "patches" && (
             <PatchList
               patchIds={issue.patches ?? []}

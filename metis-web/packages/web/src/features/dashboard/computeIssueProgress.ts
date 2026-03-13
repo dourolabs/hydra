@@ -4,7 +4,7 @@ import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 
 export function computeIsActiveMap(
   issues: IssueSummaryRecord[],
-  jobsByIssue: Map<string, JobSummaryRecord[]>,
+  sessionsByIssue: Map<string, JobSummaryRecord[]>,
 ): Map<string, boolean> {
   const childrenMap = new Map<string, string[]>();
   for (const issue of issues) {
@@ -22,7 +22,7 @@ export function computeIsActiveMap(
   function isActive(issueId: string): boolean {
     const cached = cache.get(issueId);
     if (cached !== undefined) return cached;
-    const jobs = jobsByIssue.get(issueId) ?? [];
+    const jobs = sessionsByIssue.get(issueId) ?? [];
     if (jobs.some((j) => j.task.status === "running" || j.task.status === "pending")) {
       cache.set(issueId, true);
       return true;
@@ -77,12 +77,12 @@ export function countNeedsAttentionBadge(
 
 export function computeIssueProgress(
   roots: IssueTreeNode[],
-  jobsByIssue?: Map<string, JobSummaryRecord[]>,
+  sessionsByIssue?: Map<string, JobSummaryRecord[]>,
   username?: string,
 ): IssueProgress[] {
   function hasActiveDescendant(node: IssueTreeNode): boolean {
-    if (!jobsByIssue) return false;
-    const jobs = jobsByIssue.get(node.id) ?? [];
+    if (!sessionsByIssue) return false;
+    const jobs = sessionsByIssue.get(node.id) ?? [];
     if (jobs.some((j) => j.task.status === "running" || j.task.status === "pending")) {
       return true;
     }
@@ -97,7 +97,7 @@ export function computeIssueProgress(
       (status === "open" || status === "in-progress") &&
       node.issue.issue.assignee === username
     ) {
-      const jobs = jobsByIssue?.get(node.id) ?? [];
+      const jobs = sessionsByIssue?.get(node.id) ?? [];
       const hasRunningJob = jobs.some(
         (j) => j.task.status === "running" || j.task.status === "pending",
       );

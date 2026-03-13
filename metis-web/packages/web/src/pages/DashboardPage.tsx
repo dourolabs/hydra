@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
 import { useIssues } from "../features/issues/useIssues";
-import { useAllJobs } from "../features/jobs/useAllJobs";
+import { useAllSessions } from "../features/sessions/useAllSessions";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/IssueFilterSidebar";
@@ -37,7 +37,7 @@ export function DashboardPage() {
   }, []);
 
   const { data: issues, isLoading } = useIssues(searchQuery || undefined);
-  const { data: jobsByIssue } = useAllJobs();
+  const { data: sessionsByIssue } = useAllSessions();
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
@@ -66,9 +66,9 @@ export function DashboardPage() {
     useTransitiveWorkItems(hookRootId, issues ?? []);
 
   const isActiveMap = useMemo(() => {
-    if (!issues || !jobsByIssue) return new Map<string, boolean>();
-    return computeIsActiveMap(issues, jobsByIssue);
-  }, [issues, jobsByIssue]);
+    if (!issues || !sessionsByIssue) return new Map<string, boolean>();
+    return computeIsActiveMap(issues, sessionsByIssue);
+  }, [issues, sessionsByIssue]);
 
   const inboxCount = useMemo(() => {
     if (!issues || !inboxLabel) return 0;
@@ -235,7 +235,7 @@ export function DashboardPage() {
         />
         <HeterogeneousItemList
           items={workItems}
-          jobsByIssue={jobsByIssue ?? new Map()}
+          sessionsByIssue={sessionsByIssue ?? new Map()}
           childStatusMap={childStatusMap}
           isActiveMap={isActiveMap}
           isLoading={workItemsLoading}

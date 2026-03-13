@@ -19,7 +19,7 @@ interface LabelAssociationSeed {
 
 interface SeedData {
   issues: Record<string, Issue>;
-  jobs: Record<string, Task>;
+  sessions: Record<string, Task>;
   patches: Record<string, Patch>;
   documents: Record<string, Document>;
   repositories: Record<string, Repository>;
@@ -46,8 +46,8 @@ export function loadSeedData(store: Store): void {
     store.create<Issue>("issues", id, issue, "issue");
   }
 
-  for (const [id, task] of Object.entries(seed.jobs)) {
-    store.create<Task>("jobs", id, task, "job");
+  for (const [id, task] of Object.entries(seed.sessions)) {
+    store.create<Task>("sessions", id, task, "job");
   }
 
   for (const [id, patch] of Object.entries(seed.patches)) {
@@ -87,7 +87,7 @@ export function loadSeedData(store: Store): void {
   const labelCount = seed.labels ? Object.keys(seed.labels).length : 0;
   console.log(
     `Seed data loaded: ${Object.keys(seed.issues).length} issues, ` +
-    `${Object.keys(seed.jobs).length} jobs, ` +
+    `${Object.keys(seed.sessions).length} sessions, ` +
     `${Object.keys(seed.patches).length} patches, ` +
     `${Object.keys(seed.documents).length} documents, ` +
     `${Object.keys(seed.repositories).length} repositories, ` +

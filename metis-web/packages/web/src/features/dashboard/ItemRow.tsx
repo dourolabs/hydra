@@ -11,7 +11,7 @@ import { apiClient } from "../../api/client";
 import { normalizeIssueStatus, normalizePatchStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { LabelChip } from "../labels/LabelChip";
-import { useJobDuration } from "./useJobDuration";
+import { useSessionDuration } from "./useSessionDuration";
 import { useSwipeToArchive } from "./useSwipeToArchive";
 import styles from "./ItemRow.module.css";
 
@@ -68,14 +68,14 @@ const TYPE_ICONS: Record<WorkItem["kind"], (() => React.JSX.Element) | null> = {
 
 interface ItemRowProps {
   item: WorkItem;
-  jobs?: JobSummaryRecord[];
+  sessions?: JobSummaryRecord[];
   childStatuses?: ChildStatus[];
   isActive?: boolean;
   filterRootId?: string | null;
   inboxLabelId?: string;
 }
 
-export const ItemRow = React.memo(function ItemRow({ item, jobs, childStatuses, isActive, filterRootId, inboxLabelId }: ItemRowProps) {
+export const ItemRow = React.memo(function ItemRow({ item, sessions, childStatuses, isActive, filterRootId, inboxLabelId }: ItemRowProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -175,11 +175,11 @@ export const ItemRow = React.memo(function ItemRow({ item, jobs, childStatuses, 
   const isAssignedToMe =
     item.kind === "issue" && !item.isTerminal && !!assignee && assignee === currentUsername;
 
-  // Job status (issues only) — isActive is tree-computed, fall back to direct job check
-  const hasRunningJob = isActive ?? (jobs?.some((j) => j.task.status === "running" || j.task.status === "pending") ?? false);
+  // Session status (issues only) — isActive is tree-computed, fall back to direct session check
+  const hasRunningJob = isActive ?? (sessions?.some((j) => j.task.status === "running" || j.task.status === "pending") ?? false);
 
-  // Job duration display (extracted to hook to isolate timer re-renders)
-  const { durationText, isRunning } = useJobDuration(jobs);
+  // Session duration display (extracted to hook to isolate timer re-renders)
+  const { durationText, isRunning } = useSessionDuration(sessions);
   const durationClass = isRunning
     ? `${styles.timestamp} ${styles.timerRunning}`
     : styles.timestamp;

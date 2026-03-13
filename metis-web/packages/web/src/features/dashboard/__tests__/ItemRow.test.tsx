@@ -49,8 +49,8 @@ vi.mock("@metis/ui", () => ({
   }),
 }));
 
-vi.mock("../useJobDuration", () => ({
-  useJobDuration: (jobs: JobSummaryRecord[] | undefined) => {
+vi.mock("../useSessionDuration", () => ({
+  useSessionDuration: (jobs: JobSummaryRecord[] | undefined) => {
     const running = jobs?.find(
       (j) => j.task.status === "running" || j.task.status === "pending",
     );
@@ -222,12 +222,12 @@ describe("ItemRow", () => {
     expect(mockNavigate).toHaveBeenCalled();
   });
 
-  it("shows running job duration text", () => {
-    render(<ItemRow item={makeIssueItem()} jobs={[makeRunningJob()]} />);
+  it("shows running session duration text", () => {
+    render(<ItemRow item={makeIssueItem()} sessions={[makeRunningJob()]} />);
     expect(screen.getByText("0:05")).toBeDefined();
   });
 
-  it("shows dash when no jobs", () => {
+  it("shows dash when no sessions", () => {
     render(<ItemRow item={makeIssueItem()} />);
     expect(screen.getByText("\u2014")).toBeDefined();
   });

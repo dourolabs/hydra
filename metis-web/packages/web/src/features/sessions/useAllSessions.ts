@@ -3,24 +3,24 @@ import type { JobSummaryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 
 /**
- * Fetches all jobs and groups them by spawned_from issue ID.
- * Used by the dashboard to show job status indicators on each issue row.
- * SSE events update the "allJobs" query key for real-time updates.
+ * Fetches all sessions and groups them by spawned_from issue ID.
+ * Used by the dashboard to show session status indicators on each issue row.
+ * SSE events update the "allSessions" query key for real-time updates.
  */
-export function useAllJobs() {
+export function useAllSessions() {
   return useQuery({
-    queryKey: ["allJobs"],
-    queryFn: () => apiClient.listJobs({ status: "created,pending,running" }),
+    queryKey: ["allSessions"],
+    queryFn: () => apiClient.listSessions({ status: "created,pending,running" }),
     select: (data): Map<string, JobSummaryRecord[]> => {
       const map = new Map<string, JobSummaryRecord[]>();
-      for (const job of data.jobs) {
-        const issueId = job.task.spawned_from;
+      for (const session of data.jobs) {
+        const issueId = session.task.spawned_from;
         if (!issueId) continue;
         const list = map.get(issueId);
         if (list) {
-          list.push(job);
+          list.push(session);
         } else {
-          map.set(issueId, [job]);
+          map.set(issueId, [session]);
         }
       }
       for (const list of map.values()) {

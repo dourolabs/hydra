@@ -1,16 +1,16 @@
 import { Link } from "react-router-dom";
 import { Badge, Spinner } from "@metis/ui";
-import { normalizeJobStatus } from "../../utils/statusMapping";
+import { normalizeSessionStatus } from "../../utils/statusMapping";
 import { getRuntime } from "../../utils/time";
-import { useJobsByIssue } from "./useJobsByIssue";
-import styles from "./JobList.module.css";
+import { useSessionsByIssue } from "./useSessionsByIssue";
+import styles from "./SessionList.module.css";
 
-interface JobListProps {
+interface SessionListProps {
   issueId: string;
 }
 
-export function JobList({ issueId }: JobListProps) {
-  const { data: jobs, isLoading, error } = useJobsByIssue(issueId);
+export function SessionList({ issueId }: SessionListProps) {
+  const { data: sessions, isLoading, error } = useSessionsByIssue(issueId);
 
   if (isLoading) {
     return <Spinner size="sm" />;
@@ -19,13 +19,13 @@ export function JobList({ issueId }: JobListProps) {
   if (error) {
     return (
       <p className={styles.error}>
-        Failed to load jobs: {(error as Error).message}
+        Failed to load sessions: {(error as Error).message}
       </p>
     );
   }
 
-  if (!jobs || jobs.length === 0) {
-    return <p className={styles.empty}>No jobs.</p>;
+  if (!sessions || sessions.length === 0) {
+    return <p className={styles.empty}>No sessions.</p>;
   }
 
   return (
@@ -33,22 +33,22 @@ export function JobList({ issueId }: JobListProps) {
       <thead>
         <tr>
           <th className={styles.th}>Status</th>
-          <th className={styles.th}>Job ID</th>
+          <th className={styles.th}>Session ID</th>
           <th className={styles.th}>Created</th>
           <th className={styles.th}>Runtime</th>
           <th className={styles.th}>Logs</th>
         </tr>
       </thead>
       <tbody>
-        {jobs.map((record) => (
+        {sessions.map((record) => (
           <tr key={record.job_id} className={styles.row}>
             <td className={styles.td}>
-              <Badge status={normalizeJobStatus(record.task.status)} />
+              <Badge status={normalizeSessionStatus(record.task.status)} />
             </td>
             <td className={styles.td}>
               <Link
-                to={`/issues/${issueId}/jobs/${record.job_id}/logs`}
-                className={styles.jobId}
+                to={`/issues/${issueId}/sessions/${record.job_id}/logs`}
+                className={styles.sessionId}
               >
                 {record.job_id}
               </Link>
@@ -67,7 +67,7 @@ export function JobList({ issueId }: JobListProps) {
             </td>
             <td className={styles.td}>
               <Link
-                to={`/issues/${issueId}/jobs/${record.job_id}/logs`}
+                to={`/issues/${issueId}/sessions/${record.job_id}/logs`}
                 className={styles.logLink}
               >
                 View Logs

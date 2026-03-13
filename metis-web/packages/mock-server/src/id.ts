@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 
 const PREFIXES = {
   issue: "i-",
-  job: "t-",
+  session: "t-",
   patch: "p-",
   document: "d-",
 } as const;

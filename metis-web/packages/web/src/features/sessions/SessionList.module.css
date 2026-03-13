@@ -33,14 +33,14 @@
   vertical-align: middle;
 }
 
-.jobId {
+.sessionId {
   color: var(--color-accent);
   font-weight: 600;
   font-family: var(--font-family-mono);
   text-decoration: none;
 }
 
-.jobId:hover {
+.sessionId:hover {
   text-decoration: underline;
 }
 

@@ -1,28 +1,28 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { LogViewer, Spinner } from "@metis/ui";
-import { useJobLogs } from "./useJobLogs";
-import styles from "./JobLogViewer.module.css";
+import { useSessionLogs } from "./useSessionLogs";
+import styles from "./SessionLogViewer.module.css";
 
-interface JobLogViewerProps {
-  jobId: string;
-  /** Current job status — determines streaming vs snapshot mode. */
+interface SessionLogViewerProps {
+  sessionId: string;
+  /** Current session status — determines streaming vs snapshot mode. */
   status: string;
 }
 
-/** Statuses that indicate the job is still running and should stream. */
+/** Statuses that indicate the session is still running and should stream. */
 const STREAMING_STATUSES = new Set(["created", "pending", "running"]);
 
-export function JobLogViewer({ jobId, status }: JobLogViewerProps) {
+export function SessionLogViewer({ sessionId, status }: SessionLogViewerProps) {
   const isStreaming = STREAMING_STATUSES.has(status);
 
-  // For completed jobs: fetch the full log snapshot
+  // For completed sessions: fetch the full log snapshot
   const {
     data: snapshotText,
     isLoading: snapshotLoading,
     error: snapshotError,
-  } = useJobLogs(jobId, !isStreaming);
+  } = useSessionLogs(sessionId, !isStreaming);
 
-  // For running jobs: stream logs via SSE
+  // For running sessions: stream logs via SSE
   const [streamLines, setStreamLines] = useState<string[]>([]);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [streamConnected, setStreamConnected] = useState(false);
@@ -42,7 +42,7 @@ export function JobLogViewer({ jobId, status }: JobLogViewerProps) {
     cleanup();
 
     const es = new EventSource(
-      `/api/v1/jobs/${encodeURIComponent(jobId)}/logs?watch=true`,
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/logs?watch=true`,
     );
     eventSourceRef.current = es;
 
@@ -67,7 +67,7 @@ export function JobLogViewer({ jobId, status }: JobLogViewerProps) {
         setStreamConnected(false);
       }
     };
-  }, [jobId, cleanup]);
+  }, [sessionId, cleanup]);
 
   useEffect(() => {
     if (!isStreaming) {

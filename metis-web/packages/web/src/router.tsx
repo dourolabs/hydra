@@ -35,12 +35,12 @@ export const router = createBrowserRouter([
           })),
       },
       {
-        path: "issues/:issueId/jobs/:jobId/logs",
+        path: "issues/:issueId/sessions/:sessionId/logs",
         lazy: () =>
-          import("./pages/JobLogPage").then((m) => ({
+          import("./pages/SessionLogPage").then((m) => ({
             element: (
               <ErrorBoundary>
-                <m.JobLogPage />
+                <m.SessionLogPage />
               </ErrorBoundary>
             ),
           })),

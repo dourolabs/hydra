@@ -49,8 +49,8 @@ export type { MarkdownViewerProps } from "./components/MarkdownViewer";
 export { Toast } from "./components/Toast";
 export type { ToastProps, ToastVariant } from "./components/Toast";
 
-export { JobStatusIndicator } from "./components/JobStatusIndicator";
-export type { JobStatusIndicatorProps, JobSummary, JobStatus } from "./components/JobStatusIndicator";
+export { SessionStatusIndicator } from "./components/SessionStatusIndicator";
+export type { SessionStatusIndicatorProps, SessionSummary, SessionStatus } from "./components/SessionStatusIndicator";
 
 export { DiffViewer } from "./components/DiffViewer";
 export type { DiffViewerProps } from "./components/DiffViewer";

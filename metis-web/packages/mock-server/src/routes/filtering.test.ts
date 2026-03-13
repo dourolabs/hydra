@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { Store } from "../store.js";
 import { createIssueRoutes } from "./issues.js";
 import { createPatchRoutes } from "./patches.js";
-import { createJobRoutes } from "./jobs.js";
+import { createSessionRoutes } from "./sessions.js";
 import { createDocumentRoutes } from "./documents.js";
 import type { Issue, Patch, Task, Document, Status } from "@metis/api";
 
@@ -195,60 +195,60 @@ describe("Patch list filtering", () => {
   });
 });
 
-describe("Job list filtering", () => {
+describe("Session list filtering", () => {
   let store: Store;
-  let app: ReturnType<typeof createJobRoutes>;
+  let app: ReturnType<typeof createSessionRoutes>;
 
   beforeEach(() => {
     store = new Store();
-    app = createJobRoutes(store);
+    app = createSessionRoutes(store);
   });
 
-  async function listJobs(params: Record<string, string> = {}) {
+  async function listSessions(params: Record<string, string> = {}) {
     const qs = new URLSearchParams(params).toString();
-    const url = qs ? `http://localhost/v1/jobs?${qs}` : "http://localhost/v1/jobs";
+    const url = qs ? `http://localhost/v1/sessions?${qs}` : "http://localhost/v1/sessions";
     const res = await app.request(url);
     return res.json();
   }
 
-  it("returns all jobs when no filters provided", async () => {
-    store.create("jobs", "t-1", makeTask({ prompt: "First" }), "job");
-    store.create("jobs", "t-2", makeTask({ prompt: "Second" }), "job");
-    const data = await listJobs();
+  it("returns all sessions when no filters provided", async () => {
+    store.create("sessions", "t-1", makeTask({ prompt: "First" }), "job");
+    store.create("sessions", "t-2", makeTask({ prompt: "Second" }), "job");
+    const data = await listSessions();
     expect(data.jobs).toHaveLength(2);
   });
 
   it("filters by spawned_from", async () => {
-    store.create("jobs", "t-1", makeTask({ spawned_from: "i-abc123" }), "job");
-    store.create("jobs", "t-2", makeTask({ spawned_from: "i-def456" }), "job");
-    store.create("jobs", "t-3", makeTask({ spawned_from: "i-abc123" }), "job");
-    const data = await listJobs({ spawned_from: "i-abc123" });
+    store.create("sessions", "t-1", makeTask({ spawned_from: "i-abc123" }), "job");
+    store.create("sessions", "t-2", makeTask({ spawned_from: "i-def456" }), "job");
+    store.create("sessions", "t-3", makeTask({ spawned_from: "i-abc123" }), "job");
+    const data = await listSessions({ spawned_from: "i-abc123" });
     expect(data.jobs).toHaveLength(2);
     expect(data.jobs.every((j: { task: { spawned_from: string } }) => j.task.spawned_from === "i-abc123")).toBe(true);
   });
 
   it("filters by status", async () => {
-    store.create("jobs", "t-1", makeTask({ status: "running" as Status }), "job");
-    store.create("jobs", "t-2", makeTask({ status: "pending" as Status }), "job");
-    store.create("jobs", "t-3", makeTask({ status: "running" as Status }), "job");
-    const data = await listJobs({ status: "running" });
+    store.create("sessions", "t-1", makeTask({ status: "running" as Status }), "job");
+    store.create("sessions", "t-2", makeTask({ status: "pending" as Status }), "job");
+    store.create("sessions", "t-3", makeTask({ status: "running" as Status }), "job");
+    const data = await listSessions({ status: "running" });
     expect(data.jobs).toHaveLength(2);
     expect(data.jobs.every((j: { task: { status: string } }) => j.task.status === "running")).toBe(true);
   });
 
   it("filters by q (case-insensitive substring on prompt)", async () => {
-    store.create("jobs", "t-1", makeTask({ prompt: "Deploy the application" }), "job");
-    store.create("jobs", "t-2", makeTask({ prompt: "Run tests" }), "job");
-    store.create("jobs", "t-3", makeTask({ prompt: "deploy staging" }), "job");
-    const data = await listJobs({ q: "deploy" });
+    store.create("sessions", "t-1", makeTask({ prompt: "Deploy the application" }), "job");
+    store.create("sessions", "t-2", makeTask({ prompt: "Run tests" }), "job");
+    store.create("sessions", "t-3", makeTask({ prompt: "deploy staging" }), "job");
+    const data = await listSessions({ q: "deploy" });
     expect(data.jobs).toHaveLength(2);
   });
 
   it("combines filters with AND logic", async () => {
-    store.create("jobs", "t-1", makeTask({ spawned_from: "i-abc", status: "running" as Status }), "job");
-    store.create("jobs", "t-2", makeTask({ spawned_from: "i-abc", status: "complete" as Status }), "job");
-    store.create("jobs", "t-3", makeTask({ spawned_from: "i-def", status: "running" as Status }), "job");
-    const data = await listJobs({ spawned_from: "i-abc", status: "running" });
+    store.create("sessions", "t-1", makeTask({ spawned_from: "i-abc", status: "running" as Status }), "job");
+    store.create("sessions", "t-2", makeTask({ spawned_from: "i-abc", status: "complete" as Status }), "job");
+    store.create("sessions", "t-3", makeTask({ spawned_from: "i-def", status: "running" as Status }), "job");
+    const data = await listSessions({ spawned_from: "i-abc", status: "running" });
     expect(data.jobs).toHaveLength(1);
   });
 });

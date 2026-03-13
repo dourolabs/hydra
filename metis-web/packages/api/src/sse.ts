@@ -22,8 +22,8 @@ export interface EventSubscriptionOptions {
   types?: string;
   /** Comma-separated issue IDs to filter. */
   issueIds?: string;
-  /** Comma-separated job IDs to filter. */
-  jobIds?: string;
+  /** Comma-separated session IDs to filter. */
+  sessionIds?: string;
   /** Comma-separated patch IDs to filter. */
   patchIds?: string;
   /** Comma-separated document IDs to filter. */
@@ -145,7 +145,7 @@ export function buildEventsUrl(baseUrl: string, options?: EventSubscriptionOptio
   const params = new URLSearchParams();
   if (options?.types) params.set("types", options.types);
   if (options?.issueIds) params.set("issue_ids", options.issueIds);
-  if (options?.jobIds) params.set("job_ids", options.jobIds);
+  if (options?.sessionIds) params.set("session_ids", options.sessionIds);
   if (options?.patchIds) params.set("patch_ids", options.patchIds);
   if (options?.documentIds) params.set("document_ids", options.documentIds);
 

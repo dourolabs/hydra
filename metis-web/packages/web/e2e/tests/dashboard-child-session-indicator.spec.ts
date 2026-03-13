@@ -1,20 +1,20 @@
 import { test, expect } from "../fixtures/auth";
 
-test.describe("Dashboard Child Job Indicator @dashboard:child-job-indicator", () => {
-  test("shows pulsing status box for child issue with running job @dashboard:child-job-indicator", async ({
+test.describe("Dashboard Child Session Indicator @dashboard:child-session-indicator", () => {
+  test("shows pulsing status box for child issue with running session @dashboard:child-session-indicator", async ({
     authenticatedPage: page,
   }) => {
     // Navigate to dashboard with everything filter
     await page.goto("/?selected=everything");
 
     // Find the row for "Platform v2.0 Migration" (i-seed00001)
-    // which has child i-seed00002 with a running job t-seed00002
+    // which has child i-seed00002 with a running session t-seed00002
     const row = page.getByRole("button", {
       name: /Platform v2\.0 Migration/,
     });
     await expect(row).toBeVisible();
 
-    // Verify the row's status dot is pulsing (hasRunningJob causes statusDotPulsing class)
+    // Verify the row's status dot is pulsing (hasRunningSession causes statusDotPulsing class)
     const statusDot = row.locator("span").first();
     await expect(statusDot).toHaveClass(/statusDotPulsing/);
 
@@ -24,7 +24,7 @@ test.describe("Dashboard Child Job Indicator @dashboard:child-job-indicator", ()
     await expect(statusBoxes.first()).toBeVisible();
 
     // Verify at least one status box has the active/pulsing class
-    // (the child i-seed00002 has a running job, so its box should be statusBoxActive)
+    // (the child i-seed00002 has a running session, so its box should be statusBoxActive)
     const activeBox = row.locator("span[class*='statusBoxActive']");
     await expect(activeBox).toHaveCount(1);
 

@@ -33,9 +33,9 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
 
   test("displays tabbed sections @issues:navigate-tabs", async ({ authenticatedPage: page }) => {
     await page.goto("/issues/i-seed00001");
-    // IssueDetail has tabs: Related Issues, Jobs, Patches, Activity, Metadata
+    // IssueDetail has tabs: Related Issues, Sessions, Patches, Activity, Metadata
     await expect(page.getByRole("tab", { name: "Related Issues" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Jobs" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Sessions" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Patches" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Metadata" })).toBeVisible();
   });

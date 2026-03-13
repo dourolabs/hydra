@@ -1,7 +1,7 @@
 import { useCallback } from "react";
-import { Avatar, Badge, JobStatusIndicator } from "@metis/ui";
+import { Avatar, Badge, SessionStatusIndicator } from "@metis/ui";
 import type { IssueSummaryRecord, IssueType, JobSummaryRecord } from "@metis/api";
-import { toJobSummary } from "../../utils/jobMapping";
+import { toSessionSummary } from "../../utils/sessionMapping";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
 import { formatRelativeTime } from "../../utils/time";
@@ -21,8 +21,8 @@ interface IssueRowProps {
   record: IssueSummaryRecord;
   dimmed?: boolean;
   blocked?: boolean;
-  jobs?: JobSummaryRecord[];
-  onJobClick?: (issueId: string, jobId: string) => void;
+  sessions?: JobSummaryRecord[];
+  onSessionClick?: (issueId: string, sessionId: string) => void;
   showId?: boolean;
   showTimestamp?: boolean;
 }
@@ -31,21 +31,21 @@ export function IssueRow({
   record,
   dimmed,
   blocked,
-  jobs,
-  onJobClick,
+  sessions,
+  onSessionClick,
   showId,
   showTimestamp,
 }: IssueRowProps) {
   const { issue } = record;
 
-  const handleJobClick = useCallback(
-    (jobId: string) => {
-      onJobClick?.(record.issue_id, jobId);
+  const handleSessionClick = useCallback(
+    (sessionId: string) => {
+      onSessionClick?.(record.issue_id, sessionId);
     },
-    [onJobClick, record.issue_id],
+    [onSessionClick, record.issue_id],
   );
 
-  const jobSummaries = jobs?.map(toJobSummary);
+  const sessionSummaries = sessions?.map(toSessionSummary);
 
   const classNames = [styles.row];
   if (dimmed) classNames.push(styles.dimmed);
@@ -66,13 +66,13 @@ export function IssueRow({
             descriptionSnippet(issue.description)
           )}
         </span>
-        {jobSummaries && jobSummaries.length > 0 && (
+        {sessionSummaries && sessionSummaries.length > 0 && (
           <span
-            className={styles.jobIndicator}
+            className={styles.sessionIndicator}
             onClick={(e) => e.stopPropagation()}
             role="presentation"
           >
-            <JobStatusIndicator jobs={jobSummaries} onJobClick={handleJobClick} />
+            <SessionStatusIndicator sessions={sessionSummaries} onSessionClick={handleSessionClick} />
           </span>
         )}
         {issue.assignee && <Avatar name={issue.assignee} size="sm" />}

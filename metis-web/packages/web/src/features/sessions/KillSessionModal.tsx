@@ -4,26 +4,26 @@ import type { JobVersionRecord } from "@metis/api";
 import { Modal, Button } from "@metis/ui";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
-import styles from "./KillJobModal.module.css";
+import styles from "./KillSessionModal.module.css";
 
-interface KillJobModalProps {
+interface KillSessionModalProps {
   open: boolean;
   onClose: () => void;
   onKillSuccess?: () => void;
-  jobId: string;
+  sessionId: string;
 }
 
-export function KillJobModal({ open, onClose, onKillSuccess, jobId }: KillJobModalProps) {
+export function KillSessionModal({ open, onClose, onKillSuccess, sessionId }: KillSessionModalProps) {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
-    mutationFn: () => apiClient.killJob(jobId),
+    mutationFn: () => apiClient.killSession(sessionId),
     onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey: ["job", jobId] });
-      const previous = queryClient.getQueryData<JobVersionRecord>(["job", jobId]);
+      await queryClient.cancelQueries({ queryKey: ["session", sessionId] });
+      const previous = queryClient.getQueryData<JobVersionRecord>(["session", sessionId]);
       if (previous) {
-        queryClient.setQueryData<JobVersionRecord>(["job", jobId], {
+        queryClient.setQueryData<JobVersionRecord>(["session", sessionId], {
           ...previous,
           task: { ...previous.task, status: "failed" },
         });
@@ -31,22 +31,22 @@ export function KillJobModal({ open, onClose, onKillSuccess, jobId }: KillJobMod
       return { previous };
     },
     onSuccess: () => {
-      addToast("Job killed successfully", "success");
+      addToast("Session killed successfully", "success");
       onKillSuccess?.();
       onClose();
     },
     onError: (err, _variables, context) => {
       if (context?.previous) {
-        queryClient.setQueryData(["job", jobId], context.previous);
+        queryClient.setQueryData(["session", sessionId], context.previous);
       }
       addToast(
-        err instanceof Error ? err.message : "Failed to kill job",
+        err instanceof Error ? err.message : "Failed to kill session",
         "error",
       );
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["job", jobId] });
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["sessions"] });
     },
   });
 
@@ -61,11 +61,11 @@ export function KillJobModal({ open, onClose, onKillSuccess, jobId }: KillJobMod
   }, [mutation.isPending, onClose]);
 
   return (
-    <Modal open={open} onClose={handleClose} title="Kill Job">
+    <Modal open={open} onClose={handleClose} title="Kill Session">
       <div className={styles.body}>
         <p className={styles.warning}>
-          Are you sure you want to kill this job? This will terminate the
-          running job and cannot be undone.
+          Are you sure you want to kill this session? This will terminate the
+          running session and cannot be undone.
         </p>
         <div className={styles.footer}>
           <Button variant="secondary" size="md" onClick={handleClose}>
@@ -77,7 +77,7 @@ export function KillJobModal({ open, onClose, onKillSuccess, jobId }: KillJobMod
             onClick={handleConfirm}
             disabled={mutation.isPending}
           >
-            {mutation.isPending ? "Killing..." : "Kill Job"}
+            {mutation.isPending ? "Killing..." : "Kill Session"}
           </Button>
         </div>
       </div>
