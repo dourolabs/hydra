@@ -315,7 +315,9 @@ pub fn generate_summary(event: &ServerEvent) -> String {
                 if old.status != new.status {
                     let old_status = old.status;
                     let new_status = new.status;
-                    return format!("Session {id} status changed from {old_status} to {new_status}");
+                    return format!(
+                        "Session {id} status changed from {old_status} to {new_status}"
+                    );
                 }
             }
             format!("Session {id} was updated")
