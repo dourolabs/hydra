@@ -563,7 +563,8 @@ mod tests {
 
         let creator_username = Username::from("the-human");
         let task_id = TaskId::new();
-        let (actor, _auth_token) = Actor::new_for_session(task_id.clone(), creator_username.clone());
+        let (actor, _auth_token) =
+            Actor::new_for_session(task_id.clone(), creator_username.clone());
         handles
             .store
             .as_ref()
