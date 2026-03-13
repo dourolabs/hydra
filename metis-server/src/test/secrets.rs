@@ -604,6 +604,161 @@ async fn resolve_secrets_mixed_filter_only_listed_custom_secrets_appear() {
     assert!(!env_vars.contains_key("BLOCKED_SECRET"));
 }
 
+// ---- GH_TOKEN auto-injection tests ----
+
+/// Creates a test state with local auth mode (no GitHub App), so
+/// get_github_token_for_user returns the stored token without calling GitHub APIs.
+fn test_state_local_auth() -> TestStateHandles {
+    use crate::config::AuthConfig;
+
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "unused-pat".to_string(),
+        username: None,
+        auth_token_file: None,
+    };
+    let store: Arc<dyn crate::store::Store> = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        test_secret_manager(),
+    );
+    TestStateHandles { state, store }
+}
+
+#[tokio::test]
+async fn resolve_secrets_gh_token_injected_when_in_filter_and_user_has_github_token() {
+    let handles = test_state_local_auth();
+    let secret_manager = test_secret_manager();
+    let username = Username::from("gh-user");
+
+    // Store the user's GitHub OAuth token (GITHUB_TOKEN + GITHUB_REFRESH_TOKEN)
+    let encrypted = secret_manager.encrypt("gho_test_github_token").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted)
+        .await
+        .unwrap();
+    let encrypted_refresh = secret_manager.encrypt("ghr_test_refresh_token").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GITHUB_REFRESH_TOKEN", &encrypted_refresh)
+        .await
+        .unwrap();
+
+    // Request GH_TOKEN in the secrets filter
+    let filter = Some(vec!["GH_TOKEN".to_string()]);
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &filter)
+        .await;
+
+    assert_eq!(
+        env_vars.get("GH_TOKEN").map(String::as_str),
+        Some("gho_test_github_token"),
+        "GH_TOKEN should be auto-injected from creator's GitHub OAuth token"
+    );
+}
+
+#[tokio::test]
+async fn resolve_secrets_gh_token_not_injected_when_not_in_filter() {
+    let handles = test_state_local_auth();
+    let secret_manager = test_secret_manager();
+    let username = Username::from("gh-no-filter");
+
+    // Store the user's GitHub OAuth token (GITHUB_TOKEN + GITHUB_REFRESH_TOKEN)
+    let encrypted = secret_manager.encrypt("gho_test_github_token").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted)
+        .await
+        .unwrap();
+    let encrypted_refresh = secret_manager.encrypt("ghr_test_refresh_token").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GITHUB_REFRESH_TOKEN", &encrypted_refresh)
+        .await
+        .unwrap();
+
+    // No GH_TOKEN in the secrets filter
+    let filter = Some(vec!["SOME_OTHER_SECRET".to_string()]);
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &filter)
+        .await;
+
+    assert!(
+        !env_vars.contains_key("GH_TOKEN"),
+        "GH_TOKEN should not be injected when not in secrets filter"
+    );
+}
+
+#[tokio::test]
+async fn resolve_secrets_gh_token_not_injected_when_user_has_no_github_token() {
+    let handles = test_state_local_auth();
+    let username = Username::from("gh-no-token");
+
+    // No GITHUB_TOKEN stored for this user
+    let filter = Some(vec!["GH_TOKEN".to_string()]);
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &filter)
+        .await;
+
+    assert!(
+        !env_vars.contains_key("GH_TOKEN"),
+        "GH_TOKEN should not be injected when user has no GitHub token"
+    );
+}
+
+#[tokio::test]
+async fn resolve_secrets_user_set_gh_token_takes_priority_over_auto_injection() {
+    let handles = test_state_local_auth();
+    let secret_manager = test_secret_manager();
+    let username = Username::from("gh-override");
+
+    // Store the user's GitHub OAuth token (GITHUB_TOKEN + GITHUB_REFRESH_TOKEN)
+    let encrypted_github = secret_manager.encrypt("gho_auto_token").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted_github)
+        .await
+        .unwrap();
+    let encrypted_refresh = secret_manager.encrypt("ghr_test_refresh_token").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GITHUB_REFRESH_TOKEN", &encrypted_refresh)
+        .await
+        .unwrap();
+
+    // Also store a user-set GH_TOKEN secret (explicit override)
+    let encrypted_gh = secret_manager.encrypt("gho_user_set_token").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GH_TOKEN", &encrypted_gh)
+        .await
+        .unwrap();
+
+    let filter = Some(vec!["GH_TOKEN".to_string()]);
+    let mut env_vars = HashMap::new();
+    handles
+        .state
+        .resolve_secrets_into_env_vars(&username, &mut env_vars, &filter)
+        .await;
+
+    assert_eq!(
+        env_vars.get("GH_TOKEN").map(String::as_str),
+        Some("gho_user_set_token"),
+        "User-set GH_TOKEN should take priority over auto-injected value"
+    );
+}
+
 // ---- End-to-end integration test: user secret appears in get_job_context ----
 
 #[tokio::test]

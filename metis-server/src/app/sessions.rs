@@ -359,6 +359,33 @@ impl AppState {
                 );
             }
         }
+
+        // 3. Auto-inject GH_TOKEN from the creator's GitHub OAuth token when
+        //    requested in secrets_filter and not already set by user secrets.
+        use crate::domain::{actors::get_github_token_for_user, secrets::SECRET_GH_TOKEN};
+
+        let gh_token_requested = secrets_filter
+            .as_ref()
+            .is_some_and(|filter| filter.iter().any(|s| s == SECRET_GH_TOKEN));
+
+        if gh_token_requested && !env_vars.contains_key(SECRET_GH_TOKEN) {
+            match get_github_token_for_user(self, creator).await {
+                Ok(response) => {
+                    env_vars.insert(SECRET_GH_TOKEN.to_string(), response.github_token);
+                    info!(
+                        username = %creator,
+                        "GH_TOKEN auto-injected from creator's GitHub OAuth token"
+                    );
+                }
+                Err(err) => {
+                    warn!(
+                        username = %creator,
+                        error = ?err,
+                        "failed to auto-inject GH_TOKEN from creator's GitHub OAuth token, skipping"
+                    );
+                }
+            }
+        }
     }
 
     pub async fn start_pending_task(&self, session_id: SessionId, actor: ActorRef) {
