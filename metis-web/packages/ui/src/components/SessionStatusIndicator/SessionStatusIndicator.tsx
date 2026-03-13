@@ -1,18 +1,18 @@
 import { useEffect, useState } from "react";
-import styles from "./JobStatusIndicator.module.css";
+import styles from "./SessionStatusIndicator.module.css";
 
-export type JobStatus = "created" | "pending" | "running" | "complete" | "failed";
+export type SessionStatus = "created" | "pending" | "running" | "complete" | "failed";
 
-export interface JobSummary {
-  jobId: string;
-  status: JobStatus;
+export interface SessionSummary {
+  sessionId: string;
+  status: SessionStatus;
   startTime?: string | null;
   endTime?: string | null;
 }
 
-export interface JobStatusIndicatorProps {
-  jobs: JobSummary[];
-  onJobClick?: (jobId: string) => void;
+export interface SessionStatusIndicatorProps {
+  sessions: SessionSummary[];
+  onSessionClick?: (sessionId: string) => void;
   /** Maximum number of past (non-running) dots to show before truncating */
   maxDots?: number;
 }
@@ -47,7 +47,7 @@ function useElapsedTime(startTime: string | null | undefined, active: boolean): 
   return elapsed;
 }
 
-const statusClass: Record<JobStatus, string> = {
+const statusClass: Record<SessionStatus, string> = {
   complete: styles.complete,
   failed: styles.failed,
   running: styles.running,
@@ -56,19 +56,19 @@ const statusClass: Record<JobStatus, string> = {
 };
 
 function RunningIndicator({
-  job,
+  session,
   onClick,
 }: {
-  job: JobSummary;
-  onClick?: (jobId: string) => void;
+  session: SessionSummary;
+  onClick?: (sessionId: string) => void;
 }) {
-  const elapsed = useElapsedTime(job.startTime, true);
+  const elapsed = useElapsedTime(session.startTime, true);
 
   return (
     <button
       className={`${styles.runningIndicator}`}
-      title={job.jobId}
-      onClick={() => onClick?.(job.jobId)}
+      title={session.sessionId}
+      onClick={() => onClick?.(session.sessionId)}
       type="button"
     >
       <span className={`${styles.dot} ${styles.running}`} />
@@ -77,34 +77,34 @@ function RunningIndicator({
   );
 }
 
-export function JobStatusIndicator({
-  jobs,
-  onJobClick,
+export function SessionStatusIndicator({
+  sessions,
+  onSessionClick,
   maxDots = 10,
-}: JobStatusIndicatorProps) {
-  if (jobs.length === 0) return null;
+}: SessionStatusIndicatorProps) {
+  if (sessions.length === 0) return null;
 
-  const runningJobs = jobs.filter((j) => j.status === "running");
-  const nonRunningJobs = jobs.filter((j) => j.status !== "running");
+  const runningSessions = sessions.filter((s) => s.status === "running");
+  const nonRunningSessions = sessions.filter((s) => s.status !== "running");
 
-  const truncated = nonRunningJobs.length > maxDots;
-  const visibleNonRunning = truncated ? nonRunningJobs.slice(-maxDots) : nonRunningJobs;
-  const hiddenCount = nonRunningJobs.length - visibleNonRunning.length;
+  const truncated = nonRunningSessions.length > maxDots;
+  const visibleNonRunning = truncated ? nonRunningSessions.slice(-maxDots) : nonRunningSessions;
+  const hiddenCount = nonRunningSessions.length - visibleNonRunning.length;
 
   return (
     <div className={styles.container}>
       {truncated && <span className={styles.countPrefix}>{hiddenCount + visibleNonRunning.length}:</span>}
-      {visibleNonRunning.map((job) => (
+      {visibleNonRunning.map((session) => (
         <button
-          key={job.jobId}
-          className={`${styles.dot} ${statusClass[job.status]}`}
-          title={job.jobId}
-          onClick={() => onJobClick?.(job.jobId)}
+          key={session.sessionId}
+          className={`${styles.dot} ${statusClass[session.status]}`}
+          title={session.sessionId}
+          onClick={() => onSessionClick?.(session.sessionId)}
           type="button"
         />
       ))}
-      {runningJobs.map((job) => (
-        <RunningIndicator key={job.jobId} job={job} onClick={onJobClick} />
+      {runningSessions.map((session) => (
+        <RunningIndicator key={session.sessionId} session={session} onClick={onSessionClick} />
       ))}
     </div>
   );

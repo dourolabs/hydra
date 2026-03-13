@@ -1,11 +1,11 @@
 import { Link } from "react-router-dom";
 import type { Task } from "@metis/api";
 import { Badge } from "@metis/ui";
-import { normalizeJobStatus } from "../../utils/statusMapping";
+import { normalizeSessionStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
-import styles from "./JobSettings.module.css";
+import styles from "./SessionSettings.module.css";
 
-interface JobSettingsProps {
+interface SessionSettingsProps {
   task: Task;
 }
 
@@ -35,7 +35,7 @@ function formatEnvVars(envVars: Task["env_vars"]): string | null {
   return keys.join(", ");
 }
 
-export function JobSettings({ task }: JobSettingsProps) {
+export function SessionSettings({ task }: SessionSettingsProps) {
   const entries: { label: string; value: React.ReactNode }[] = [];
 
   if (task.prompt) {
@@ -49,7 +49,7 @@ export function JobSettings({ task }: JobSettingsProps) {
 
   entries.push({
     label: "Status",
-    value: <Badge status={normalizeJobStatus(task.status)} />,
+    value: <Badge status={normalizeSessionStatus(task.status)} />,
   });
 
   entries.push({ label: "Context", value: formatContext(task.context) });

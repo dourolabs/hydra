@@ -19,7 +19,7 @@ import type {
   Status,
 } from "@metis/api";
 
-const COLLECTION = "jobs";
+const COLLECTION = "sessions";
 const SSE_PREFIX = "job";
 
 function toVersionRecord(
@@ -61,13 +61,13 @@ function toSummaryRecord(
   };
 }
 
-export function createJobRoutes(store: Store): Hono {
+export function createSessionRoutes(store: Store): Hono {
   const app = new Hono();
 
-  // POST /v1/jobs
-  app.post("/v1/jobs", async (c) => {
+  // POST /v1/sessions
+  app.post("/v1/sessions", async (c) => {
     const body = await c.req.json<CreateJobRequest>();
-    const id = generateId("job");
+    const id = generateId("session");
     const now = new Date().toISOString();
     const task: Task = {
       prompt: body.prompt,
@@ -84,8 +84,8 @@ export function createJobRoutes(store: Store): Hono {
     return c.json(resp, 201);
   });
 
-  // GET /v1/jobs
-  app.get("/v1/jobs", (c) => {
+  // GET /v1/sessions
+  app.get("/v1/sessions", (c) => {
     const includeDeleted = c.req.query("include_deleted") === "true";
     const q = c.req.query("q");
     const spawnedFrom = c.req.query("spawned_from");
@@ -115,47 +115,47 @@ export function createJobRoutes(store: Store): Hono {
     return c.json(resp);
   });
 
-  // GET /v1/jobs/:id
-  app.get("/v1/jobs/:id", (c) => {
+  // GET /v1/sessions/:id
+  app.get("/v1/sessions/:id", (c) => {
     const id = c.req.param("id");
     const entry = store.get<Task>(COLLECTION, id);
     if (!entry) {
-      return c.json({ error: `job '${id}' not found` }, 404);
+      return c.json({ error: `session '${id}' not found` }, 404);
     }
     return c.json(toVersionRecord(id, entry.version, entry.timestamp, entry.data));
   });
 
-  // GET /v1/jobs/:id/versions/:version
-  app.get("/v1/jobs/:id/versions/:version", (c) => {
+  // GET /v1/sessions/:id/versions/:version
+  app.get("/v1/sessions/:id/versions/:version", (c) => {
     const id = c.req.param("id");
     const version = Number(c.req.param("version"));
     const entry = store.getVersion<Task>(COLLECTION, id, version);
     if (!entry) {
-      return c.json({ error: `job '${id}' version ${version} not found` }, 404);
+      return c.json({ error: `session '${id}' version ${version} not found` }, 404);
     }
     return c.json(toVersionRecord(id, entry.version, entry.timestamp, entry.data));
   });
 
-  // DELETE /v1/jobs/:id — kill job
-  // The real server sends a kill signal to K8s but the job stays "running"
+  // DELETE /v1/sessions/:id — kill session
+  // The real server sends a kill signal to K8s but the session stays "running"
   // until the pod actually terminates. We simulate this by not updating
   // the store immediately, so refetches still return "running".
-  app.delete("/v1/jobs/:id", (c) => {
+  app.delete("/v1/sessions/:id", (c) => {
     const id = c.req.param("id");
     const entry = store.get<Task>(COLLECTION, id);
     if (!entry) {
-      return c.json({ error: `job '${id}' not found` }, 404);
+      return c.json({ error: `session '${id}' not found` }, 404);
     }
     const resp: KillJobResponse = { job_id: id, status: "failed" };
     return c.json(resp);
   });
 
-  // GET /v1/jobs/:id/logs
-  app.get("/v1/jobs/:id/logs", (c) => {
+  // GET /v1/sessions/:id/logs
+  app.get("/v1/sessions/:id/logs", (c) => {
     const id = c.req.param("id");
     const entry = store.get<Task>(COLLECTION, id);
     if (!entry) {
-      return c.json({ error: `job '${id}' not found` }, 404);
+      return c.json({ error: `session '${id}' not found` }, 404);
     }
     const watch = c.req.query("watch") === "true";
     if (watch) {
@@ -163,21 +163,21 @@ export function createJobRoutes(store: Store): Hono {
         c.header("Content-Type", "text/event-stream");
         c.header("Cache-Control", "no-cache");
         c.header("Connection", "keep-alive");
-        await s.write(`data: [mock] Job ${id} log line 1\n\n`);
-        await s.write(`data: [mock] Job ${id} log line 2\n\n`);
-        await s.write(`data: [mock] Job ${id} complete\n\n`);
+        await s.write(`data: [mock] Session ${id} log line 1\n\n`);
+        await s.write(`data: [mock] Session ${id} log line 2\n\n`);
+        await s.write(`data: [mock] Session ${id} complete\n\n`);
       });
     }
-    return c.text(`[mock] Job ${id} log output\n[mock] Job completed successfully\n`);
+    return c.text(`[mock] Session ${id} log output\n[mock] Session completed successfully\n`);
   });
 
-  // POST /v1/jobs/:id/status
-  app.post("/v1/jobs/:id/status", async (c) => {
+  // POST /v1/sessions/:id/status
+  app.post("/v1/sessions/:id/status", async (c) => {
     const id = c.req.param("id");
     const body = await c.req.json<JobStatusUpdate>();
     const entry = store.get<Task>(COLLECTION, id);
     if (!entry) {
-      return c.json({ error: `job '${id}' not found` }, 404);
+      return c.json({ error: `session '${id}' not found` }, 404);
     }
     let newStatus: Status;
     const updates: Partial<Task> = {};
@@ -198,12 +198,12 @@ export function createJobRoutes(store: Store): Hono {
     return c.json(resp);
   });
 
-  // GET /v1/jobs/:id/context
-  app.get("/v1/jobs/:id/context", (c) => {
+  // GET /v1/sessions/:id/context
+  app.get("/v1/sessions/:id/context", (c) => {
     const id = c.req.param("id");
     const entry = store.get<Task>(COLLECTION, id);
     if (!entry) {
-      return c.json({ error: `job '${id}' not found` }, 404);
+      return c.json({ error: `session '${id}' not found` }, 404);
     }
     const task = entry.data;
     const resp: WorkerContext = {
@@ -217,12 +217,12 @@ export function createJobRoutes(store: Store): Hono {
     return c.json(resp);
   });
 
-  // GET /v1/jobs/:id/versions
-  app.get("/v1/jobs/:id/versions", (c) => {
+  // GET /v1/sessions/:id/versions
+  app.get("/v1/sessions/:id/versions", (c) => {
     const id = c.req.param("id");
     const allVersions = store.listVersions<Task>(COLLECTION, id);
     if (allVersions.length === 0) {
-      return c.json({ error: `job '${id}' not found` }, 404);
+      return c.json({ error: `session '${id}' not found` }, 404);
     }
     const versions = allVersions.map((v) =>
       toVersionRecord(id, v.version, v.timestamp, v.data),

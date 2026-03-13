@@ -216,15 +216,15 @@ describe("Issues", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Jobs
+// Sessions
 // ---------------------------------------------------------------------------
-describe("Jobs", () => {
+describe("Sessions", () => {
   beforeEach(async () => {
     await resetServer();
   });
 
-  const jobPayload: CreateJobRequest = {
-    prompt: "Contract test job prompt",
+  const sessionPayload: CreateJobRequest = {
+    prompt: "Contract test session prompt",
     context: {
       type: "git_repository",
       url: "https://github.com/test/repo.git",
@@ -235,63 +235,63 @@ describe("Jobs", () => {
 
   it("round-trip: create → get → list → versions → kill", async () => {
     // Create
-    const created = await client.createJob(jobPayload);
+    const created = await client.createSession(sessionPayload);
     expect(created.job_id).toBeTruthy();
-    const jobId = created.job_id;
+    const sessionId = created.job_id;
 
     // Get
-    const fetched = await client.getJob(jobId);
-    expect(fetched.job_id).toBe(jobId);
-    expect(fetched.task.prompt).toBe("Contract test job prompt");
+    const fetched = await client.getSession(sessionId);
+    expect(fetched.job_id).toBe(sessionId);
+    expect(fetched.task.prompt).toBe("Contract test session prompt");
     expect(fetched.task.status).toBe("pending");
 
     // List
-    const list = await client.listJobs();
-    const found = list.jobs.find((j) => j.job_id === jobId);
+    const list = await client.listSessions();
+    const found = list.jobs.find((j) => j.job_id === sessionId);
     expect(found).toBeDefined();
 
     // Versions
-    const versions = await client.listJobVersions(jobId);
+    const versions = await client.listSessionVersions(sessionId);
     expect(versions.versions.length).toBeGreaterThanOrEqual(1);
 
     // Get specific version
-    const v1 = await client.getJobVersion(jobId, 1);
+    const v1 = await client.getSessionVersion(sessionId, 1);
     expect(v1.task.status).toBe("pending");
 
-    // Kill (DELETE) — returns intended terminal status but the job
+    // Kill (DELETE) — returns intended terminal status but the session
     // stays "running" in the store until the pod actually terminates.
-    const killed = await client.killJob(jobId);
-    expect(killed.job_id).toBe(jobId);
+    const killed = await client.killSession(sessionId);
+    expect(killed.job_id).toBe(sessionId);
     expect(killed.status).toBe("failed");
   });
 
-  it("set job status: complete and failed", async () => {
-    const created = await client.createJob(jobPayload);
-    const jobId = created.job_id;
+  it("set session status: complete and failed", async () => {
+    const created = await client.createSession(sessionPayload);
+    const sessionId = created.job_id;
 
     // Set to complete
-    const completed = await client.setJobStatus(jobId, {
+    const completed = await client.setSessionStatus(sessionId, {
       status: "complete",
       last_message: "All done",
     });
     expect(completed.status).toBe("complete");
 
-    const afterComplete = await client.getJob(jobId);
+    const afterComplete = await client.getSession(sessionId);
     expect(afterComplete.task.status).toBe("complete");
     expect(afterComplete.task.last_message).toBe("All done");
     expect(afterComplete.task.end_time).toBeTruthy();
   });
 
-  it("get job context", async () => {
-    const created = await client.createJob(jobPayload);
-    const ctx = await client.getJobContext(created.job_id);
-    expect(ctx.prompt).toBe("Contract test job prompt");
+  it("get session context", async () => {
+    const created = await client.createSession(sessionPayload);
+    const ctx = await client.getSessionContext(created.job_id);
+    expect(ctx.prompt).toBe("Contract test session prompt");
     expect(ctx.request_context.type).toBe("git_repository");
   });
 
-  it("get job logs", async () => {
-    const created = await client.createJob(jobPayload);
-    const resp = await client.getJobLogs(created.job_id);
+  it("get session logs", async () => {
+    const created = await client.createSession(sessionPayload);
+    const resp = await client.getSessionLogs(created.job_id);
     const text = await resp.text();
     expect(text).toContain("[mock]");
   });
@@ -810,8 +810,8 @@ describe("Seed data", () => {
     expect(seed1.issue.todo_list!.length).toBeGreaterThan(0);
   });
 
-  it("seed jobs are loaded", async () => {
-    const list = await client.listJobs();
+  it("seed sessions are loaded", async () => {
+    const list = await client.listSessions();
     expect(list.jobs.length).toBeGreaterThanOrEqual(4);
   });
 

@@ -10,7 +10,7 @@ import { Store, StoreError } from "./store.js";
 import { authMiddleware } from "./auth.js";
 import { createAuthRoutes } from "./routes/auth.js";
 import { createIssueRoutes } from "./routes/issues.js";
-import { createJobRoutes } from "./routes/jobs.js";
+import { createSessionRoutes } from "./routes/sessions.js";
 import { createPatchRoutes } from "./routes/patches.js";
 import { createDocumentRoutes } from "./routes/documents.js";
 import { createRepositoryRoutes } from "./routes/repositories.js";
@@ -71,7 +71,7 @@ app.post("/v1/dev/reset", (c) => {
 
 // Mount routes
 app.route("", createIssueRoutes(store));
-app.route("", createJobRoutes(store));
+app.route("", createSessionRoutes(store));
 app.route("", createPatchRoutes(store));
 app.route("", createDocumentRoutes(store));
 app.route("", createRepositoryRoutes(store));

@@ -10,8 +10,8 @@ interface IssueTreeProps {
   issues: IssueSummaryRecord[];
   /** When provided, only show branches containing these issue IDs. Non-matching ancestors are dimmed. */
   matchingIds?: Set<string>;
-  /** Jobs grouped by issue ID, used to render job status indicators. */
-  jobsByIssue?: Map<string, JobSummaryRecord[]>;
+  /** Sessions grouped by issue ID, used to render session status indicators. */
+  sessionsByIssue?: Map<string, JobSummaryRecord[]>;
   /** Controlled collapse state: set of collapsed node IDs. */
   collapsedIds?: Set<string>;
   /** Called when a node's expand/collapse chevron is clicked. */
@@ -35,8 +35,8 @@ function hasMatchingDescendant(node: IssueTreeNode, matchingIds: Set<string>): b
 function toTreeNodes(
   nodes: IssueTreeNode[],
   matchingIds: Set<string> | undefined,
-  jobsByIssue: Map<string, JobSummaryRecord[]> | undefined,
-  onJobClick: (issueId: string, jobId: string) => void,
+  sessionsByIssue: Map<string, JobSummaryRecord[]> | undefined,
+  onSessionClick: (issueId: string, sessionId: string) => void,
 ): TreeNode[] {
   const result: TreeNode[] = [];
 
@@ -46,14 +46,14 @@ function toTreeNodes(
     }
 
     const dimmed = matchingIds ? !matchingIds.has(node.id) : false;
-    const jobs = jobsByIssue?.get(node.id);
+    const sessions = sessionsByIssue?.get(node.id);
 
     result.push({
       id: node.id,
-      label: <IssueRow record={node.issue} dimmed={dimmed} blocked={node.blocked} jobs={jobs} onJobClick={onJobClick} />,
+      label: <IssueRow record={node.issue} dimmed={dimmed} blocked={node.blocked} sessions={sessions} onSessionClick={onSessionClick} />,
       children:
         node.children.length > 0
-          ? toTreeNodes(node.children, matchingIds, jobsByIssue, onJobClick)
+          ? toTreeNodes(node.children, matchingIds, sessionsByIssue, onSessionClick)
           : undefined,
       defaultExpanded: node.defaultExpanded,
     });
@@ -62,20 +62,20 @@ function toTreeNodes(
   return result;
 }
 
-export function IssueTree({ issues, matchingIds, jobsByIssue, collapsedIds, onToggle, className }: IssueTreeProps) {
+export function IssueTree({ issues, matchingIds, sessionsByIssue, collapsedIds, onToggle, className }: IssueTreeProps) {
   const navigate = useNavigate();
 
-  const handleJobClick = useCallback(
-    (issueId: string, jobId: string) => {
-      navigate(`/issues/${issueId}/jobs/${jobId}/logs`);
+  const handleSessionClick = useCallback(
+    (issueId: string, sessionId: string) => {
+      navigate(`/issues/${issueId}/sessions/${sessionId}/logs`);
     },
     [navigate],
   );
 
   const tree = useMemo(() => {
     const issueNodes = buildIssueTree(issues);
-    return toTreeNodes(issueNodes, matchingIds, jobsByIssue, handleJobClick);
-  }, [issues, matchingIds, jobsByIssue, handleJobClick]);
+    return toTreeNodes(issueNodes, matchingIds, sessionsByIssue, handleSessionClick);
+  }, [issues, matchingIds, sessionsByIssue, handleSessionClick]);
 
   const handleNodeClick = (id: string) => {
     navigate(`/issues/${id}`);

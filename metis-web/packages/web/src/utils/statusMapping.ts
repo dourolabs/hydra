@@ -28,8 +28,8 @@ export function normalizeCiState(state: string): BadgeStatus {
   return map[state] ?? "unknown";
 }
 
-/** Normalize a lowercase job status to a BadgeStatus. Job statuses already match 1:1. */
-export function normalizeJobStatus(status: string): BadgeStatus {
+/** Normalize a lowercase session status to a BadgeStatus. Session statuses already match 1:1. */
+export function normalizeSessionStatus(status: string): BadgeStatus {
   const valid: Set<string> = new Set([
     "created",
     "pending",

@@ -189,7 +189,7 @@
       "todo_list": []
     }
   },
-  "jobs": {
+  "sessions": {
     "t-seed00001": {
       "prompt": "Run the database migration scripts for the v2.0 schema update. Execute all pending migrations in order and verify data integrity.",
       "context": {

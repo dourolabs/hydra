@@ -1,27 +1,27 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Badge, Button, Spinner, Tabs } from "@metis/ui";
-import { normalizeJobStatus } from "../utils/statusMapping";
+import { normalizeSessionStatus } from "../utils/statusMapping";
 import { getRuntime } from "../utils/time";
-import { useJob } from "../features/jobs/useJob";
-import { JobLogViewer } from "../features/jobs/JobLogViewer";
-import { JobSettings } from "../features/jobs/JobSettings";
-import { KillJobModal } from "../features/jobs/KillJobModal";
+import { useSession } from "../features/sessions/useSession";
+import { SessionLogViewer } from "../features/sessions/SessionLogViewer";
+import { SessionSettings } from "../features/sessions/SessionSettings";
+import { KillSessionModal } from "../features/sessions/KillSessionModal";
 import { ApiError } from "../api/client";
 import { Breadcrumbs } from "../layout/Breadcrumbs";
-import styles from "./JobLogPage.module.css";
+import styles from "./SessionLogPage.module.css";
 
 const TABS = [
   { id: "logs", label: "Logs" },
   { id: "settings", label: "Settings" },
 ];
 
-export function JobLogPage() {
-  const { issueId, jobId } = useParams<{
+export function SessionLogPage() {
+  const { issueId, sessionId } = useParams<{
     issueId: string;
-    jobId: string;
+    sessionId: string;
   }>();
-  const { data: record, isLoading, error } = useJob(jobId ?? "");
+  const { data: record, isLoading, error } = useSession(sessionId ?? "");
   const [activeTab, setActiveTab] = useState("logs");
   const [killModalOpen, setKillModalOpen] = useState(false);
   const [killRequested, setKillRequested] = useState(false);
@@ -33,7 +33,7 @@ export function JobLogPage() {
           { label: "Dashboard", to: "/" },
           { label: `Issue ${issueId}`, to: `/issues/${issueId}` },
         ]}
-        current={`Job ${jobId}`}
+        current={`Session ${sessionId}`}
       />
 
       {isLoading && (
@@ -46,11 +46,11 @@ export function JobLogPage() {
         <div className={styles.errorContainer}>
           {error instanceof ApiError && error.status === 404 ? (
             <p className={styles.error}>
-              Job <strong>{jobId}</strong> not found.
+              Session <strong>{sessionId}</strong> not found.
             </p>
           ) : (
             <p className={styles.error}>
-              Failed to load job: {(error as Error).message}
+              Failed to load session: {(error as Error).message}
             </p>
           )}
         </div>
@@ -58,11 +58,11 @@ export function JobLogPage() {
 
       {record && (
         <>
-          {/* Job metadata header */}
+          {/* Session metadata header */}
           <div className={styles.header}>
             <div className={styles.headerTop}>
-              <span className={styles.jobId}>{record.job_id}</span>
-              <Badge status={normalizeJobStatus(record.task.status)} />
+              <span className={styles.sessionId}>{record.job_id}</span>
+              <Badge status={normalizeSessionStatus(record.task.status)} />
               {record.task.status === "running" && (
                 killRequested ? (
                   <span className={styles.terminating}>
@@ -75,7 +75,7 @@ export function JobLogPage() {
                     size="sm"
                     onClick={() => setKillModalOpen(true)}
                   >
-                    Kill Job
+                    Kill Session
                   </Button>
                 )
               )}
@@ -109,15 +109,15 @@ export function JobLogPage() {
 
           {/* Tab content */}
           {activeTab === "logs" && (
-            <JobLogViewer jobId={record.job_id} status={record.task.status} />
+            <SessionLogViewer sessionId={record.job_id} status={record.task.status} />
           )}
-          {activeTab === "settings" && <JobSettings task={record.task} />}
+          {activeTab === "settings" && <SessionSettings task={record.task} />}
 
-          <KillJobModal
+          <KillSessionModal
             open={killModalOpen}
             onClose={() => setKillModalOpen(false)}
             onKillSuccess={() => setKillRequested(true)}
-            jobId={record.job_id}
+            sessionId={record.job_id}
           />
         </>
       )}

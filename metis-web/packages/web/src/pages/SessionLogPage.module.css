@@ -17,7 +17,7 @@
   gap: var(--space-3);
 }
 
-.jobId {
+.sessionId {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-lg);
   font-weight: 600;

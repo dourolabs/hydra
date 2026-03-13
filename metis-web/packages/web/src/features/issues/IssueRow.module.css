@@ -76,7 +76,7 @@
   color: var(--color-text-primary);
 }
 
-.jobIndicator {
+.sessionIndicator {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;

@@ -7,8 +7,8 @@ describe("generateId", () => {
     expect(id).toMatch(/^i-[a-f0-9]{9}$/);
   });
 
-  it("generates job IDs with t- prefix", () => {
-    const id = generateId("job");
+  it("generates session IDs with t- prefix", () => {
+    const id = generateId("session");
     expect(id).toMatch(/^t-[a-f0-9]{9}$/);
   });
 
