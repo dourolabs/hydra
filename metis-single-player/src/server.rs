@@ -11,8 +11,10 @@ use std::{
 use anyhow::{bail, ensure, Context, Result};
 use clap::Subcommand;
 
+use metis::client::MetisClient;
 use metis::config::{self, expand_path};
 use metis::constants::DEFAULT_CONFIG_FILE;
+use metis_common::api::v1::agents::UpsertAgentRequest;
 
 /// Directory layout under ~/.metis/
 const SERVER_DIR: &str = "~/.metis/server";
@@ -159,11 +161,9 @@ const PM_PROMPT: &str = include_str!("../../scripts/agent-prompts/pm.md");
 const REVIEWER_PROMPT: &str = include_str!("../../scripts/agent-prompts/reviewer.md");
 
 /// Create the default agents (swe, pm, reviewer) and upload their prompts
-/// to the running server via HTTP.
+/// to the running server via the MetisClient.
 fn create_default_agents(auth_token: &str) -> Result<()> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()?;
+    let client = MetisClient::new(LOCAL_SERVER_URL, auth_token)?;
 
     let agents: &[(&str, &str, bool)] = &[
         ("swe", SWE_PROMPT, false),
@@ -171,27 +171,17 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
         ("reviewer", REVIEWER_PROMPT, false),
     ];
 
+    // Server commands run before the tokio runtime is created (due to fork),
+    // so we create a small runtime to drive the async MetisClient calls.
+    let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+
     for &(name, prompt, is_assignment_agent) in agents {
-        let body = serde_json::json!({
-            "name": name,
-            "prompt": prompt,
-            "is_assignment_agent": is_assignment_agent,
-        });
+        let mut request = UpsertAgentRequest::new(name, prompt, 3, i32::MAX);
+        request.is_assignment_agent = is_assignment_agent;
 
-        let resp = client
-            .post(format!("{LOCAL_SERVER_URL}/v1/agents"))
-            .bearer_auth(auth_token)
-            .json(&body)
-            .send()
+        rt.block_on(client.create_agent(&request))
             .with_context(|| format!("failed to create agent '{name}'"))?;
-
-        if resp.status().is_success() {
-            println!("Created agent: {name}");
-        } else {
-            let status = resp.status();
-            let body = resp.text().unwrap_or_default();
-            bail!("Failed to create agent '{name}': HTTP {status} — {body}");
-        }
+        println!("Created agent: {name}");
     }
 
     Ok(())
