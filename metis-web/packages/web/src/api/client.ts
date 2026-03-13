@@ -19,6 +19,7 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const resp = await fetch(path, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...init?.headers,

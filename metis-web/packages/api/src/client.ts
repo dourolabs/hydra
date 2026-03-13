@@ -119,7 +119,7 @@ export class MetisApiClient {
       if (qs) url += `?${qs}`;
     }
 
-    const init: RequestInit = { method };
+    const init: RequestInit = { method, credentials: "include" };
     if (options?.body !== undefined) {
       init.headers = { "Content-Type": "application/json" };
       init.body = JSON.stringify(options.body);
