@@ -1,11 +1,11 @@
 use crate::{
-    app::{AppState, WORKER_NAME_CLEANUP_ORPHANED_TASKS, WORKER_NAME_TASK_LIFECYCLE},
+    app::{AppState, WORKER_NAME_CLEANUP_ORPHANED_SESSIONS, WORKER_NAME_SESSION_LIFECYCLE},
     background::scheduler::{ScheduledWorker, WorkerOutcome},
     domain::actors::ActorRef,
     store::Status,
 };
 use async_trait::async_trait;
-use metis_common::jobs::SearchJobsQuery;
+use metis_common::sessions::SearchSessionsQuery;
 use tracing::{error, info};
 
 /// Scheduled worker that monitors running jobs once per iteration.
@@ -34,12 +34,12 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
 
         // Clean up tasks whose spawned_from issue has been deleted
         let cleanup_actor = ActorRef::System {
-            worker_name: WORKER_NAME_CLEANUP_ORPHANED_TASKS.into(),
+            worker_name: WORKER_NAME_CLEANUP_ORPHANED_SESSIONS.into(),
             on_behalf_of: None,
         };
         self.state.cleanup_orphaned_tasks(cleanup_actor).await;
 
-        let query = SearchJobsQuery::new(
+        let query = SearchSessionsQuery::new(
             None,
             None,
             None,
@@ -73,7 +73,7 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
 
         // Check each active job's status
         let lifecycle_actor = ActorRef::System {
-            worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
+            worker_name: WORKER_NAME_SESSION_LIFECYCLE.into(),
             on_behalf_of: None,
         };
         for metis_id in active_ids {
@@ -102,11 +102,11 @@ mod tests {
         domain::{
             actors::ActorRef,
             issues::{Issue, IssueStatus, IssueType},
-            jobs::BundleSpec,
+            sessions::BundleSpec,
             users::Username,
         },
         job_engine::JobStatus,
-        store::{Status, StoreError, Task},
+        store::{Session, Status, StoreError},
         test_utils::{
             FailingStore, MockJobEngine, test_state_handles, test_state_with_engine_handles,
             test_state_with_store,
@@ -129,7 +129,7 @@ mod tests {
     async fn reconciles_running_jobs_and_reports_progress() {
         let engine = Arc::new(MockJobEngine::new());
         let handles = test_state_with_engine_handles(engine.clone());
-        let task = Task::new(
+        let task = Session::new(
             "observe".to_string(),
             BundleSpec::None,
             None,
@@ -146,7 +146,7 @@ mod tests {
         );
         let (task_id, _) = handles
             .store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .expect("task should be added");
         handles
@@ -171,7 +171,7 @@ mod tests {
         assert_eq!(
             handles
                 .state
-                .get_task(&task_id)
+                .get_session(&task_id)
                 .await
                 .expect("task should exist")
                 .status,
@@ -213,7 +213,7 @@ mod tests {
             .await
             .unwrap();
 
-        let task = Task::new(
+        let task = Session::new(
             "spawned task".to_string(),
             BundleSpec::None,
             Some(issue_id.clone()),
@@ -230,7 +230,7 @@ mod tests {
         );
         let (task_id, _) = handles
             .store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -243,9 +243,9 @@ mod tests {
         let worker = MonitorRunningJobsWorker::new(handles.state);
         worker.run_iteration().await;
 
-        let result = handles.store.get_task(&task_id, false).await;
+        let result = handles.store.get_session(&task_id, false).await;
         assert!(
-            matches!(result, Err(StoreError::TaskNotFound(_))),
+            matches!(result, Err(StoreError::SessionNotFound(_))),
             "orphaned task should be cleaned up during worker iteration"
         );
     }

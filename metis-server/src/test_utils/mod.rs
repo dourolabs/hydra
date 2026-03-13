@@ -14,7 +14,7 @@ use crate::{
     store::{MemoryStore, Store, StoreError},
 };
 use anyhow::Context;
-use metis_common::{RepoName, TaskId};
+use metis_common::{RepoName, SessionId};
 use reqwest::{Client, header};
 use std::{
     sync::Arc,
@@ -194,7 +194,7 @@ fn test_auth() -> (Actor, String) {
     TEST_AUTH
         .get_or_init(|| {
             Actor::new_for_task(
-                TaskId::new(),
+                SessionId::new(),
                 crate::domain::users::Username::from("test-creator"),
             )
         })

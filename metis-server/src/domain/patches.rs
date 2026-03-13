@@ -3,7 +3,7 @@ use crate::domain::actors::UNKNOWN_CREATOR;
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use metis_common::api::v1 as api;
-use metis_common::{RepoName, TaskId};
+use metis_common::{RepoName, SessionId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
@@ -204,7 +204,7 @@ pub struct Patch {
     #[serde(default)]
     pub is_automatic_backup: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<TaskId>,
+    pub created_by: Option<SessionId>,
     /// The resolved username of the human/agent that authored the patch.
     /// Uses a serde default for backward compatibility with v1 JSONB payloads that lack the field.
     #[serde(default = "default_patch_creator")]
@@ -240,7 +240,7 @@ impl Patch {
         diff: String,
         status: PatchStatus,
         is_automatic_backup: bool,
-        created_by: Option<TaskId>,
+        created_by: Option<SessionId>,
         creator: Username,
         reviews: Vec<Review>,
         service_repo_name: RepoName,

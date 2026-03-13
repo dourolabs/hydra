@@ -4,7 +4,7 @@ use crate::domain::{
     documents::Document,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
-        JobSettings, TodoItem,
+        SessionSettings, TodoItem,
     },
     labels::Label,
     messages::Message,
@@ -17,13 +17,13 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
+    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, SessionId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
@@ -34,7 +34,7 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use super::{ReadOnlyStore, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
+use super::{ReadOnlyStore, Status, Store, StoreError, Session, TaskError, TaskStatusLog};
 
 const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
 const TABLE_ACTORS_V2: &str = "actors_v2";
@@ -120,7 +120,8 @@ struct IssueRow {
     progress: String,
     status: String,
     assignee: Option<String>,
-    job_settings: String,
+    #[sqlx(rename = "job_settings")]
+    session_settings: String,
     todo_list: String,
     deleted: bool,
     actor: Option<String>,
@@ -552,8 +553,8 @@ impl SqliteStore {
             StoreError::Internal(format!("version number overflow for issue '{id}'"))
         })?;
 
-        let job_settings_json = serde_json::to_string(&issue.job_settings)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize job_settings: {e}")))?;
+        let session_settings_json = serde_json::to_string(&issue.session_settings)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize session_settings: {e}")))?;
         let todo_list_json = serde_json::to_string(&issue.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
         sqlx::query(
@@ -569,7 +570,7 @@ impl SqliteStore {
         .bind(&issue.progress)
         .bind(issue.status.as_str())
         .bind(issue.assignee.as_deref())
-        .bind(&job_settings_json)
+        .bind(&session_settings_json)
         .bind(&todo_list_json)
         .bind(issue.deleted)
         .bind(actor)
@@ -730,7 +731,7 @@ impl SqliteStore {
             .created_by
             .as_ref()
             .map(|s| {
-                TaskId::from_str(s)
+                SessionId::from_str(s)
                     .map_err(|e| StoreError::Internal(format!("invalid created_by task id: {e}")))
             })
             .transpose()?;
@@ -802,7 +803,7 @@ impl SqliteStore {
             .created_by
             .as_ref()
             .map(|s| {
-                TaskId::from_str(s)
+                SessionId::from_str(s)
                     .map_err(|e| StoreError::Internal(format!("invalid created_by task id: {e}")))
             })
             .transpose()?;
@@ -828,9 +829,9 @@ impl SqliteStore {
 
     async fn insert_task(
         &self,
-        id: &TaskId,
+        id: &SessionId,
         version_number: VersionNumber,
-        task: &Task,
+        session: &Session,
         actor: Option<&str>,
         created_at: Option<&str>,
     ) -> Result<(), StoreError> {
@@ -838,11 +839,11 @@ impl SqliteStore {
             StoreError::Internal(format!("version number overflow for task '{id}'"))
         })?;
 
-        let context_json = serde_json::to_string(&task.context)
+        let context_json = serde_json::to_string(&session.context)
             .map_err(|e| StoreError::Internal(format!("failed to serialize context: {e}")))?;
-        let env_vars_json = serde_json::to_string(&task.env_vars)
+        let env_vars_json = serde_json::to_string(&session.env_vars)
             .map_err(|e| StoreError::Internal(format!("failed to serialize env_vars: {e}")))?;
-        let error_json = task
+        let error_json = session
             .error
             .as_ref()
             .map(|e| {
@@ -851,7 +852,7 @@ impl SqliteStore {
                 })
             })
             .transpose()?;
-        let secrets_json = task
+        let secrets_json = session
             .secrets
             .as_ref()
             .map(|s| {
@@ -860,10 +861,10 @@ impl SqliteStore {
                 })
             })
             .transpose()?;
-        let status_str = super::status_to_db_str(task.status);
-        let creation_time_str = task.creation_time.map(|t| t.to_rfc3339());
-        let start_time_str = task.start_time.map(|t| t.to_rfc3339());
-        let end_time_str = task.end_time.map(|t| t.to_rfc3339());
+        let status_str = super::status_to_db_str(session.status);
+        let creation_time_str = session.creation_time.map(|t| t.to_rfc3339());
+        let start_time_str = session.start_time.map(|t| t.to_rfc3339());
+        let end_time_str = session.end_time.map(|t| t.to_rfc3339());
 
         if let Some(ts) = created_at {
             sqlx::query(
@@ -874,19 +875,19 @@ impl SqliteStore {
             )
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(&task.prompt)
+            .bind(&session.prompt)
             .bind(&context_json)
-            .bind(task.spawned_from.as_ref().map(|i| i.as_ref()))
-            .bind(task.creator.as_str())
-            .bind(task.image.as_deref())
-            .bind(task.model.as_deref())
+            .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
+            .bind(session.creator.as_str())
+            .bind(session.image.as_deref())
+            .bind(session.model.as_deref())
             .bind(&env_vars_json)
-            .bind(task.cpu_limit.as_deref())
-            .bind(task.memory_limit.as_deref())
+            .bind(session.cpu_limit.as_deref())
+            .bind(session.memory_limit.as_deref())
             .bind(status_str)
-            .bind(task.last_message.as_deref())
+            .bind(session.last_message.as_deref())
             .bind(&error_json)
-            .bind(task.deleted)
+            .bind(session.deleted)
             .bind(actor)
             .bind(&secrets_json)
             .bind(ts)
@@ -905,19 +906,19 @@ impl SqliteStore {
             )
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(&task.prompt)
+            .bind(&session.prompt)
             .bind(&context_json)
-            .bind(task.spawned_from.as_ref().map(|i| i.as_ref()))
-            .bind(task.creator.as_str())
-            .bind(task.image.as_deref())
-            .bind(task.model.as_deref())
+            .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
+            .bind(session.creator.as_str())
+            .bind(session.image.as_deref())
+            .bind(session.model.as_deref())
             .bind(&env_vars_json)
-            .bind(task.cpu_limit.as_deref())
-            .bind(task.memory_limit.as_deref())
+            .bind(session.cpu_limit.as_deref())
+            .bind(session.memory_limit.as_deref())
             .bind(status_str)
-            .bind(task.last_message.as_deref())
+            .bind(session.last_message.as_deref())
             .bind(&error_json)
-            .bind(task.deleted)
+            .bind(session.deleted)
             .bind(actor)
             .bind(&secrets_json)
             .bind(creation_time_str.as_deref())
@@ -931,7 +932,7 @@ impl SqliteStore {
         Ok(())
     }
 
-    fn row_to_task(&self, row: &TaskRow) -> Result<Task, StoreError> {
+    fn row_to_session(&self, row: &TaskRow) -> Result<Session, StoreError> {
         let context = serde_json::from_str(&row.context)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize context: {e}")))?;
         let env_vars: HashMap<String, String> = serde_json::from_str(&row.env_vars)
@@ -993,7 +994,7 @@ impl SqliteStore {
             .map(parse_sqlite_timestamp)
             .transpose()?;
 
-        Ok(Task {
+        Ok(Session {
             prompt: row.prompt.clone(),
             context,
             spawned_from,
@@ -1014,13 +1015,13 @@ impl SqliteStore {
         })
     }
 
-    fn row_to_task_id(id: &str) -> Result<TaskId, StoreError> {
-        id.parse::<TaskId>().map_err(|err| {
+    fn row_to_task_id(id: &str) -> Result<SessionId, StoreError> {
+        id.parse::<SessionId>().map_err(|err| {
             StoreError::Internal(format!("invalid task id stored in database: {err}"))
         })
     }
 
-    fn row_to_versioned_task(&self, row: &TaskRow) -> Result<Versioned<Task>, StoreError> {
+    fn row_to_versioned_task(&self, row: &TaskRow) -> Result<Versioned<Session>, StoreError> {
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
             StoreError::Internal(format!(
                 "invalid version number stored for task '{}'",
@@ -1034,7 +1035,7 @@ impl SqliteStore {
             .map(parse_sqlite_timestamp)
             .transpose()?
             .unwrap_or(timestamp);
-        let task = self.row_to_task(row)?;
+        let task = self.row_to_session(row)?;
         Ok(Versioned::with_optional_actor(
             task,
             version,
@@ -1048,8 +1049,8 @@ impl SqliteStore {
         let issue_type = IssueType::from_str(&row.issue_type)
             .map_err(|e| StoreError::Internal(format!("invalid issue_type: {e}")))?;
         let status = IssueStatus::from_str(&row.status).map_err(StoreError::InvalidIssueStatus)?;
-        let job_settings: JobSettings = serde_json::from_str(&row.job_settings).map_err(|e| {
-            StoreError::Internal(format!("failed to deserialize job_settings: {e}"))
+        let session_settings: SessionSettings = serde_json::from_str(&row.session_settings).map_err(|e| {
+            StoreError::Internal(format!("failed to deserialize session_settings: {e}"))
         })?;
         let todo_list: Vec<TodoItem> = serde_json::from_str(&row.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize todo_list: {e}")))?;
@@ -1061,7 +1062,7 @@ impl SqliteStore {
             progress: row.progress.clone(),
             status,
             assignee: row.assignee.clone(),
-            job_settings,
+            session_settings,
             todo_list,
             dependencies: vec![],
             patches: vec![],
@@ -1621,7 +1622,7 @@ fn build_documents_predicates_sqlite(query: &SearchDocumentsQuery) -> (Vec<Strin
 
 /// Build WHERE predicates and bindings for tasks queries (SQLite `?N` placeholders).
 /// Uses `t.` column prefix since tasks queries join against the table alias `t`.
-fn build_tasks_predicates_sqlite(query: &SearchJobsQuery) -> (Vec<String>, Vec<String>) {
+fn build_tasks_predicates_sqlite(query: &SearchSessionsQuery) -> (Vec<String>, Vec<String>) {
     use crate::domain::task_status::Status;
 
     let mut predicates = Vec::new();
@@ -2059,10 +2060,10 @@ impl ReadOnlyStore for SqliteStore {
             .collect()
     }
 
-    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
+    async fn get_sessions_for_issue(&self, issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, vec![]);
-        let tasks = self.list_tasks(&query).await?;
+        let query = SearchSessionsQuery::new(None, Some(issue_id.clone()), None, vec![]);
+        let tasks = self.list_sessions(&query).await?;
         Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }
 
@@ -2468,11 +2469,11 @@ impl ReadOnlyStore for SqliteStore {
         .await
     }
 
-    async fn get_task(
+    async fn get_session(
         &self,
-        id: &TaskId,
+        id: &SessionId,
         include_deleted: bool,
-    ) -> Result<Versioned<Task>, StoreError> {
+    ) -> Result<Versioned<Session>, StoreError> {
         let row = sqlx::query_as::<_, TaskRow>(
             &format!(
                 "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at,
@@ -2488,14 +2489,14 @@ impl ReadOnlyStore for SqliteStore {
         .await
         .map_err(map_sqlx_error)?;
 
-        let row = row.ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+        let row = row.ok_or_else(|| StoreError::SessionNotFound(id.clone()))?;
         if !include_deleted && row.deleted {
-            return Err(StoreError::TaskNotFound(id.clone()));
+            return Err(StoreError::SessionNotFound(id.clone()));
         }
         self.row_to_versioned_task(&row)
     }
 
-    async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
+    async fn get_session_versions(&self, id: &SessionId) -> Result<Vec<Versioned<Session>>, StoreError> {
         let rows = sqlx::query_as::<_, TaskRow>(
             &format!(
                 "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time
@@ -2510,10 +2511,10 @@ impl ReadOnlyStore for SqliteStore {
         .map_err(map_sqlx_error)?;
 
         if rows.is_empty() {
-            return Err(StoreError::TaskNotFound(id.clone()));
+            return Err(StoreError::SessionNotFound(id.clone()));
         }
 
-        let mut results: Vec<Versioned<Task>> = rows
+        let mut results: Vec<Versioned<Session>> = rows
             .iter()
             .map(|row| self.row_to_versioned_task(row))
             .collect::<Result<Vec<_>, _>>()?;
@@ -2526,10 +2527,10 @@ impl ReadOnlyStore for SqliteStore {
         Ok(results)
     }
 
-    async fn list_tasks(
+    async fn list_sessions(
         &self,
-        query: &SearchJobsQuery,
-    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+        query: &SearchSessionsQuery,
+    ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
             "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.creator, t.deleted, t.actor, t.created_at, t.updated_at, \
              t.creation_time, t.start_time, t.end_time \
@@ -2569,7 +2570,7 @@ impl ReadOnlyStore for SqliteStore {
         Ok(tasks)
     }
 
-    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+    async fn count_sessions(&self, query: &SearchSessionsQuery) -> Result<u64, StoreError> {
         let mut sql = format!(
             "SELECT COUNT(*) \
              FROM {TABLE_TASKS_V2} t \
@@ -2596,16 +2597,16 @@ impl ReadOnlyStore for SqliteStore {
         Ok(count as u64)
     }
 
-    async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
-        let versions = self.get_task_versions(id).await?;
-        super::task_status_log_from_versions(&versions)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
+    async fn get_status_log(&self, id: &SessionId) -> Result<TaskStatusLog, StoreError> {
+        let versions = self.get_session_versions(id).await?;
+        super::session_status_log_from_versions(&versions)
+            .ok_or_else(|| StoreError::SessionNotFound(id.clone()))
     }
 
     async fn get_status_logs(
         &self,
-        ids: &[TaskId],
-    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
+        ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -2629,7 +2630,7 @@ impl ReadOnlyStore for SqliteStore {
             .await
             .map_err(map_sqlx_error)?;
 
-        let mut grouped: HashMap<TaskId, Vec<Versioned<Task>>> = HashMap::new();
+        let mut grouped: HashMap<SessionId, Vec<Versioned<Session>>> = HashMap::new();
         for row in &rows {
             let task_id = Self::row_to_task_id(&row.id)?;
             let versioned = self.row_to_versioned_task(row)?;
@@ -2638,7 +2639,7 @@ impl ReadOnlyStore for SqliteStore {
 
         let mut result = HashMap::new();
         for (task_id, versions) in grouped {
-            if let Some(log) = super::task_status_log_from_versions(&versions) {
+            if let Some(log) = super::session_status_log_from_versions(&versions) {
                 result.insert(task_id, log);
             }
         }
@@ -3571,59 +3572,59 @@ impl Store for SqliteStore {
         self.update_document(id, document, actor).await
     }
 
-    async fn add_task(
+    async fn add_session(
         &self,
-        mut task: Task,
+        mut session: Session,
         creation_time: DateTime<Utc>,
         actor: &ActorRef,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let id = TaskId::new();
+    ) -> Result<(SessionId, VersionNumber), StoreError> {
+        let id = SessionId::new();
 
-        if let Some(issue_id) = task.spawned_from.as_ref() {
+        if let Some(issue_id) = session.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
         }
 
-        task.creation_time = Some(creation_time);
+        session.creation_time = Some(creation_time);
         let actor_json = actor_to_json_string(actor);
         let created_at = creation_time.to_rfc3339();
-        self.insert_task(&id, 1, &task, Some(&actor_json), Some(&created_at))
+        self.insert_task(&id, 1, &session, Some(&actor_json), Some(&created_at))
             .await?;
         Ok((id, 1))
     }
 
-    async fn update_task(
+    async fn update_session(
         &self,
-        metis_id: &TaskId,
-        task: Task,
+        metis_id: &SessionId,
+        session: Session,
         actor: &ActorRef,
-    ) -> Result<Versioned<Task>, StoreError> {
-        if let Some(issue_id) = task.spawned_from.as_ref() {
+    ) -> Result<Versioned<Session>, StoreError> {
+        if let Some(issue_id) = session.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
         }
 
         let latest_version = self
             .fetch_latest_version_number(TABLE_TASKS_V2, metis_id.as_ref())
             .await?
-            .ok_or_else(|| StoreError::TaskNotFound(metis_id.clone()))?;
+            .ok_or_else(|| StoreError::SessionNotFound(metis_id.clone()))?;
         let next_version = latest_version.checked_add(1).ok_or_else(|| {
             StoreError::Internal(format!("version number overflow for task '{metis_id}'"))
         })?;
 
         let actor_json = actor_to_json_string(actor);
-        self.insert_task(metis_id, next_version, &task, Some(&actor_json), None)
+        self.insert_task(metis_id, next_version, &session, Some(&actor_json), None)
             .await?;
-        self.get_task(metis_id, true).await
+        self.get_session(metis_id, true).await
     }
 
-    async fn delete_task(
+    async fn delete_session(
         &self,
-        id: &TaskId,
+        id: &SessionId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        let current = self.get_task(id, true).await?;
+        let current = self.get_session(id, true).await?;
         let mut task = current.item;
         task.deleted = true;
-        let versioned = self.update_task(id, task, actor).await?;
+        let versioned = self.update_session(id, task, actor).await?;
         Ok(versioned.version)
     }
 
@@ -4217,9 +4218,9 @@ fn apply_pagination_sql_sqlite(
 mod tests {
     use super::*;
     use crate::domain::actors::{ActorId, ActorRef};
-    use crate::domain::jobs::BundleSpec;
+    use crate::domain::sessions::BundleSpec;
     use chrono::Duration;
-    use metis_common::TaskId;
+    use metis_common::SessionId;
 
     async fn create_test_store() -> SqliteStore {
         let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
@@ -4468,7 +4469,7 @@ mod tests {
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
-            actor_id: ActorId::Task(TaskId::new()),
+            actor_id: ActorId::Task(SessionId::new()),
             creator: Username::from("creator"),
         };
         let name = actor.name();
@@ -4488,7 +4489,7 @@ mod tests {
     #[tokio::test]
     async fn update_actor_overwrites_existing_entry() {
         let store = create_test_store().await;
-        let task_id = TaskId::new();
+        let task_id = SessionId::new();
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
@@ -4536,7 +4537,7 @@ mod tests {
     #[tokio::test]
     async fn get_actor_missing_returns_not_found() {
         let store = create_test_store().await;
-        let task_id = TaskId::new();
+        let task_id = SessionId::new();
         let name = format!("w-{task_id}");
 
         let err = store.get_actor(&name).await.unwrap_err();
@@ -5096,7 +5097,7 @@ mod tests {
         )
     }
 
-    fn sample_document(path: Option<&str>, created_by: Option<TaskId>) -> Document {
+    fn sample_document(path: Option<&str>, created_by: Option<SessionId>) -> Document {
         Document {
             title: "Doc".to_string(),
             body_markdown: "Body".to_string(),
@@ -5263,7 +5264,7 @@ mod tests {
     }
 
     /// Patch with every optional field set so serialization round-trip can assert full equality.
-    fn sample_patch_all_fields(created_by: Option<TaskId>) -> Patch {
+    fn sample_patch_all_fields(created_by: Option<SessionId>) -> Patch {
         use crate::domain::patches::GitOid;
         use std::str::FromStr;
 
@@ -5304,7 +5305,7 @@ mod tests {
     #[tokio::test]
     async fn patch_serialization_round_trip_all_fields() {
         let store = create_test_store().await;
-        let task_id = TaskId::new();
+        let task_id = SessionId::new();
         let patch = sample_patch_all_fields(Some(task_id));
 
         let (patch_id, _) = store
@@ -5407,8 +5408,8 @@ mod tests {
     #[tokio::test]
     async fn document_filters_apply_query() {
         let store = create_test_store().await;
-        let task_id = TaskId::new();
-        let other_task = TaskId::new();
+        let task_id = SessionId::new();
+        let other_task = SessionId::new();
 
         let (first, _) = store
             .add_document(
@@ -5498,7 +5499,7 @@ mod tests {
     #[tokio::test]
     async fn document_serialization_round_trip_all_fields() {
         let store = create_test_store().await;
-        let task_id = TaskId::new();
+        let task_id = SessionId::new();
         let doc = sample_document(Some("docs/roundtrip.md"), Some(task_id));
 
         let (doc_id, _) = store
@@ -5515,8 +5516,8 @@ mod tests {
 
     // ---- Task helpers ----
 
-    fn spawn_task() -> Task {
-        Task::new(
+    fn spawn_task() -> Session {
+        Session::new(
             "test prompt".to_string(),
             BundleSpec::None,
             None,
@@ -5542,12 +5543,12 @@ mod tests {
         let now = Utc::now();
 
         let (task_id, version) = store
-            .add_task(task.clone(), now, &ActorRef::test())
+            .add_session(task.clone(), now, &ActorRef::test())
             .await
             .unwrap();
         assert_eq!(version, 1);
 
-        let fetched = store.get_task(&task_id, false).await.unwrap();
+        let fetched = store.get_session(&task_id, false).await.unwrap();
         // add_task sets creation_time on the stored task
         let mut expected = task.clone();
         expected.creation_time = Some(now);
@@ -5558,9 +5559,9 @@ mod tests {
     #[tokio::test]
     async fn task_not_found() {
         let store = create_test_store().await;
-        let missing_id = TaskId::new();
-        let err = store.get_task(&missing_id, false).await.unwrap_err();
-        assert!(matches!(err, StoreError::TaskNotFound(_)));
+        let missing_id = SessionId::new();
+        let err = store.get_session(&missing_id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
     }
 
     #[tokio::test]
@@ -5570,18 +5571,18 @@ mod tests {
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
         let (task_id, _) = store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut updated = spawn_task();
         updated.prompt = "v2".to_string();
         store
-            .update_task(&task_id, updated.clone(), &ActorRef::test())
+            .update_session(&task_id, updated.clone(), &ActorRef::test())
             .await
             .unwrap();
 
-        let fetched = store.get_task(&task_id, false).await.unwrap();
+        let fetched = store.get_session(&task_id, false).await.unwrap();
         assert_versioned(&fetched, &updated, 2);
     }
 
@@ -5592,18 +5593,18 @@ mod tests {
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
         let (task_id, _) = store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut v2 = spawn_task();
         v2.prompt = "v2".to_string();
         store
-            .update_task(&task_id, v2, &ActorRef::test())
+            .update_session(&task_id, v2, &ActorRef::test())
             .await
             .unwrap();
 
-        let versions = store.get_task_versions(&task_id).await.unwrap();
+        let versions = store.get_session_versions(&task_id).await.unwrap();
         assert_eq!(versions.len(), 2);
         assert_eq!(versions[0].version, 1);
         assert_eq!(versions[1].version, 2);
@@ -5616,15 +5617,15 @@ mod tests {
         let store = create_test_store().await;
 
         let (id1, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         let (id2, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
-        let tasks = store.list_tasks(&SearchJobsQuery::default()).await.unwrap();
+        let tasks = store.list_sessions(&SearchSessionsQuery::default()).await.unwrap();
         let ids: HashSet<_> = tasks.into_iter().map(|(id, _)| id).collect();
         assert_eq!(ids, HashSet::from([id1, id2]));
     }
@@ -5636,19 +5637,19 @@ mod tests {
         let mut task1 = spawn_task();
         task1.prompt = "deploy to production".to_string();
         store
-            .add_task(task1, Utc::now(), &ActorRef::test())
+            .add_session(task1, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut task2 = spawn_task();
         task2.prompt = "run tests".to_string();
         store
-            .add_task(task2, Utc::now(), &ActorRef::test())
+            .add_session(task2, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
-        let query = SearchJobsQuery::new(Some("deploy".to_string()), None, None, vec![]);
-        let tasks = store.list_tasks(&query).await.unwrap();
+        let query = SearchSessionsQuery::new(Some("deploy".to_string()), None, None, vec![]);
+        let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].1.item.prompt, "deploy to production");
     }
@@ -5658,35 +5659,35 @@ mod tests {
         let store = create_test_store().await;
 
         let (task_id, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut running = spawn_task();
         running.status = Status::Running;
         store
-            .update_task(&task_id, running, &ActorRef::test())
+            .update_session(&task_id, running, &ActorRef::test())
             .await
             .unwrap();
 
         // Search for running tasks
-        let query = SearchJobsQuery::new(
+        let query = SearchSessionsQuery::new(
             None,
             None,
             None,
             vec![metis_common::task_status::Status::Running],
         );
-        let tasks = store.list_tasks(&query).await.unwrap();
+        let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
 
         // Search for created tasks - should be empty since task is now running
-        let query = SearchJobsQuery::new(
+        let query = SearchSessionsQuery::new(
             None,
             None,
             None,
             vec![metis_common::task_status::Status::Created],
         );
-        let tasks = store.list_tasks(&query).await.unwrap();
+        let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 0);
     }
 
@@ -5696,19 +5697,19 @@ mod tests {
 
         // Create three tasks - they all start as Created
         let (task1_id, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         let (task2_id, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         let (task3_id, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         let (task4_id, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -5716,7 +5717,7 @@ mod tests {
         let mut running = spawn_task();
         running.status = Status::Running;
         store
-            .update_task(&task2_id, running, &ActorRef::test())
+            .update_session(&task2_id, running, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5724,7 +5725,7 @@ mod tests {
         let mut complete = spawn_task();
         complete.status = Status::Complete;
         store
-            .update_task(&task3_id, complete, &ActorRef::test())
+            .update_session(&task3_id, complete, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5732,12 +5733,12 @@ mod tests {
         let mut failed = spawn_task();
         failed.status = Status::Failed;
         store
-            .update_task(&task4_id, failed, &ActorRef::test())
+            .update_session(&task4_id, failed, &ActorRef::test())
             .await
             .unwrap();
 
         // Filter by multiple statuses: Created and Running
-        let query = SearchJobsQuery::new(
+        let query = SearchSessionsQuery::new(
             None,
             None,
             None,
@@ -5746,30 +5747,30 @@ mod tests {
                 metis_common::task_status::Status::Running,
             ],
         );
-        let tasks = store.list_tasks(&query).await.unwrap();
+        let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 2);
         let ids: Vec<_> = tasks.iter().map(|(id, _)| id.clone()).collect();
         assert!(ids.contains(&task1_id));
         assert!(ids.contains(&task2_id));
 
         // Filter by single status: Complete
-        let query = SearchJobsQuery::new(
+        let query = SearchSessionsQuery::new(
             None,
             None,
             None,
             vec![metis_common::task_status::Status::Complete],
         );
-        let tasks = store.list_tasks(&query).await.unwrap();
+        let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].0, task3_id);
 
         // Empty status vec returns all tasks (no filter)
-        let query = SearchJobsQuery::new(None, None, None, vec![]);
-        let tasks = store.list_tasks(&query).await.unwrap();
+        let query = SearchSessionsQuery::new(None, None, None, vec![]);
+        let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 4);
 
         // Filter by three statuses: Running, Complete, Failed
-        let query = SearchJobsQuery::new(
+        let query = SearchSessionsQuery::new(
             None,
             None,
             None,
@@ -5779,7 +5780,7 @@ mod tests {
                 metis_common::task_status::Status::Failed,
             ],
         );
-        let tasks = store.list_tasks(&query).await.unwrap();
+        let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 3);
         let ids: Vec<_> = tasks.iter().map(|(id, _)| id.clone()).collect();
         assert!(ids.contains(&task2_id));
@@ -5792,31 +5793,31 @@ mod tests {
         let store = create_test_store().await;
 
         let (task_id, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         store
-            .delete_task(&task_id, &ActorRef::test())
+            .delete_session(&task_id, &ActorRef::test())
             .await
             .unwrap();
 
         // Should not appear in default list
-        let tasks = store.list_tasks(&SearchJobsQuery::default()).await.unwrap();
+        let tasks = store.list_sessions(&SearchSessionsQuery::default()).await.unwrap();
         assert!(tasks.is_empty());
 
         // Should appear when include_deleted is true
-        let query = SearchJobsQuery::new(None, None, Some(true), vec![]);
-        let tasks = store.list_tasks(&query).await.unwrap();
+        let query = SearchSessionsQuery::new(None, None, Some(true), vec![]);
+        let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert!(tasks[0].1.item.deleted);
 
         // get_task with include_deleted=false should fail
-        let err = store.get_task(&task_id, false).await.unwrap_err();
-        assert!(matches!(err, StoreError::TaskNotFound(_)));
+        let err = store.get_session(&task_id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::SessionNotFound(_)));
 
         // get_task with include_deleted=true should succeed
-        let fetched = store.get_task(&task_id, true).await.unwrap();
+        let fetched = store.get_session(&task_id, true).await.unwrap();
         assert!(fetched.item.deleted);
     }
 
@@ -5826,7 +5827,7 @@ mod tests {
         let created_at = Utc::now() - Duration::seconds(60);
         let task = spawn_task();
         let (task_id, _) = store
-            .add_task(task.clone(), created_at, &ActorRef::test())
+            .add_session(task.clone(), created_at, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5839,7 +5840,7 @@ mod tests {
         let mut pending = task.clone();
         pending.status = Status::Pending;
         store
-            .update_task(&task_id, pending, &ActorRef::test())
+            .update_session(&task_id, pending, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5847,7 +5848,7 @@ mod tests {
         let mut running = task.clone();
         running.status = Status::Running;
         store
-            .update_task(&task_id, running, &ActorRef::test())
+            .update_session(&task_id, running, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5856,7 +5857,7 @@ mod tests {
         complete.status = Status::Complete;
         complete.last_message = Some("done".to_string());
         store
-            .update_task(&task_id, complete, &ActorRef::test())
+            .update_session(&task_id, complete, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5871,16 +5872,16 @@ mod tests {
         let store = create_test_store().await;
 
         let (task_id1, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let (task_id2, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
-        let missing_id = TaskId::new();
+        let missing_id = SessionId::new();
 
         let logs = store
             .get_status_logs(&[task_id1.clone(), task_id2.clone(), missing_id.clone()])
@@ -5898,7 +5899,7 @@ mod tests {
     #[tokio::test]
     async fn task_serialization_round_trip_all_fields() {
         let store = create_test_store().await;
-        let task = Task::new(
+        let task = Session::new(
             "full test".to_string(),
             BundleSpec::None,
             None,
@@ -5918,11 +5919,11 @@ mod tests {
 
         let now = Utc::now();
         let (task_id, _) = store
-            .add_task(task.clone(), now, &ActorRef::test())
+            .add_session(task.clone(), now, &ActorRef::test())
             .await
             .unwrap();
 
-        let fetched = store.get_task(&task_id, false).await.unwrap();
+        let fetched = store.get_session(&task_id, false).await.unwrap();
         // add_task sets creation_time on the stored task
         let mut expected = task.clone();
         expected.creation_time = Some(now);
@@ -5936,11 +5937,11 @@ mod tests {
         let task = spawn_task();
 
         let (task_id, _) = store
-            .add_task(task, creation_time, &ActorRef::test())
+            .add_session(task, creation_time, &ActorRef::test())
             .await
             .unwrap();
 
-        let fetched = store.get_task(&task_id, false).await.unwrap();
+        let fetched = store.get_session(&task_id, false).await.unwrap();
         // Timestamps may lose sub-millisecond precision, so check within 1 second
         let diff = (fetched.timestamp - creation_time).num_seconds().abs();
         assert!(
@@ -5954,14 +5955,14 @@ mod tests {
         let store = create_test_store().await;
         let task = spawn_task();
         let (task_id, _) = store
-            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .add_session(task.clone(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut running = task.clone();
         running.status = Status::Running;
         store
-            .update_task(&task_id, running, &ActorRef::test())
+            .update_session(&task_id, running, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5971,7 +5972,7 @@ mod tests {
             reason: "OOM killed".to_string(),
         });
         store
-            .update_task(&task_id, failed, &ActorRef::test())
+            .update_session(&task_id, failed, &ActorRef::test())
             .await
             .unwrap();
 
@@ -7039,13 +7040,13 @@ mod tests {
 
         for _ in 0..4 {
             store
-                .add_task(spawn_task(), Utc::now(), &actor)
+                .add_session(spawn_task(), Utc::now(), &actor)
                 .await
                 .unwrap();
         }
 
-        let query = metis_common::api::v1::jobs::SearchJobsQuery::new(None, None, None, vec![]);
-        assert_eq!(store.count_tasks(&query).await.unwrap(), 4);
+        let query = metis_common::api::v1::sessions::SearchSessionsQuery::new(None, None, None, vec![]);
+        assert_eq!(store.count_sessions(&query).await.unwrap(), 4);
     }
 
     #[tokio::test]

@@ -8,7 +8,7 @@ use super::{ApiError, JobIdPath};
 pub async fn kill_job(
     State(state): State<AppState>,
     JobIdPath(job_id): JobIdPath,
-) -> Result<Json<v1::jobs::KillJobResponse>, ApiError> {
+) -> Result<Json<v1::sessions::KillSessionResponse>, ApiError> {
     info!(job_id = %job_id, "kill_job invoked");
     state
         .job_engine
@@ -38,7 +38,7 @@ pub async fn kill_job(
 
     info!(job_id = %job_id, "kill_job completed successfully");
 
-    Ok(Json(v1::jobs::KillJobResponse::new(
+    Ok(Json(v1::sessions::KillSessionResponse::new(
         job_id,
         "killed".to_string(),
     )))

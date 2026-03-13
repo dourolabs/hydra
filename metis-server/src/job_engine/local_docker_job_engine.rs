@@ -18,7 +18,7 @@ use futures::{StreamExt, channel::mpsc};
 use metis_common::constants::{ENV_METIS_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN};
 use tracing::{error, info, warn};
 
-use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
+use super::{JobEngine, JobEngineError, JobStatus, MetisJob, SessionId};
 use crate::domain::actors::Actor;
 
 /// Metadata tracked in-memory for each container managed by this engine.
@@ -32,7 +32,7 @@ pub struct LocalDockerJobEngine {
     docker: Docker,
     server_url: String,
     /// Maps metis_id → container info for tracking.
-    containers: DashMap<TaskId, ContainerInfo>,
+    containers: DashMap<SessionId, ContainerInfo>,
 }
 
 impl LocalDockerJobEngine {
@@ -71,13 +71,13 @@ impl LocalDockerJobEngine {
                 .labels
                 .as_ref()
                 .and_then(|labels| labels.get("metis-id"))
-                .and_then(|id| TaskId::from_str(id).ok());
+                .and_then(|id| SessionId::from_str(id).ok());
 
             let task_id = match task_id {
                 Some(id) => id,
                 None => {
                     // Fall back to parsing from container name.
-                    let name = extract_task_id_from_names(container.names.as_deref());
+                    let name = extract_session_id_from_names(container.names.as_deref());
                     match name {
                         Some(id) => id,
                         None => {
@@ -117,7 +117,7 @@ impl LocalDockerJobEngine {
 
     fn build_env_vars(
         &self,
-        metis_id: &TaskId,
+        metis_id: &SessionId,
         auth_token: &str,
         extra_env: &HashMap<String, String>,
     ) -> Vec<String> {
@@ -133,11 +133,11 @@ impl LocalDockerJobEngine {
         env.into_iter().map(|(k, v)| format!("{k}={v}")).collect()
     }
 
-    fn container_name(metis_id: &TaskId) -> String {
+    fn container_name(metis_id: &SessionId) -> String {
         format!("metis-worker-{metis_id}")
     }
 
-    async fn inspect_to_metis_job(&self, metis_id: &TaskId) -> Result<MetisJob, JobEngineError> {
+    async fn inspect_to_metis_job(&self, metis_id: &SessionId) -> Result<MetisJob, JobEngineError> {
         let info = self
             .containers
             .get(metis_id)
@@ -223,7 +223,7 @@ fn parse_docker_time(s: &str) -> Option<DateTime<Utc>> {
 impl JobEngine for LocalDockerJobEngine {
     async fn create_job(
         &self,
-        metis_id: &TaskId,
+        metis_id: &SessionId,
         _actor: &Actor,
         auth_token: &str,
         image: &str,
@@ -362,13 +362,13 @@ impl JobEngine for LocalDockerJobEngine {
         Ok(jobs)
     }
 
-    async fn find_job_by_metis_id(&self, metis_id: &TaskId) -> Result<MetisJob, JobEngineError> {
+    async fn find_job_by_metis_id(&self, metis_id: &SessionId) -> Result<MetisJob, JobEngineError> {
         self.inspect_to_metis_job(metis_id).await
     }
 
     async fn get_logs(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         tail_lines: Option<i64>,
     ) -> Result<String, JobEngineError> {
         let info = self
@@ -407,7 +407,7 @@ impl JobEngine for LocalDockerJobEngine {
 
     fn get_logs_stream(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         follow: bool,
     ) -> Result<mpsc::UnboundedReceiver<String>, JobEngineError> {
         let info = self
@@ -449,7 +449,7 @@ impl JobEngine for LocalDockerJobEngine {
         Ok(rx)
     }
 
-    async fn kill_job(&self, metis_id: &TaskId) -> Result<(), JobEngineError> {
+    async fn kill_job(&self, metis_id: &SessionId) -> Result<(), JobEngineError> {
         let info = self
             .containers
             .get(metis_id)
@@ -508,14 +508,14 @@ impl JobEngine for LocalDockerJobEngine {
     }
 }
 
-/// Extracts a TaskId from Docker container names (e.g., ["/metis-worker-t-abcdef"]).
-fn extract_task_id_from_names(names: Option<&[String]>) -> Option<TaskId> {
+/// Extracts a SessionId from Docker container names (e.g., ["/metis-worker-t-abcdef"]).
+fn extract_session_id_from_names(names: Option<&[String]>) -> Option<SessionId> {
     const PREFIX: &str = "metis-worker-";
     names?.iter().find_map(|name| {
         // Docker prefixes names with '/'.
         let stripped = name.strip_prefix('/').unwrap_or(name);
         let id_str = stripped.strip_prefix(PREFIX)?;
-        TaskId::from_str(id_str).ok()
+        SessionId::from_str(id_str).ok()
     })
 }
 
@@ -586,7 +586,7 @@ mod tests {
 
     #[test]
     fn container_name_uses_metis_id() {
-        let id: TaskId = "t-abcd".parse().unwrap();
+        let id: SessionId = "t-abcd".parse().unwrap();
         assert_eq!(
             LocalDockerJobEngine::container_name(&id),
             "metis-worker-t-abcd"
@@ -594,31 +594,31 @@ mod tests {
     }
 
     #[test]
-    fn extract_task_id_from_names_with_slash_prefix() {
+    fn extract_session_id_from_names_with_slash_prefix() {
         let names = vec!["/metis-worker-t-abcdef".to_string()];
-        let result = extract_task_id_from_names(Some(&names));
+        let result = extract_session_id_from_names(Some(&names));
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_string(), "t-abcdef");
     }
 
     #[test]
-    fn extract_task_id_from_names_without_slash() {
+    fn extract_session_id_from_names_without_slash() {
         let names = vec!["metis-worker-t-xyzabc".to_string()];
-        let result = extract_task_id_from_names(Some(&names));
+        let result = extract_session_id_from_names(Some(&names));
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_string(), "t-xyzabc");
     }
 
     #[test]
-    fn extract_task_id_from_names_no_match() {
+    fn extract_session_id_from_names_no_match() {
         let names = vec!["/some-other-container".to_string()];
-        let result = extract_task_id_from_names(Some(&names));
+        let result = extract_session_id_from_names(Some(&names));
         assert!(result.is_none());
     }
 
     #[test]
-    fn extract_task_id_from_names_none() {
-        let result = extract_task_id_from_names(None);
+    fn extract_session_id_from_names_none() {
+        let result = extract_session_id_from_names(None);
         assert!(result.is_none());
     }
 }

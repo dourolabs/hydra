@@ -7,7 +7,7 @@ use crate::{
     },
 };
 pub use metis_common::{ActorId, ActorRef, parse_actor_name};
-use metis_common::{IssueId, TaskId, api::v1::ApiError, github::GithubTokenResponse};
+use metis_common::{IssueId, SessionId, api::v1::ApiError, github::GithubTokenResponse};
 use reqwest::{
     Client, StatusCode,
     header::{ACCEPT, USER_AGENT},
@@ -102,7 +102,7 @@ impl Actor {
         self.auth_token_hash == Self::hash_auth_token(token.raw_token())
     }
 
-    pub fn new_for_task(task_id: TaskId, creator: Username) -> (Actor, String) {
+    pub fn new_for_task(task_id: SessionId, creator: Username) -> (Actor, String) {
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
         let actor_id = ActorId::Task(task_id);
         let actor = Actor {
@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn verify_auth_token_requires_matching_actor_name() {
-        let task_id = TaskId::new();
+        let task_id = SessionId::new();
         let (actor, auth_token) = Actor::new_for_task(task_id, Username::from("creator"));
         let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
 

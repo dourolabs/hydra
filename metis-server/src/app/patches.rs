@@ -3,7 +3,7 @@ use crate::{
     store::{ReadOnlyStore, Status, StoreError},
 };
 use metis_common::{
-    PatchId, TaskId, VersionNumber, Versioned, api::v1 as api, api::v1::patches::SearchPatchesQuery,
+    PatchId, SessionId, VersionNumber, Versioned, api::v1 as api, api::v1::patches::SearchPatchesQuery,
 };
 use thiserror::Error;
 
@@ -16,17 +16,17 @@ pub enum UpsertPatchError {
     JobNotFound {
         #[source]
         source: StoreError,
-        job_id: TaskId,
+        job_id: SessionId,
     },
     #[error("failed to validate job status for '{job_id}'")]
     JobStatusLookup {
         #[source]
         source: StoreError,
-        job_id: TaskId,
+        job_id: SessionId,
     },
     #[error("created_by must reference a running job")]
     JobNotRunning {
-        job_id: TaskId,
+        job_id: SessionId,
         status: Option<Status>,
     },
     #[error("patch '{patch_id}' not found")]
@@ -205,7 +205,7 @@ mod tests {
     use chrono::Utc;
     use httpmock::Method::PATCH;
     use httpmock::prelude::*;
-    use metis_common::{RepoName, TaskId, api::v1 as api};
+    use metis_common::{RepoName, SessionId, api::v1 as api};
 
     #[tokio::test]
     async fn upsert_patch_sync_github_updates_existing_pr() -> anyhow::Result<()> {
@@ -253,7 +253,7 @@ mod tests {
             "diff".to_string(),
             PatchStatus::Open,
             false,
-            Some(TaskId::new()),
+            Some(SessionId::new()),
             Username::from("test-creator"),
             Vec::new(),
             repo_name.clone(),
@@ -389,13 +389,13 @@ mod tests {
         let (task_id, _) = handles
             .store
             .as_ref()
-            .add_task(task.clone(), created_at, &ActorRef::test())
+            .add_session(task.clone(), created_at, &ActorRef::test())
             .await?;
         task.status = Status::Running;
         handles
             .store
             .as_ref()
-            .update_task(&task_id, task, &ActorRef::test())
+            .update_session(&task_id, task, &ActorRef::test())
             .await?;
         let patch = Patch::new(
             "New patch".to_string(),
@@ -562,7 +562,7 @@ mod tests {
         let repo_name = RepoName::new("octo", "repo")?;
 
         let creator_username = Username::from("the-human");
-        let task_id = TaskId::new();
+        let task_id = SessionId::new();
         let (actor, _auth_token) = Actor::new_for_task(task_id.clone(), creator_username.clone());
         handles
             .store

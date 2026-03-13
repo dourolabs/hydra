@@ -10,18 +10,18 @@ use crate::{
         patches::Patch,
         users::{User, Username},
     },
-    store::{ReadOnlyStore, Store, StoreError, Task, TaskStatusLog},
+    store::{ReadOnlyStore, Store, StoreError, Session, TaskStatusLog},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
+    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, SessionId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
@@ -92,7 +92,7 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
-    async fn get_tasks_for_issue(&self, _issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
+    async fn get_sessions_for_issue(&self, _issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError> {
         fail()
     }
 
@@ -156,37 +156,37 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
-    async fn get_task(
+    async fn get_session(
         &self,
-        _id: &TaskId,
+        _id: &SessionId,
         _include_deleted: bool,
-    ) -> Result<Versioned<Task>, StoreError> {
+    ) -> Result<Versioned<Session>, StoreError> {
         fail()
     }
 
-    async fn get_task_versions(&self, _id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
+    async fn get_session_versions(&self, _id: &SessionId) -> Result<Vec<Versioned<Session>>, StoreError> {
         fail()
     }
 
-    async fn list_tasks(
+    async fn list_sessions(
         &self,
-        _query: &SearchJobsQuery,
-    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+        _query: &SearchSessionsQuery,
+    ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         fail()
     }
 
-    async fn count_tasks(&self, _query: &SearchJobsQuery) -> Result<u64, StoreError> {
+    async fn count_sessions(&self, _query: &SearchSessionsQuery) -> Result<u64, StoreError> {
         fail()
     }
 
-    async fn get_status_log(&self, _id: &TaskId) -> Result<TaskStatusLog, StoreError> {
+    async fn get_status_log(&self, _id: &SessionId) -> Result<TaskStatusLog, StoreError> {
         fail()
     }
 
     async fn get_status_logs(
         &self,
-        _ids: &[TaskId],
-    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
+        _ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError> {
         fail()
     }
 
@@ -413,27 +413,27 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_task(
+    async fn add_session(
         &self,
-        _task: Task,
+        _session: Session,
         _creation_time: DateTime<Utc>,
         _actor: &ActorRef,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
+    ) -> Result<(SessionId, VersionNumber), StoreError> {
         fail()
     }
 
-    async fn update_task(
+    async fn update_session(
         &self,
-        _metis_id: &TaskId,
-        _task: Task,
+        _metis_id: &SessionId,
+        _session: Session,
         _actor: &ActorRef,
-    ) -> Result<Versioned<Task>, StoreError> {
+    ) -> Result<Versioned<Session>, StoreError> {
         fail()
     }
 
-    async fn delete_task(
+    async fn delete_session(
         &self,
-        _id: &TaskId,
+        _id: &SessionId,
         _actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         fail()

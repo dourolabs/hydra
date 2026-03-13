@@ -1,6 +1,6 @@
 use crate::domain::users::Username;
 use metis_common::api::v1 as api;
-use metis_common::{IssueId, TaskId};
+use metis_common::{IssueId, SessionId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -10,7 +10,7 @@ pub enum ActorIdentity {
         username: Username,
     },
     Task {
-        task_id: TaskId,
+        task_id: SessionId,
         creator: Username,
     },
     Issue {

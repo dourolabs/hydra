@@ -5,7 +5,7 @@ use crate::{
     },
     store::{ReadOnlyStore, StoreError},
 };
-use metis_common::{TaskId, api::v1 as api};
+use metis_common::{SessionId, api::v1 as api};
 use octocrab::Octocrab;
 use serde::Deserialize;
 use thiserror::Error;
@@ -133,10 +133,10 @@ impl AppState {
 
     pub(crate) async fn create_actor_for_job(
         &self,
-        task_id: TaskId,
+        task_id: SessionId,
         lifecycle_actor: ActorRef,
     ) -> Result<(Actor, String), StoreError> {
-        let task = self.get_task(&task_id).await?;
+        let task = self.get_session(&task_id).await?;
         let creator = task.creator;
         let (actor, auth_token) = if let Some(issue_id) = task.spawned_from {
             Actor::new_for_issue(issue_id, creator)

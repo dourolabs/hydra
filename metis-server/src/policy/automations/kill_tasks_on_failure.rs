@@ -61,7 +61,7 @@ impl Automation for KillTasksOnFailureAutomation {
         }
 
         let store = ctx.store;
-        let task_ids = store.get_tasks_for_issue(issue_id).await.map_err(|e| {
+        let task_ids = store.get_sessions_for_issue(issue_id).await.map_err(|e| {
             AutomationError::Other(anyhow::anyhow!(
                 "failed to get tasks for issue {issue_id}: {e}"
             ))
@@ -69,7 +69,7 @@ impl Automation for KillTasksOnFailureAutomation {
 
         let mut killed = 0usize;
         for task_id in task_ids {
-            let task = store.get_task(&task_id, false).await.map_err(|e| {
+            let task = store.get_session(&task_id, false).await.map_err(|e| {
                 AutomationError::Other(anyhow::anyhow!("failed to fetch task {task_id}: {e}"))
             })?;
 
@@ -120,7 +120,7 @@ mod tests {
     use crate::app::event_bus::MutationPayload;
     use crate::domain::actors::ActorRef;
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
-    use crate::domain::jobs::BundleSpec;
+    use crate::domain::sessions::BundleSpec;
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::test_utils;
@@ -144,8 +144,8 @@ mod tests {
         )
     }
 
-    fn make_task(issue_id: &metis_common::IssueId) -> crate::domain::jobs::Task {
-        crate::domain::jobs::Task::new(
+    fn make_task(issue_id: &metis_common::IssueId) -> crate::domain::sessions::Session {
+        crate::domain::sessions::Session::new(
             "test task".to_string(),
             BundleSpec::None,
             Some(issue_id.clone()),
@@ -173,15 +173,15 @@ mod tests {
         // Add a task for the issue
         let task = make_task(&issue_id);
         let (task_id, _) = store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         // Mark task as Running
-        let mut running_task = store.get_task(&task_id, false).await.unwrap().item;
+        let mut running_task = store.get_session(&task_id, false).await.unwrap().item;
         running_task.status = Status::Running;
         store
-            .update_task(&task_id, running_task, &ActorRef::test())
+            .update_session(&task_id, running_task, &ActorRef::test())
             .await
             .unwrap();
 

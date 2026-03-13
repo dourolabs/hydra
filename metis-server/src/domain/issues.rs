@@ -349,8 +349,8 @@ pub struct Issue {
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<String>,
-    #[serde(default, skip_serializing_if = "JobSettings::is_default")]
-    pub job_settings: JobSettings,
+    #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
+    pub session_settings: SessionSettings,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub todo_list: Vec<TodoItem>,
     #[serde(default)]
@@ -371,7 +371,7 @@ impl Issue {
         progress: String,
         status: IssueStatus,
         assignee: Option<String>,
-        job_settings: Option<JobSettings>,
+        session_settings: Option<SessionSettings>,
         todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
@@ -384,7 +384,7 @@ impl Issue {
             progress,
             status,
             assignee,
-            job_settings: job_settings.unwrap_or_default(),
+            session_settings: session_settings.unwrap_or_default(),
             todo_list,
             dependencies,
             patches,
@@ -394,7 +394,7 @@ impl Issue {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct JobSettings {
+pub struct SessionSettings {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub repo_name: Option<RepoName>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -415,7 +415,7 @@ pub struct JobSettings {
     pub secrets: Option<Vec<String>>,
 }
 
-impl JobSettings {
+impl SessionSettings {
     pub fn is_default(value: &Self) -> bool {
         value == &Self::default()
     }
@@ -655,8 +655,8 @@ impl TryFrom<IssueGraphFilter> for api::issues::IssueGraphFilter {
     }
 }
 
-impl From<api::issues::JobSettings> for JobSettings {
-    fn from(value: api::issues::JobSettings) -> Self {
+impl From<api::issues::SessionSettings> for SessionSettings {
+    fn from(value: api::issues::SessionSettings) -> Self {
         Self {
             repo_name: value.repo_name,
             remote_url: value.remote_url,
@@ -671,19 +671,19 @@ impl From<api::issues::JobSettings> for JobSettings {
     }
 }
 
-impl From<JobSettings> for api::issues::JobSettings {
-    fn from(value: JobSettings) -> Self {
-        let mut job_settings = api::issues::JobSettings::default();
-        job_settings.repo_name = value.repo_name;
-        job_settings.remote_url = value.remote_url;
-        job_settings.image = value.image;
-        job_settings.model = value.model;
-        job_settings.branch = value.branch;
-        job_settings.max_retries = value.max_retries;
-        job_settings.cpu_limit = value.cpu_limit;
-        job_settings.memory_limit = value.memory_limit;
-        job_settings.secrets = value.secrets;
-        job_settings
+impl From<SessionSettings> for api::issues::SessionSettings {
+    fn from(value: SessionSettings) -> Self {
+        let mut session_settings = api::issues::SessionSettings::default();
+        session_settings.repo_name = value.repo_name;
+        session_settings.remote_url = value.remote_url;
+        session_settings.image = value.image;
+        session_settings.model = value.model;
+        session_settings.branch = value.branch;
+        session_settings.max_retries = value.max_retries;
+        session_settings.cpu_limit = value.cpu_limit;
+        session_settings.memory_limit = value.memory_limit;
+        session_settings.secrets = value.secrets;
+        session_settings
     }
 }
 
@@ -697,7 +697,7 @@ impl From<api::issues::Issue> for Issue {
             progress: value.progress,
             status: value.status.into(),
             assignee: value.assignee,
-            job_settings: value.job_settings.into(),
+            session_settings: value.session_settings.into(),
             todo_list: value.todo_list.into_iter().map(Into::into).collect(),
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
             patches: value.patches,
@@ -716,7 +716,7 @@ impl From<Issue> for api::issues::Issue {
             value.progress,
             value.status.into(),
             value.assignee,
-            Some(value.job_settings.into()),
+            Some(value.session_settings.into()),
             value.todo_list.into_iter().map(Into::into).collect(),
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
@@ -759,7 +759,7 @@ mod tests {
     fn issue_roundtrip_json() {
         let dependency_id = IssueId::new();
         let patch_id = PatchId::new();
-        let job_settings = JobSettings {
+        let session_settings = SessionSettings {
             repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
             remote_url: Some("https://github.com/dourolabs/metis".to_string()),
             image: Some("worker:latest".to_string()),
@@ -778,7 +778,7 @@ mod tests {
             progress: "in-progress".to_string(),
             status: IssueStatus::Open,
             assignee: Some("bob".to_string()),
-            job_settings: job_settings.clone(),
+            session_settings: session_settings.clone(),
             todo_list: vec![TodoItem {
                 description: "todo".to_string(),
                 is_done: false,
@@ -806,7 +806,7 @@ mod tests {
         assert_eq!(decoded.issue_type, issue.issue_type);
         assert_eq!(decoded.description, issue.description);
         assert_eq!(decoded.todo_list.len(), 1);
-        assert_eq!(decoded.job_settings, job_settings);
+        assert_eq!(decoded.session_settings, session_settings);
     }
 
     #[test]
@@ -843,9 +843,9 @@ mod tests {
     }
 
     #[test]
-    fn job_settings_roundtrip_preserves_secrets() {
+    fn session_settings_roundtrip_preserves_secrets() {
         let secrets = Some(vec!["db-secret".to_string(), "api-key".to_string()]);
-        let job_settings = JobSettings {
+        let session_settings = SessionSettings {
             repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
             remote_url: None,
             image: Some("worker:latest".to_string()),
@@ -857,17 +857,17 @@ mod tests {
             secrets: secrets.clone(),
         };
 
-        let api_job_settings: api::issues::JobSettings = job_settings.clone().into();
-        let round_trip: JobSettings = api_job_settings.into();
+        let api_session_settings: api::issues::SessionSettings = session_settings.clone().into();
+        let round_trip: SessionSettings = api_session_settings.into();
 
         assert_eq!(round_trip.secrets, secrets);
-        assert_eq!(round_trip.repo_name, job_settings.repo_name);
-        assert_eq!(round_trip.image, job_settings.image);
+        assert_eq!(round_trip.repo_name, session_settings.repo_name);
+        assert_eq!(round_trip.image, session_settings.image);
     }
 
     #[test]
-    fn job_settings_merge_prefers_primary_secrets() {
-        let primary = JobSettings {
+    fn session_settings_merge_prefers_primary_secrets() {
+        let primary = SessionSettings {
             repo_name: None,
             remote_url: None,
             image: None,
@@ -878,7 +878,7 @@ mod tests {
             memory_limit: None,
             secrets: Some(vec!["primary-secret".to_string()]),
         };
-        let secondary = JobSettings {
+        let secondary = SessionSettings {
             repo_name: None,
             remote_url: None,
             image: None,
@@ -890,14 +890,14 @@ mod tests {
             secrets: Some(vec!["secondary-secret".to_string()]),
         };
 
-        let merged = JobSettings::merge(primary, secondary);
+        let merged = SessionSettings::merge(primary, secondary);
 
         assert_eq!(merged.secrets, Some(vec!["primary-secret".to_string()]));
     }
 
     #[test]
-    fn job_settings_merge_uses_secondary_when_primary_none() {
-        let primary = JobSettings {
+    fn session_settings_merge_uses_secondary_when_primary_none() {
+        let primary = SessionSettings {
             repo_name: None,
             remote_url: None,
             image: None,
@@ -908,7 +908,7 @@ mod tests {
             memory_limit: None,
             secrets: None,
         };
-        let secondary = JobSettings {
+        let secondary = SessionSettings {
             repo_name: None,
             remote_url: None,
             image: None,
@@ -920,7 +920,7 @@ mod tests {
             secrets: Some(vec!["secondary-secret".to_string()]),
         };
 
-        let merged = JobSettings::merge(primary, secondary);
+        let merged = SessionSettings::merge(primary, secondary);
 
         assert_eq!(merged.secrets, Some(vec!["secondary-secret".to_string()]));
     }

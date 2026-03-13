@@ -11,7 +11,7 @@ fn default_task_status() -> Status {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Task {
+pub struct Session {
     pub prompt: String,
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,7 +45,7 @@ pub struct Task {
     pub end_time: Option<DateTime<Utc>>,
 }
 
-impl Task {
+impl Session {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         prompt: String,
@@ -90,7 +90,7 @@ pub enum BundleSpec {
     #[serde(rename = "none")]
     None,
     GitRepository {
-        /// Remote Git repository URL that should be cloned for the job context.
+        /// Remote Git repository URL that should be cloned for the session context.
         url: String,
         /// Specific git revision (branch, tag, or commit) to checkout after cloning.
         rev: String,
@@ -119,14 +119,14 @@ impl From<Bundle> for BundleSpec {
     }
 }
 
-impl From<api::jobs::BundleSpec> for BundleSpec {
-    fn from(value: api::jobs::BundleSpec) -> Self {
+impl From<api::sessions::BundleSpec> for BundleSpec {
+    fn from(value: api::sessions::BundleSpec) -> Self {
         match value {
-            api::jobs::BundleSpec::None => BundleSpec::None,
-            api::jobs::BundleSpec::GitRepository { url, rev } => {
+            api::sessions::BundleSpec::None => BundleSpec::None,
+            api::sessions::BundleSpec::GitRepository { url, rev } => {
                 BundleSpec::GitRepository { url, rev }
             }
-            api::jobs::BundleSpec::ServiceRepository { name, rev } => {
+            api::sessions::BundleSpec::ServiceRepository { name, rev } => {
                 BundleSpec::ServiceRepository { name, rev }
             }
             _ => unreachable!("unsupported bundle spec variant"),
@@ -134,15 +134,15 @@ impl From<api::jobs::BundleSpec> for BundleSpec {
     }
 }
 
-impl From<BundleSpec> for api::jobs::BundleSpec {
+impl From<BundleSpec> for api::sessions::BundleSpec {
     fn from(value: BundleSpec) -> Self {
         match value {
-            BundleSpec::None => api::jobs::BundleSpec::None,
+            BundleSpec::None => api::sessions::BundleSpec::None,
             BundleSpec::GitRepository { url, rev } => {
-                api::jobs::BundleSpec::GitRepository { url, rev }
+                api::sessions::BundleSpec::GitRepository { url, rev }
             }
             BundleSpec::ServiceRepository { name, rev } => {
-                api::jobs::BundleSpec::ServiceRepository { name, rev }
+                api::sessions::BundleSpec::ServiceRepository { name, rev }
             }
         }
     }
@@ -154,35 +154,35 @@ pub enum Bundle {
     #[serde(rename = "none")]
     None,
     GitRepository {
-        /// Remote Git repository URL that should be cloned for the job context.
+        /// Remote Git repository URL that should be cloned for the session context.
         url: String,
         /// Specific git revision (branch, tag, or commit) to checkout after cloning.
         rev: String,
     },
 }
 
-impl From<api::jobs::Bundle> for Bundle {
-    fn from(value: api::jobs::Bundle) -> Self {
+impl From<api::sessions::Bundle> for Bundle {
+    fn from(value: api::sessions::Bundle) -> Self {
         match value {
-            api::jobs::Bundle::None => Bundle::None,
-            api::jobs::Bundle::GitRepository { url, rev } => Bundle::GitRepository { url, rev },
+            api::sessions::Bundle::None => Bundle::None,
+            api::sessions::Bundle::GitRepository { url, rev } => Bundle::GitRepository { url, rev },
             _ => unreachable!("unsupported bundle variant"),
         }
     }
 }
 
-impl From<Bundle> for api::jobs::Bundle {
+impl From<Bundle> for api::sessions::Bundle {
     fn from(value: Bundle) -> Self {
         match value {
-            Bundle::None => api::jobs::Bundle::None,
-            Bundle::GitRepository { url, rev } => api::jobs::Bundle::GitRepository { url, rev },
+            Bundle::None => api::sessions::Bundle::None,
+            Bundle::GitRepository { url, rev } => api::sessions::Bundle::GitRepository { url, rev },
         }
     }
 }
 
-impl From<api::jobs::Task> for Task {
-    fn from(value: api::jobs::Task) -> Self {
-        Task {
+impl From<api::sessions::Session> for Session {
+    fn from(value: api::sessions::Session) -> Self {
+        Session {
             prompt: value.prompt,
             context: value.context.into(),
             spawned_from: value.spawned_from,
@@ -204,9 +204,9 @@ impl From<api::jobs::Task> for Task {
     }
 }
 
-impl From<Task> for api::jobs::Task {
-    fn from(value: Task) -> Self {
-        api::jobs::Task::new(
+impl From<Session> for api::sessions::Session {
+    fn from(value: Session) -> Self {
+        api::sessions::Session::new(
             value.prompt,
             value.context.into(),
             value.spawned_from,
@@ -230,7 +230,7 @@ impl From<Task> for api::jobs::Task {
 
 #[cfg(test)]
 mod tests {
-    use super::{BundleSpec, Task};
+    use super::{BundleSpec, Session};
     use crate::domain::task_status::Status;
     use crate::domain::users::Username;
     use metis_common::RepoName;
@@ -246,16 +246,16 @@ mod tests {
             rev: Some("main".to_string()),
         };
 
-        let api_spec: api::jobs::BundleSpec = domain.clone().into();
+        let api_spec: api::sessions::BundleSpec = domain.clone().into();
         let round_trip: BundleSpec = api_spec.into();
 
         assert_eq!(round_trip, domain);
     }
 
     #[test]
-    fn task_roundtrip_preserves_secrets() {
+    fn session_roundtrip_preserves_secrets() {
         let secrets = Some(vec!["db-secret".to_string(), "api-key".to_string()]);
-        let domain_task = Task::new(
+        let domain_session = Session::new(
             "test prompt".to_string(),
             BundleSpec::None,
             None,
@@ -271,18 +271,18 @@ mod tests {
             None,
         );
 
-        let api_task: api::jobs::Task = domain_task.clone().into();
-        let round_trip: Task = api_task.into();
+        let api_session: api::sessions::Session = domain_session.clone().into();
+        let round_trip: Session = api_session.into();
 
         assert_eq!(round_trip.secrets, secrets);
-        assert_eq!(round_trip.prompt, domain_task.prompt);
-        assert_eq!(round_trip.image, domain_task.image);
-        assert_eq!(round_trip.model, domain_task.model);
+        assert_eq!(round_trip.prompt, domain_session.prompt);
+        assert_eq!(round_trip.image, domain_session.image);
+        assert_eq!(round_trip.model, domain_session.model);
     }
 
     #[test]
-    fn task_roundtrip_preserves_empty_secrets() {
-        let domain_task = Task::new(
+    fn session_roundtrip_preserves_empty_secrets() {
+        let domain_session = Session::new(
             "test prompt".to_string(),
             BundleSpec::None,
             None,
@@ -298,8 +298,8 @@ mod tests {
             None,
         );
 
-        let api_task: api::jobs::Task = domain_task.clone().into();
-        let round_trip: Task = api_task.into();
+        let api_session: api::sessions::Session = domain_session.clone().into();
+        let round_trip: Session = api_session.into();
 
         assert_eq!(round_trip.secrets, None);
     }

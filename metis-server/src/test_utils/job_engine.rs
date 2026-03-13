@@ -1,4 +1,4 @@
-use crate::job_engine::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
+use crate::job_engine::{JobEngine, JobEngineError, JobStatus, MetisJob, SessionId};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
@@ -10,10 +10,10 @@ use std::{
 #[derive(Clone, Default)]
 pub struct MockJobEngine {
     jobs: Arc<Mutex<Vec<MetisJob>>>,
-    logs: Arc<Mutex<HashMap<TaskId, Vec<String>>>>,
-    env_vars: Arc<Mutex<HashMap<TaskId, HashMap<String, String>>>>,
-    resource_limits: Arc<Mutex<HashMap<TaskId, (String, String)>>>,
-    resource_requests: Arc<Mutex<HashMap<TaskId, (String, String)>>>,
+    logs: Arc<Mutex<HashMap<SessionId, Vec<String>>>>,
+    env_vars: Arc<Mutex<HashMap<SessionId, HashMap<String, String>>>>,
+    resource_limits: Arc<Mutex<HashMap<SessionId, (String, String)>>>,
+    resource_requests: Arc<Mutex<HashMap<SessionId, (String, String)>>>,
     /// When set, `create_job` returns this error instead of creating the job.
     create_job_error: Arc<Mutex<Option<String>>>,
 }
@@ -23,7 +23,7 @@ impl MockJobEngine {
         Self::default()
     }
 
-    pub async fn insert_job(&self, metis_id: &TaskId, status: JobStatus) {
+    pub async fn insert_job(&self, metis_id: &SessionId, status: JobStatus) {
         let mut jobs = self.jobs.lock().unwrap();
         let start_time = if status == JobStatus::Pending {
             None
@@ -42,7 +42,7 @@ impl MockJobEngine {
 
     pub async fn insert_job_with_metadata(
         &self,
-        metis_id: &TaskId,
+        metis_id: &SessionId,
         status: JobStatus,
         completion_time: Option<DateTime<Utc>>,
         failure_message: Option<String>,
@@ -63,22 +63,22 @@ impl MockJobEngine {
         });
     }
 
-    pub async fn set_logs(&self, metis_id: &TaskId, chunks: Vec<String>) {
+    pub async fn set_logs(&self, metis_id: &SessionId, chunks: Vec<String>) {
         let mut logs = self.logs.lock().unwrap();
         logs.insert(metis_id.clone(), chunks);
     }
 
-    pub fn env_vars_for_job(&self, metis_id: &TaskId) -> Option<HashMap<String, String>> {
+    pub fn env_vars_for_job(&self, metis_id: &SessionId) -> Option<HashMap<String, String>> {
         let env_vars = self.env_vars.lock().unwrap();
         env_vars.get(metis_id).cloned()
     }
 
-    pub fn resource_limits_for_job(&self, metis_id: &TaskId) -> Option<(String, String)> {
+    pub fn resource_limits_for_job(&self, metis_id: &SessionId) -> Option<(String, String)> {
         let limits = self.resource_limits.lock().unwrap();
         limits.get(metis_id).cloned()
     }
 
-    pub fn resource_requests_for_job(&self, metis_id: &TaskId) -> Option<(String, String)> {
+    pub fn resource_requests_for_job(&self, metis_id: &SessionId) -> Option<(String, String)> {
         let requests = self.resource_requests.lock().unwrap();
         requests.get(metis_id).cloned()
     }
@@ -94,7 +94,7 @@ impl MockJobEngine {
 impl JobEngine for MockJobEngine {
     async fn create_job(
         &self,
-        metis_id: &TaskId,
+        metis_id: &SessionId,
         _actor: &crate::domain::actors::Actor,
         _auth_token: &str,
         _image: &str,
@@ -144,7 +144,7 @@ impl JobEngine for MockJobEngine {
         Ok(jobs.clone())
     }
 
-    async fn find_job_by_metis_id(&self, metis_id: &TaskId) -> Result<MetisJob, JobEngineError> {
+    async fn find_job_by_metis_id(&self, metis_id: &SessionId) -> Result<MetisJob, JobEngineError> {
         let mut matches: Vec<MetisJob> = {
             let jobs = self.jobs.lock().unwrap();
             jobs.iter()
@@ -162,7 +162,7 @@ impl JobEngine for MockJobEngine {
 
     async fn get_logs(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         tail_lines: Option<i64>,
     ) -> Result<String, JobEngineError> {
         let exists = {
@@ -186,7 +186,7 @@ impl JobEngine for MockJobEngine {
 
     fn get_logs_stream(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         _follow: bool,
     ) -> Result<mpsc::UnboundedReceiver<String>, JobEngineError> {
         let exists = {
@@ -218,7 +218,7 @@ impl JobEngine for MockJobEngine {
         Ok(rx)
     }
 
-    async fn kill_job(&self, metis_id: &TaskId) -> Result<(), JobEngineError> {
+    async fn kill_job(&self, metis_id: &SessionId) -> Result<(), JobEngineError> {
         let mut jobs = self.jobs.lock().unwrap();
         let matching_indices: Vec<_> = jobs
             .iter()
@@ -252,9 +252,9 @@ mod tests {
     async fn create_job_records_env_vars() {
         let engine = MockJobEngine::new();
         let env_vars = HashMap::from([("FOO".to_string(), "bar".to_string())]);
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let (actor, _) = crate::domain::actors::Actor::new_for_task(
-            TaskId::new(),
+            SessionId::new(),
             crate::domain::users::Username::from("creator"),
         );
 

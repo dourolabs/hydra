@@ -11,7 +11,7 @@ mod local_job_engine;
 pub use crate::ee::job_engine::KubernetesJobEngine;
 pub use local_docker_job_engine::LocalDockerJobEngine;
 pub use local_job_engine::LocalJobEngine;
-pub use metis_common::TaskId;
+pub use metis_common::SessionId;
 
 /// Represents the lifecycle state of a Metis job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +43,7 @@ impl std::fmt::Display for JobStatus {
 #[derive(Debug, Clone)]
 pub struct MetisJob {
     /// The unique Metis job ID (metis-id label)
-    pub id: TaskId,
+    pub id: SessionId,
     /// Job status in the Metis lifecycle.
     pub status: JobStatus,
     /// When the job was created
@@ -60,11 +60,11 @@ pub struct MetisJob {
 #[derive(Debug, thiserror::Error)]
 pub enum JobEngineError {
     #[error("Job not found: {0}")]
-    NotFound(TaskId),
+    NotFound(SessionId),
     #[error("Multiple jobs found: {0}")]
-    MultipleFound(TaskId),
+    MultipleFound(SessionId),
     #[error("Job already exists: {0}")]
-    AlreadyExists(TaskId),
+    AlreadyExists(SessionId),
     #[cfg(feature = "kubernetes")]
     #[error("Kubernetes API error: {0}")]
     Kubernetes(#[from] kube::Error),
@@ -103,7 +103,7 @@ pub trait JobEngine: Send + Sync {
     /// Ok(()) if successful, or an error if creation fails
     async fn create_job(
         &self,
-        metis_id: &TaskId,
+        metis_id: &SessionId,
         actor: &Actor,
         auth_token: &str,
         image: &str,
@@ -127,7 +127,7 @@ pub trait JobEngine: Send + Sync {
     ///
     /// # Returns
     /// The MetisJob if exactly one is found, or an error if none or multiple are found
-    async fn find_job_by_metis_id(&self, metis_id: &TaskId) -> Result<MetisJob, JobEngineError>;
+    async fn find_job_by_metis_id(&self, metis_id: &SessionId) -> Result<MetisJob, JobEngineError>;
 
     /// Gets logs for a job as a single string (batch mode).
     ///
@@ -139,7 +139,7 @@ pub trait JobEngine: Send + Sync {
     /// The complete logs as a string, or an error if retrieval fails
     async fn get_logs(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         tail_lines: Option<i64>,
     ) -> Result<String, JobEngineError>;
 
@@ -157,7 +157,7 @@ pub trait JobEngine: Send + Sync {
     /// when the stream ends or encounters an error.
     fn get_logs_stream(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         follow: bool,
     ) -> Result<futures::channel::mpsc::UnboundedReceiver<String>, JobEngineError>;
 
@@ -165,5 +165,5 @@ pub trait JobEngine: Send + Sync {
     ///
     /// Implementations should delete the underlying job and any associated
     /// resources necessary to stop execution.
-    async fn kill_job(&self, metis_id: &TaskId) -> Result<(), JobEngineError>;
+    async fn kill_job(&self, metis_id: &SessionId) -> Result<(), JobEngineError>;
 }

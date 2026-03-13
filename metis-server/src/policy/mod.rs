@@ -268,9 +268,9 @@ impl PolicyEngine {
     /// Check restrictions for updating a job/task status.
     pub async fn check_update_job(
         &self,
-        task_id: &metis_common::TaskId,
-        new: &crate::store::Task,
-        old: Option<&crate::store::Task>,
+        task_id: &metis_common::SessionId,
+        new: &crate::store::Session,
+        old: Option<&crate::store::Session>,
         store: &dyn crate::store::ReadOnlyStore,
         actor: &crate::domain::actors::ActorRef,
     ) -> Result<(), PolicyViolation> {

@@ -9,10 +9,10 @@ use tracing::{error, info};
 pub async fn get_job_context(
     State(state): State<AppState>,
     JobIdPath(job_id): JobIdPath,
-) -> Result<Json<v1::jobs::WorkerContext>, ApiError> {
+) -> Result<Json<v1::sessions::WorkerContext>, ApiError> {
     info!(job_id = %job_id, "get_job_context invoked");
 
-    let task = state.get_task(&job_id).await.map_err(|err| {
+    let task = state.get_session(&job_id).await.map_err(|err| {
         error!(error = %err, job_id = %job_id, "failed to get task");
         ApiError::not_found(format!("Job '{job_id}' not found"))
     })?;
@@ -26,7 +26,7 @@ pub async fn get_job_context(
     env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
 
     let build_cache = state.config.build_cache.to_context();
-    let context = v1::jobs::WorkerContext::new(
+    let context = v1::sessions::WorkerContext::new(
         resolved.context.bundle.into(),
         task.prompt,
         task.model.clone(),

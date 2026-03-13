@@ -1,16 +1,16 @@
 use crate::{
     config::non_empty,
-    domain::{actors::ActorRef, issues::JobSettings, jobs::BundleSpec, users::Username},
+    domain::{actors::ActorRef, issues::SessionSettings, sessions::BundleSpec, users::Username},
     job_engine::{JobEngineError, JobStatus},
-    store::{ReadOnlyStore, Status, StoreError, Task, TaskError, TaskStatusLog},
+    store::{ReadOnlyStore, Status, StoreError, Session, TaskError, TaskStatusLog},
 };
 use chrono::{DateTime, Duration, Utc};
 use metis_common::{
-    TaskId, Versioned,
+    SessionId, Versioned,
     api::v1 as api,
-    api::v1::jobs::SearchJobsQuery,
+    api::v1::sessions::SearchSessionsQuery,
     issues::IssueId,
-    job_status::{JobStatusUpdate, SetJobStatusResponse},
+    session_status::{SessionStatusUpdate, SetSessionStatusResponse},
 };
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -19,11 +19,11 @@ use tracing::{error, info, warn};
 use super::TaskResolutionError;
 use super::app_state::AppState;
 
-pub(crate) const WORKER_NAME_TASK_LIFECYCLE: &str = "task_lifecycle";
-pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_TASKS: &str = "cleanup_orphaned_tasks";
+pub(crate) const WORKER_NAME_SESSION_LIFECYCLE: &str = "session_lifecycle";
+pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_SESSIONS: &str = "cleanup_orphaned_sessions";
 
 #[derive(Debug, Error)]
-pub enum CreateJobError {
+pub enum CreateSessionError {
     #[error(transparent)]
     TaskResolution(#[from] TaskResolutionError),
     #[error("failed to load issue '{issue_id}' for job creation")]
@@ -40,52 +40,52 @@ pub enum CreateJobError {
 }
 
 #[derive(Debug, Error)]
-pub enum SetJobStatusError {
-    #[error("job '{job_id}' not found in store")]
+pub enum SetSessionStatusError {
+    #[error("job '{session_id}' not found in store")]
     NotFound {
         #[source]
         source: StoreError,
-        job_id: TaskId,
+        session_id: SessionId,
     },
-    #[error("invalid status transition for job '{job_id}'")]
-    InvalidStatusTransition { job_id: TaskId },
-    #[error("failed to update status for job '{job_id}'")]
+    #[error("invalid status transition for job '{session_id}'")]
+    InvalidStatusTransition { session_id: SessionId },
+    #[error("failed to update status for job '{session_id}'")]
     Store {
         #[source]
         source: StoreError,
-        job_id: TaskId,
+        session_id: SessionId,
     },
     #[error("{0}")]
     PolicyViolation(#[from] crate::policy::PolicyViolation),
 }
 
 impl AppState {
-    pub async fn add_task(
+    pub async fn add_session(
         &self,
-        task: Task,
+        session: Session,
         created_at: DateTime<Utc>,
         actor: ActorRef,
-    ) -> Result<TaskId, StoreError> {
-        let (task_id, _version) = self
+    ) -> Result<SessionId, StoreError> {
+        let (session_id, _version) = self
             .store
-            .add_task_with_actor(task, created_at, actor)
+            .add_session_with_actor(session, created_at, actor)
             .await?;
-        Ok(task_id)
+        Ok(session_id)
     }
 
-    pub async fn create_job(
+    pub async fn create_session(
         &self,
-        request: api::jobs::CreateJobRequest,
+        request: api::sessions::CreateSessionRequest,
         actor: ActorRef,
         creator: Username,
-    ) -> Result<TaskId, CreateJobError> {
+    ) -> Result<SessionId, CreateSessionError> {
         let env_vars = request.variables;
 
         let issue = match request.issue_id.as_ref() {
             Some(issue_id) => {
                 let store = self.store.as_ref();
                 Some(store.get_issue(issue_id, false).await.map_err(|source| {
-                    CreateJobError::IssueLookup {
+                    CreateSessionError::IssueLookup {
                         source,
                         issue_id: issue_id.clone(),
                     }
@@ -93,27 +93,27 @@ impl AppState {
             }
             None => None,
         };
-        let job_settings = issue
+        let session_settings = issue
             .as_ref()
-            .map(|issue| self.apply_job_settings_defaults(issue.item.job_settings.clone()))
-            .filter(|settings| !JobSettings::is_default(settings));
+            .map(|issue| self.apply_session_settings_defaults(issue.item.session_settings.clone()))
+            .filter(|settings| !SessionSettings::is_default(settings));
 
         let mut context: BundleSpec = request.context.into();
-        let image = job_settings
+        let image = session_settings
             .as_ref()
             .and_then(|settings| settings.image.clone())
             .or(request.image);
-        let model = job_settings
+        let model = session_settings
             .as_ref()
             .and_then(|settings| settings.model.clone());
-        let cpu_limit = job_settings
+        let cpu_limit = session_settings
             .as_ref()
             .and_then(|settings| settings.cpu_limit.clone());
-        let memory_limit = job_settings
+        let memory_limit = session_settings
             .as_ref()
             .and_then(|settings| settings.memory_limit.clone());
 
-        if let Some(settings) = job_settings {
+        if let Some(settings) = session_settings {
             if let Some(remote_url) = settings.remote_url.clone() {
                 let rev = settings
                     .branch
@@ -142,7 +142,7 @@ impl AppState {
             }
         }
 
-        let task = Task::new(
+        let session = Session::new(
             request.prompt,
             context,
             request.issue_id.clone(),
@@ -158,18 +158,18 @@ impl AppState {
             None,
         );
 
-        self.resolve_task(&task).await?;
+        self.resolve_task(&session).await?;
 
-        let (job_id, _version) = self
+        let (session_id, _version) = self
             .store
-            .add_task_with_actor(task, Utc::now(), actor)
+            .add_session_with_actor(session, Utc::now(), actor)
             .await
-            .map_err(|source| CreateJobError::Store { source })?;
+            .map_err(|source| CreateSessionError::Store { source })?;
 
-        Ok(job_id)
+        Ok(session_id)
     }
 
-    pub(crate) fn apply_job_settings_defaults(&self, mut settings: JobSettings) -> JobSettings {
+    pub(crate) fn apply_session_settings_defaults(&self, mut settings: SessionSettings) -> SessionSettings {
         if settings.model.is_none() {
             if let Some(default_model) =
                 self.config.job.default_model.as_deref().and_then(non_empty)
@@ -181,43 +181,43 @@ impl AppState {
         settings
     }
 
-    pub async fn set_job_status(
+    pub async fn set_session_status(
         &self,
-        job_id: TaskId,
-        status: JobStatusUpdate,
+        session_id: SessionId,
+        status: SessionStatusUpdate,
         actor: ActorRef,
-    ) -> Result<SetJobStatusResponse, SetJobStatusError> {
+    ) -> Result<SetSessionStatusResponse, SetSessionStatusError> {
         {
             let store = self.store.as_ref();
 
             store
-                .get_task(&job_id, false)
+                .get_session(&session_id, false)
                 .await
                 .map(|_| ())
-                .map_err(|source| SetJobStatusError::NotFound {
+                .map_err(|source| SetSessionStatusError::NotFound {
                     source,
-                    job_id: job_id.clone(),
+                    session_id: session_id.clone(),
                 })?;
 
             self.transition_task_to_completion(
-                &job_id,
+                &session_id,
                 status.to_result().map_err(TaskError::from),
                 status.last_message(),
                 actor,
             )
             .await
             .map_err(|source| match source {
-                StoreError::InvalidStatusTransition => SetJobStatusError::InvalidStatusTransition {
-                    job_id: job_id.clone(),
+                StoreError::InvalidStatusTransition => SetSessionStatusError::InvalidStatusTransition {
+                    session_id: session_id.clone(),
                 },
-                other => SetJobStatusError::Store {
+                other => SetSessionStatusError::Store {
                     source: other,
-                    job_id: job_id.clone(),
+                    session_id: session_id.clone(),
                 },
             })?;
         }
 
-        Ok(SetJobStatusResponse::new(job_id, status.as_status()))
+        Ok(SetSessionStatusResponse::new(session_id, status.as_status()))
     }
 
     /// Loads all user secrets and injects them as env vars, then falls back to config
@@ -353,22 +353,22 @@ impl AppState {
         }
     }
 
-    pub async fn start_pending_task(&self, task_id: TaskId, actor: ActorRef) {
+    pub async fn start_pending_task(&self, session_id: SessionId, actor: ActorRef) {
         let job_config = self.config.job.clone();
         let (mut resolved, cpu_limit, memory_limit, creator, secrets) = {
             let store = self.store.as_ref();
-            match store.get_task(&task_id, false).await {
-                Ok(task) => match self.resolve_task(&task.item).await {
+            match store.get_session(&session_id, false).await {
+                Ok(versioned) => match self.resolve_task(&versioned.item).await {
                     Ok(resolved) => (
                         resolved,
-                        task.item.cpu_limit.clone(),
-                        task.item.memory_limit.clone(),
-                        task.item.creator.clone(),
-                        task.item.secrets.clone(),
+                        versioned.item.cpu_limit.clone(),
+                        versioned.item.memory_limit.clone(),
+                        versioned.item.creator.clone(),
+                        versioned.item.secrets.clone(),
                     ),
                     Err(err) => {
                         warn!(
-                            metis_id = %task_id,
+                            metis_id = %session_id,
                             error = %err,
                             "failed to resolve task for spawning"
                         );
@@ -377,7 +377,7 @@ impl AppState {
                 },
                 Err(err) => {
                     warn!(
-                        metis_id = %task_id,
+                        metis_id = %session_id,
                         error = %err,
                         "failed to load task for spawning"
                     );
@@ -396,7 +396,7 @@ impl AppState {
         let memory_request = job_config.memory_request.clone();
 
         let (task_actor, auth_token) = match self
-            .create_actor_for_job(task_id.clone(), actor.clone())
+            .create_actor_for_job(session_id.clone(), actor.clone())
             .await
         {
             Ok(values) => values,
@@ -404,7 +404,7 @@ impl AppState {
                 let failure_reason = format!("Failed to create actor for task: {err}");
                 if let Err(update_err) = self
                     .transition_task_to_completion(
-                        &task_id,
+                        &session_id,
                         Err(TaskError::JobEngineError {
                             reason: failure_reason,
                         }),
@@ -414,13 +414,13 @@ impl AppState {
                     .await
                 {
                     error!(
-                        metis_id = %task_id,
+                        metis_id = %session_id,
                         error = %update_err,
                         "failed to set task status to Failed (actor creation failed)"
                     );
                 } else {
                     info!(
-                        metis_id = %task_id,
+                        metis_id = %session_id,
                         "set task status to Failed (actor creation failed)"
                     );
                 }
@@ -431,7 +431,7 @@ impl AppState {
         match self
             .job_engine
             .create_job(
-                &task_id,
+                &session_id,
                 &task_actor,
                 &auth_token,
                 &resolved.image,
@@ -444,18 +444,18 @@ impl AppState {
             .await
         {
             Ok(()) => match self
-                .transition_task_to_pending(&task_id, actor.clone())
+                .transition_task_to_pending(&session_id, actor.clone())
                 .await
             {
                 Ok(_) => {
                     info!(
-                        metis_id = %task_id,
+                        metis_id = %session_id,
                         "set task status to Pending (spawned)"
                     );
                 }
                 Err(err) => {
                     warn!(
-                        metis_id = %task_id,
+                        metis_id = %session_id,
                         error = %err,
                         "failed to set task to Pending after spawn"
                     );
@@ -468,30 +468,30 @@ impl AppState {
                 // marking the task as Failed.
                 if !matches!(err, JobEngineError::AlreadyExists(_)) {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    match self.job_engine.find_job_by_metis_id(&task_id).await {
+                    match self.job_engine.find_job_by_metis_id(&session_id).await {
                         Ok(job)
                             if job.status == JobStatus::Pending
                                 || job.status == JobStatus::Running =>
                         {
                             warn!(
-                                metis_id = %task_id,
+                                metis_id = %session_id,
                                 create_error = %err,
                                 job_status = %job.status,
                                 "create_job failed but job exists in K8s; treating as successful"
                             );
                             match self
-                                .transition_task_to_pending(&task_id, actor.clone())
+                                .transition_task_to_pending(&session_id, actor.clone())
                                 .await
                             {
                                 Ok(_) => {
                                     info!(
-                                        metis_id = %task_id,
+                                        metis_id = %session_id,
                                         "set task status to Pending (job found after create error)"
                                     );
                                 }
                                 Err(transition_err) => {
                                     warn!(
-                                        metis_id = %task_id,
+                                        metis_id = %session_id,
                                         error = %transition_err,
                                         "failed to set task to Pending after finding existing job"
                                     );
@@ -509,7 +509,7 @@ impl AppState {
                 let failure_reason = format!("Failed to create Kubernetes job: {err}");
                 if let Err(update_err) = self
                     .transition_task_to_completion(
-                        &task_id,
+                        &session_id,
                         Err(TaskError::JobEngineError {
                             reason: failure_reason,
                         }),
@@ -519,13 +519,13 @@ impl AppState {
                     .await
                 {
                     error!(
-                        metis_id = %task_id,
+                        metis_id = %session_id,
                         error = %update_err,
                         "failed to set task status to Failed (spawn failed)"
                     );
                 } else {
                     info!(
-                        metis_id = %task_id,
+                        metis_id = %session_id,
                         "set task status to Failed (spawn failed)"
                     );
                 }
@@ -546,9 +546,9 @@ impl AppState {
             return;
         }
 
-        let store_task_ids: Vec<TaskId> = {
+        let store_session_ids: Vec<SessionId> = {
             let store = self.store.as_ref();
-            match store.list_tasks(&SearchJobsQuery::default()).await {
+            match store.list_sessions(&SearchSessionsQuery::default()).await {
                 Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
                 Err(err) => {
                     error!(error = %err, "failed to list tasks from store for job reconciliation");
@@ -557,7 +557,7 @@ impl AppState {
             }
         };
 
-        let store_task_set: HashSet<_> = store_task_ids.into_iter().collect();
+        let store_task_set: HashSet<_> = store_session_ids.into_iter().collect();
         let orphaned_jobs: Vec<_> = job_engine_jobs
             .into_iter()
             .filter(|job| !store_task_set.contains(&job.id))
@@ -590,7 +590,7 @@ impl AppState {
     /// killed in the engine.
     pub async fn cleanup_orphaned_tasks(&self, actor: ActorRef) {
         let store = self.store.as_ref();
-        let tasks = match store.list_tasks(&SearchJobsQuery::default()).await {
+        let tasks = match store.list_sessions(&SearchSessionsQuery::default()).await {
             Ok(tasks) => tasks,
             Err(err) => {
                 error!(error = %err, "failed to list tasks for orphaned task cleanup");
@@ -598,7 +598,7 @@ impl AppState {
             }
         };
 
-        for (task_id, versioned_task) in tasks {
+        for (session_id, versioned_task) in tasks {
             let issue_id = match &versioned_task.item.spawned_from {
                 Some(id) => id.clone(),
                 None => continue,
@@ -609,7 +609,7 @@ impl AppState {
                 Err(StoreError::IssueNotFound(_)) => true,
                 Err(err) => {
                     warn!(
-                        metis_id = %task_id,
+                        metis_id = %session_id,
                         issue_id = %issue_id,
                         error = %err,
                         "failed to check spawned_from issue for orphaned task cleanup"
@@ -623,18 +623,18 @@ impl AppState {
             }
 
             info!(
-                metis_id = %task_id,
+                metis_id = %session_id,
                 issue_id = %issue_id,
                 "soft-deleting orphaned task whose spawned_from issue was deleted"
             );
 
             if let Err(err) = self
                 .store
-                .delete_task_with_actor(&task_id, actor.clone())
+                .delete_task_with_actor(&session_id, actor.clone())
                 .await
             {
                 warn!(
-                    metis_id = %task_id,
+                    metis_id = %session_id,
                     error = %err,
                     "failed to soft-delete orphaned task"
                 );
@@ -645,9 +645,9 @@ impl AppState {
                 versioned_task.item.status,
                 Status::Pending | Status::Running
             ) {
-                if let Err(err) = self.job_engine.kill_job(&task_id).await {
+                if let Err(err) = self.job_engine.kill_job(&session_id).await {
                     warn!(
-                        metis_id = %task_id,
+                        metis_id = %session_id,
                         error = %err,
                         "failed to kill job for orphaned task"
                     );
@@ -656,14 +656,14 @@ impl AppState {
         }
     }
 
-    pub async fn reconcile_running_task(&self, task_id: TaskId, actor: ActorRef) {
+    pub async fn reconcile_running_task(&self, session_id: SessionId, actor: ActorRef) {
         let current_status = {
             let store = self.store.as_ref();
-            match store.get_task(&task_id, false).await {
-                Ok(task) => task.item.status,
+            match store.get_session(&session_id, false).await {
+                Ok(versioned) => versioned.item.status,
                 Err(err) => {
                     warn!(
-                        metis_id = %task_id,
+                        metis_id = %session_id,
                         error = %err,
                         "failed to load task while reconciling status"
                     );
@@ -672,24 +672,24 @@ impl AppState {
             }
         };
 
-        match self.job_engine.find_job_by_metis_id(&task_id).await {
+        match self.job_engine.find_job_by_metis_id(&session_id).await {
             Ok(job) => match job.status {
                 JobStatus::Pending => {}
                 JobStatus::Running => {
                     if current_status == Status::Pending {
                         match self
-                            .transition_task_to_running(&task_id, actor.clone())
+                            .transition_task_to_running(&session_id, actor.clone())
                             .await
                         {
                             Ok(_) => {
                                 info!(
-                                    metis_id = %task_id,
+                                    metis_id = %session_id,
                                     "set task status to Running (pod started)"
                                 );
                             }
                             Err(err) => {
                                 warn!(
-                                    metis_id = %task_id,
+                                    metis_id = %session_id,
                                     error = %err,
                                     "failed to set task to Running after pod start"
                                 );
@@ -699,7 +699,7 @@ impl AppState {
                 }
                 JobStatus::Complete => {
                     warn!(
-                        metis_id = %task_id,
+                        metis_id = %session_id,
                         "Job completed in job engine without submitting results."
                     );
 
@@ -716,7 +716,7 @@ impl AppState {
                             .to_string();
                     match self
                         .transition_task_to_completion(
-                            &task_id,
+                            &session_id,
                             Err(TaskError::JobEngineError {
                                 reason: failure_reason,
                             }),
@@ -726,10 +726,10 @@ impl AppState {
                         .await
                     {
                         Ok(_) => {
-                            warn!(metis_id = %task_id, "task marked failed due to missing results after job completion timeout");
+                            warn!(metis_id = %session_id, "task marked failed due to missing results after job completion timeout");
                         }
                         Err(err) => {
-                            warn!(metis_id = %task_id, error = %err, "failed to mark task failed after missing results timeout");
+                            warn!(metis_id = %session_id, error = %err, "failed to mark task failed after missing results timeout");
                         }
                     }
                 }
@@ -739,7 +739,7 @@ impl AppState {
                         .unwrap_or_else(|| "Job failed for an undetermined reason".to_string());
                     match self
                         .transition_task_to_completion(
-                            &task_id,
+                            &session_id,
                             Err(TaskError::JobEngineError {
                                 reason: failure_reason,
                             }),
@@ -749,24 +749,24 @@ impl AppState {
                         .await
                     {
                         Ok(_) => {
-                            info!(metis_id = %task_id, "updated task status to Failed from job engine");
+                            info!(metis_id = %session_id, "updated task status to Failed from job engine");
                         }
                         Err(err) => {
-                            warn!(metis_id = %task_id, error = %err, "failed to update task status to Failed");
+                            warn!(metis_id = %session_id, error = %err, "failed to update task status to Failed");
                         }
                     }
                 }
             },
             Err(JobEngineError::NotFound(_)) => {
                 warn!(
-                    metis_id = %task_id,
+                    metis_id = %session_id,
                     "job not found in job engine, marking as failed"
                 );
 
                 let failure_reason = "Job not found in job engine".to_string();
                 if let Err(update_err) = self
                     .transition_task_to_completion(
-                        &task_id,
+                        &session_id,
                         Err(TaskError::JobEngineError {
                             reason: failure_reason,
                         }),
@@ -775,12 +775,12 @@ impl AppState {
                     )
                     .await
                 {
-                    error!(metis_id = %task_id, error = %update_err, "failed to set task status to Failed");
+                    error!(metis_id = %session_id, error = %update_err, "failed to set task status to Failed");
                 }
             }
             Err(err) => {
                 error!(
-                    metis_id = %task_id,
+                    metis_id = %session_id,
                     error = %err,
                     "failed to check job status in job engine"
                 );
@@ -790,10 +790,10 @@ impl AppState {
 
     pub async fn transition_task_to_pending(
         &self,
-        task_id: &TaskId,
+        session_id: &SessionId,
         actor: ActorRef,
-    ) -> Result<Versioned<Task>, StoreError> {
-        let latest = self.store.get_task(task_id, false).await?;
+    ) -> Result<Versioned<Session>, StoreError> {
+        let latest = self.store.get_session(session_id, false).await?;
         if latest.item.status != Status::Created {
             return Err(StoreError::InvalidStatusTransition);
         }
@@ -804,16 +804,16 @@ impl AppState {
         updated.error = None;
 
         self.store
-            .update_task_with_actor(task_id, updated, actor)
+            .update_session_with_actor(session_id, updated, actor)
             .await
     }
 
     pub async fn transition_task_to_running(
         &self,
-        task_id: &TaskId,
+        session_id: &SessionId,
         actor: ActorRef,
-    ) -> Result<Versioned<Task>, StoreError> {
-        let latest = self.store.get_task(task_id, false).await?;
+    ) -> Result<Versioned<Session>, StoreError> {
+        let latest = self.store.get_session(session_id, false).await?;
         if !matches!(latest.item.status, Status::Created | Status::Pending) {
             return Err(StoreError::InvalidStatusTransition);
         }
@@ -827,19 +827,19 @@ impl AppState {
         }
 
         self.store
-            .update_task_with_actor(task_id, updated, actor)
+            .update_session_with_actor(session_id, updated, actor)
             .await
     }
 
     pub async fn transition_task_to_completion(
         &self,
-        task_id: &TaskId,
+        session_id: &SessionId,
         result: Result<(), TaskError>,
         last_message: Option<String>,
         actor: ActorRef,
-    ) -> Result<Versioned<Task>, StoreError> {
+    ) -> Result<Versioned<Session>, StoreError> {
         let store = self.store.as_ref();
-        let latest = store.get_task(task_id, false).await?;
+        let latest = store.get_session(session_id, false).await?;
         let can_transition = match latest.item.status {
             Status::Created => result.is_err(),
             Status::Pending | Status::Running => true,
@@ -874,60 +874,60 @@ impl AppState {
         }
 
         self.store
-            .update_task_with_actor(task_id, updated, actor)
+            .update_session_with_actor(session_id, updated, actor)
             .await
     }
 
-    pub async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
+    pub async fn get_session(&self, session_id: &SessionId) -> Result<Session, StoreError> {
         let store = self.store.as_ref();
-        store.get_task(task_id, false).await.map(|task| task.item)
+        store.get_session(session_id, false).await.map(|v| v.item)
     }
 
-    pub async fn get_task_versions(
+    pub async fn get_session_versions(
         &self,
-        task_id: &TaskId,
-    ) -> Result<Vec<Versioned<Task>>, StoreError> {
+        session_id: &SessionId,
+    ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let store = self.store.as_ref();
-        store.get_task_versions(task_id).await
+        store.get_session_versions(session_id).await
     }
 
-    pub async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
+    pub async fn get_sessions_for_issue(&self, issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError> {
         let store = self.store.as_ref();
-        store.get_tasks_for_issue(issue_id).await
+        store.get_sessions_for_issue(issue_id).await
     }
 
-    pub async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
+    pub async fn list_sessions(&self) -> Result<Vec<SessionId>, StoreError> {
         let store = self.store.as_ref();
         store
-            .list_tasks(&SearchJobsQuery::default())
+            .list_sessions(&SearchSessionsQuery::default())
             .await
             .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
     }
 
     pub async fn list_tasks_with_query(
         &self,
-        query: &SearchJobsQuery,
-    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+        query: &SearchSessionsQuery,
+    ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let store = self.store.as_ref();
-        store.list_tasks(query).await
+        store.list_sessions(query).await
     }
 
-    pub async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+    pub async fn count_sessions(&self, query: &SearchSessionsQuery) -> Result<u64, StoreError> {
         let store = self.store.as_ref();
-        store.count_tasks(query).await
+        store.count_sessions(query).await
     }
 
-    pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
+    pub async fn get_status_log(&self, session_id: &SessionId) -> Result<TaskStatusLog, StoreError> {
         let store = self.store.as_ref();
-        store.get_status_log(task_id).await
+        store.get_status_log(session_id).await
     }
 
     pub async fn get_status_logs(
         &self,
-        task_ids: &[TaskId],
-    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
+        session_ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError> {
         let store = self.store.as_ref();
-        store.get_status_logs(task_ids).await
+        store.get_status_logs(session_ids).await
     }
 }
 
@@ -938,14 +938,14 @@ mod tests {
             issue_with_status, sample_task, state_with_default_model, task_for_issue,
         },
         domain::actors::ActorRef,
-        domain::issues::{Issue, IssueStatus, IssueType, JobSettings},
+        domain::issues::{Issue, IssueStatus, IssueType, SessionSettings},
         domain::users::Username,
         job_engine::{JobEngine, JobStatus},
         store::{ReadOnlyStore, Status, StoreError, TaskError},
         test_utils::{MockJobEngine, test_state_with_engine},
     };
     use chrono::{Duration, Utc};
-    use metis_common::TaskId;
+    use metis_common::SessionId;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -953,29 +953,29 @@ mod tests {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
         let config = state.config.clone();
-        let task = sample_task();
+        let session = sample_task();
 
-        let (task_id, _) = {
+        let (session_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), ActorRef::test())
+                .add_session_with_actor(session, Utc::now(), ActorRef::test())
                 .await
                 .unwrap()
         };
 
         state
-            .start_pending_task(task_id.clone(), ActorRef::test())
+            .start_pending_task(session_id.clone(), ActorRef::test())
             .await;
 
         {
             let store = state.store.as_ref();
-            let status = store.get_task(&task_id, false).await.unwrap().item.status;
+            let status = store.get_session(&session_id, false).await.unwrap().item.status;
             assert_eq!(status, Status::Pending);
         }
 
-        assert!(job_engine.env_vars_for_job(&task_id).is_some());
+        assert!(job_engine.env_vars_for_job(&session_id).is_some());
         let limits = job_engine
-            .resource_limits_for_job(&task_id)
+            .resource_limits_for_job(&session_id)
             .expect("resource limits should be recorded");
         assert_eq!(
             limits,
@@ -990,7 +990,7 @@ mod tests {
     async fn start_pending_task_uses_task_resource_limits() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
-        let job_settings = JobSettings {
+        let session_settings = SessionSettings {
             cpu_limit: Some("750m".to_string()),
             memory_limit: Some("2Gi".to_string()),
             ..Default::default()
@@ -1008,7 +1008,7 @@ mod tests {
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: None,
-                        job_settings: job_settings.clone(),
+                        session_settings: session_settings.clone(),
                         todo_list: Vec::new(),
                         dependencies: Vec::new(),
                         patches: Vec::new(),
@@ -1020,23 +1020,23 @@ mod tests {
                 .unwrap()
         };
 
-        let (task_id, _) = {
+        let (session_id, _) = {
             let store = state.store.as_ref();
-            let mut task = task_for_issue(&issue_id);
-            task.cpu_limit = job_settings.cpu_limit.clone();
-            task.memory_limit = job_settings.memory_limit.clone();
+            let mut session = task_for_issue(&issue_id);
+            session.cpu_limit = session_settings.cpu_limit.clone();
+            session.memory_limit = session_settings.memory_limit.clone();
             store
-                .add_task_with_actor(task, Utc::now(), ActorRef::test())
+                .add_session_with_actor(session, Utc::now(), ActorRef::test())
                 .await
                 .unwrap()
         };
 
         state
-            .start_pending_task(task_id.clone(), ActorRef::test())
+            .start_pending_task(session_id.clone(), ActorRef::test())
             .await;
 
         let limits = job_engine
-            .resource_limits_for_job(&task_id)
+            .resource_limits_for_job(&session_id)
             .expect("resource limits should be recorded");
         assert_eq!(limits, ("750m".to_string(), "2Gi".to_string()));
     }
@@ -1045,12 +1045,12 @@ mod tests {
     async fn start_pending_task_timeout_but_job_exists_transitions_to_pending() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
-        let task = sample_task();
+        let session = sample_task();
 
-        let (task_id, _) = {
+        let (session_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), ActorRef::test())
+                .add_session_with_actor(session, Utc::now(), ActorRef::test())
                 .await
                 .unwrap()
         };
@@ -1058,15 +1058,15 @@ mod tests {
         // Pre-insert the job so find_job_by_metis_id finds it, and configure
         // create_job to fail (simulating an etcdserver timeout where the job
         // was actually created).
-        job_engine.insert_job(&task_id, JobStatus::Running).await;
+        job_engine.insert_job(&session_id, JobStatus::Running).await;
         job_engine.set_create_job_error(Some("etcdserver: request timed out".to_string()));
 
         state
-            .start_pending_task(task_id.clone(), ActorRef::test())
+            .start_pending_task(session_id.clone(), ActorRef::test())
             .await;
 
         let store = state.store.as_ref();
-        let status = store.get_task(&task_id, false).await.unwrap().item.status;
+        let status = store.get_session(&session_id, false).await.unwrap().item.status;
         assert_eq!(status, Status::Pending);
     }
 
@@ -1074,12 +1074,12 @@ mod tests {
     async fn start_pending_task_timeout_and_job_missing_transitions_to_failed() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
-        let task = sample_task();
+        let session = sample_task();
 
-        let (task_id, _) = {
+        let (session_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(task, Utc::now(), ActorRef::test())
+                .add_session_with_actor(session, Utc::now(), ActorRef::test())
                 .await
                 .unwrap()
         };
@@ -1089,33 +1089,33 @@ mod tests {
         job_engine.set_create_job_error(Some("etcdserver: request timed out".to_string()));
 
         state
-            .start_pending_task(task_id.clone(), ActorRef::test())
+            .start_pending_task(session_id.clone(), ActorRef::test())
             .await;
 
         let store = state.store.as_ref();
-        let status = store.get_task(&task_id, false).await.unwrap().item.status;
+        let status = store.get_session(&session_id, false).await.unwrap().item.status;
         assert_eq!(status, Status::Failed);
     }
 
     #[test]
-    fn apply_job_settings_defaults_sets_model() {
+    fn apply_session_settings_defaults_sets_model() {
         let state = state_with_default_model("gpt-4o");
-        let job_settings = JobSettings::default();
+        let session_settings = SessionSettings::default();
 
-        let resolved = state.apply_job_settings_defaults(job_settings);
+        let resolved = state.apply_session_settings_defaults(session_settings);
 
         assert_eq!(resolved.model.as_deref(), Some("gpt-4o"));
     }
 
     #[test]
-    fn apply_job_settings_defaults_preserves_explicit_model() {
+    fn apply_session_settings_defaults_preserves_explicit_model() {
         let state = state_with_default_model("gpt-4o");
-        let job_settings = JobSettings {
+        let session_settings = SessionSettings {
             model: Some("custom-model".to_string()),
             ..Default::default()
         };
 
-        let resolved = state.apply_job_settings_defaults(job_settings);
+        let resolved = state.apply_session_settings_defaults(session_settings);
 
         assert_eq!(resolved.model.as_deref(), Some("custom-model"));
     }
@@ -1124,33 +1124,33 @@ mod tests {
     async fn reap_orphaned_jobs_kills_jobs_missing_from_store() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
-        let (tracked_task_id, _) = {
+        let (tracked_session_id, _) = {
             let store = state.store.as_ref();
             store
-                .add_task_with_actor(sample_task(), Utc::now(), ActorRef::test())
+                .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
                 .await
                 .unwrap()
         };
-        let orphan_task_id = TaskId::new();
+        let orphan_session_id = SessionId::new();
 
         job_engine
-            .insert_job(&tracked_task_id, JobStatus::Running)
+            .insert_job(&tracked_session_id, JobStatus::Running)
             .await;
         job_engine
-            .insert_job(&orphan_task_id, JobStatus::Running)
+            .insert_job(&orphan_session_id, JobStatus::Running)
             .await;
 
         state.reap_orphaned_jobs().await;
 
         let tracked_status = job_engine
-            .find_job_by_metis_id(&tracked_task_id)
+            .find_job_by_metis_id(&tracked_session_id)
             .await
             .expect("tracked job should exist")
             .status;
         assert_eq!(tracked_status, JobStatus::Running);
 
         let orphan_status = job_engine
-            .find_job_by_metis_id(&orphan_task_id)
+            .find_job_by_metis_id(&orphan_session_id)
             .await
             .expect("orphan job should exist")
             .status;
@@ -1161,30 +1161,30 @@ mod tests {
     async fn reconcile_running_task_marks_missing_jobs_failed() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine);
-        let task_id = {
+        let session_id = {
             let store = state.store.as_ref();
-            let (task_id, _) = store
-                .add_task_with_actor(sample_task(), Utc::now(), ActorRef::test())
+            let (session_id, _) = store
+                .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
                 .await
                 .unwrap();
             state
-                .transition_task_to_pending(&task_id, ActorRef::test())
+                .transition_task_to_pending(&session_id, ActorRef::test())
                 .await
                 .expect("task should transition to pending");
-            task_id
+            session_id
         };
 
         state
-            .reconcile_running_task(task_id.clone(), ActorRef::test())
+            .reconcile_running_task(session_id.clone(), ActorRef::test())
             .await;
 
         let store = state.store.as_ref();
         assert_eq!(
-            store.get_task(&task_id, false).await.unwrap().item.status,
+            store.get_session(&session_id, false).await.unwrap().item.status,
             Status::Failed
         );
 
-        let status_log = store.get_status_log(&task_id).await.unwrap();
+        let status_log = store.get_status_log(&session_id).await.unwrap();
         match status_log.result().expect("task should be finished") {
             Err(TaskError::JobEngineError { reason }) => {
                 assert_eq!(reason, "Job not found in job engine");
@@ -1199,33 +1199,33 @@ mod tests {
         let state = test_state_with_engine(job_engine.clone());
         let completion_time = Utc::now() - Duration::seconds(90);
 
-        let task_id = {
+        let session_id = {
             let store = state.store.as_ref();
-            let (task_id, _) = store
-                .add_task_with_actor(sample_task(), Utc::now(), ActorRef::test())
+            let (session_id, _) = store
+                .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
                 .await
                 .unwrap();
             state
-                .transition_task_to_pending(&task_id, ActorRef::test())
+                .transition_task_to_pending(&session_id, ActorRef::test())
                 .await
                 .expect("task should transition to pending");
-            task_id
+            session_id
         };
 
         job_engine
-            .insert_job_with_metadata(&task_id, JobStatus::Complete, Some(completion_time), None)
+            .insert_job_with_metadata(&session_id, JobStatus::Complete, Some(completion_time), None)
             .await;
 
         state
-            .reconcile_running_task(task_id.clone(), ActorRef::test())
+            .reconcile_running_task(session_id.clone(), ActorRef::test())
             .await;
 
         let store = state.store.as_ref();
         assert_eq!(
-            store.get_task(&task_id, false).await.unwrap().item.status,
+            store.get_session(&session_id, false).await.unwrap().item.status,
             Status::Failed
         );
-        let status_log = store.get_status_log(&task_id).await.unwrap();
+        let status_log = store.get_status_log(&session_id).await.unwrap();
         assert!(status_log.end_time().is_some());
 
         match status_log.result().expect("task should be finished") {
@@ -1250,8 +1250,8 @@ mod tests {
             )
             .await
             .unwrap();
-        let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), ActorRef::test())
+        let (session_id, _) = store
+            .add_session_with_actor(task_for_issue(&issue_id), Utc::now(), ActorRef::test())
             .await
             .unwrap();
 
@@ -1262,13 +1262,13 @@ mod tests {
 
         state.cleanup_orphaned_tasks(ActorRef::test()).await;
 
-        let result = store.get_task(&task_id, false).await;
+        let result = store.get_session(&session_id, false).await;
         assert!(
-            matches!(result, Err(StoreError::TaskNotFound(_))),
+            matches!(result, Err(StoreError::SessionNotFound(_))),
             "orphaned task should be soft-deleted"
         );
 
-        let deleted_task = store.get_task(&task_id, true).await.unwrap();
+        let deleted_task = store.get_session(&session_id, true).await.unwrap();
         assert!(deleted_task.item.deleted);
     }
 
@@ -1285,16 +1285,16 @@ mod tests {
             )
             .await
             .unwrap();
-        let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), ActorRef::test())
+        let (session_id, _) = store
+            .add_session_with_actor(task_for_issue(&issue_id), Utc::now(), ActorRef::test())
             .await
             .unwrap();
 
         state.cleanup_orphaned_tasks(ActorRef::test()).await;
 
-        let task = store.get_task(&task_id, false).await.unwrap();
+        let session = store.get_session(&session_id, false).await.unwrap();
         assert!(
-            !task.item.deleted,
+            !session.item.deleted,
             "task with existing issue should not be deleted"
         );
     }
@@ -1305,16 +1305,16 @@ mod tests {
         let state = test_state_with_engine(job_engine);
         let store = state.store.as_ref();
 
-        let (task_id, _) = store
-            .add_task_with_actor(sample_task(), Utc::now(), ActorRef::test())
+        let (session_id, _) = store
+            .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
             .await
             .unwrap();
 
         state.cleanup_orphaned_tasks(ActorRef::test()).await;
 
-        let task = store.get_task(&task_id, false).await.unwrap();
+        let session = store.get_session(&session_id, false).await.unwrap();
         assert!(
-            !task.item.deleted,
+            !session.item.deleted,
             "task without spawned_from should not be deleted"
         );
     }
@@ -1332,16 +1332,16 @@ mod tests {
             )
             .await
             .unwrap();
-        let (task_id, _) = store
-            .add_task_with_actor(task_for_issue(&issue_id), Utc::now(), ActorRef::test())
+        let (session_id, _) = store
+            .add_session_with_actor(task_for_issue(&issue_id), Utc::now(), ActorRef::test())
             .await
             .unwrap();
         state
-            .transition_task_to_pending(&task_id, ActorRef::test())
+            .transition_task_to_pending(&session_id, ActorRef::test())
             .await
             .expect("task should transition to pending");
 
-        job_engine.insert_job(&task_id, JobStatus::Running).await;
+        job_engine.insert_job(&session_id, JobStatus::Running).await;
 
         store
             .delete_issue_with_actor(&issue_id, ActorRef::test())
@@ -1350,14 +1350,14 @@ mod tests {
 
         state.cleanup_orphaned_tasks(ActorRef::test()).await;
 
-        let result = store.get_task(&task_id, false).await;
+        let result = store.get_session(&session_id, false).await;
         assert!(
-            matches!(result, Err(StoreError::TaskNotFound(_))),
+            matches!(result, Err(StoreError::SessionNotFound(_))),
             "orphaned running task should be soft-deleted"
         );
 
         let job = job_engine
-            .find_job_by_metis_id(&task_id)
+            .find_job_by_metis_id(&session_id)
             .await
             .expect("job should still exist in engine");
         assert_eq!(
