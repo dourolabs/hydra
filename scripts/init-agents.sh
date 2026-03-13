@@ -15,7 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROMPTS_DIR="${SCRIPT_DIR}/agent-prompts"
 
-AGENTS=("swe" "pm" "reviewer" "merger")
+AGENTS=("swe" "pm" "reviewer")
 
 # Validate that all prompt files exist before creating agents
 for agent in "${AGENTS[@]}"; do

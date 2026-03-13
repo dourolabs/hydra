@@ -132,6 +132,9 @@ fn cmd_init() -> Result<()> {
     cli_config.write_to(&cli_config_path)?;
     println!("CLI configured with auth token for {LOCAL_SERVER_URL}");
 
+    // Auto-populate default agents and their prompts.
+    create_default_agents(&auth_token)?;
+
     let engine_label = if job_engine == "docker" {
         "Docker"
     } else {
@@ -146,6 +149,50 @@ fn cmd_init() -> Result<()> {
     println!("  metis server status             # check server status");
     println!("  metis server logs --follow      # watch server logs");
     println!("  metis server stop               # stop the server");
+
+    Ok(())
+}
+
+// Embedded agent prompts (compiled into the binary).
+const SWE_PROMPT: &str = include_str!("../../scripts/agent-prompts/swe.md");
+const PM_PROMPT: &str = include_str!("../../scripts/agent-prompts/pm.md");
+const REVIEWER_PROMPT: &str = include_str!("../../scripts/agent-prompts/reviewer.md");
+
+/// Create the default agents (swe, pm, reviewer) and upload their prompts
+/// to the running server via HTTP.
+fn create_default_agents(auth_token: &str) -> Result<()> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+
+    let agents: &[(&str, &str, bool)] = &[
+        ("swe", SWE_PROMPT, false),
+        ("pm", PM_PROMPT, true),
+        ("reviewer", REVIEWER_PROMPT, false),
+    ];
+
+    for &(name, prompt, is_assignment_agent) in agents {
+        let body = serde_json::json!({
+            "name": name,
+            "prompt": prompt,
+            "is_assignment_agent": is_assignment_agent,
+        });
+
+        let resp = client
+            .post(format!("{LOCAL_SERVER_URL}/v1/agents"))
+            .bearer_auth(auth_token)
+            .json(&body)
+            .send()
+            .with_context(|| format!("failed to create agent '{name}'"))?;
+
+        if resp.status().is_success() {
+            println!("Created agent: {name}");
+        } else {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            bail!("Failed to create agent '{name}': HTTP {status} — {body}");
+        }
+    }
 
     Ok(())
 }
