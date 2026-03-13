@@ -132,7 +132,7 @@ pub enum Commands {
 /// Run the CLI with the given parsed arguments.
 pub async fn run(cli: Cli) -> Result<()> {
     let config_path = resolve_config_path(&cli);
-    let app_config = load_app_config(&config_path)?;
+    let app_config = load_or_default_app_config(&cli, &config_path)?;
     let server_url = resolve_server_url(&cli, &app_config)?;
     let unauth_client = MetisClientUnauthenticated::new(&server_url)?;
     let client =
@@ -240,6 +240,32 @@ pub fn load_app_config(config_path: &Path) -> Result<AppConfig> {
     }
 
     AppConfig::load(&resolved_path)
+}
+
+/// Try to load the config file. If it doesn't exist but both server_url and token
+/// are provided via CLI flags or environment variables, fall back to an empty config.
+pub fn load_or_default_app_config(cli: &Cli, config_path: &Path) -> Result<AppConfig> {
+    match load_app_config(config_path) {
+        Ok(config) => Ok(config),
+        Err(err) => {
+            let has_server_url = cli
+                .server_url
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|url| !url.is_empty());
+            let has_token = cli
+                .token
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|token| !token.is_empty());
+
+            if has_server_url && has_token {
+                Ok(config::empty_app_config())
+            } else {
+                Err(err)
+            }
+        }
+    }
 }
 
 pub fn resolve_server_url(cli: &Cli, app_config: &AppConfig) -> Result<String> {
@@ -355,5 +381,35 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
         let err: anyhow::Error = io_err.into();
         assert!(!is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn load_or_default_falls_back_when_env_provided() {
+        let temp = tempdir().expect("tempdir");
+        let missing_path = temp.path().join("missing.toml");
+
+        let cli = Cli {
+            server_url: Some("http://localhost:9000".to_string()),
+            token: Some("test-token".to_string()),
+            ..base_cli()
+        };
+
+        let config = load_or_default_app_config(&cli, &missing_path)
+            .expect("should fall back to empty config");
+        assert!(config.servers.is_empty());
+    }
+
+    #[test]
+    fn load_or_default_errors_without_env() {
+        let temp = tempdir().expect("tempdir");
+        let missing_path = temp.path().join("missing.toml");
+
+        let cli = base_cli();
+        let err = load_or_default_app_config(&cli, &missing_path).unwrap_err();
+        assert!(
+            err.to_string().contains("No configuration file found"),
+            "expected helpful error, got: {}",
+            err
+        );
     }
 }
