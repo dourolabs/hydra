@@ -11,9 +11,10 @@ pub enum ActorIdentity {
     User {
         username: Username,
     },
-    Task {
+    #[serde(alias = "task")]
+    Session {
         #[serde(alias = "task_id")]
-        task_id: SessionId,
+        session_id: SessionId,
         creator: Username,
     },
     Issue {

@@ -1024,7 +1024,9 @@ async fn resolve_creator_username(client: &dyn MetisClientInterface) -> Result<U
         .context("failed to resolve authenticated actor")?;
     match response.actor {
         ActorIdentity::User { username } => Ok(username),
-        ActorIdentity::Task { creator, .. } | ActorIdentity::Issue { creator, .. } => Ok(creator),
+        ActorIdentity::Session { creator, .. } | ActorIdentity::Issue { creator, .. } => {
+            Ok(creator)
+        }
         other => bail!("unexpected actor identity: {other:?}"),
     }
 }

@@ -10,7 +10,8 @@ use std::str::FromStr;
 #[cfg_attr(feature = "ts", ts(export))]
 pub enum ActorId {
     Username(Username),
-    Task(SessionId),
+    #[serde(alias = "Task")]
+    Session(SessionId),
     Issue(IssueId),
 }
 
@@ -18,7 +19,7 @@ impl fmt::Display for ActorId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ActorId::Username(username) => write!(f, "u-{username}"),
-            ActorId::Task(task_id) => write!(f, "w-{task_id}"),
+            ActorId::Session(session_id) => write!(f, "w-{session_id}"),
             ActorId::Issue(issue_id) => write!(f, "a-{issue_id}"),
         }
     }
@@ -50,7 +51,7 @@ impl ActorRef {
         match self {
             ActorRef::Authenticated { actor_id } => match actor_id {
                 ActorId::Username(username) => username.to_string(),
-                ActorId::Task(task_id) => task_id.to_string(),
+                ActorId::Session(session_id) => session_id.to_string(),
                 ActorId::Issue(issue_id) => issue_id.to_string(),
             },
             ActorRef::System {
@@ -60,7 +61,7 @@ impl ActorRef {
                 if let Some(behalf) = on_behalf_of {
                     let behalf_name = match behalf {
                         ActorId::Username(username) => username.to_string(),
-                        ActorId::Task(task_id) => task_id.to_string(),
+                        ActorId::Session(session_id) => session_id.to_string(),
                         ActorId::Issue(issue_id) => issue_id.to_string(),
                     };
                     format!("{worker_name} (on behalf of {behalf_name})")
@@ -97,7 +98,7 @@ impl ActorRef {
 ///
 /// Shorthand rules:
 /// - Strings starting with `"i-"` are parsed as [`IssueId`] → `ActorId::Issue`
-/// - Strings starting with `"t-"` or `"s-"` are parsed as [`SessionId`] → `ActorId::Task`
+/// - Strings starting with `"t-"` or `"s-"` are parsed as [`SessionId`] → `ActorId::Session`
 /// - Everything else is treated as a username → `ActorId::Username`
 ///
 /// **Note:** This `FromStr` deliberately does NOT round-trip with [`Display`],
@@ -122,7 +123,7 @@ impl FromStr for ActorId {
         if trimmed.starts_with("t-") || trimmed.starts_with("s-") {
             let session_id = SessionId::from_str(trimmed)
                 .map_err(|e| format!("invalid session ID '{trimmed}': {e}"))?;
-            return Ok(ActorId::Task(session_id));
+            return Ok(ActorId::Session(session_id));
         }
 
         Ok(ActorId::Username(Username::from(trimmed)))
@@ -136,7 +137,7 @@ impl TryFrom<ActorIdentity> for ActorId {
         #[allow(unreachable_patterns)]
         match identity {
             ActorIdentity::User { username } => Ok(ActorId::Username(username)),
-            ActorIdentity::Task { task_id, .. } => Ok(ActorId::Task(task_id)),
+            ActorIdentity::Session { session_id, .. } => Ok(ActorId::Session(session_id)),
             ActorIdentity::Issue { issue_id, .. } => Ok(ActorId::Issue(issue_id)),
             _ => Err("unsupported actor identity type".to_string()),
         }
@@ -168,7 +169,7 @@ pub fn parse_actor_name(name: &str) -> Option<ActorId> {
             return None;
         }
         let task_id = SessionId::from_str(task_id).ok()?;
-        return Some(ActorId::Task(task_id));
+        return Some(ActorId::Session(task_id));
     }
 
     None
@@ -271,7 +272,7 @@ mod tests {
     fn parse_actor_name_task() {
         let task_id = SessionId::from_str("t-abcdef").unwrap();
         let result = parse_actor_name("w-t-abcdef");
-        assert_eq!(result, Some(ActorId::Task(task_id)));
+        assert_eq!(result, Some(ActorId::Session(task_id)));
     }
 
     #[test]
@@ -328,7 +329,7 @@ mod tests {
     #[test]
     fn actor_id_display_task() {
         let task_id = SessionId::from_str("t-abcdef").unwrap();
-        let actor_id = ActorId::Task(task_id);
+        let actor_id = ActorId::Session(task_id);
         assert_eq!(actor_id.to_string(), "w-t-abcdef");
     }
 
@@ -352,8 +353,8 @@ mod tests {
     fn actor_id_from_str_task_id() {
         let actor: ActorId = "t-abcdef".parse().unwrap();
         match actor {
-            ActorId::Task(id) => assert_eq!(id.to_string(), "t-abcdef"),
-            other => panic!("expected ActorId::Task, got {other:?}"),
+            ActorId::Session(id) => assert_eq!(id.to_string(), "t-abcdef"),
+            other => panic!("expected ActorId::Session, got {other:?}"),
         }
     }
 
@@ -393,12 +394,12 @@ mod tests {
     #[test]
     fn try_from_actor_identity_task() {
         let task_id = SessionId::from_str("t-abcdef").unwrap();
-        let identity = ActorIdentity::Task {
-            task_id: task_id.clone(),
+        let identity = ActorIdentity::Session {
+            session_id: task_id.clone(),
             creator: Username::from("bob"),
         };
         let actor_id = ActorId::try_from(identity).unwrap();
-        assert_eq!(actor_id, ActorId::Task(task_id));
+        assert_eq!(actor_id, ActorId::Session(task_id));
     }
 
     #[test]

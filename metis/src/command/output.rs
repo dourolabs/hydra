@@ -203,7 +203,7 @@ async fn resolve_auto_output_format(
     let whoami = client.whoami().await?;
     Ok(match whoami.actor {
         ActorIdentity::User { .. } => ResolvedOutputFormat::Pretty,
-        ActorIdentity::Task { .. } => ResolvedOutputFormat::Jsonl,
+        ActorIdentity::Session { .. } => ResolvedOutputFormat::Jsonl,
         _ => ResolvedOutputFormat::Jsonl,
     })
 }
@@ -1181,8 +1181,8 @@ mod tests {
     async fn resolve_output_format_auto_prefers_jsonl_for_tasks() {
         let server = MockServer::start();
         let client = MetisClient::new(server.base_url(), TEST_METIS_TOKEN).expect("client");
-        let whoami = WhoAmIResponse::new(ActorIdentity::Task {
-            task_id: TaskId::from_str("t-task").expect("task id"),
+        let whoami = WhoAmIResponse::new(ActorIdentity::Session {
+            session_id: TaskId::from_str("t-task").expect("task id"),
             creator: "test-creator".into(),
         });
 

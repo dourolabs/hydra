@@ -4468,7 +4468,7 @@ mod tests {
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
-            actor_id: ActorId::Task(TaskId::new()),
+            actor_id: ActorId::Session(TaskId::new()),
             creator: Username::from("creator"),
         };
         let name = actor.name();
@@ -4492,7 +4492,7 @@ mod tests {
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
-            actor_id: ActorId::Task(task_id),
+            actor_id: ActorId::Session(task_id),
             creator: Username::from("creator"),
         };
         let mut updated = actor.clone();
