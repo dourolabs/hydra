@@ -307,34 +307,40 @@ impl ClaudeCommands {
 
         // The main process has exited. Give stdout a grace period to reach EOF
         // (it will if no background processes inherited the pipe).
-        let stdout_result =
-            tokio::time::timeout(PROCESS_GROUP_GRACE_PERIOD, &mut stdout_handle).await;
+        let (stdout_buf, last_message) =
+            match tokio::time::timeout(PROCESS_GROUP_GRACE_PERIOD, &mut stdout_handle).await {
+                Ok(join_result) => {
+                    // stdout finished within the grace period — use the result directly.
+                    join_result.context("failed to join claude stdout task")??
+                }
+                Err(_) => {
+                    // Grace period expired; stdout is still open (orphaned subprocesses).
+                    // Kill the process group to close inherited fds, then await with a
+                    // longer timeout.
+                    #[cfg(unix)]
+                    if let Some(pgid) = child_pgid {
+                        eprintln!(
+                            "claude process exited but stdout pipe still open; \
+                             killing process group {pgid}"
+                        );
+                        kill_process_group(pgid).await;
+                    }
 
-        // If stdout didn't finish, kill the process group to close inherited fds.
-        #[cfg(unix)]
-        if stdout_result.is_err() {
-            if let Some(pgid) = child_pgid {
-                eprintln!(
-                    "claude process exited but stdout pipe still open; \
-                     killing process group {pgid}"
-                );
-                kill_process_group(pgid).await;
-            }
-        }
-
-        // Await stdout with a timeout so we never hang indefinitely.
-        let stdout_result = tokio::time::timeout(PIPE_READ_TIMEOUT, stdout_handle).await;
-        let (stdout_buf, last_message) = match stdout_result {
-            Ok(join_result) => join_result.context("failed to join claude stdout task")??,
-            Err(_) => {
-                let timeout = PIPE_READ_TIMEOUT;
-                eprintln!(
-                    "stdout pipe read timed out after {timeout:?} — \
-                     dropping handle and proceeding with partial output"
-                );
-                (String::new(), None)
-            }
-        };
+                    match tokio::time::timeout(PIPE_READ_TIMEOUT, stdout_handle).await {
+                        Ok(join_result) => {
+                            join_result.context("failed to join claude stdout task")??
+                        }
+                        Err(_) => {
+                            let timeout = PIPE_READ_TIMEOUT;
+                            eprintln!(
+                                "stdout pipe read timed out after {timeout:?} — \
+                                 dropping handle and proceeding with partial output"
+                            );
+                            (String::new(), None)
+                        }
+                    }
+                }
+            };
 
         // Await stderr with a timeout so we never hang indefinitely.
         let stderr_result = tokio::time::timeout(PIPE_READ_TIMEOUT, stderr_handle).await;
