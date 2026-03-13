@@ -55,6 +55,7 @@ import type { ListLabelsResponse } from "./generated/ListLabelsResponse";
 import type { LabelRecord } from "./generated/LabelRecord";
 import type { ListSecretsResponse } from "./generated/ListSecretsResponse";
 import type { SetSecretRequest } from "./generated/SetSecretRequest";
+import type { VersionResponse } from "./generated/VersionResponse";
 import {
   MetisEventSource,
   buildEventsUrl,
@@ -543,6 +544,15 @@ export class MetisApiClient {
   /** DELETE /v1/users/me/secrets/:name */
   deleteSecret(name: string): Promise<void> {
     return this.del(`/v1/users/me/secrets/${encodeURIComponent(name)}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Version
+  // ---------------------------------------------------------------------------
+
+  /** GET /v1/version */
+  getVersion(): Promise<VersionResponse> {
+    return this.get("/v1/version");
   }
 
   // ---------------------------------------------------------------------------

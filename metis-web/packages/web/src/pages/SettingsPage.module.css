@@ -1,1 +1,9 @@
 .page { composes: page from './page.module.css'; }
+
+.versionFooter {
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  padding: var(--space-4) 0;
+  margin-top: auto;
+}
