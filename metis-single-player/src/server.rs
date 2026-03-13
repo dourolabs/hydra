@@ -124,6 +124,9 @@ fn cmd_init() -> Result<()> {
     cli_config.write_to(&cli_config_path)?;
     println!("CLI configured with auth token for {LOCAL_SERVER_URL}");
 
+    // Upload default playbooks to the document store.
+    upload_default_playbooks(&auth_token)?;
+
     let engine_label = if job_engine == "docker" {
         "Docker"
     } else {
@@ -138,6 +141,56 @@ fn cmd_init() -> Result<()> {
     println!("  metis server status             # check server status");
     println!("  metis server logs --follow      # watch server logs");
     println!("  metis server stop               # stop the server");
+
+    Ok(())
+}
+
+const PLAYBOOK_ADD_NEW_REPO: &str = include_str!("../../playbooks/add-new-repo.md");
+const PLAYBOOK_DESIGN_REVIEW: &str = include_str!("../../playbooks/design-review.md");
+
+/// Upload default playbooks to the server's document store.
+fn upload_default_playbooks(auth_token: &str) -> Result<()> {
+    let playbooks = [
+        (
+            "Add new repo to metis",
+            PLAYBOOK_ADD_NEW_REPO,
+            "playbooks/add-new-repo.md",
+        ),
+        (
+            "Design Document Review",
+            PLAYBOOK_DESIGN_REVIEW,
+            "playbooks/design-review.md",
+        ),
+    ];
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+
+    for (title, body, path) in playbooks {
+        let payload = serde_json::json!({
+            "document": {
+                "title": title,
+                "body_markdown": body,
+                "path": path,
+            }
+        });
+
+        let resp = client
+            .post(format!("{LOCAL_SERVER_URL}/v1/documents"))
+            .bearer_auth(auth_token)
+            .json(&payload)
+            .send()
+            .with_context(|| format!("failed to upload playbook {path}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            bail!("failed to upload playbook {path}: {status} {body}");
+        }
+
+        println!("Uploaded playbook: {path}");
+    }
 
     Ok(())
 }
