@@ -509,7 +509,7 @@ impl JobEngine for KubernetesJobEngine {
             image_pull_policy: Some("Always".into()),
             command: Some(vec!["metis".to_string()]),
             args: Some(vec![
-                "jobs".to_string(),
+                "sessions".to_string(),
                 "worker-run".to_string(),
                 metis_id.to_string(),
                 ".".to_string(),

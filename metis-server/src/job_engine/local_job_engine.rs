@@ -228,7 +228,7 @@ impl JobEngine for LocalJobEngine {
                     JobEngineError::Internal(format!("Failed to determine current executable: {e}"))
                 })?;
                 let args = vec![
-                    "jobs".to_string(),
+                    "sessions".to_string(),
                     "worker-run".to_string(),
                     metis_id.as_ref().to_string(),
                     ".".to_string(),
