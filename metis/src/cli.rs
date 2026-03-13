@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::{
     client::{MetisClient, MetisClientInterface, MetisClientUnauthenticated},
@@ -86,8 +86,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: command::caches::CachesCommand,
     },
-    /// Launch a live dashboard for jobs, issues, and patches.
-    Dashboard,
     /// List or create issues.
     Issues {
         #[command(subcommand)]
@@ -192,7 +190,14 @@ pub async fn dispatch(
     server_url: &str,
     context: &CommandContext,
 ) -> Result<()> {
-    match resolve_command(cli.command) {
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            Cli::command().print_help()?;
+            return Ok(());
+        }
+    };
+    match command {
         Commands::Jobs { command } => command::jobs::run(client, command, context).await?,
         Commands::Agents { command } => command::agents::run(client, command, context).await?,
         Commands::Patches { command } => command::patches::run(client, command, context).await?,
@@ -200,9 +205,6 @@ pub async fn dispatch(
             command::documents::run(client, command, context).await?
         }
         Commands::Caches { command } => command::caches::run(command, context).await?,
-        Commands::Dashboard => {
-            command::dashboard::run(client, server_url, cli.browser.as_deref(), context).await?
-        }
         Commands::Issues { command } => command::issues::run(client, command, context).await?,
         Commands::Messages { command } => command::messages::run(client, command, context).await?,
         Commands::Notifications { command } => {
@@ -218,10 +220,6 @@ pub async fn dispatch(
     }
 
     Ok(())
-}
-
-pub fn resolve_command(command: Option<Commands>) -> Commands {
-    command.unwrap_or(Commands::Dashboard)
 }
 
 pub fn resolve_config_path(cli: &Cli) -> PathBuf {
@@ -320,14 +318,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_without_subcommand_defaults_to_dashboard() {
+    fn parse_without_subcommand_has_no_command() {
         let cli = Cli::try_parse_from(["metis"]).expect("parse");
-        let command = resolve_command(cli.command);
-
-        match command {
-            Commands::Dashboard => {}
-            _ => panic!("expected dashboard default"),
-        }
+        assert!(cli.command.is_none());
     }
 
     #[test]
