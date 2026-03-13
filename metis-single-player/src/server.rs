@@ -78,6 +78,12 @@ fn cmd_init() -> Result<()> {
     // Prompt for GitHub PAT.
     let github_pat = prompt_github_pat()?;
 
+    // Prompt for model choice (Codex vs Claude).
+    let (provider, default_model) = prompt_model_choice()?;
+
+    // Prompt for the appropriate API key(s).
+    let api_keys = prompt_api_key(provider)?;
+
     // Prompt for job engine choice.
     let job_engine = prompt_job_engine()?;
 
@@ -100,6 +106,8 @@ fn cmd_init() -> Result<()> {
         &db_path,
         &auth_token_path_expanded,
         &job_engine,
+        Some(&default_model),
+        &api_keys,
     );
     fs::write(&config_path, &config_content)
         .with_context(|| format!("failed to write config to {}", config_path.display()))?;
@@ -216,6 +224,102 @@ fn prompt_github_pat() -> Result<String> {
     Ok(token)
 }
 
+/// Which AI provider the user selected during init.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelProvider {
+    Codex,
+    Claude,
+}
+
+/// Prompt the user to choose between Codex and Claude as their default model.
+/// Returns the provider enum and the model string to store in config.
+fn prompt_model_choice() -> Result<(ModelProvider, String)> {
+    eprintln!();
+    eprintln!("Select default model:");
+    eprintln!("  1) Codex (OpenAI gpt-4o)");
+    eprintln!("  2) Claude (Anthropic opus)");
+    eprint!("Choice [2]: ");
+    io::stderr().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    let choice = if input.is_empty() { "2" } else { input };
+
+    match choice {
+        "1" => Ok((ModelProvider::Codex, "gpt-4o".to_string())),
+        "2" => Ok((ModelProvider::Claude, "opus".to_string())),
+        _ => {
+            eprintln!("Invalid choice '{choice}', defaulting to Claude.");
+            Ok((ModelProvider::Claude, "opus".to_string()))
+        }
+    }
+}
+
+/// API keys collected during init.
+#[derive(Debug, Default)]
+struct ApiKeys {
+    openai_api_key: Option<String>,
+    anthropic_api_key: Option<String>,
+    claude_code_oauth_token: Option<String>,
+}
+
+/// Prompt for the appropriate API key(s) based on the selected provider.
+fn prompt_api_key(provider: ModelProvider) -> Result<ApiKeys> {
+    let mut keys = ApiKeys::default();
+    match provider {
+        ModelProvider::Codex => {
+            eprintln!();
+            eprint!("Enter your OpenAI API key (OPENAI_API_KEY): ");
+            io::stderr().flush()?;
+            let key =
+                rpassword::prompt_password_stdout("").context("failed to read OpenAI API key")?;
+            let key = key.trim().to_string();
+            if !key.is_empty() {
+                keys.openai_api_key = Some(key);
+            }
+        }
+        ModelProvider::Claude => {
+            eprintln!();
+            eprintln!("Select Claude authentication method:");
+            eprintln!("  1) API key (ANTHROPIC_API_KEY)");
+            eprintln!("  2) OAuth token (CLAUDE_CODE_OAUTH_TOKEN)");
+            eprint!("Choice [1]: ");
+            io::stderr().flush()?;
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let input = input.trim();
+            let choice = if input.is_empty() { "1" } else { input };
+
+            match choice {
+                "2" => {
+                    eprint!("Enter your Claude OAuth token (CLAUDE_CODE_OAUTH_TOKEN): ");
+                    io::stderr().flush()?;
+                    let key = rpassword::prompt_password_stdout("")
+                        .context("failed to read Claude OAuth token")?;
+                    let key = key.trim().to_string();
+                    if !key.is_empty() {
+                        keys.claude_code_oauth_token = Some(key);
+                    }
+                }
+                _ => {
+                    eprint!("Enter your Anthropic API key (ANTHROPIC_API_KEY): ");
+                    io::stderr().flush()?;
+                    let key = rpassword::prompt_password_stdout("")
+                        .context("failed to read Anthropic API key")?;
+                    let key = key.trim().to_string();
+                    if !key.is_empty() {
+                        keys.anthropic_api_key = Some(key);
+                    }
+                }
+            }
+        }
+    }
+    Ok(keys)
+}
+
 fn generate_encryption_key() -> String {
     let mut key = [0u8; 32];
     getrandom::getrandom(&mut key).expect("failed to generate random bytes from OS CSPRNG");
@@ -244,11 +348,22 @@ struct InitMetisSection {
     server_hostname: String,
     #[serde(rename = "METIS_SECRET_ENCRYPTION_KEY")]
     secret_encryption_key: String,
+    #[serde(rename = "OPENAI_API_KEY", skip_serializing_if = "Option::is_none")]
+    openai_api_key: Option<String>,
+    #[serde(rename = "ANTHROPIC_API_KEY", skip_serializing_if = "Option::is_none")]
+    anthropic_api_key: Option<String>,
+    #[serde(
+        rename = "CLAUDE_CODE_OAUTH_TOKEN",
+        skip_serializing_if = "Option::is_none"
+    )]
+    claude_code_oauth_token: Option<String>,
 }
 
 #[derive(serde::Serialize)]
 struct InitJobSection {
     default_image: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_model: Option<String>,
 }
 
 fn render_server_config(
@@ -257,11 +372,16 @@ fn render_server_config(
     db_path: &Path,
     auth_token_path: &Path,
     job_engine: &str,
+    default_model: Option<&str>,
+    api_keys: &ApiKeys,
 ) -> String {
     let config = ServerInitConfig {
         metis: InitMetisSection {
             server_hostname: "127.0.0.1:8080".to_string(),
             secret_encryption_key: encryption_key.to_string(),
+            openai_api_key: api_keys.openai_api_key.clone(),
+            anthropic_api_key: api_keys.anthropic_api_key.clone(),
+            claude_code_oauth_token: api_keys.claude_code_oauth_token.clone(),
         },
         auth_mode: "local".to_string(),
         github_token: github_pat.to_string(),
@@ -271,6 +391,7 @@ fn render_server_config(
         job_engine: job_engine.to_string(),
         job: InitJobSection {
             default_image: "metis-worker:latest".to_string(),
+            default_model: default_model.map(str::to_string),
         },
     };
 
@@ -662,6 +783,8 @@ mod tests {
             Path::new("/tmp/test.db"),
             Path::new("/tmp/auth-token"),
             "docker",
+            None,
+            &ApiKeys::default(),
         );
 
         // Verify the generated YAML contains all expected fields.
@@ -689,6 +812,10 @@ mod tests {
             Some(Path::new("/tmp/auth-token"))
         );
         assert_eq!(app_config.job.default_image, "metis-worker:latest");
+        assert!(app_config.job.default_model.is_none());
+        assert!(app_config.metis.openai_api_key.is_none());
+        assert!(app_config.metis.anthropic_api_key.is_none());
+        assert!(app_config.metis.claude_code_oauth_token.is_none());
         assert!(matches!(
             app_config.storage,
             metis_server::config::StorageConfig::Sqlite { .. }
@@ -710,6 +837,8 @@ mod tests {
             Path::new("/tmp/test.db"),
             Path::new("/tmp/auth-token"),
             "local",
+            None,
+            &ApiKeys::default(),
         );
 
         assert!(config.contains("job_engine: local"));
@@ -724,6 +853,121 @@ mod tests {
             metis_server::config::JobEngineConfig::Local
         ));
         assert_eq!(app_config.metis.server_hostname, "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn render_server_config_with_codex_model_and_openai_key() {
+        use base64::Engine;
+        let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
+
+        let keys = ApiKeys {
+            openai_api_key: Some("sk-test-openai-key".to_string()),
+            ..Default::default()
+        };
+
+        let config = render_server_config(
+            &encryption_key,
+            "ghp_test123",
+            Path::new("/tmp/test.db"),
+            Path::new("/tmp/auth-token"),
+            "docker",
+            Some("gpt-4o"),
+            &keys,
+        );
+
+        assert!(config.contains("default_model: gpt-4o"));
+        assert!(config.contains("OPENAI_API_KEY: sk-test-openai-key"));
+        // Should not contain Claude keys.
+        assert!(!config.contains("ANTHROPIC_API_KEY"));
+        assert!(!config.contains("CLAUDE_CODE_OAUTH_TOKEN"));
+
+        use metis_server::config::AppConfig;
+        let app_config: AppConfig = serde_yaml_ng::from_str(&config)
+            .expect("generated config should deserialize into AppConfig");
+
+        assert_eq!(app_config.job.default_model.as_deref(), Some("gpt-4o"));
+        assert_eq!(
+            app_config.metis.openai_api_key.as_deref(),
+            Some("sk-test-openai-key")
+        );
+        assert!(app_config.metis.anthropic_api_key.is_none());
+        assert!(app_config.metis.claude_code_oauth_token.is_none());
+    }
+
+    #[test]
+    fn render_server_config_with_claude_model_and_anthropic_key() {
+        use base64::Engine;
+        let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
+
+        let keys = ApiKeys {
+            anthropic_api_key: Some("sk-ant-test-key".to_string()),
+            ..Default::default()
+        };
+
+        let config = render_server_config(
+            &encryption_key,
+            "ghp_test123",
+            Path::new("/tmp/test.db"),
+            Path::new("/tmp/auth-token"),
+            "docker",
+            Some("opus"),
+            &keys,
+        );
+
+        assert!(config.contains("default_model: opus"));
+        assert!(config.contains("ANTHROPIC_API_KEY: sk-ant-test-key"));
+        assert!(!config.contains("OPENAI_API_KEY"));
+        assert!(!config.contains("CLAUDE_CODE_OAUTH_TOKEN"));
+
+        use metis_server::config::AppConfig;
+        let app_config: AppConfig = serde_yaml_ng::from_str(&config)
+            .expect("generated config should deserialize into AppConfig");
+
+        assert_eq!(app_config.job.default_model.as_deref(), Some("opus"));
+        assert_eq!(
+            app_config.metis.anthropic_api_key.as_deref(),
+            Some("sk-ant-test-key")
+        );
+        assert!(app_config.metis.openai_api_key.is_none());
+        assert!(app_config.metis.claude_code_oauth_token.is_none());
+    }
+
+    #[test]
+    fn render_server_config_with_claude_oauth_token() {
+        use base64::Engine;
+        let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
+
+        let keys = ApiKeys {
+            claude_code_oauth_token: Some("oauth-token-test".to_string()),
+            ..Default::default()
+        };
+
+        let config = render_server_config(
+            &encryption_key,
+            "ghp_test123",
+            Path::new("/tmp/test.db"),
+            Path::new("/tmp/auth-token"),
+            "docker",
+            Some("opus"),
+            &keys,
+        );
+
+        assert!(config.contains("default_model: opus"));
+        assert!(config.contains("CLAUDE_CODE_OAUTH_TOKEN: oauth-token-test"));
+        assert!(!config.contains("OPENAI_API_KEY"));
+        assert!(!config.contains("ANTHROPIC_API_KEY"));
+
+        use metis_server::config::AppConfig;
+        let app_config: AppConfig = serde_yaml_ng::from_str(&config)
+            .expect("generated config should deserialize into AppConfig");
+
+        assert_eq!(app_config.job.default_model.as_deref(), Some("opus"));
+        assert_eq!(
+            app_config.metis.claude_code_oauth_token.as_deref(),
+            Some("oauth-token-test")
+        );
+        assert!(app_config.metis.openai_api_key.is_none());
+        assert!(app_config.metis.anthropic_api_key.is_none());
     }
 
     #[test]
