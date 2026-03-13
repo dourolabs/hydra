@@ -309,16 +309,18 @@ pub fn generate_summary(event: &ServerEvent) -> String {
                 _ => "unknown".to_string(),
             };
             if old.is_none() {
-                return format!("Job {id} was created");
+                return format!("Session {id} was created");
             }
             if let Some(old) = old {
                 if old.status != new.status {
                     let old_status = old.status;
                     let new_status = new.status;
-                    return format!("Job {id} status changed from {old_status} to {new_status}");
+                    return format!(
+                        "Session {id} status changed from {old_status} to {new_status}"
+                    );
                 }
             }
-            format!("Job {id} was updated")
+            format!("Session {id} was updated")
         }
         MutationPayload::Document { old, new, .. } => {
             let id = match event {
@@ -798,6 +800,45 @@ mod tests {
             generate_summary(&event),
             "Issue i-abcdef progress was updated"
         );
+    }
+
+    #[test]
+    fn summary_session_created() {
+        let task = crate::store::Session {
+            prompt: "test".to_string(),
+            context: crate::domain::sessions::BundleSpec::default(),
+            spawned_from: None,
+            creator: Username::from("alice"),
+            image: None,
+            model: None,
+            env_vars: Default::default(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            status: crate::store::Status::Created,
+            last_message: None,
+            error: None,
+            deleted: false,
+            creation_time: None,
+            start_time: None,
+            end_time: None,
+        };
+
+        let payload = Arc::new(MutationPayload::Session {
+            old: None,
+            new: task,
+            actor: test_actor(),
+        });
+        let session_id: metis_common::SessionId = "t-abcdef".parse().unwrap();
+        let event = ServerEvent::SessionCreated {
+            seq: 1,
+            session_id,
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        assert_eq!(generate_summary(&event), "Session t-abcdef was created");
     }
 
     #[test]
