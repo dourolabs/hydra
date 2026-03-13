@@ -138,13 +138,13 @@ background:
     interval_secs: 60
 
   scheduler:
-    process_pending_jobs:
-      # Optional scheduler settings for the worker that spawns pending jobs.
+    process_pending_sessions:
+      # Optional scheduler settings for the worker that spawns pending sessions.
       interval_secs: 2
       initial_backoff_secs: 1
       max_backoff_secs: 30
-    monitor_running_jobs:
-      # Optional scheduler settings for the worker that reconciles running jobs.
+    monitor_running_sessions:
+      # Optional scheduler settings for the worker that reconciles running sessions.
       interval_secs: 5
       initial_backoff_secs: 1
       max_backoff_secs: 30

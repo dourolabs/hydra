@@ -139,7 +139,7 @@ mod tests {
         let job_id = SessionId::from_str("t-jobxyz")?;
         let log_mock = server.mock(|when, then| {
             when.method(GET)
-                .path(format!("/v1/jobs/{job_id}/logs"))
+                .path(format!("/v1/sessions/{job_id}/logs"))
                 .query_param("watch", "false");
             then.status(200)
                 .header("content-type", "text/event-stream")
@@ -161,7 +161,7 @@ mod tests {
         let issue_id = issue_id("i-issueabc");
         let list_jobs_mock = server.mock(|when, then| {
             when.method(GET)
-                .path("/v1/jobs")
+                .path("/v1/sessions")
                 .query_param("spawned_from", issue_id.as_ref());
             then.status(200)
                 .json_body_obj(&ListSessionsResponse::new(vec![
@@ -171,7 +171,7 @@ mod tests {
         });
         let log_mock = server.mock(|when, then| {
             when.method(GET)
-                .path("/v1/jobs/t-newest/logs")
+                .path("/v1/sessions/t-newest/logs")
                 .query_param("watch", "false");
             then.status(200)
                 .header("content-type", "text/event-stream")

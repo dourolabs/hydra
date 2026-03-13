@@ -652,9 +652,12 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(handles.state, handles.store.clone()).await?;
     let client = test_client();
 
-    // Call get_job_context and verify secrets appear in variables
+    // Call get_session_context and verify secrets appear in variables
     let response = client
-        .get(format!("{}/v1/jobs/{job_id}/context", server.base_url()))
+        .get(format!(
+            "{}/v1/sessions/{job_id}/context",
+            server.base_url()
+        ))
         .send()
         .await?;
 

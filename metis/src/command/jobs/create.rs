@@ -306,7 +306,7 @@ mod tests {
     fn mock_get_job(server: &MockServer, job: SessionVersionRecord) -> Mock {
         server.mock(|when, then| {
             when.method(GET)
-                .path(format!("/v1/jobs/{}", job.session_id));
+                .path(format!("/v1/sessions/{}", job.session_id));
             then.status(200).json_body_obj(&job);
         })
     }
@@ -330,14 +330,14 @@ mod tests {
         );
         let create_mock = server.mock(|when, then| {
             when.method(POST)
-                .path("/v1/jobs")
+                .path("/v1/sessions")
                 .json_body_obj(&create_request);
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
         let logs_mock = server.mock(|when, then| {
             when.method(GET)
-                .path(format!("/v1/jobs/{job_id}/logs"))
+                .path(format!("/v1/sessions/{job_id}/logs"))
                 .query_param("watch", "true");
             then.status(200)
                 .header("content-type", "text/event-stream")
@@ -349,7 +349,7 @@ mod tests {
             &job_record_with_status(job_id.as_ref(), Status::Complete, None),
         )]);
         let list_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/jobs");
+            when.method(GET).path("/v1/sessions");
             then.status(200).json_body_obj(&completed_jobs);
         });
 
@@ -394,7 +394,9 @@ mod tests {
         );
         let job_id = task_id("t-job-service");
         let create_mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            when.method(POST)
+                .path("/v1/sessions")
+                .json_body_obj(&request);
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
@@ -439,7 +441,9 @@ mod tests {
         );
         let job_id = task_id("t-job-service-default-rev");
         let create_mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            when.method(POST)
+                .path("/v1/sessions")
+                .json_body_obj(&request);
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
@@ -484,7 +488,9 @@ mod tests {
         );
         let job_id = task_id("t-job-git");
         let create_mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            when.method(POST)
+                .path("/v1/sessions")
+                .json_body_obj(&request);
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
@@ -529,7 +535,9 @@ mod tests {
         );
         let job_id = task_id("t-job-git-default-rev");
         let create_mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            when.method(POST)
+                .path("/v1/sessions")
+                .json_body_obj(&request);
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
@@ -571,7 +579,9 @@ mod tests {
         );
         let job_id = task_id("t-job-image");
         let create_mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            when.method(POST)
+                .path("/v1/sessions")
+                .json_body_obj(&request);
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
@@ -614,7 +624,9 @@ mod tests {
         );
         let job_id = task_id("t-job-with-vars");
         let create_mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            when.method(POST)
+                .path("/v1/sessions")
+                .json_body_obj(&request);
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
@@ -646,7 +658,7 @@ mod tests {
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())
                 .expect("client");
         let create_mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/jobs");
+            when.method(POST).path("/v1/sessions");
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(task_id("unused")));
         });

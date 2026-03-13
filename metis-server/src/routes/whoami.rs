@@ -3,7 +3,7 @@ use crate::{
         actors::{Actor, ActorId},
         whoami::{ActorIdentity, WhoAmIResponse},
     },
-    routes::jobs::ApiError,
+    routes::sessions::ApiError,
 };
 use axum::{Extension, Json};
 use metis_common::api::v1;

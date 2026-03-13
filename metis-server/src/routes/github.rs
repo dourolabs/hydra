@@ -1,4 +1,4 @@
-use crate::{app::AppState, domain::actors::Actor, routes::jobs::ApiError};
+use crate::{app::AppState, domain::actors::Actor, routes::sessions::ApiError};
 use axum::{Extension, Json, extract::State};
 use metis_common::github::{GithubAppClientIdResponse, GithubTokenResponse};
 use tracing::info;

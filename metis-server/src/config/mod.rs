@@ -635,9 +635,9 @@ impl Default for GithubPollerConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct SchedulerSection {
     #[serde(default = "default_process_pending_scheduler")]
-    pub process_pending_jobs: WorkerSchedulerConfig,
+    pub process_pending_sessions: WorkerSchedulerConfig,
     #[serde(default = "default_monitor_running_scheduler")]
-    pub monitor_running_jobs: WorkerSchedulerConfig,
+    pub monitor_running_sessions: WorkerSchedulerConfig,
     #[serde(default = "default_run_spawners_scheduler")]
     pub run_spawners: WorkerSchedulerConfig,
     #[serde(default = "default_github_poller_scheduler")]
@@ -649,8 +649,8 @@ pub struct SchedulerSection {
 impl Default for SchedulerSection {
     fn default() -> Self {
         Self {
-            process_pending_jobs: default_process_pending_scheduler(),
-            monitor_running_jobs: default_monitor_running_scheduler(),
+            process_pending_sessions: default_process_pending_scheduler(),
+            monitor_running_sessions: default_monitor_running_scheduler(),
             run_spawners: default_run_spawners_scheduler(),
             github_poller: default_github_poller_scheduler(),
             cleanup_branches: default_cleanup_branches_scheduler(),
@@ -818,8 +818,8 @@ mod tests {
         let background = BackgroundSection::default();
         let scheduler = background.scheduler;
 
-        assert_eq!(scheduler.process_pending_jobs.interval_secs, 2);
-        assert_eq!(scheduler.monitor_running_jobs.interval_secs, 5);
+        assert_eq!(scheduler.process_pending_sessions.interval_secs, 2);
+        assert_eq!(scheduler.monitor_running_sessions.interval_secs, 5);
         assert_eq!(scheduler.run_spawners.interval_secs, 3);
         assert_eq!(
             scheduler.github_poller.interval_secs,
@@ -827,10 +827,10 @@ mod tests {
         );
         assert_eq!(scheduler.cleanup_branches.interval_secs, 300);
 
-        assert_eq!(scheduler.process_pending_jobs.initial_backoff_secs, 1);
-        assert_eq!(scheduler.process_pending_jobs.max_backoff_secs, 30);
-        assert_eq!(scheduler.monitor_running_jobs.initial_backoff_secs, 1);
-        assert_eq!(scheduler.monitor_running_jobs.max_backoff_secs, 30);
+        assert_eq!(scheduler.process_pending_sessions.initial_backoff_secs, 1);
+        assert_eq!(scheduler.process_pending_sessions.max_backoff_secs, 30);
+        assert_eq!(scheduler.monitor_running_sessions.initial_backoff_secs, 1);
+        assert_eq!(scheduler.monitor_running_sessions.max_backoff_secs, 30);
         assert_eq!(scheduler.run_spawners.initial_backoff_secs, 1);
         assert_eq!(scheduler.run_spawners.max_backoff_secs, 30);
         assert_eq!(scheduler.github_poller.initial_backoff_secs, 1);

@@ -8,25 +8,25 @@ use async_trait::async_trait;
 use metis_common::sessions::SearchSessionsQuery;
 use tracing::{error, info};
 
-const WORKER_NAME: &str = "process_pending_jobs";
+const WORKER_NAME: &str = "process_pending_sessions";
 
-/// Scheduled worker that processes pending jobs once per iteration.
+/// Scheduled worker that processes pending sessions once per iteration.
 ///
 /// A successful iteration returns `Progress`, empty queues return `Idle`,
 /// and store failures map to `TransientError` so the scheduler can back off.
 #[derive(Clone)]
-pub struct ProcessPendingJobsWorker {
+pub struct ProcessPendingSessionsWorker {
     state: AppState,
 }
 
-impl ProcessPendingJobsWorker {
+impl ProcessPendingSessionsWorker {
     pub fn new(state: AppState) -> Self {
         Self { state }
     }
 }
 
 #[async_trait]
-impl ScheduledWorker for ProcessPendingJobsWorker {
+impl ScheduledWorker for ProcessPendingSessionsWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
         let query = SearchSessionsQuery::new(None, None, None, vec![Status::Created.into()]);
@@ -92,7 +92,7 @@ mod tests {
     #[tokio::test]
     async fn returns_idle_when_no_pending_tasks_exist() {
         let state = test_state();
-        let worker = ProcessPendingJobsWorker::new(state);
+        let worker = ProcessPendingSessionsWorker::new(state);
 
         let outcome = worker.run_iteration().await;
 
@@ -126,7 +126,7 @@ mod tests {
             .await
             .expect("second task should be added");
 
-        let worker = ProcessPendingJobsWorker::new(state.clone());
+        let worker = ProcessPendingSessionsWorker::new(state.clone());
         let outcome = worker.run_iteration().await;
 
         assert_eq!(
@@ -158,7 +158,7 @@ mod tests {
     #[tokio::test]
     async fn returns_transient_error_when_store_fails() {
         let handles = test_state_with_store(Arc::new(FailingStore));
-        let worker = ProcessPendingJobsWorker::new(handles.state);
+        let worker = ProcessPendingSessionsWorker::new(handles.state);
 
         let outcome = worker.run_iteration().await;
 

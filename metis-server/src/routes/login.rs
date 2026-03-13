@@ -1,6 +1,6 @@
 use crate::app::{AppState, LoginError, WORKER_NAME_LOGIN};
 use crate::domain::actors::ActorRef;
-use crate::routes::jobs::ApiError;
+use crate::routes::sessions::ApiError;
 use axum::{Json, extract::State};
 use metis_common::api::v1;
 use tracing::{error, info};

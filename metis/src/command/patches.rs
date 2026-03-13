@@ -1189,7 +1189,7 @@ mod tests {
     fn mock_get_job(server: &MockServer, job: SessionVersionRecord) -> Mock {
         server.mock(move |when, then| {
             when.method(GET)
-                .path(format!("/v1/jobs/{}", job.session_id.as_ref()));
+                .path(format!("/v1/sessions/{}", job.session_id.as_ref()));
             then.status(200).json_body_obj(&job);
         })
     }

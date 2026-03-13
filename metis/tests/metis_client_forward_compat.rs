@@ -66,10 +66,10 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let todo_response_for_replace = todo_response.clone();
     let todo_response_for_status = todo_response.clone();
 
-    let job_path = format!("/v1/jobs/{job_id}");
-    let job_logs_path = format!("/v1/jobs/{job_id}/logs");
-    let job_status_path = format!("/v1/jobs/{job_id}/status");
-    let job_context_path = format!("/v1/jobs/{job_id}/context");
+    let job_path = format!("/v1/sessions/{job_id}");
+    let job_logs_path = format!("/v1/sessions/{job_id}/logs");
+    let job_status_path = format!("/v1/sessions/{job_id}/status");
+    let job_context_path = format!("/v1/sessions/{job_id}/context");
     let issue_path = format!("/v1/issues/{issue_id}");
     let todo_path = format!("/v1/issues/{issue_id}/todo-items");
     let todo_item_path = format!("{todo_path}/1");
@@ -117,13 +117,13 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     });
 
     server.mock(move |when, then| {
-        when.method(POST).path("/v1/jobs");
+        when.method(POST).path("/v1/sessions");
         then.status(200)
             .json_body(json!({"job_id": job_id_for_create.clone(), "unexpected": "field"}));
     });
 
     server.mock(move |when, then| {
-        when.method(GET).path("/v1/jobs");
+        when.method(GET).path("/v1/sessions");
         then.status(200).json_body(json!({
             "jobs": [job_record_body_for_list.clone()],
             "future": "job-list"

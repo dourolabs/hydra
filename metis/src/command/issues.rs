@@ -2752,7 +2752,7 @@ mod tests {
         });
         let list_jobs_mock = server.mock(|when, then| {
             when.method(GET)
-                .path("/v1/jobs")
+                .path("/v1/sessions")
                 .query_param("spawned_from", root_id.as_ref());
             then.status(200)
                 .json_body_obj(&ListSessionsResponse::new(Vec::new()));
