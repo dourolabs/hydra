@@ -213,7 +213,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
                   </span>
                 </div>
               </div>
-              <IssueSettings jobSettings={issue.job_settings} />
+              <IssueSettings jobSettings={issue.session_settings} />
             </div>
           )}
         </div>

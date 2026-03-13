@@ -3,11 +3,11 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type {
   EntityEventData,
   IssueSummaryRecord,
-  JobSummaryRecord,
+  SessionSummaryRecord,
   PatchSummaryRecord,
   DocumentSummaryRecord,
   ListIssuesResponse,
-  ListJobsResponse,
+  ListSessionsResponse,
   ListPatchesResponse,
   ListDocumentsResponse,
 } from "@metis/api";
@@ -21,8 +21,8 @@ const ENTITY_EVENT_TYPES = [
   "patch_created",
   "patch_updated",
   "patch_deleted",
-  "job_created",
-  "job_updated",
+  "session_created",
+  "session_updated",
   "document_created",
   "document_updated",
   "document_deleted",
@@ -90,9 +90,9 @@ const issueList = (r: ListIssuesResponse) => r.issues;
 const wrapIssues = (items: IssueSummaryRecord[]): ListIssuesResponse => ({ issues: items });
 const issueRecordId = (r: IssueSummaryRecord) => r.issue_id;
 
-const sessionList = (r: ListJobsResponse) => r.jobs;
-const wrapSessions = (items: JobSummaryRecord[]): ListJobsResponse => ({ jobs: items });
-const sessionRecordId = (r: JobSummaryRecord) => r.job_id;
+const sessionList = (r: ListSessionsResponse) => r.sessions;
+const wrapSessions = (items: SessionSummaryRecord[]): ListSessionsResponse => ({ sessions: items });
+const sessionRecordId = (r: SessionSummaryRecord) => r.session_id;
 
 const patchList = (r: ListPatchesResponse) => r.patches;
 const wrapPatches = (items: PatchSummaryRecord[]): ListPatchesResponse => ({ patches: items });
@@ -124,7 +124,7 @@ export function useSSE(): SSEConnectionState {
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         queryClient.invalidateQueries({ queryKey: ["issues"] });
         queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
-      } else if (entity_type === "job" || entity_type === "sessions" || eventType.startsWith("job_")) {
+      } else if (entity_type === "session" || eventType.startsWith("session_")) {
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["allSessions"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
@@ -161,10 +161,10 @@ export function useSSE(): SSEConnectionState {
           upsertInList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id, record);
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
         }
-      } else if (entity_type === "job" || entity_type === "sessions" || eventType.startsWith("job_")) {
-        const record = entity as unknown as JobSummaryRecord;
-        const spawnedFrom = record.task?.spawned_from;
-        const isTerminal = record.task?.status === "complete" || record.task?.status === "failed" || record.task?.status === "unknown";
+      } else if (entity_type === "session" || eventType.startsWith("session_")) {
+        const record = entity as unknown as SessionSummaryRecord;
+        const spawnedFrom = record.session?.spawned_from;
+        const isTerminal = record.session?.status === "complete" || record.session?.status === "failed" || record.session?.status === "unknown";
 
         // SSE now sends summary records; invalidate the detail cache instead of direct-setting.
         queryClient.invalidateQueries({ queryKey: ["session", entity_id] });
@@ -225,7 +225,7 @@ export function useSSE(): SSEConnectionState {
 
     setState("connecting");
 
-    const es = new EventSource("/api/v1/events?types=issues,jobs,patches,documents,labels");
+    const es = new EventSource("/api/v1/events?types=issues,sessions,patches,documents,labels");
     esRef.current = es;
 
     es.onopen = () => {

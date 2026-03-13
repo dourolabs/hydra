@@ -4,7 +4,7 @@ import type { LabelSummary } from "./LabelSummary";
 import type { PatchStatus } from "./PatchStatus";
 import type { RepoName } from "./RepoName";
 import type { ReviewSummary } from "./ReviewSummary";
-import type { TaskId } from "./TaskId";
+import type { SessionId } from "./SessionId";
 import type { Username } from "./Username";
 
 /**
@@ -12,17 +12,4 @@ import type { Username } from "./Username";
  *
  * Excludes `diff`, `description`, `reviews[].contents`, and `commit_range`.
  */
-export type PatchSummary = {
-  title: string;
-  status: PatchStatus;
-  is_automatic_backup: boolean;
-  created_by?: TaskId | null;
-  creator: Username;
-  review_summary: ReviewSummary;
-  service_repo_name: RepoName;
-  github?: GithubPr | null;
-  branch_name?: string | null;
-  base_branch?: string | null;
-  deleted?: boolean;
-  labels?: Array<LabelSummary>;
-};
+export type PatchSummary = { title: string, status: PatchStatus, is_automatic_backup: boolean, created_by?: SessionId | null, creator: Username, review_summary: ReviewSummary, service_repo_name: RepoName, github?: GithubPr | null, branch_name?: string | null, base_branch?: string | null, deleted?: boolean, labels?: Array<LabelSummary>, };

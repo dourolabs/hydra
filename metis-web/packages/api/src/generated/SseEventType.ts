@@ -3,24 +3,4 @@
 /**
  * The SSE event type names sent in the `event:` field.
  */
-export type SseEventType =
-  | "issue_created"
-  | "issue_updated"
-  | "issue_deleted"
-  | "patch_created"
-  | "patch_updated"
-  | "patch_deleted"
-  | "job_created"
-  | "job_updated"
-  | "document_created"
-  | "document_updated"
-  | "document_deleted"
-  | "label_created"
-  | "label_updated"
-  | "label_deleted"
-  | "message_created"
-  | "message_updated"
-  | "notification_created"
-  | "snapshot"
-  | "resync"
-  | "heartbeat";
+export type SseEventType = "issue_created" | "issue_updated" | "issue_deleted" | "patch_created" | "patch_updated" | "patch_deleted" | "session_created" | "session_updated" | "document_created" | "document_updated" | "document_deleted" | "label_created" | "label_updated" | "label_deleted" | "message_created" | "message_updated" | "notification_created" | "snapshot" | "resync" | "heartbeat";

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import React from "react";
 import type { WorkItem } from "../useTransitiveWorkItems";
-import type { JobSummaryRecord } from "@metis/api";
+import type { SessionSummaryRecord } from "@metis/api";
 import type { ChildStatus } from "../computeIssueProgress";
 
 // --- Mocks ---
@@ -50,9 +50,9 @@ vi.mock("@metis/ui", () => ({
 }));
 
 vi.mock("../useSessionDuration", () => ({
-  useSessionDuration: (jobs: JobSummaryRecord[] | undefined) => {
+  useSessionDuration: (jobs: SessionSummaryRecord[] | undefined) => {
     const running = jobs?.find(
-      (j) => j.task.status === "running" || j.task.status === "pending",
+      (j) => j.session.status === "running" || j.session.status === "pending",
     );
     if (running) return { durationText: "0:05", isRunning: true };
     return { durationText: "\u2014", isRunning: false };
@@ -142,12 +142,12 @@ function makePatchItem(): WorkItem {
   } as WorkItem;
 }
 
-function makeRunningJob(): JobSummaryRecord {
+function makeRunningJob(): SessionSummaryRecord {
   return {
-    job_id: "t-job1",
+    session_id: "s-job1",
     version: 1n,
     timestamp: "2026-01-01T00:00:00Z",
-    task: {
+    session: {
       prompt: "do work",
       creator: "alice",
       status: "running",

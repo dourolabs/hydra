@@ -5,7 +5,7 @@ export function useSessionsByIssue(issueId: string) {
   return useQuery({
     queryKey: ["sessions", issueId],
     queryFn: () => apiClient.listSessions({ spawned_from: issueId }),
-    select: (data) => data.jobs,
+    select: (data) => data.sessions,
     enabled: !!issueId,
   });
 }

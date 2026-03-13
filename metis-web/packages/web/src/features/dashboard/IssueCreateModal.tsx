@@ -93,10 +93,10 @@ export function IssueCreateModal({
           patches: [],
           ...(params.assignee && { assignee: params.assignee }),
           ...(params.repoName && {
-            job_settings: { repo_name: params.repoName },
+            session_settings: { repo_name: params.repoName },
           }),
         },
-        job_id: null,
+        session_id: null,
         ...(params.labelNames && params.labelNames.length > 0 && {
           label_names: params.labelNames,
         }),

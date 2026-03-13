@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { MetisApiClient, ApiError } from "@metis/api";
 import type {
   UpsertIssueRequest,
-  CreateJobRequest,
+  CreateSessionRequest,
   UpsertPatchRequest,
   UpsertDocumentRequest,
   UpsertAgentRequest,
@@ -78,7 +78,7 @@ describe("Issues", () => {
       patches: [],
       todo_list: [],
     },
-    job_id: null,
+    session_id: null,
   };
 
   it("round-trip: create → get → list → update → get → delete → 404", async () => {
@@ -110,7 +110,7 @@ describe("Issues", () => {
         status: "in-progress",
         progress: "Working on it",
       },
-      job_id: null,
+      session_id: null,
     };
     const updateResp = await client.updateIssue(issueId, updatedPayload);
     expect(updateResp.issue_id).toBe(issueId);
@@ -146,7 +146,7 @@ describe("Issues", () => {
 
     await client.updateIssue(issueId, {
       issue: { ...issuePayload.issue, status: "closed" },
-      job_id: null,
+      session_id: null,
     });
 
     // List all versions
@@ -164,7 +164,7 @@ describe("Issues", () => {
     await client.createIssue(issuePayload);
     await client.createIssue({
       issue: { ...issuePayload.issue, status: "closed" },
-      job_id: null,
+      session_id: null,
     });
 
     const openIssues = await client.listIssues({ status: "open" });
@@ -223,7 +223,7 @@ describe("Sessions", () => {
     await resetServer();
   });
 
-  const sessionPayload: CreateJobRequest = {
+  const sessionPayload: CreateSessionRequest = {
     prompt: "Contract test session prompt",
     context: {
       type: "git_repository",
@@ -236,18 +236,18 @@ describe("Sessions", () => {
   it("round-trip: create → get → list → versions → kill", async () => {
     // Create
     const created = await client.createSession(sessionPayload);
-    expect(created.job_id).toBeTruthy();
-    const sessionId = created.job_id;
+    expect(created.session_id).toBeTruthy();
+    const sessionId = created.session_id;
 
     // Get
     const fetched = await client.getSession(sessionId);
-    expect(fetched.job_id).toBe(sessionId);
-    expect(fetched.task.prompt).toBe("Contract test session prompt");
-    expect(fetched.task.status).toBe("pending");
+    expect(fetched.session_id).toBe(sessionId);
+    expect(fetched.session.prompt).toBe("Contract test session prompt");
+    expect(fetched.session.status).toBe("pending");
 
     // List
     const list = await client.listSessions();
-    const found = list.jobs.find((j) => j.job_id === sessionId);
+    const found = list.sessions.find((j) => j.session_id === sessionId);
     expect(found).toBeDefined();
 
     // Versions
@@ -256,18 +256,18 @@ describe("Sessions", () => {
 
     // Get specific version
     const v1 = await client.getSessionVersion(sessionId, 1);
-    expect(v1.task.status).toBe("pending");
+    expect(v1.session.status).toBe("pending");
 
     // Kill (DELETE) — returns intended terminal status but the session
     // stays "running" in the store until the pod actually terminates.
     const killed = await client.killSession(sessionId);
-    expect(killed.job_id).toBe(sessionId);
+    expect(killed.session_id).toBe(sessionId);
     expect(killed.status).toBe("failed");
   });
 
   it("set session status: complete and failed", async () => {
     const created = await client.createSession(sessionPayload);
-    const sessionId = created.job_id;
+    const sessionId = created.session_id;
 
     // Set to complete
     const completed = await client.setSessionStatus(sessionId, {
@@ -277,21 +277,21 @@ describe("Sessions", () => {
     expect(completed.status).toBe("complete");
 
     const afterComplete = await client.getSession(sessionId);
-    expect(afterComplete.task.status).toBe("complete");
-    expect(afterComplete.task.last_message).toBe("All done");
-    expect(afterComplete.task.end_time).toBeTruthy();
+    expect(afterComplete.session.status).toBe("complete");
+    expect(afterComplete.session.last_message).toBe("All done");
+    expect(afterComplete.session.end_time).toBeTruthy();
   });
 
   it("get session context", async () => {
     const created = await client.createSession(sessionPayload);
-    const ctx = await client.getSessionContext(created.job_id);
+    const ctx = await client.getSessionContext(created.session_id);
     expect(ctx.prompt).toBe("Contract test session prompt");
     expect(ctx.request_context.type).toBe("git_repository");
   });
 
   it("get session logs", async () => {
     const created = await client.createSession(sessionPayload);
-    const resp = await client.getSessionLogs(created.job_id);
+    const resp = await client.getSessionLogs(created.session_id);
     const text = await resp.text();
     expect(text).toContain("[mock]");
   });
@@ -663,7 +663,7 @@ describe("Reset endpoint", () => {
         dependencies: [],
         patches: [],
       },
-      job_id: null,
+      session_id: null,
     });
 
     // Verify it's in the list
@@ -770,7 +770,7 @@ describe("SSE Events", () => {
         dependencies: [],
         patches: [],
       },
-      job_id: null,
+      session_id: null,
     });
 
     // Read until we get the issue_created event
@@ -812,7 +812,7 @@ describe("Seed data", () => {
 
   it("seed sessions are loaded", async () => {
     const list = await client.listSessions();
-    expect(list.jobs.length).toBeGreaterThanOrEqual(4);
+    expect(list.sessions.length).toBeGreaterThanOrEqual(4);
   });
 
   it("seed patches are loaded", async () => {

@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { Avatar, Badge, SessionStatusIndicator } from "@metis/ui";
-import type { IssueSummaryRecord, IssueType, JobSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, IssueType, SessionSummaryRecord } from "@metis/api";
 import { toSessionSummary } from "../../utils/sessionMapping";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { descriptionSnippet } from "../../utils/text";
@@ -21,7 +21,7 @@ interface IssueRowProps {
   record: IssueSummaryRecord;
   dimmed?: boolean;
   blocked?: boolean;
-  sessions?: JobSummaryRecord[];
+  sessions?: SessionSummaryRecord[];
   onSessionClick?: (issueId: string, sessionId: string) => void;
   showId?: boolean;
   showTimestamp?: boolean;

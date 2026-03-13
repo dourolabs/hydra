@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Store } from "./store.js";
-import type { Issue, Task, Patch, Document, Repository, AgentRecord } from "@metis/api";
+import type { Issue, Session, Patch, Document, Repository, AgentRecord } from "@metis/api";
 import { clearAssociations, addAssociation } from "./routes/labels.js";
 
 interface LabelData {
@@ -19,7 +19,7 @@ interface LabelAssociationSeed {
 
 interface SeedData {
   issues: Record<string, Issue>;
-  sessions: Record<string, Task>;
+  sessions: Record<string, Session>;
   patches: Record<string, Patch>;
   documents: Record<string, Document>;
   repositories: Record<string, Repository>;
@@ -47,7 +47,7 @@ export function loadSeedData(store: Store): void {
   }
 
   for (const [id, task] of Object.entries(seed.sessions)) {
-    store.create<Task>("sessions", id, task, "job");
+    store.create<Session>("sessions", id, task, "session");
   }
 
   for (const [id, patch] of Object.entries(seed.patches)) {

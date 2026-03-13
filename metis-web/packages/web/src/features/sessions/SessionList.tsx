@@ -41,33 +41,33 @@ export function SessionList({ issueId }: SessionListProps) {
       </thead>
       <tbody>
         {sessions.map((record) => (
-          <tr key={record.job_id} className={styles.row}>
+          <tr key={record.session_id} className={styles.row}>
             <td className={styles.td}>
-              <Badge status={normalizeSessionStatus(record.task.status)} />
+              <Badge status={normalizeSessionStatus(record.session.status)} />
             </td>
             <td className={styles.td}>
               <Link
-                to={`/issues/${issueId}/sessions/${record.job_id}/logs`}
+                to={`/issues/${issueId}/sessions/${record.session_id}/logs`}
                 className={styles.sessionId}
               >
-                {record.job_id}
+                {record.session_id}
               </Link>
             </td>
             <td className={styles.td}>
               <span className={styles.time}>
-                {record.task.creation_time
-                  ? new Date(record.task.creation_time).toLocaleString()
+                {record.session.creation_time
+                  ? new Date(record.session.creation_time).toLocaleString()
                   : "\u2014"}
               </span>
             </td>
             <td className={styles.td}>
               <span className={styles.time}>
-                {getRuntime(record.task.start_time, record.task.end_time)}
+                {getRuntime(record.session.start_time, record.session.end_time)}
               </span>
             </td>
             <td className={styles.td}>
               <Link
-                to={`/issues/${issueId}/sessions/${record.job_id}/logs`}
+                to={`/issues/${issueId}/sessions/${record.session_id}/logs`}
                 className={styles.logLink}
               >
                 View Logs
