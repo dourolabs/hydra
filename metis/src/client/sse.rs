@@ -165,7 +165,7 @@ mod tests {
 
     #[tokio::test]
     async fn parses_entity_event() {
-        let raw = b"event: job_updated\nid: 5\ndata: {\"entity_type\":\"job\",\"entity_id\":\"t-123\",\"version\":3,\"timestamp\":\"2026-01-01T00:00:00Z\"}\n\n";
+        let raw = b"event: job_updated\nid: 5\ndata: {\"entity_type\":\"job\",\"entity_id\":\"s-abcd\",\"version\":3,\"timestamp\":\"2026-01-01T00:00:00Z\"}\n\n";
         let mut stream = parse_sse_event_stream(bytes_stream(raw));
 
         let event = stream.next().await.unwrap().unwrap();
@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(event.id, Some(5));
 
         let entity = event.as_entity_event().unwrap();
-        assert_eq!(entity.entity_id, "t-123");
+        assert_eq!(entity.entity_id, "s-abcd");
         assert_eq!(entity.entity_type, "job");
         assert_eq!(entity.version, 3);
     }
@@ -222,7 +222,7 @@ mod tests {
 
     #[tokio::test]
     async fn handles_multiple_events() {
-        let raw = b"event: job_created\nid: 1\ndata: {\"entity_type\":\"job\",\"entity_id\":\"t-1\",\"version\":1,\"timestamp\":\"2026-01-01T00:00:00Z\"}\n\nevent: job_updated\nid: 2\ndata: {\"entity_type\":\"job\",\"entity_id\":\"t-1\",\"version\":2,\"timestamp\":\"2026-01-01T00:00:01Z\"}\n\n";
+        let raw = b"event: job_created\nid: 1\ndata: {\"entity_type\":\"job\",\"entity_id\":\"s-abcd\",\"version\":1,\"timestamp\":\"2026-01-01T00:00:00Z\"}\n\nevent: job_updated\nid: 2\ndata: {\"entity_type\":\"job\",\"entity_id\":\"s-abcd\",\"version\":2,\"timestamp\":\"2026-01-01T00:00:01Z\"}\n\n";
         let mut stream = parse_sse_event_stream(bytes_stream(raw));
 
         let e1 = stream.next().await.unwrap().unwrap();

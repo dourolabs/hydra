@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn parse_metis_branch_task_head() {
-        let branch = parse_metis_branch("refs/heads/metis/t-xyzabc/head");
+        let branch = parse_metis_branch("refs/heads/metis/s-xyzabc/head");
         assert!(branch.is_some());
         let branch = branch.unwrap();
         assert_eq!(branch.suffix, "head");
@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn parse_metis_branch_task_base() {
-        let branch = parse_metis_branch("refs/heads/metis/t-xyzabc/base");
+        let branch = parse_metis_branch("refs/heads/metis/s-xyzabc/base");
         assert!(branch.is_some());
         let branch = branch.unwrap();
         assert_eq!(branch.suffix, "base");

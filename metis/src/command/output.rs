@@ -1188,7 +1188,7 @@ mod tests {
         let server = MockServer::start();
         let client = MetisClient::new(server.base_url(), TEST_METIS_TOKEN).expect("client");
         let whoami = WhoAmIResponse::new(ActorIdentity::Session {
-            session_id: SessionId::from_str("t-task").expect("task id"),
+            session_id: SessionId::from_str("s-task").expect("task id"),
             creator: "test-creator".into(),
         });
 

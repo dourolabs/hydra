@@ -10,7 +10,6 @@ use std::str::FromStr;
 #[cfg_attr(feature = "ts", ts(export))]
 pub enum ActorId {
     Username(Username),
-    #[serde(alias = "Task")]
     Session(SessionId),
     Issue(IssueId),
 }
@@ -98,7 +97,7 @@ impl ActorRef {
 ///
 /// Shorthand rules:
 /// - Strings starting with `"i-"` are parsed as [`IssueId`] → `ActorId::Issue`
-/// - Strings starting with `"t-"` or `"s-"` are parsed as [`SessionId`] → `ActorId::Session`
+/// - Strings starting with `"s-"` are parsed as [`SessionId`] → `ActorId::Session`
 /// - Everything else is treated as a username → `ActorId::Username`
 ///
 /// **Note:** This `FromStr` deliberately does NOT round-trip with [`Display`],
@@ -120,7 +119,7 @@ impl FromStr for ActorId {
             return Ok(ActorId::Issue(issue_id));
         }
 
-        if trimmed.starts_with("t-") || trimmed.starts_with("s-") {
+        if trimmed.starts_with("s-") {
             let session_id = SessionId::from_str(trimmed)
                 .map_err(|e| format!("invalid session ID '{trimmed}': {e}"))?;
             return Ok(ActorId::Session(session_id));
@@ -270,8 +269,8 @@ mod tests {
 
     #[test]
     fn parse_actor_name_task() {
-        let task_id = SessionId::from_str("t-abcdef").unwrap();
-        let result = parse_actor_name("w-t-abcdef");
+        let task_id = SessionId::from_str("s-abcdef").unwrap();
+        let result = parse_actor_name("w-s-abcdef");
         assert_eq!(result, Some(ActorId::Session(task_id)));
     }
 
@@ -328,9 +327,9 @@ mod tests {
 
     #[test]
     fn actor_id_display_task() {
-        let task_id = SessionId::from_str("t-abcdef").unwrap();
+        let task_id = SessionId::from_str("s-abcdef").unwrap();
         let actor_id = ActorId::Session(task_id);
-        assert_eq!(actor_id.to_string(), "w-t-abcdef");
+        assert_eq!(actor_id.to_string(), "w-s-abcdef");
     }
 
     #[test]
@@ -351,9 +350,9 @@ mod tests {
 
     #[test]
     fn actor_id_from_str_task_id() {
-        let actor: ActorId = "t-abcdef".parse().unwrap();
+        let actor: ActorId = "s-abcdef".parse().unwrap();
         match actor {
-            ActorId::Session(id) => assert_eq!(id.to_string(), "t-abcdef"),
+            ActorId::Session(id) => assert_eq!(id.to_string(), "s-abcdef"),
             other => panic!("expected ActorId::Session, got {other:?}"),
         }
     }
@@ -393,7 +392,7 @@ mod tests {
 
     #[test]
     fn try_from_actor_identity_task() {
-        let task_id = SessionId::from_str("t-abcdef").unwrap();
+        let task_id = SessionId::from_str("s-abcdef").unwrap();
         let identity = ActorIdentity::Session {
             session_id: task_id.clone(),
             creator: Username::from("bob"),

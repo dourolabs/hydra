@@ -136,7 +136,7 @@ mod tests {
     #[tokio::test]
     async fn logs_streams_session_logs() -> Result<()> {
         let server = MockServer::start();
-        let session_id = SessionId::from_str("t-jobxyz")?;
+        let session_id = SessionId::from_str("s-jobxyz")?;
         let log_mock = server.mock(|when, then| {
             when.method(GET)
                 .path(format!("/v1/sessions/{session_id}/logs"))
@@ -165,13 +165,13 @@ mod tests {
                 .query_param("spawned_from", issue_id.as_ref());
             then.status(200)
                 .json_body_obj(&ListSessionsResponse::new(vec![
-                    SessionSummaryRecord::from(&session_record("t-newest")),
-                    SessionSummaryRecord::from(&session_record("t-older")),
+                    SessionSummaryRecord::from(&session_record("s-newest")),
+                    SessionSummaryRecord::from(&session_record("s-older")),
                 ]));
         });
         let log_mock = server.mock(|when, then| {
             when.method(GET)
-                .path("/v1/sessions/t-newest/logs")
+                .path("/v1/sessions/s-newest/logs")
                 .query_param("watch", "false");
             then.status(200)
                 .header("content-type", "text/event-stream")
