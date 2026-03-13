@@ -253,7 +253,7 @@ mod tests {
         let engine = MockJobEngine::new();
         let env_vars = HashMap::from([("FOO".to_string(), "bar".to_string())]);
         let metis_id = TaskId::new();
-        let (actor, _) = crate::domain::actors::Actor::new_for_task(
+        let (actor, _) = crate::domain::actors::Actor::new_for_session(
             TaskId::new(),
             crate::domain::users::Username::from("creator"),
         );

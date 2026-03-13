@@ -718,7 +718,7 @@ mod tests {
     use crate::domain::users::Username;
 
     fn make_actor() -> (Actor, String) {
-        Actor::new_for_task(TaskId::new(), Username::from("test-user"))
+        Actor::new_for_session(TaskId::new(), Username::from("test-user"))
     }
 
     fn dummy_env() -> HashMap<String, String> {
