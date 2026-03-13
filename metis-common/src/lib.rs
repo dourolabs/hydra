@@ -18,17 +18,18 @@ pub mod versioning;
 pub use activity_log::{
     ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange,
     activity_log_for_document_versions, activity_log_for_issue_versions,
-    activity_log_for_job_versions, activity_log_for_patch_versions, activity_log_from_versions,
+    activity_log_for_patch_versions, activity_log_for_session_versions, activity_log_from_versions,
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
-    agents, documents, events, issues, job_status, jobs, labels, login, logs, merge_queues,
-    notifications, patches, repositories, secrets, task_status, users, whoami,
+    agents, documents, events, issues, labels, login, logs, merge_queues, notifications, patches,
+    repositories, secrets, session_status, sessions, task_status, users, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
 pub use ids::{
-    DocumentId, IssueId, LabelId, MessageId, MetisId, MetisIdError, NotificationId, PatchId, TaskId,
+    DocumentId, IssueId, LabelId, MessageId, MetisId, MetisIdError, NotificationId, PatchId,
+    SessionId,
 };
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use repo_name::{RepoName, RepoNameError};
@@ -72,7 +73,7 @@ mod ts_export {
         crate::IssueId::export_all(&cfg).expect("IssueId");
         crate::PatchId::export_all(&cfg).expect("PatchId");
         crate::DocumentId::export_all(&cfg).expect("DocumentId");
-        crate::TaskId::export_all(&cfg).expect("TaskId");
+        crate::SessionId::export_all(&cfg).expect("SessionId");
         crate::NotificationId::export_all(&cfg).expect("NotificationId");
         crate::LabelId::export_all(&cfg).expect("LabelId");
         crate::DocumentPath::export_all(&cfg).expect("DocumentPath");
@@ -145,7 +146,7 @@ mod ts_export {
         crate::issues::SetTodoItemStatusRequest::export_all(&cfg)
             .expect("SetTodoItemStatusRequest");
         crate::issues::Issue::export_all(&cfg).expect("Issue");
-        crate::issues::JobSettings::export_all(&cfg).expect("JobSettings");
+        crate::issues::SessionSettings::export_all(&cfg).expect("SessionSettings");
         crate::issues::IssueVersionRecord::export_all(&cfg).expect("IssueVersionRecord");
         crate::issues::UpsertIssueRequest::export_all(&cfg).expect("UpsertIssueRequest");
         crate::issues::UpsertIssueResponse::export_all(&cfg).expect("UpsertIssueResponse");
@@ -156,22 +157,24 @@ mod ts_export {
         crate::issues::ListIssueVersionsResponse::export_all(&cfg)
             .expect("ListIssueVersionsResponse");
 
-        // API v1: job_status
-        crate::job_status::JobStatusUpdate::export_all(&cfg).expect("JobStatusUpdate");
-        crate::job_status::SetJobStatusResponse::export_all(&cfg).expect("SetJobStatusResponse");
+        // API v1: session_status
+        crate::session_status::SessionStatusUpdate::export_all(&cfg).expect("SessionStatusUpdate");
+        crate::session_status::SetSessionStatusResponse::export_all(&cfg)
+            .expect("SetSessionStatusResponse");
 
-        // API v1: jobs
-        crate::jobs::Task::export_all(&cfg).expect("Task");
-        crate::jobs::CreateJobRequest::export_all(&cfg).expect("CreateJobRequest");
-        crate::jobs::BundleSpec::export_all(&cfg).expect("BundleSpec");
-        crate::jobs::Bundle::export_all(&cfg).expect("Bundle");
-        crate::jobs::WorkerContext::export_all(&cfg).expect("WorkerContext");
-        crate::jobs::CreateJobResponse::export_all(&cfg).expect("CreateJobResponse");
-        crate::jobs::ListJobsResponse::export_all(&cfg).expect("ListJobsResponse");
-        crate::jobs::JobVersionRecord::export_all(&cfg).expect("JobVersionRecord");
-        crate::jobs::SearchJobsQuery::export_all(&cfg).expect("SearchJobsQuery");
-        crate::jobs::ListJobVersionsResponse::export_all(&cfg).expect("ListJobVersionsResponse");
-        crate::jobs::KillJobResponse::export_all(&cfg).expect("KillJobResponse");
+        // API v1: sessions
+        crate::sessions::Session::export_all(&cfg).expect("Session");
+        crate::sessions::CreateSessionRequest::export_all(&cfg).expect("CreateSessionRequest");
+        crate::sessions::BundleSpec::export_all(&cfg).expect("BundleSpec");
+        crate::sessions::Bundle::export_all(&cfg).expect("Bundle");
+        crate::sessions::WorkerContext::export_all(&cfg).expect("WorkerContext");
+        crate::sessions::CreateSessionResponse::export_all(&cfg).expect("CreateSessionResponse");
+        crate::sessions::ListSessionsResponse::export_all(&cfg).expect("ListSessionsResponse");
+        crate::sessions::SessionVersionRecord::export_all(&cfg).expect("SessionVersionRecord");
+        crate::sessions::SearchSessionsQuery::export_all(&cfg).expect("SearchSessionsQuery");
+        crate::sessions::ListSessionVersionsResponse::export_all(&cfg)
+            .expect("ListSessionVersionsResponse");
+        crate::sessions::KillSessionResponse::export_all(&cfg).expect("KillSessionResponse");
 
         // API v1: login
         crate::login::LoginRequest::export_all(&cfg).expect("LoginRequest");
