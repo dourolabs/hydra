@@ -530,15 +530,17 @@ mod tests {
 
         let response = app.oneshot(req).await.unwrap();
 
-        // The auto-login middleware should set the cookie.
-        let set_cookie = response.headers().get(header::SET_COOKIE);
-        // The cookie may or may not be set depending on whether the frontend
-        // assets exist (they may not in test). But the middleware logic is
-        // tested: if there's no cookie in the request, it should be added.
-        if let Some(val) = set_cookie {
-            let cookie_str = val.to_str().unwrap();
-            assert!(cookie_str.contains("metis_token=auto-token-123"));
-        }
+        // The auto-login middleware must set the cookie on every response
+        // when no cookie is present in the request.
+        let set_cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .expect("auto-login middleware must set metis_token cookie on first request");
+        let cookie_str = set_cookie.to_str().unwrap();
+        assert!(
+            cookie_str.contains("metis_token=auto-token-123"),
+            "expected metis_token=auto-token-123, got {cookie_str}"
+        );
     }
 
     #[tokio::test]
@@ -685,6 +687,79 @@ mod tests {
             .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(body, serde_json::json!({"status": "ok"}));
+    }
+
+    #[tokio::test]
+    async fn auto_login_end_to_end() {
+        // Simulate the full auto-login flow:
+        // 1. GET / (no cookie) -> middleware sets Set-Cookie
+        // 2. GET /auth/me (with cookie from step 1) -> returns user info
+        let handles = metis_server::test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let actor = metis_server::test_utils::test_actor();
+        let system_ref = metis_server::domain::actors::ActorRef::test();
+        let _ = store.add_actor(actor, &system_ref).await;
+
+        let inner_app =
+            metis_server::build_router(&handles.state).with_state(handles.state.clone());
+        let token = metis_server::test_utils::test_auth_token();
+        let bff_state = BffState {
+            auto_login_token: Arc::new(token.clone()),
+            inner_app,
+        };
+
+        // Step 1: Request GET / without any cookie.
+        let app = build_bff_router(bff_state.clone());
+        let req = Request::builder()
+            .method("GET")
+            .uri("/")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+
+        // The middleware must set the auto-login cookie.
+        let set_cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .expect("auto-login middleware must set cookie on GET /");
+        let set_cookie_str = set_cookie.to_str().unwrap();
+        assert!(
+            set_cookie_str.contains("metis_token="),
+            "expected metis_token cookie, got {set_cookie_str}"
+        );
+
+        // Extract the cookie name=value for the next request (browser behavior).
+        let cookie_header = set_cookie_str
+            .split(';')
+            .next()
+            .expect("cookie should have a value part");
+
+        // Step 2: Request GET /auth/me with the cookie from step 1.
+        let app = build_bff_router(bff_state);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/auth/me")
+            .header(header::COOKIE, cookie_header)
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "GET /auth/me with auto-login cookie should return 200 OK"
+        );
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(
+            body.get("actor").is_some(),
+            "response should contain actor info"
+        );
     }
 
     #[tokio::test]
