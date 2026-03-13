@@ -105,9 +105,16 @@ describe("SecretsSection", () => {
 
   it("renders known secrets", () => {
     render(<SecretsSection />);
+    expect(screen.getByText("GH_TOKEN")).toBeDefined();
     expect(screen.getByText("OPENAI_API_KEY")).toBeDefined();
     expect(screen.getByText("ANTHROPIC_API_KEY")).toBeDefined();
     expect(screen.getByText("CLAUDE_CODE_OAUTH_TOKEN")).toBeDefined();
+  });
+
+  it("renders GH_TOKEN with auto-provided description", () => {
+    render(<SecretsSection />);
+    expect(screen.getByText("GitHub Token")).toBeDefined();
+    expect(screen.getByText("Automatically provided from your GitHub login. You can override it below if needed.")).toBeDefined();
   });
 
   it("shows Configured for configured secrets", () => {

@@ -5,6 +5,7 @@ import { AddSecretForm } from "./AddSecretForm";
 import styles from "./SecretsSection.module.css";
 
 const KNOWN_SECRETS = [
+  { name: "GH_TOKEN", label: "GitHub Token", description: "Automatically provided from your GitHub login. You can override it below if needed." },
   { name: "OPENAI_API_KEY", label: "OpenAI API Key" },
   { name: "ANTHROPIC_API_KEY", label: "Anthropic API Key" },
   { name: "CLAUDE_CODE_OAUTH_TOKEN", label: "Claude Code OAuth Token" },
@@ -42,6 +43,7 @@ export function SecretsSection() {
                 key={secret.name}
                 name={secret.name}
                 label={secret.label}
+                description={secret.description}
                 configured={configuredSecrets.includes(secret.name)}
               />
             ))}
