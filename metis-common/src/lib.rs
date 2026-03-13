@@ -23,7 +23,7 @@ pub use activity_log::{
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
     agents, documents, events, issues, labels, login, logs, merge_queues, notifications, patches,
-    repositories, secrets, session_status, sessions, task_status, users, whoami,
+    repositories, secrets, session_status, sessions, task_status, users, version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
@@ -241,6 +241,9 @@ mod ts_export {
         crate::users::User::export_all(&cfg).expect("User");
         crate::users::UserSummary::export_all(&cfg).expect("UserSummary");
         crate::users::SearchUsersQuery::export_all(&cfg).expect("SearchUsersQuery");
+
+        // API v1: version
+        crate::version::VersionResponse::export_all(&cfg).expect("VersionResponse");
 
         // API v1: whoami
         crate::whoami::ActorIdentity::export_all(&cfg).expect("ActorIdentity");

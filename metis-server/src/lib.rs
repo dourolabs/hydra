@@ -212,6 +212,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
 pub fn build_router(state: &AppState) -> Router<AppState> {
     let public_routes = Router::new()
         .route("/health", get(health_check))
+        .route("/v1/version", get(routes::version::get_version))
         .route("/v1/login", post(routes::login::login))
         .route(
             "/v1/github/app/client-id",
