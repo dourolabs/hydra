@@ -5,10 +5,10 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
 use metis_common::{
-    jobs::{BundleSpec, CreateJobRequest, SearchJobsQuery},
     logs::LogsQuery,
+    sessions::{BundleSpec, CreateSessionRequest, SearchSessionsQuery},
     task_status::{Status, TaskError},
-    IssueId, RepoName, TaskId,
+    IssueId, RepoName, SessionId,
 };
 use std::{
     io::{self, Write},
@@ -49,9 +49,9 @@ pub async fn run(
         }
         None => None,
     };
-    let request = CreateJobRequest::new(prompt, image, bundle_context, variables, issue_id);
+    let request = CreateSessionRequest::new(prompt, image, bundle_context, variables, issue_id);
     let response = client.create_job(&request).await?;
-    let job_id = response.job_id;
+    let job_id = response.session_id;
 
     let job = client.get_job(&job_id).await?;
     let mut buffer = Vec::new();
@@ -82,7 +82,7 @@ pub(crate) enum LogOutputTarget {
 
 pub(crate) async fn stream_job_logs_via_server(
     client: &dyn MetisClientInterface,
-    job_id: &TaskId,
+    job_id: &SessionId,
     watch: bool,
     output: LogOutputTarget,
 ) -> Result<()> {
@@ -108,17 +108,17 @@ pub(crate) async fn stream_job_logs_via_server(
 
 async fn wait_for_job_completion_via_server(
     client: &dyn MetisClientInterface,
-    job_id: &TaskId,
+    job_id: &SessionId,
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     loop {
-        let response = client.list_jobs(&SearchJobsQuery::default()).await?;
+        let response = client.list_jobs(&SearchSessionsQuery::default()).await?;
         if let Some(job) = response
-            .jobs
+            .sessions
             .iter()
-            .find(|job| job.job_id.as_ref() == job_id.as_ref())
+            .find(|job| job.session_id.as_ref() == job_id.as_ref())
         {
-            match job.task.status {
+            match job.session.status {
                 Status::Complete => {
                     if output_format == ResolvedOutputFormat::Pretty {
                         eprintln!("Job '{job_id}' completed successfully.");
@@ -127,7 +127,7 @@ async fn wait_for_job_completion_via_server(
                 }
                 Status::Failed => {
                     let reason = job
-                        .task
+                        .session
                         .error
                         .as_ref()
                         .map(|e| match e {
@@ -247,9 +247,9 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::Mock;
     use metis_common::{
-        jobs::{
-            BundleSpec, CreateJobResponse, JobSummaryRecord, JobVersionRecord, ListJobsResponse,
-            Task,
+        sessions::{
+            BundleSpec, CreateSessionResponse, ListSessionsResponse, Session, SessionSummaryRecord,
+            SessionVersionRecord,
         },
         task_status::{Status, TaskError},
         users::Username,
@@ -263,7 +263,7 @@ mod tests {
         CommandContext::new(ResolvedOutputFormat::Pretty)
     }
 
-    fn task_id(value: &str) -> TaskId {
+    fn task_id(value: &str) -> SessionId {
         ids::task_id(value)
     }
 
@@ -271,12 +271,12 @@ mod tests {
         id: &str,
         status: Status,
         error: Option<TaskError>,
-    ) -> JobVersionRecord {
-        JobVersionRecord::new(
+    ) -> SessionVersionRecord {
+        SessionVersionRecord::new(
             task_id(id),
             0,
             chrono::Utc::now(),
-            Task::new(
+            Session::new(
                 "0".to_string(),
                 BundleSpec::None,
                 None,
@@ -299,13 +299,14 @@ mod tests {
         )
     }
 
-    fn job_record(id: &str) -> JobVersionRecord {
+    fn job_record(id: &str) -> SessionVersionRecord {
         job_record_with_status(id, Status::Created, None)
     }
 
-    fn mock_get_job(server: &MockServer, job: JobVersionRecord) -> Mock {
+    fn mock_get_job(server: &MockServer, job: SessionVersionRecord) -> Mock {
         server.mock(|when, then| {
-            when.method(GET).path(format!("/v1/jobs/{}", job.job_id));
+            when.method(GET)
+                .path(format!("/v1/jobs/{}", job.session_id));
             then.status(200).json_body_obj(&job);
         })
     }
@@ -320,7 +321,7 @@ mod tests {
 
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
-        let create_request = CreateJobRequest::new(
+        let create_request = CreateSessionRequest::new(
             "test prompt".to_string(),
             None,
             BundleSpec::None,
@@ -332,7 +333,7 @@ mod tests {
                 .path("/v1/jobs")
                 .json_body_obj(&create_request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
+                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
         let logs_mock = server.mock(|when, then| {
             when.method(GET)
@@ -344,7 +345,7 @@ mod tests {
         });
         let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
-        let completed_jobs = ListJobsResponse::new(vec![JobSummaryRecord::from(
+        let completed_jobs = ListSessionsResponse::new(vec![SessionSummaryRecord::from(
             &job_record_with_status(job_id.as_ref(), Status::Complete, None),
         )]);
         let list_mock = server.mock(|when, then| {
@@ -381,7 +382,7 @@ mod tests {
                 .expect("client");
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
-        let request = CreateJobRequest::new(
+        let request = CreateSessionRequest::new(
             "test prompt".to_string(),
             None,
             BundleSpec::ServiceRepository {
@@ -395,7 +396,7 @@ mod tests {
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
+                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
         let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
@@ -426,7 +427,7 @@ mod tests {
                 .expect("client");
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
-        let request = CreateJobRequest::new(
+        let request = CreateSessionRequest::new(
             "test prompt".to_string(),
             None,
             BundleSpec::ServiceRepository {
@@ -440,7 +441,7 @@ mod tests {
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
+                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
         let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
@@ -471,7 +472,7 @@ mod tests {
                 .expect("client");
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
-        let request = CreateJobRequest::new(
+        let request = CreateSessionRequest::new(
             "test prompt".to_string(),
             None,
             BundleSpec::GitRepository {
@@ -485,7 +486,7 @@ mod tests {
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
+                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
         let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
@@ -516,7 +517,7 @@ mod tests {
                 .expect("client");
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
-        let request = CreateJobRequest::new(
+        let request = CreateSessionRequest::new(
             "test prompt".to_string(),
             None,
             BundleSpec::GitRepository {
@@ -530,7 +531,7 @@ mod tests {
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
+                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
         let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
@@ -561,7 +562,7 @@ mod tests {
                 .expect("client");
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "custom image".to_string());
-        let request = CreateJobRequest::new(
+        let request = CreateSessionRequest::new(
             "custom image".to_string(),
             Some("ghcr.io/example/metis:dev".to_string()),
             BundleSpec::None,
@@ -572,7 +573,7 @@ mod tests {
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
+                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
         let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
@@ -601,7 +602,7 @@ mod tests {
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())
                 .expect("client");
-        let request = CreateJobRequest::new(
+        let request = CreateSessionRequest::new(
             "variable prompt".to_string(),
             None,
             BundleSpec::None,
@@ -615,7 +616,7 @@ mod tests {
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
+                .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
         let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
@@ -647,7 +648,7 @@ mod tests {
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs");
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(task_id("unused")));
+                .json_body_obj(&CreateSessionResponse::new(task_id("unused")));
         });
 
         let context = test_context();

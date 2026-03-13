@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use metis_common::TaskId;
+use metis_common::SessionId;
 
 use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
 use crate::policy::{PolicyViolation, Restriction};
@@ -16,7 +16,7 @@ impl RunningJobValidationRestriction {
 }
 
 impl RunningJobValidationRestriction {
-    fn extract_job_id<'a>(&self, ctx: &'a RestrictionContext<'_>) -> Option<&'a TaskId> {
+    fn extract_job_id<'a>(&self, ctx: &'a RestrictionContext<'_>) -> Option<&'a SessionId> {
         match (ctx.operation, ctx.payload) {
             (Operation::CreatePatch, OperationPayload::Patch { new, .. }) => {
                 new.created_by.as_ref()
@@ -52,7 +52,7 @@ impl Restriction for RunningJobValidationRestriction {
 
         let task = ctx
             .store
-            .get_task(job_id, false)
+            .get_session(job_id, false)
             .await
             .map_err(|e| PolicyViolation {
                 policy_name: self.name().to_string(),
@@ -79,7 +79,7 @@ mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
     use crate::domain::documents::Document;
-    use crate::domain::jobs::{BundleSpec, Task};
+    use crate::domain::sessions::{BundleSpec, Session};
     use crate::domain::task_status::Status;
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
@@ -87,8 +87,8 @@ mod tests {
     use chrono::Utc;
     use std::collections::HashMap;
 
-    fn make_task() -> Task {
-        Task::new(
+    fn make_task() -> Session {
+        Session::new(
             "test".to_string(),
             BundleSpec::None,
             None,
@@ -105,7 +105,7 @@ mod tests {
         )
     }
 
-    fn make_doc(created_by: Option<TaskId>) -> Document {
+    fn make_doc(created_by: Option<SessionId>) -> Document {
         Document {
             title: String::new(),
             body_markdown: String::new(),
@@ -141,20 +141,20 @@ mod tests {
 
         let task = make_task();
         let (task_id, _) = store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         // Transition to running
-        let mut t = store.get_task(&task_id, false).await.unwrap().item;
+        let mut t = store.get_session(&task_id, false).await.unwrap().item;
         t.status = Status::Pending;
         store
-            .update_task(&task_id, t, &ActorRef::test())
+            .update_session(&task_id, t, &ActorRef::test())
             .await
             .unwrap();
-        let mut t = store.get_task(&task_id, false).await.unwrap().item;
+        let mut t = store.get_session(&task_id, false).await.unwrap().item;
         t.status = Status::Running;
         store
-            .update_task(&task_id, t, &ActorRef::test())
+            .update_session(&task_id, t, &ActorRef::test())
             .await
             .unwrap();
 
@@ -180,7 +180,7 @@ mod tests {
 
         let task = make_task();
         let (task_id, _) = store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 

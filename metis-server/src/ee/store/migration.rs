@@ -1018,7 +1018,7 @@ mod tests {
             progress: "".to_string(),
             status: IssueStatus::Open,
             assignee: None,
-            job_settings: Default::default(),
+            session_settings: Default::default(),
             todo_list: vec![],
             dependencies: vec![],
             patches: vec![],

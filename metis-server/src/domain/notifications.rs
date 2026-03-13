@@ -627,9 +627,9 @@ mod tests {
         let (issue_id, _) = store.add_issue(issue.clone(), &test_actor()).await.unwrap();
 
         // Create a Task with spawned_from pointing to the issue
-        let task = crate::store::Task {
+        let task = crate::store::Session {
             prompt: "test".to_string(),
-            context: crate::domain::jobs::BundleSpec::default(),
+            context: crate::domain::sessions::BundleSpec::default(),
             spawned_from: Some(issue_id.clone()),
             creator: Username::from("alice"),
             image: None,
@@ -652,7 +652,7 @@ mod tests {
             new: task.clone(),
             actor: test_actor(),
         });
-        let task_id = metis_common::TaskId::new();
+        let task_id = metis_common::SessionId::new();
         let event = ServerEvent::JobCreated {
             seq: 1,
             task_id,

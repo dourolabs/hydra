@@ -6,8 +6,8 @@ use std::time::Duration;
 use anyhow::{bail, Result};
 use metis_common::{
     issues::{IssueDependencyType, IssueStatus, IssueSummaryRecord, IssueType, IssueVersionRecord},
-    jobs::JobVersionRecord,
     patches::{PatchStatus, PatchVersionRecord},
+    sessions::SessionVersionRecord,
     task_status::Status,
     IssueId,
 };
@@ -352,29 +352,29 @@ pub trait JobAssertions {
     fn assert_env_var(&self, key: &str, value: &str);
 }
 
-impl JobAssertions for JobVersionRecord {
+impl JobAssertions for SessionVersionRecord {
     fn assert_status(&self, expected: Status) {
         assert_eq!(
-            self.task.status, expected,
+            self.session.status, expected,
             "job {}: expected status {:?}, got {:?}",
-            self.job_id, expected, self.task.status
+            self.session_id, expected, self.session.status
         );
     }
 
     fn assert_env_var(&self, key: &str, value: &str) {
-        match self.task.env_vars.get(key) {
+        match self.session.env_vars.get(key) {
             Some(actual) => {
                 assert_eq!(
                     actual, value,
                     "job {}: env var '{}' expected value {:?}, got {:?}",
-                    self.job_id, key, value, actual
+                    self.session_id, key, value, actual
                 );
             }
             None => {
-                let keys: Vec<&str> = self.task.env_vars.keys().map(|k| k.as_str()).collect();
+                let keys: Vec<&str> = self.session.env_vars.keys().map(|k| k.as_str()).collect();
                 panic!(
                     "job {}: expected env var '{}', but only found: {:?}",
-                    self.job_id, key, keys
+                    self.session_id, key, keys
                 );
             }
         }

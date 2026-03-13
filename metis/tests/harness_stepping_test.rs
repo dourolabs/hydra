@@ -1,7 +1,7 @@
 mod harness;
 
 use anyhow::Result;
-use metis_common::issues::{Issue, IssueStatus, IssueType, JobSettings, UpsertIssueRequest};
+use metis_common::issues::{Issue, IssueStatus, IssueType, SessionSettings, UpsertIssueRequest};
 use metis_common::users::Username;
 use std::str::FromStr;
 
@@ -14,7 +14,7 @@ async fn create_spawnable_issue(
     description: &str,
 ) -> Result<metis_common::IssueId> {
     let repo = metis_common::RepoName::from_str(repo_name)?;
-    let mut job_settings = JobSettings::default();
+    let mut job_settings = SessionSettings::default();
     job_settings.repo_name = Some(repo);
 
     let issue = Issue::new(
@@ -199,7 +199,7 @@ async fn step_monitor_jobs_idle_without_tasks() -> Result<()> {
 #[tokio::test]
 async fn stepping_is_deterministic() -> Result<()> {
     // Run the same scenario twice and verify identical results.
-    async fn run_scenario() -> Result<Vec<metis_common::TaskId>> {
+    async fn run_scenario() -> Result<Vec<metis_common::SessionId>> {
         let harness = harness::TestHarness::builder()
             .with_repo("acme/deterministic")
             .build()

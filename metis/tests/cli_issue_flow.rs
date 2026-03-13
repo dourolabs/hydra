@@ -1,7 +1,7 @@
 mod harness;
 
 use anyhow::{anyhow, Result};
-use metis_common::issues::{IssueStatus, IssueType, JobSettings};
+use metis_common::issues::{IssueStatus, IssueType, SessionSettings};
 use std::str::FromStr;
 
 #[tokio::test]
@@ -13,12 +13,12 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let user = harness.default_user();
 
     // Create a parent issue with specific job settings that should be inherited.
-    let mut parent_job_settings = JobSettings::default();
-    parent_job_settings.repo_name =
+    let mut parent_session_settings = SessionSettings::default();
+    parent_session_settings.repo_name =
         Some(metis_common::RepoName::from_str("acme/cli-flow").unwrap());
-    parent_job_settings.remote_url = Some("https://example.com/cli-flow.git".into());
-    parent_job_settings.image = Some("worker:latest".into());
-    parent_job_settings.branch = Some("feature/cli-flow".into());
+    parent_session_settings.remote_url = Some("https://example.com/cli-flow.git".into());
+    parent_session_settings.image = Some("worker:latest".into());
+    parent_session_settings.branch = Some("feature/cli-flow".into());
 
     let parent_id = user
         .create_issue_with_settings(
@@ -26,7 +26,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
             IssueType::Task,
             IssueStatus::Open,
             None,
-            Some(parent_job_settings),
+            Some(parent_session_settings),
         )
         .await?;
 
@@ -49,7 +49,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     user.cli(&["issues", "list"]).await?;
 
     // Verify the created issue inherited job settings from the parent.
-    // list_issues() returns IssueSummaryRecord which excludes job_settings,
+    // list_issues() returns IssueSummaryRecord which excludes session_settings,
     // so find the issue ID from the summary and then fetch the full record.
     let issues = user.list_issues().await?.issues;
     let created_summary = issues
@@ -61,19 +61,19 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
 
     let created = user.get_issue(&created_summary.issue_id).await?;
     assert_eq!(
-        created.issue.job_settings.repo_name,
+        created.issue.session_settings.repo_name,
         Some(metis_common::RepoName::from_str("acme/cli-flow").unwrap())
     );
     assert_eq!(
-        created.issue.job_settings.remote_url,
+        created.issue.session_settings.remote_url,
         Some("https://example.com/cli-flow.git".into())
     );
     assert_eq!(
-        created.issue.job_settings.image,
+        created.issue.session_settings.image,
         Some("worker:latest".into())
     );
     assert_eq!(
-        created.issue.job_settings.branch,
+        created.issue.session_settings.branch,
         Some("feature/cli-flow".into())
     );
 

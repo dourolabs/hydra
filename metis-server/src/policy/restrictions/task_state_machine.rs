@@ -86,14 +86,14 @@ impl Restriction for TaskStateMachineRestriction {
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
-    use crate::domain::jobs::{BundleSpec, Task};
+    use crate::domain::sessions::{BundleSpec, Session};
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::MemoryStore;
     use std::collections::HashMap;
 
-    fn make_task_with_status(status: Status) -> Task {
-        Task::new(
+    fn make_task_with_status(status: Status) -> Session {
+        Session::new(
             "test".to_string(),
             BundleSpec::None,
             None,

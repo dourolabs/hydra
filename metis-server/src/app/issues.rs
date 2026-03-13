@@ -4,7 +4,7 @@ use crate::{
     store::{ReadOnlyStore, Status, StoreError},
 };
 use metis_common::{
-    TaskId, VersionNumber, Versioned, api::v1 as api, api::v1::issues::SearchIssuesQuery,
+    SessionId, VersionNumber, Versioned, api::v1 as api, api::v1::issues::SearchIssuesQuery,
     issues::IssueId,
 };
 use std::collections::HashSet;
@@ -41,17 +41,17 @@ pub enum UpsertIssueError {
     JobNotFound {
         #[source]
         source: StoreError,
-        job_id: TaskId,
+        job_id: SessionId,
     },
     #[error("failed to validate job status for '{job_id}'")]
     JobStatusLookup {
         #[source]
         source: StoreError,
-        job_id: TaskId,
+        job_id: SessionId,
     },
     #[error("job_id must reference a running job")]
     JobNotRunning {
-        job_id: TaskId,
+        job_id: SessionId,
         status: Option<Status>,
     },
     #[error("failed to read tasks for dropped issue '{issue_id}'")]
@@ -65,7 +65,7 @@ pub enum UpsertIssueError {
         #[source]
         source: crate::job_engine::JobEngineError,
         issue_id: IssueId,
-        job_id: TaskId,
+        job_id: SessionId,
     },
     #[error("{0}")]
     PolicyViolation(#[from] crate::policy::PolicyViolation),
@@ -144,7 +144,7 @@ impl AppState {
     ) -> Result<(IssueId, VersionNumber), UpsertIssueError> {
         let api::issues::UpsertIssueRequest {
             issue,
-            job_id,
+            session_id: job_id,
             label_ids,
             label_names,
             ..
@@ -200,10 +200,10 @@ impl AppState {
             None => {
                 if let Some(ref job_id) = job_id {
                     let status = store
-                        .get_task(job_id, false)
+                        .get_session(job_id, false)
                         .await
                         .map_err(|source| match source {
-                            StoreError::TaskNotFound(_) => UpsertIssueError::JobNotFound {
+                            StoreError::SessionNotFound(_) => UpsertIssueError::JobNotFound {
                                 job_id: job_id.clone(),
                                 source,
                             },
@@ -843,15 +843,19 @@ mod tests {
         let (parent_task_id, child_task_id, grandchild_task_id) = {
             let store = state.store.as_ref();
             let (parent_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&parent_id), Utc::now(), ActorRef::test())
+                .add_session_with_actor(task_for_issue(&parent_id), Utc::now(), ActorRef::test())
                 .await
                 .unwrap();
             let (child_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), ActorRef::test())
+                .add_session_with_actor(task_for_issue(&child_id), Utc::now(), ActorRef::test())
                 .await
                 .unwrap();
             let (grandchild_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&grandchild_id), Utc::now(), ActorRef::test())
+                .add_session_with_actor(
+                    task_for_issue(&grandchild_id),
+                    Utc::now(),
+                    ActorRef::test(),
+                )
                 .await
                 .unwrap();
             (parent_task_id, child_task_id, grandchild_task_id)
@@ -1443,7 +1447,7 @@ mod tests {
         let (child_task_id,) = {
             let store = state.store.as_ref();
             let (child_task_id, _) = store
-                .add_task_with_actor(task_for_issue(&child_id), Utc::now(), ActorRef::test())
+                .add_session_with_actor(task_for_issue(&child_id), Utc::now(), ActorRef::test())
                 .await
                 .unwrap();
             (child_task_id,)

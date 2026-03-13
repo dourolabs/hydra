@@ -2,7 +2,7 @@ use crate::{
     domain::{
         actors::{Actor, ActorRef, store_github_token_secrets},
         issues::{Issue, IssueStatus, IssueType},
-        jobs::{BundleSpec, Task},
+        sessions::{BundleSpec, Session},
         task_status::Status,
         users::{User, Username},
     },
@@ -13,7 +13,7 @@ use crate::{
 };
 use chrono::Utc;
 use httpmock::prelude::*;
-use metis_common::{TaskId, github::GithubTokenResponse};
+use metis_common::{SessionId, github::GithubTokenResponse};
 use reqwest::{Client, header};
 use std::collections::HashMap;
 
@@ -102,7 +102,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         )
         .await?;
 
-    let task = Task::new(
+    let task = Session::new(
         "prompt".to_string(),
         BundleSpec::None,
         Some(issue_id),
@@ -119,7 +119,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
     );
     let (task_id, _) = handles
         .store
-        .add_task(task, Utc::now(), &ActorRef::test())
+        .add_session(task, Utc::now(), &ActorRef::test())
         .await?;
     let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
     handles.store.add_actor(actor, &ActorRef::test()).await?;
@@ -222,7 +222,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         )
         .await?;
 
-    let task = Task::new(
+    let task = Session::new(
         "prompt".to_string(),
         BundleSpec::None,
         Some(issue_id),
@@ -239,7 +239,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     );
     let (task_id, _) = handles
         .store
-        .add_task(task, Utc::now(), &ActorRef::test())
+        .add_session(task, Utc::now(), &ActorRef::test())
         .await?;
     let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
     handles.store.add_actor(actor, &ActorRef::test()).await?;
@@ -313,7 +313,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         )
         .await?;
 
-    let task = Task::new(
+    let task = Session::new(
         "prompt".to_string(),
         BundleSpec::None,
         Some(issue_id),
@@ -330,7 +330,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
     );
     let (task_id, _) = handles
         .store
-        .add_task(task, Utc::now(), &ActorRef::test())
+        .add_session(task, Utc::now(), &ActorRef::test())
         .await?;
     let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
     handles.store.add_actor(actor, &ActorRef::test()).await?;
@@ -350,7 +350,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
 #[tokio::test]
 async fn github_token_returns_not_found_for_missing_task() -> anyhow::Result<()> {
     let handles = test_state_handles();
-    let task_id = TaskId::new();
+    let task_id = SessionId::new();
     let (actor, auth_token) = Actor::new_for_session(task_id, Username::from("creator"));
     handles.store.add_actor(actor, &ActorRef::test()).await?;
 

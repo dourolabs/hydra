@@ -169,7 +169,7 @@ mod tests {
         let mut stream = parse_sse_event_stream(bytes_stream(raw));
 
         let event = stream.next().await.unwrap().unwrap();
-        assert_eq!(event.event_type, SseEventType::JobUpdated);
+        assert_eq!(event.event_type, SseEventType::SessionUpdated);
         assert_eq!(event.id, Some(5));
 
         let entity = event.as_entity_event().unwrap();
@@ -226,11 +226,11 @@ mod tests {
         let mut stream = parse_sse_event_stream(bytes_stream(raw));
 
         let e1 = stream.next().await.unwrap().unwrap();
-        assert_eq!(e1.event_type, SseEventType::JobCreated);
+        assert_eq!(e1.event_type, SseEventType::SessionCreated);
         assert_eq!(e1.id, Some(1));
 
         let e2 = stream.next().await.unwrap().unwrap();
-        assert_eq!(e2.event_type, SseEventType::JobUpdated);
+        assert_eq!(e2.event_type, SseEventType::SessionUpdated);
         assert_eq!(e2.id, Some(2));
 
         assert!(stream.next().await.is_none());

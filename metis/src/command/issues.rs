@@ -15,22 +15,22 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Subcommand;
 use metis_common::{
-    activity_log_for_issue_versions, activity_log_for_job_versions,
-    activity_log_for_patch_versions,
+    activity_log_for_issue_versions, activity_log_for_patch_versions,
+    activity_log_for_session_versions,
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
     constants::ENV_METIS_ISSUE_ID,
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
         IssueGraphSelector, IssueGraphWildcard, IssueId, IssueStatus, IssueSummaryRecord,
-        IssueType, IssueVersionRecord, JobSettings, ReplaceTodoListRequest, SearchIssuesQuery,
+        IssueType, IssueVersionRecord, ReplaceTodoListRequest, SearchIssuesQuery, SessionSettings,
         SetTodoItemStatusRequest, TodoItem, UpsertIssueRequest,
     },
-    jobs::{JobSummaryRecord, SearchJobsQuery, Task},
     patches::{PatchVersionRecord, Review},
+    sessions::{SearchSessionsQuery, Session, SessionSummaryRecord},
     users::Username,
     whoami::ActorIdentity,
     ActivityLogEntry, ActivityObjectKind, LabelId, MetisId, PatchId, RelativeVersionNumber,
-    RepoName, TaskId, Versioned,
+    RepoName, SessionId, Versioned,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -845,8 +845,8 @@ async fn collect_activity_log(
 
     let jobs = fetch_jobs_for_issue(client, issue_id).await?;
     for job in jobs {
-        let versions = fetch_job_versions(client, &job.job_id).await?;
-        let log = activity_log_for_job_versions(job.job_id.clone(), &versions);
+        let versions = fetch_job_versions(client, &job.session_id).await?;
+        let log = activity_log_for_session_versions(job.session_id.clone(), &versions);
         entries.extend(filter_activity_entries(log, root_created_at));
     }
 
@@ -918,8 +918,8 @@ async fn fetch_patch_versions(
 
 async fn fetch_job_versions(
     client: &dyn MetisClientInterface,
-    job_id: &TaskId,
-) -> Result<Vec<Versioned<Task>>> {
+    job_id: &SessionId,
+) -> Result<Vec<Versioned<Session>>> {
     let response = client
         .list_job_versions(job_id)
         .await
@@ -929,7 +929,7 @@ async fn fetch_job_versions(
         .into_iter()
         .map(|record| {
             Versioned::new(
-                record.task,
+                record.session,
                 record.version,
                 record.timestamp,
                 record.timestamp,
@@ -941,9 +941,9 @@ async fn fetch_job_versions(
 async fn fetch_jobs_for_issue(
     client: &dyn MetisClientInterface,
     issue_id: &IssueId,
-) -> Result<Vec<JobSummaryRecord>> {
+) -> Result<Vec<SessionSummaryRecord>> {
     let response = client
-        .list_jobs(&SearchJobsQuery::new(
+        .list_jobs(&SearchSessionsQuery::new(
             None,
             Some(issue_id.clone()),
             None,
@@ -951,7 +951,7 @@ async fn fetch_jobs_for_issue(
         ))
         .await
         .with_context(|| format!("failed to fetch jobs for issue '{issue_id}'"))?;
-    Ok(response.jobs)
+    Ok(response.sessions)
 }
 
 fn filter_activity_entries(
@@ -983,7 +983,7 @@ fn activity_kind_rank(kind: &ActivityObjectKind) -> u8 {
     match kind {
         ActivityObjectKind::Issue => 0,
         ActivityObjectKind::Patch => 1,
-        ActivityObjectKind::Job => 2,
+        ActivityObjectKind::Session => 2,
         _ => u8::MAX,
     }
 }
@@ -1119,7 +1119,7 @@ async fn fetch_issues(
 }
 
 fn resolve_job_settings(
-    current: JobSettings,
+    current: SessionSettings,
     repo_name: Option<String>,
     remote_url: Option<String>,
     image: Option<String>,
@@ -1129,9 +1129,9 @@ fn resolve_job_settings(
     secrets: Vec<String>,
     clear_secrets: bool,
     clear_job_settings: bool,
-) -> Result<(JobSettings, bool)> {
+) -> Result<(SessionSettings, bool)> {
     if clear_job_settings {
-        return Ok((JobSettings::default(), true));
+        return Ok((SessionSettings::default(), true));
     }
 
     let mut changed = false;
@@ -1217,9 +1217,9 @@ fn resolve_job_settings(
 async fn resolve_inherited_job_settings(
     client: &dyn MetisClientInterface,
     current_issue_id: Option<IssueId>,
-) -> Result<JobSettings> {
+) -> Result<SessionSettings> {
     let Some(issue_id) = current_issue_id else {
-        return Ok(JobSettings::default());
+        return Ok(SessionSettings::default());
     };
 
     let issue = client
@@ -1227,8 +1227,8 @@ async fn resolve_inherited_job_settings(
         .await
         .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
-    let mut job_settings = JobSettings::default();
-    let current = issue.issue.job_settings;
+    let mut job_settings = SessionSettings::default();
+    let current = issue.issue.session_settings;
     job_settings.repo_name = current.repo_name;
     job_settings.remote_url = current.remote_url;
     job_settings.image = current.image;
@@ -1294,8 +1294,8 @@ async fn create_issue(
         false,
         false,
     )?;
-    let job_settings =
-        (job_settings_requested || !JobSettings::is_default(&job_settings)).then_some(job_settings);
+    let job_settings = (job_settings_requested || !SessionSettings::is_default(&job_settings))
+        .then_some(job_settings);
 
     let issue = Issue::new(
         issue_type,
@@ -1443,7 +1443,7 @@ async fn update_issue(
         .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
     let (job_settings, job_settings_changed) = resolve_job_settings(
-        current.issue.job_settings.clone(),
+        current.issue.session_settings.clone(),
         repo_name,
         remote_url,
         image,
@@ -1457,7 +1457,7 @@ async fn update_issue(
     let job_settings = if job_settings_changed {
         Some(job_settings)
     } else {
-        Some(current.issue.job_settings.clone())
+        Some(current.issue.session_settings.clone())
     };
 
     let issue_fields_changed = issue_type.is_some()
@@ -2199,17 +2199,17 @@ mod tests {
     use httpmock::prelude::*;
     use metis_common::issues::{
         AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueSummaryRecord,
-        IssueVersionRecord, JobSettings, ListIssueVersionsResponse, ListIssuesResponse,
-        ReplaceTodoListRequest, SetTodoItemStatusRequest, TodoItem, TodoListResponse,
-        UpsertIssueRequest, UpsertIssueResponse,
+        IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse, ReplaceTodoListRequest,
+        SessionSettings, SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
+        UpsertIssueResponse,
     };
     use metis_common::{
-        jobs::{BundleSpec, ListJobsResponse, Task},
         patches::{ListPatchVersionsResponse, Patch, PatchStatus, PatchVersionRecord, Review},
+        sessions::{BundleSpec, ListSessionsResponse, Session},
         task_status::Status,
         users::Username,
         whoami::{ActorIdentity, WhoAmIResponse},
-        PatchId, RepoName, TaskId,
+        PatchId, RepoName, SessionId,
     };
     use reqwest::Client as HttpClient;
     use std::collections::HashMap;
@@ -2225,8 +2225,8 @@ mod tests {
         RepoName::from_str("dourolabs/example").unwrap()
     }
 
-    fn sample_job_settings() -> JobSettings {
-        let mut job_settings = JobSettings::default();
+    fn sample_job_settings() -> SessionSettings {
+        let mut job_settings = SessionSettings::default();
         job_settings.repo_name = Some(sample_repo_name());
         job_settings.remote_url = Some("https://example.com/service.git".into());
         job_settings.image = Some("worker:123".into());
@@ -2755,7 +2755,7 @@ mod tests {
                 .path("/v1/jobs")
                 .query_param("spawned_from", root_id.as_ref());
             then.status(200)
-                .json_body_obj(&ListJobsResponse::new(Vec::new()));
+                .json_body_obj(&ListSessionsResponse::new(Vec::new()));
         });
 
         let description = collect_issue_description(&client, root_id.clone(), false, None)
@@ -2875,7 +2875,7 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
 
-        let mut job_settings = JobSettings::default();
+        let mut job_settings = SessionSettings::default();
         job_settings.repo_name = Some(sample_repo_name());
         job_settings.remote_url = Some("https://example.com/service.git".into());
         job_settings.image = Some("worker:latest".into());
@@ -2940,7 +2940,7 @@ mod tests {
         let client = metis_client(&server);
 
         let current_issue_id = issue_id("i-current");
-        let mut inherited_settings = JobSettings::default();
+        let mut inherited_settings = SessionSettings::default();
         inherited_settings.repo_name = Some(sample_repo_name());
         inherited_settings.remote_url = Some("https://example.com/service.git".into());
         inherited_settings.image = Some("worker:latest".into());
@@ -3033,7 +3033,7 @@ mod tests {
         let client = metis_client(&server);
 
         let current_issue_id = issue_id("i-current");
-        let mut inherited_settings = JobSettings::default();
+        let mut inherited_settings = SessionSettings::default();
         inherited_settings.repo_name = Some(sample_repo_name());
         inherited_settings.remote_url = Some("https://example.com/service.git".into());
         inherited_settings.image = Some("worker:latest".into());
@@ -3066,7 +3066,7 @@ mod tests {
             then.status(200).json_body_obj(&current_issue);
         });
 
-        let mut expected_settings = JobSettings::default();
+        let mut expected_settings = SessionSettings::default();
         expected_settings.repo_name = Some(RepoName::from_str("dourolabs/override").unwrap());
         expected_settings.remote_url = inherited_settings.remote_url.clone();
         expected_settings.image = Some("custom:tag".into());
@@ -3131,7 +3131,7 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
 
-        let mut job_settings = JobSettings::default();
+        let mut job_settings = SessionSettings::default();
         job_settings.secrets = Some(vec!["my-api-secret".into(), "my-db-secret".into()]);
         let create_request = UpsertIssueRequest::new(
             Issue::new(
@@ -3192,7 +3192,7 @@ mod tests {
         let client = metis_client(&server);
 
         let current_issue_id = issue_id("i-current");
-        let mut inherited_settings = JobSettings::default();
+        let mut inherited_settings = SessionSettings::default();
         inherited_settings.secrets = Some(vec!["inherited-secret".into()]);
         let current_issue = IssueVersionRecord::new(
             current_issue_id.clone(),
@@ -3380,7 +3380,7 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let whoami_response = WhoAmIResponse::new(ActorIdentity::Session {
-            session_id: TaskId::from_str("t-abcd").unwrap(),
+            session_id: SessionId::from_str("t-abcd").unwrap(),
             creator: Username::from("whoami-creator"),
         });
         let whoami_mock = server.mock(|when, then| {
@@ -3400,7 +3400,7 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let target_issue_id = issue_id("i-9");
-        let mut job_settings = JobSettings::default();
+        let mut job_settings = SessionSettings::default();
         job_settings.repo_name = Some(sample_repo_name());
         job_settings.remote_url = Some("https://example.com/service.git".into());
         job_settings.image = Some("worker:123".into());
@@ -3713,7 +3713,7 @@ mod tests {
             Utc::now(),
             Vec::new(),
         );
-        let mut expected_settings = JobSettings::default();
+        let mut expected_settings = SessionSettings::default();
         expected_settings.secrets = Some(vec!["new-secret".into()]);
         let update_request = UpsertIssueRequest::new(
             Issue::new(
@@ -3786,7 +3786,7 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let target_issue_id = issue_id("i-clear-secrets");
-        let mut existing_settings = JobSettings::default();
+        let mut existing_settings = SessionSettings::default();
         existing_settings.secrets = Some(vec!["old-secret".into()]);
         let current_issue = IssueVersionRecord::new(
             target_issue_id.clone(),
@@ -3819,7 +3819,7 @@ mod tests {
                 String::new(),
                 IssueStatus::Open,
                 None,
-                Some(JobSettings::default()),
+                Some(SessionSettings::default()),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -4295,7 +4295,7 @@ mod tests {
             &patch_versions,
         ));
 
-        let base_task = Task::new(
+        let base_task = Session::new(
             "run build".into(),
             BundleSpec::None,
             Some(main_issue_id.clone()),
@@ -4330,7 +4330,7 @@ mod tests {
                 Utc.with_ymd_and_hms(2024, 1, 2, 15, 0, 0).unwrap(),
             ),
         ];
-        activity_log.extend(activity_log_for_job_versions(
+        activity_log.extend(activity_log_for_session_versions(
             main_job_id.clone(),
             &job_versions,
         ));
@@ -4362,7 +4362,7 @@ mod tests {
         assert!(rendered.contains("History:"));
         assert!(rendered.contains("2024-01-01T12:00:00Z Issue i-main v1 created"));
         assert!(rendered.contains("2024-01-02T09:00:00Z Patch p-main v1 created"));
-        assert!(rendered.contains("2024-01-02T12:00:00Z Job t-main v1 created"));
+        assert!(rendered.contains("2024-01-02T12:00:00Z Session t-main v1 created"));
         assert!(rendered.contains("Status: open -> in-progress"));
     }
 

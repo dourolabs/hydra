@@ -89,7 +89,7 @@ impl ScheduledWorker for RunSpawnersWorker {
                     for task in tasks {
                         match self
                             .state
-                            .add_task(
+                            .add_session(
                                 task,
                                 Utc::now(),
                                 ActorRef::System {
@@ -171,7 +171,7 @@ mod tests {
         config::{DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
         domain::agents::Agent,
         domain::documents::Document,
-        domain::issues::{Issue, IssueStatus, IssueType, JobSettings},
+        domain::issues::{Issue, IssueStatus, IssueType, SessionSettings},
         domain::users::Username,
         test::{add_repository, test_state_handles},
     };
@@ -212,10 +212,10 @@ mod tests {
             String::new(),
             IssueStatus::Open,
             Some(agent.to_string()),
-            Some(JobSettings {
+            Some(SessionSettings {
                 repo_name: Some(repo_name.clone()),
                 image: Some("agent-image".to_string()),
-                ..JobSettings::default()
+                ..SessionSettings::default()
             }),
             Vec::new(),
             Vec::new(),
@@ -266,7 +266,7 @@ mod tests {
             }
         );
 
-        let tasks = handles.state.list_tasks().await?;
+        let tasks = handles.state.list_sessions().await?;
         assert_eq!(tasks.len(), 1);
 
         Ok(())

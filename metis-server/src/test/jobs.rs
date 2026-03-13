@@ -3,14 +3,14 @@ use crate::app::{AppState, ServiceState};
 use crate::config::BuildCacheSection;
 use crate::domain::{
     actors::ActorRef,
-    issues::{Issue, IssueStatus, IssueType, JobSettings},
-    jobs::{Bundle, BundleSpec},
+    issues::{Issue, IssueStatus, IssueType, SessionSettings},
     patches::{Patch, PatchStatus},
+    sessions::{Bundle, BundleSpec},
     users::Username,
 };
 use crate::{
     job_engine::JobStatus,
-    store::{MemoryStore, Status, Task},
+    store::{MemoryStore, Session, Status},
     test_utils::{
         MockJobEngine, add_repository, spawn_test_server, spawn_test_server_with_state,
         test_app_config, test_client, test_secret_manager, test_state_handles,
@@ -22,7 +22,10 @@ use metis_common::{
     BuildCacheStorageConfig,
     api::v1::{
         self,
-        jobs::{CreateJobResponse, JobVersionRecord, ListJobVersionsResponse, ListJobsResponse},
+        sessions::{
+            CreateSessionResponse, ListSessionVersionsResponse, ListSessionsResponse,
+            SessionVersionRecord,
+        },
     },
 };
 use reqwest::StatusCode;
@@ -45,12 +48,12 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let body: CreateJobResponse = response.json().await?;
-    assert!(!body.job_id.as_ref().trim().is_empty());
+    let body: CreateSessionResponse = response.json().await?;
+    assert!(!body.session_id.as_ref().trim().is_empty());
 
-    let task = check_state.get_task(&body.job_id).await?;
+    let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
-    let Task {
+    let Session {
         context, prompt, ..
     } = task;
 
@@ -59,7 +62,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
     assert_eq!(resolved.context.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
-    let status = check_state.get_task(&body.job_id).await?.status;
+    let status = check_state.get_session(&body.session_id).await?.status;
     assert_eq!(status, Status::Created);
     Ok(())
 }
@@ -85,10 +88,10 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let body: CreateJobResponse = response.json().await?;
-    let task = check_state.get_task(&body.job_id).await?;
+    let body: CreateSessionResponse = response.json().await?;
+    let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
-    let Task { context, .. } = task;
+    let Session { context, .. } = task;
     assert_eq!(
         context,
         BundleSpec::ServiceRepository {
@@ -127,8 +130,8 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let body: CreateJobResponse = response.json().await?;
-    let task = check_state.get_task(&body.job_id).await?;
+    let body: CreateSessionResponse = response.json().await?;
+    let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(task.image, Some("ghcr.io/example/custom:dev".to_string()));
     assert_eq!(resolved.image, "ghcr.io/example/custom:dev");
@@ -158,8 +161,8 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let body: CreateJobResponse = response.json().await?;
-    let task = check_state.get_task(&body.job_id).await?;
+    let body: CreateSessionResponse = response.json().await?;
+    let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(resolved.image, "ghcr.io/example/override:main");
 
@@ -184,9 +187,9 @@ async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let body: CreateJobResponse = response.json().await?;
-    let task = check_state.get_task(&body.job_id).await?;
-    let Task { env_vars, .. } = task;
+    let body: CreateSessionResponse = response.json().await?;
+    let task = check_state.get_session(&body.session_id).await?;
+    let Session { env_vars, .. } = task;
     assert_eq!(env_vars.get("FOO"), Some(&"bar".to_string()));
     assert_eq!(env_vars.get("PROMPT"), Some(&"custom prompt".to_string()));
 
@@ -194,7 +197,7 @@ async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Result<()> {
+async fn session_settings_override_request_with_remote_url_priority() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let (repo_name, repo) = service_repository();
@@ -202,7 +205,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
     let resolver_state = state.clone();
     let check_state = state.clone();
 
-    let job_settings = JobSettings {
+    let session_settings = SessionSettings {
         repo_name: Some(repo_name.clone()),
         remote_url: Some("https://override.example.com/repo.git".to_string()),
         image: Some("ghcr.io/example/issue:latest".to_string()),
@@ -225,7 +228,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
-                job_settings: job_settings.clone(),
+                session_settings: session_settings.clone(),
                 todo_list: Vec::new(),
                 dependencies: Vec::new(),
                 patches: Vec::new(),
@@ -248,9 +251,9 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
         .await?;
 
     assert!(response.status().is_success());
-    let body: CreateJobResponse = response.json().await?;
+    let body: CreateSessionResponse = response.json().await?;
 
-    let task = check_state.get_task(&body.job_id).await?;
+    let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(
         resolved.context.bundle,
@@ -265,15 +268,15 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
         .get(format!(
             "{}/v1/jobs/{}/context",
             server.base_url(),
-            body.job_id.as_ref()
+            body.session_id.as_ref()
         ))
         .send()
         .await?;
     assert!(context_response.status().is_success());
-    let worker_context: v1::jobs::WorkerContext = context_response.json().await?;
+    let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
     assert_eq!(
         worker_context.request_context,
-        v1::jobs::Bundle::GitRepository {
+        v1::sessions::Bundle::GitRepository {
             url: "https://override.example.com/repo.git".to_string(),
             rev: "issue-branch".to_string(),
         }
@@ -282,7 +285,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
 }
 
 #[tokio::test]
-async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()> {
+async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let (repo_name, repo) = service_repository();
@@ -290,7 +293,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
     let resolver_state = state.clone();
     let check_state = state.clone();
 
-    let job_settings = JobSettings {
+    let session_settings = SessionSettings {
         repo_name: Some(repo_name.clone()),
         remote_url: None,
         image: None,
@@ -313,7 +316,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
-                job_settings: job_settings.clone(),
+                session_settings: session_settings.clone(),
                 todo_list: Vec::new(),
                 dependencies: Vec::new(),
                 patches: Vec::new(),
@@ -336,9 +339,9 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
         .await?;
 
     assert!(response.status().is_success());
-    let body: CreateJobResponse = response.json().await?;
+    let body: CreateSessionResponse = response.json().await?;
 
-    let task = check_state.get_task(&body.job_id).await?;
+    let task = check_state.get_session(&body.session_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(
         resolved.context.bundle,
@@ -353,15 +356,15 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
         .get(format!(
             "{}/v1/jobs/{}/context",
             server.base_url(),
-            body.job_id.as_ref()
+            body.session_id.as_ref()
         ))
         .send()
         .await?;
     assert!(context_response.status().is_success());
-    let worker_context: v1::jobs::WorkerContext = context_response.json().await?;
+    let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
     assert_eq!(
         worker_context.request_context,
-        v1::jobs::Bundle::GitRepository {
+        v1::sessions::Bundle::GitRepository {
             url: repo.remote_url.clone(),
             rev: "issue-branch".to_string(),
         }
@@ -403,18 +406,18 @@ async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let body: CreateJobResponse = response.json().await?;
+    let body: CreateSessionResponse = response.json().await?;
     let context_response = client
         .get(format!(
             "{}/v1/jobs/{}/context",
             server.base_url(),
-            body.job_id.as_ref()
+            body.session_id.as_ref()
         ))
         .send()
         .await?;
 
     assert!(context_response.status().is_success());
-    let worker_context: v1::jobs::WorkerContext = context_response.json().await?;
+    let worker_context: v1::sessions::WorkerContext = context_response.json().await?;
     let build_cache = worker_context.build_cache.expect("build cache");
     assert_eq!(
         build_cache.storage,
@@ -458,8 +461,8 @@ async fn list_jobs_returns_empty_list_when_store_is_empty() -> anyhow::Result<()
         .await?;
 
     assert!(response.status().is_success());
-    let body: ListJobsResponse = response.json().await?;
-    assert!(body.jobs.is_empty());
+    let body: ListSessionsResponse = response.json().await?;
+    assert!(body.sessions.is_empty());
     Ok(())
 }
 
@@ -477,20 +480,20 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let created: CreateJobResponse = response.json().await?;
+    let created: CreateSessionResponse = response.json().await?;
 
     state
-        .transition_task_to_pending(&created.job_id, ActorRef::test())
+        .transition_task_to_pending(&created.session_id, ActorRef::test())
         .await?;
     state
-        .transition_task_to_running(&created.job_id, ActorRef::test())
+        .transition_task_to_running(&created.session_id, ActorRef::test())
         .await?;
 
     let response = client
         .post(format!(
             "{}/v1/jobs/{}/status",
             server.base_url(),
-            created.job_id
+            created.session_id
         ))
         .json(&json!({ "status": "complete" }))
         .send()
@@ -498,11 +501,11 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
 
-    let versions: ListJobVersionsResponse = client
+    let versions: ListSessionVersionsResponse = client
         .get(format!(
             "{}/v1/jobs/{}/versions",
             server.base_url(),
-            created.job_id
+            created.session_id
         ))
         .send()
         .await?
@@ -510,36 +513,36 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(versions.versions.len(), 4);
-    assert_eq!(versions.versions[0].job_id, created.job_id);
+    assert_eq!(versions.versions[0].session_id, created.session_id);
     assert_eq!(versions.versions[0].version, 1);
     assert_eq!(
-        versions.versions[0].task.status,
+        versions.versions[0].session.status,
         v1::task_status::Status::Created
     );
-    assert_eq!(versions.versions[1].job_id, created.job_id);
+    assert_eq!(versions.versions[1].session_id, created.session_id);
     assert_eq!(versions.versions[1].version, 2);
     assert_eq!(
-        versions.versions[1].task.status,
+        versions.versions[1].session.status,
         v1::task_status::Status::Pending
     );
-    assert_eq!(versions.versions[2].job_id, created.job_id);
+    assert_eq!(versions.versions[2].session_id, created.session_id);
     assert_eq!(versions.versions[2].version, 3);
     assert_eq!(
-        versions.versions[2].task.status,
+        versions.versions[2].session.status,
         v1::task_status::Status::Running
     );
-    assert_eq!(versions.versions[3].job_id, created.job_id);
+    assert_eq!(versions.versions[3].session_id, created.session_id);
     assert_eq!(versions.versions[3].version, 4);
     assert_eq!(
-        versions.versions[3].task.status,
+        versions.versions[3].session.status,
         v1::task_status::Status::Complete
     );
 
-    let version: JobVersionRecord = client
+    let version: SessionVersionRecord = client
         .get(format!(
             "{}/v1/jobs/{}/versions/4",
             server.base_url(),
-            created.job_id
+            created.session_id
         ))
         .send()
         .await?
@@ -547,8 +550,8 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(version.version, 4);
-    assert_eq!(version.job_id, created.job_id);
-    assert_eq!(version.task.status, v1::task_status::Status::Complete);
+    assert_eq!(version.session_id, created.session_id);
+    assert_eq!(version.session.status, v1::task_status::Status::Complete);
 
     Ok(())
 }
@@ -577,13 +580,13 @@ async fn job_version_endpoints_return_404s() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let created: CreateJobResponse = response.json().await?;
+    let created: CreateSessionResponse = response.json().await?;
 
     let response = client
         .get(format!(
             "{}/v1/jobs/{}/versions/99",
             server.base_url(),
-            created.job_id
+            created.session_id
         ))
         .send()
         .await?;
@@ -620,8 +623,8 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
     let now = Utc::now();
     let (job_id, _) = handles
         .store
-        .add_task(
-            Task {
+        .add_session(
+            Session {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
                 spawned_from: None,
@@ -881,8 +884,8 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
     let default_image = default_image();
     let (job_id, _) = handles
         .store
-        .add_task(
-            Task {
+        .add_session(
+            Session {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
                 spawned_from: None,
@@ -946,7 +949,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
     let body: serde_json::Value = response.json().await?;
     assert_eq!(
         body,
-        json!({ "job_id": job_id.as_ref(), "status": "complete" })
+        json!({ "session_id": job_id.as_ref(), "status": "complete" })
     );
     Ok(())
 }
@@ -957,8 +960,8 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
     let state = handles.state;
     let (job_id, _) = handles
         .store
-        .add_task(
-            Task {
+        .add_session(
+            Session {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
                 spawned_from: None,
@@ -1000,7 +1003,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
     let body: serde_json::Value = response.json().await?;
     assert_eq!(
         body,
-        json!({ "job_id": job_id.as_ref(), "status": "failed" })
+        json!({ "session_id": job_id.as_ref(), "status": "failed" })
     );
     Ok(())
 }
@@ -1053,8 +1056,8 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
     };
     let (parent_job_id, _) = handles
         .store
-        .add_task(
-            Task {
+        .add_session(
+            Session {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
                 spawned_from: None,
@@ -1110,8 +1113,8 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
         .await?;
     let (ctx_job_id, _) = handles
         .store
-        .add_task(
-            Task {
+        .add_session(
+            Session {
                 prompt: "0".to_string(),
                 context: context_spec.clone(),
                 spawned_from: None,
@@ -1146,10 +1149,10 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
         .await?;
 
     assert!(response.status().is_success());
-    let body: v1::jobs::WorkerContext = response.json().await?;
+    let body: v1::sessions::WorkerContext = response.json().await?;
     assert_eq!(
         body.request_context,
-        v1::jobs::Bundle::GitRepository {
+        v1::sessions::Bundle::GitRepository {
             url: "https://example.com/repo.git".to_string(),
             rev: "main".to_string(),
         }
@@ -1165,8 +1168,8 @@ async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
     let default_image = default_image();
     let (job_id, _) = handles
         .store
-        .add_task(
-            Task {
+        .add_session(
+            Session {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
                 spawned_from: None,
@@ -1198,7 +1201,7 @@ async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let body: v1::jobs::WorkerContext = response.json().await?;
+    let body: v1::sessions::WorkerContext = response.json().await?;
     assert_eq!(body.model.as_deref(), Some("claude-3-5-sonnet"));
     Ok(())
 }
@@ -1210,8 +1213,8 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
     let default_image = default_image();
     let (job_id, _) = handles
         .store
-        .add_task(
-            Task {
+        .add_session(
+            Session {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
                 spawned_from: None,
@@ -1243,7 +1246,7 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let body: v1::jobs::WorkerContext = response.json().await?;
+    let body: v1::sessions::WorkerContext = response.json().await?;
     assert_eq!(
         body.variables.get("SECRET_VALUE").map(String::as_str),
         Some("keep-me-safe")

@@ -200,7 +200,7 @@ mod tests {
     #[tokio::test]
     async fn show_user_info_fails_when_actor_is_task() {
         let server = MockServer::start();
-        let task_id = metis_common::TaskId::new();
+        let task_id = metis_common::SessionId::new();
         let whoami_response = WhoAmIResponse::new(ActorIdentity::Session {
             session_id: task_id.clone(),
             creator: Username::from("test-creator"),
@@ -216,8 +216,8 @@ mod tests {
 
         whoami_mock.assert();
         assert!(
-            error.to_string().contains("current actor is a task"),
-            "error should mention actor is a task: {error}"
+            error.to_string().contains("current actor is a session"),
+            "error should mention actor is a session: {error}"
         );
     }
 

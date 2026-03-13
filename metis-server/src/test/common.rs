@@ -1,12 +1,12 @@
 use crate::app::Repository;
-use metis_common::{RepoName, TaskId};
+use metis_common::{RepoName, SessionId};
 use std::str::FromStr;
 
 pub(crate) fn default_image() -> String {
     "metis-worker:latest".to_string()
 }
 
-pub(crate) fn task_id(value: &str) -> TaskId {
+pub(crate) fn task_id(value: &str) -> SessionId {
     value.parse().expect("task id should be valid")
 }
 

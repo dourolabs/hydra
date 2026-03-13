@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 use metis_common::{
-    jobs::{JobSummaryRecord, SearchJobsQuery},
+    sessions::{SearchSessionsQuery, SessionSummaryRecord},
     IssueId,
 };
 use std::io::{self, Write};
@@ -17,11 +17,11 @@ pub async fn run(
     context: &CommandContext,
 ) -> Result<()> {
     let response = client
-        .list_jobs(&SearchJobsQuery::new(None, spawned_from, None, vec![]))
+        .list_jobs(&SearchSessionsQuery::new(None, spawned_from, None, vec![]))
         .await?;
     let limit = limit.max(1);
-    let total_jobs = response.jobs.len();
-    let (jobs, truncated) = truncate_jobs(response.jobs, limit);
+    let total_jobs = response.sessions.len();
+    let (jobs, truncated) = truncate_jobs(response.sessions, limit);
 
     let mut buffer = Vec::new();
     render_job_summary_records(context.output_format, &jobs, &mut buffer)?;
@@ -36,9 +36,9 @@ pub async fn run(
 }
 
 pub(crate) fn truncate_jobs(
-    jobs: Vec<JobSummaryRecord>,
+    jobs: Vec<SessionSummaryRecord>,
     limit: usize,
-) -> (Vec<JobSummaryRecord>, bool) {
+) -> (Vec<SessionSummaryRecord>, bool) {
     if jobs.len() <= limit {
         return (jobs, false);
     }
@@ -56,7 +56,7 @@ mod tests {
     };
     use chrono::Utc;
     use httpmock::prelude::*;
-    use metis_common::jobs::{BundleSpec, JobVersionRecord, ListJobsResponse, Task};
+    use metis_common::sessions::{BundleSpec, ListSessionsResponse, Session, SessionVersionRecord};
     use metis_common::task_status::Status;
     use metis_common::users::Username;
     use std::collections::HashMap;
@@ -70,12 +70,12 @@ mod tests {
         }
     }
 
-    fn sample_job(id: &str) -> JobSummaryRecord {
-        JobSummaryRecord::from(&JobVersionRecord::new(
+    fn sample_job(id: &str) -> SessionSummaryRecord {
+        SessionSummaryRecord::from(&SessionVersionRecord::new(
             task_id(id),
             0,
             Utc::now(),
-            Task::new(
+            Session::new(
                 "0".to_string(),
                 BundleSpec::None,
                 None,
@@ -110,13 +110,13 @@ mod tests {
 
         assert!(!truncated);
         assert_eq!(kept.len(), 3);
-        assert_eq!(kept[0].job_id, task_id("t-job-1"));
-        assert_eq!(kept[2].job_id, task_id("t-job-3"));
+        assert_eq!(kept[0].session_id, task_id("t-job-1"));
+        assert_eq!(kept[2].session_id, task_id("t-job-3"));
     }
 
     #[test]
     fn truncate_jobs_limits_to_requested_count() {
-        let jobs: Vec<JobSummaryRecord> = (0..12)
+        let jobs: Vec<SessionSummaryRecord> = (0..12)
             .map(|idx| sample_job(&format!("t-job-{idx}")))
             .collect();
 
@@ -124,8 +124,8 @@ mod tests {
 
         assert!(truncated);
         assert_eq!(kept.len(), 10);
-        assert_eq!(kept.first().unwrap().job_id, task_id("t-job-0"));
-        assert_eq!(kept.last().unwrap().job_id, task_id("t-job-9"));
+        assert_eq!(kept.first().unwrap().session_id, task_id("t-job-0"));
+        assert_eq!(kept.last().unwrap().session_id, task_id("t-job-9"));
     }
 
     #[tokio::test]
@@ -135,7 +135,7 @@ mod tests {
         let client =
             MetisClient::new(server.base_url(), TEST_METIS_TOKEN).expect("should construct client");
 
-        let list_response = ListJobsResponse::new(vec![sample_job("t-job-1")]);
+        let list_response = ListSessionsResponse::new(vec![sample_job("t-job-1")]);
 
         let mock = server.mock(|when, then| {
             when.method(GET)

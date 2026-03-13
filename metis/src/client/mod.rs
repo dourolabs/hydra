@@ -30,11 +30,6 @@ use metis_common::{
         ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse,
         UpsertIssueRequest, UpsertIssueResponse,
     },
-    job_status::{JobStatusUpdate, SetJobStatusResponse},
-    jobs::{
-        CreateJobRequest, CreateJobResponse, JobVersionRecord, KillJobResponse,
-        ListJobVersionsResponse, ListJobsResponse, SearchJobsQuery, WorkerContext,
-    },
     logs::LogsQuery,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
     patches::{
@@ -47,10 +42,16 @@ use metis_common::{
         RepositoryRecord, SearchRepositoriesQuery, UpdateRepositoryRequest,
         UpsertRepositoryResponse,
     },
+    session_status::{SessionStatusUpdate, SetSessionStatusResponse},
+    sessions::{
+        CreateSessionRequest, CreateSessionResponse, KillSessionResponse,
+        ListSessionVersionsResponse, ListSessionsResponse, SearchSessionsQuery,
+        SessionVersionRecord, WorkerContext,
+    },
     users::UserSummary,
     whoami::WhoAmIResponse,
     ActorId, DocumentId, IssueId, LabelId, MetisId, NotificationId, PatchId, RelativeVersionNumber,
-    RepoName, TaskId,
+    RepoName, SessionId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
 use sse::SseEventStream;
@@ -127,24 +128,24 @@ impl ResponseExt for Response {
 pub trait MetisClientInterface: Send + Sync {
     fn base_url(&self) -> &Url;
 
-    async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
-    async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse>;
-    async fn get_job(&self, job_id: &TaskId) -> Result<JobVersionRecord>;
+    async fn create_job(&self, request: &CreateSessionRequest) -> Result<CreateSessionResponse>;
+    async fn list_jobs(&self, query: &SearchSessionsQuery) -> Result<ListSessionsResponse>;
+    async fn get_job(&self, job_id: &SessionId) -> Result<SessionVersionRecord>;
     async fn get_job_version(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         version: RelativeVersionNumber,
-    ) -> Result<JobVersionRecord>;
-    async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse>;
-    async fn get_job_logs(&self, job_id: &TaskId, query: &LogsQuery) -> Result<LogStream>;
+    ) -> Result<SessionVersionRecord>;
+    async fn kill_job(&self, job_id: &SessionId) -> Result<KillSessionResponse>;
+    async fn get_job_logs(&self, job_id: &SessionId, query: &LogsQuery) -> Result<LogStream>;
     async fn set_job_status(
         &self,
-        job_id: &TaskId,
-        status: &JobStatusUpdate,
-    ) -> Result<SetJobStatusResponse>;
+        job_id: &SessionId,
+        status: &SessionStatusUpdate,
+    ) -> Result<SetSessionStatusResponse>;
 
-    async fn get_job_context(&self, job_id: &TaskId) -> Result<WorkerContext>;
-    async fn list_job_versions(&self, job_id: &TaskId) -> Result<ListJobVersionsResponse>;
+    async fn get_job_context(&self, job_id: &SessionId) -> Result<WorkerContext>;
+    async fn list_job_versions(&self, job_id: &SessionId) -> Result<ListSessionVersionsResponse>;
     async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse>;
     async fn update_issue(
         &self,
@@ -429,7 +430,10 @@ impl MetisClient {
     }
 
     /// Call `POST /v1/jobs` to create a new job.
-    pub async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse> {
+    pub async fn create_job(
+        &self,
+        request: &CreateSessionRequest,
+    ) -> Result<CreateSessionResponse> {
         let url = self.endpoint("/v1/jobs")?;
         let response = self
             .authed(self.http.post(url))
@@ -441,13 +445,13 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<CreateJobResponse>()
+            .json::<CreateSessionResponse>()
             .await
             .context("failed to decode create job response")
     }
 
     /// Call `GET /v1/jobs` to list existing jobs.
-    pub async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse> {
+    pub async fn list_jobs(&self, query: &SearchSessionsQuery) -> Result<ListSessionsResponse> {
         let url = self.endpoint("/v1/jobs")?;
         let response = self
             .authed(self.http.get(url))
@@ -459,13 +463,16 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<ListJobsResponse>()
+            .json::<ListSessionsResponse>()
             .await
             .context("failed to decode list jobs response")
     }
 
     /// Call `GET /v1/jobs/:job_id/versions` to list job history.
-    pub async fn list_job_versions(&self, job_id: &TaskId) -> Result<ListJobVersionsResponse> {
+    pub async fn list_job_versions(
+        &self,
+        job_id: &SessionId,
+    ) -> Result<ListSessionVersionsResponse> {
         let path = format!("/v1/jobs/{job_id}/versions");
         let url = self.endpoint(&path)?;
         let response = self
@@ -477,13 +484,13 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<ListJobVersionsResponse>()
+            .json::<ListSessionVersionsResponse>()
             .await
             .context("failed to decode list job versions response")
     }
 
     /// Call `GET /v1/jobs/:job_id` to fetch an individual job summary.
-    pub async fn get_job(&self, job_id: &TaskId) -> Result<JobVersionRecord> {
+    pub async fn get_job(&self, job_id: &SessionId) -> Result<SessionVersionRecord> {
         let path = format!("/v1/jobs/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -495,7 +502,7 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<JobVersionRecord>()
+            .json::<SessionVersionRecord>()
             .await
             .context("failed to decode job response")
     }
@@ -503,9 +510,9 @@ impl MetisClient {
     /// Call `GET /v1/jobs/:job_id/versions/:version` to fetch a specific job version.
     pub async fn get_job_version(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         version: RelativeVersionNumber,
-    ) -> Result<JobVersionRecord> {
+    ) -> Result<SessionVersionRecord> {
         let path = format!("/v1/jobs/{job_id}/versions/{version}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -517,13 +524,13 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<JobVersionRecord>()
+            .json::<SessionVersionRecord>()
             .await
             .context("failed to decode job version response")
     }
 
     /// Call `DELETE /v1/jobs/:job_id` to terminate a running job.
-    pub async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse> {
+    pub async fn kill_job(&self, job_id: &SessionId) -> Result<KillSessionResponse> {
         let path = format!("/v1/jobs/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -535,7 +542,7 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<KillJobResponse>()
+            .json::<KillSessionResponse>()
             .await
             .context("failed to decode kill job response")
     }
@@ -544,7 +551,7 @@ impl MetisClient {
     ///
     /// When `query.watch` is `Some(true)` the returned stream yields log lines
     /// as new SSE events arrive.
-    pub async fn get_job_logs(&self, job_id: &TaskId, query: &LogsQuery) -> Result<LogStream> {
+    pub async fn get_job_logs(&self, job_id: &SessionId, query: &LogsQuery) -> Result<LogStream> {
         let path = format!("/v1/jobs/{job_id}/logs");
         let url = self.endpoint(&path)?;
         let response = self
@@ -574,9 +581,9 @@ impl MetisClient {
     /// Call `POST /v1/jobs/:job_id/status` to update the recorded agent status.
     pub async fn set_job_status(
         &self,
-        job_id: &TaskId,
-        status: &JobStatusUpdate,
-    ) -> Result<SetJobStatusResponse> {
+        job_id: &SessionId,
+        status: &SessionStatusUpdate,
+    ) -> Result<SetSessionStatusResponse> {
         let path = format!("/v1/jobs/{job_id}/status");
         let url = self.endpoint(&path)?;
         let response = self
@@ -589,13 +596,13 @@ impl MetisClient {
             .await?;
 
         response
-            .json::<SetJobStatusResponse>()
+            .json::<SetSessionStatusResponse>()
             .await
             .context("failed to decode set job status response")
     }
 
     /// Call `GET /v1/jobs/:job_id/context` to retrieve the stored job context.
-    pub async fn get_job_context(&self, job_id: &TaskId) -> Result<WorkerContext> {
+    pub async fn get_job_context(&self, job_id: &SessionId) -> Result<WorkerContext> {
         let path = format!("/v1/jobs/{job_id}/context");
         let url = self.endpoint(&path)?;
         let response = self
@@ -1909,47 +1916,47 @@ impl MetisClientInterface for MetisClient {
         self.base_url()
     }
 
-    async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse> {
+    async fn create_job(&self, request: &CreateSessionRequest) -> Result<CreateSessionResponse> {
         MetisClient::create_job(self, request).await
     }
 
-    async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse> {
+    async fn list_jobs(&self, query: &SearchSessionsQuery) -> Result<ListSessionsResponse> {
         MetisClient::list_jobs(self, query).await
     }
 
-    async fn get_job(&self, job_id: &TaskId) -> Result<JobVersionRecord> {
+    async fn get_job(&self, job_id: &SessionId) -> Result<SessionVersionRecord> {
         MetisClient::get_job(self, job_id).await
     }
 
     async fn get_job_version(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         version: RelativeVersionNumber,
-    ) -> Result<JobVersionRecord> {
+    ) -> Result<SessionVersionRecord> {
         MetisClient::get_job_version(self, job_id, version).await
     }
 
-    async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse> {
+    async fn kill_job(&self, job_id: &SessionId) -> Result<KillSessionResponse> {
         MetisClient::kill_job(self, job_id).await
     }
 
-    async fn get_job_logs(&self, job_id: &TaskId, query: &LogsQuery) -> Result<LogStream> {
+    async fn get_job_logs(&self, job_id: &SessionId, query: &LogsQuery) -> Result<LogStream> {
         MetisClient::get_job_logs(self, job_id, query).await
     }
 
     async fn set_job_status(
         &self,
-        job_id: &TaskId,
-        status: &JobStatusUpdate,
-    ) -> Result<SetJobStatusResponse> {
+        job_id: &SessionId,
+        status: &SessionStatusUpdate,
+    ) -> Result<SetSessionStatusResponse> {
         MetisClient::set_job_status(self, job_id, status).await
     }
 
-    async fn get_job_context(&self, job_id: &TaskId) -> Result<WorkerContext> {
+    async fn get_job_context(&self, job_id: &SessionId) -> Result<WorkerContext> {
         MetisClient::get_job_context(self, job_id).await
     }
 
-    async fn list_job_versions(&self, job_id: &TaskId) -> Result<ListJobVersionsResponse> {
+    async fn list_job_versions(&self, job_id: &SessionId) -> Result<ListSessionVersionsResponse> {
         MetisClient::list_job_versions(self, job_id).await
     }
 

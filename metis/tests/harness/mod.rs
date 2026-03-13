@@ -10,14 +10,14 @@ use metis::client::{MetisClient, MetisClientInterface};
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, SessionSettings,
         UpsertIssueRequest,
     },
-    jobs::SearchJobsQuery,
     patches::{PatchStatus, UpsertPatchRequest},
     repositories::Repository,
+    sessions::SearchSessionsQuery,
     users::{User, Username},
-    IssueId, PatchId, RepoName, TaskId,
+    IssueId, PatchId, RepoName, SessionId,
 };
 use metis_server::{
     app::{AppState, ServiceState},
@@ -75,16 +75,16 @@ pub fn test_patch_workflow_config(
     }
 }
 
-/// Build a `JobSettings` with only `repo_name` set.
-pub fn test_job_settings(repo: &RepoName) -> JobSettings {
-    let mut settings = JobSettings::default();
+/// Build a `SessionSettings` with only `repo_name` set.
+pub fn test_job_settings(repo: &RepoName) -> SessionSettings {
+    let mut settings = SessionSettings::default();
     settings.repo_name = Some(repo.clone());
     settings
 }
 
-/// Build a `JobSettings` with `repo_name`, `image`, and `branch` set.
-pub fn test_job_settings_full(repo: &RepoName, image: &str, branch: &str) -> JobSettings {
-    let mut settings = JobSettings::default();
+/// Build a `SessionSettings` with `repo_name`, `image`, and `branch` set.
+pub fn test_job_settings_full(repo: &RepoName, image: &str, branch: &str) -> SessionSettings {
+    let mut settings = SessionSettings::default();
     settings.repo_name = Some(repo.clone());
     settings.image = Some(image.to_string());
     settings.branch = Some(branch.to_string());
@@ -117,7 +117,7 @@ pub async fn create_merge_request_issue(
         .await
         .context("failed to fetch parent issue")?;
     let creator = parent_issue.issue.creator;
-    let job_settings = parent_issue.issue.job_settings.clone();
+    let job_settings = parent_issue.issue.session_settings.clone();
     let description = format!("Review patch {}: {patch_title}", patch_id.as_ref());
     let issue = Issue::new(
         IssueType::MergeRequest,
@@ -303,7 +303,11 @@ impl TestHarness {
     /// `METIS_TOKEN`, `METIS_ISSUE_ID`) are set in the job context so that
     /// subprocess commands (like `metis patches create`) can reach the test
     /// server.
-    pub async fn run_worker(&self, job_id: &TaskId, commands: Vec<&str>) -> Result<WorkerResult> {
+    pub async fn run_worker(
+        &self,
+        job_id: &SessionId,
+        commands: Vec<&str>,
+    ) -> Result<WorkerResult> {
         worker::run_worker_impl(self, job_id, commands, false).await
     }
 
@@ -314,7 +318,7 @@ impl TestHarness {
     /// command outputs captured before the failure.
     pub async fn run_worker_expect_failure(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         commands: Vec<&str>,
     ) -> Result<WorkerFailure> {
         worker::run_worker_expect_failure_impl(self, job_id, commands).await
@@ -326,10 +330,10 @@ impl TestHarness {
     ///
     /// Finds ready issues, creates tasks for them, and returns the IDs of
     /// newly created tasks. Returns an empty vec when no issues are ready.
-    pub async fn step_spawner(&self) -> Result<Vec<TaskId>> {
-        let before: HashSet<TaskId> = self
+    pub async fn step_spawner(&self) -> Result<Vec<SessionId>> {
+        let before: HashSet<SessionId> = self
             .state
-            .list_tasks()
+            .list_sessions()
             .await
             .context("failed to list tasks before step_spawner")?
             .into_iter()
@@ -344,11 +348,11 @@ impl TestHarness {
 
         let after = self
             .state
-            .list_tasks()
+            .list_sessions()
             .await
             .context("failed to list tasks after step_spawner")?;
 
-        let new_ids: Vec<TaskId> = after
+        let new_ids: Vec<SessionId> = after
             .into_iter()
             .filter(|id| !before.contains(id))
             .collect();
@@ -360,16 +364,16 @@ impl TestHarness {
     ///
     /// Transitions tasks from Created to Pending status and kicks off
     /// engine processing. Returns the IDs of tasks that were processed.
-    pub async fn step_pending_jobs(&self) -> Result<Vec<TaskId>> {
-        let query = SearchJobsQuery::new(
+    pub async fn step_pending_jobs(&self) -> Result<Vec<SessionId>> {
+        let query = SearchSessionsQuery::new(
             None,
             None,
             None,
             vec![metis_server::store::Status::Created.into()],
         );
-        let before: Vec<TaskId> = self
+        let before: Vec<SessionId> = self
             .state
-            .list_tasks_with_query(&query)
+            .list_sessions_with_query(&query)
             .await
             .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
             .context("failed to list created tasks before step_pending_jobs")?;
@@ -421,7 +425,7 @@ impl TestHarness {
     /// creates tasks from ready issues, then the pending-jobs processor
     /// transitions them from Created to Pending/Running. Returns all task
     /// IDs created by the spawner.
-    pub async fn step_schedule(&self) -> Result<Vec<TaskId>> {
+    pub async fn step_schedule(&self) -> Result<Vec<SessionId>> {
         let created = self.step_spawner().await?;
         self.step_pending_jobs().await?;
         Ok(created)
@@ -649,7 +653,7 @@ impl TestHarnessBuilder {
 
         // Default user
         let (default_actor, default_token) =
-            Actor::new_for_session(TaskId::new(), Username::from("default").into());
+            Actor::new_for_session(SessionId::new(), Username::from("default").into());
         store.add_actor(default_actor, &ActorRef::test()).await?;
         let default_user = User::new(Username::from("default"), Some(1), false);
         store
@@ -663,7 +667,7 @@ impl TestHarnessBuilder {
                 continue; // Already created
             }
             let (actor, token) =
-                Actor::new_for_session(TaskId::new(), Username::from(user_name.as_str()).into());
+                Actor::new_for_session(SessionId::new(), Username::from(user_name.as_str()).into());
             store.add_actor(actor, &ActorRef::test()).await?;
             let user = User::new(
                 Username::from(user_name.as_str()),

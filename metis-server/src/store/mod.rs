@@ -14,12 +14,12 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
+    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, SessionId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
@@ -36,7 +36,7 @@ pub use crate::ee::store::migration;
 pub use crate::ee::store::postgres_v2;
 pub mod sqlite_store;
 
-pub use crate::domain::jobs::Task;
+pub use crate::domain::sessions::Session;
 pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
 
 /// The kind of object participating in a relationship.
@@ -152,7 +152,9 @@ pub(crate) fn status_to_db_str(status: Status) -> &'static str {
     }
 }
 
-pub(crate) fn task_status_log_from_versions(versions: &[Versioned<Task>]) -> Option<TaskStatusLog> {
+pub(crate) fn session_status_log_from_versions(
+    versions: &[Versioned<Session>],
+) -> Option<TaskStatusLog> {
     let (first, rest) = versions.split_first()?;
     let mut log = TaskStatusLog::new(first.item.status, first.timestamp);
     let mut last_status = first.item.status;
@@ -201,8 +203,8 @@ pub(crate) fn task_status_log_from_versions(versions: &[Versioned<Task>]) -> Opt
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
-    #[error("Task not found: {0}")]
-    TaskNotFound(TaskId),
+    #[error("Session not found: {0}")]
+    SessionNotFound(SessionId),
     #[error("Issue not found: {0}")]
     IssueNotFound(IssueId),
     #[error("Patch not found: {0}")]
@@ -229,7 +231,7 @@ pub enum StoreError {
     InvalidIssueStatus(String),
     #[error("Internal error: {0}")]
     Internal(String),
-    #[error("Invalid status transition for task")]
+    #[error("Invalid status transition for session")]
     InvalidStatusTransition,
     #[error("Repository not found: {0}")]
     RepositoryNotFound(RepoName),
@@ -322,8 +324,11 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Lists all issues that are blocked on the provided issue.
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 
-    /// Lists all task IDs spawned from the provided issue.
-    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError>;
+    /// Lists all session IDs spawned from the provided issue.
+    async fn get_sessions_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<SessionId>, StoreError>;
 
     /// Retrieves a patch by its PatchId.
     ///
@@ -385,66 +390,69 @@ pub trait ReadOnlyStore: Send + Sync {
         path_prefix: &str,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError>;
 
-    /// Gets a task by its TaskId.
+    /// Gets a session by its SessionId.
     ///
     /// # Arguments
-    /// * `id` - The TaskId to look up
-    /// * `include_deleted` - If true, returns the task even if it has been soft-deleted.
-    ///   If false, returns `StoreError::TaskNotFound` for deleted tasks.
+    /// * `id` - The SessionId to look up
+    /// * `include_deleted` - If true, returns the session even if it has been soft-deleted.
+    ///   If false, returns `StoreError::SessionNotFound` for deleted tasks.
     ///
     /// # Returns
-    /// The task if found, or an error if not found
-    async fn get_task(
+    /// The session if found, or an error if not found
+    async fn get_session(
         &self,
-        id: &TaskId,
+        id: &SessionId,
         include_deleted: bool,
-    ) -> Result<Versioned<Task>, StoreError>;
+    ) -> Result<Versioned<Session>, StoreError>;
 
-    /// Retrieves all versions of a task in ascending version order.
-    async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError>;
+    /// Retrieves all versions of a session in ascending version order.
+    async fn get_session_versions(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<Versioned<Session>>, StoreError>;
 
-    /// Lists all tasks in the store that match the provided search query.
+    /// Lists all sessions in the store that match the provided search query.
     ///
     /// # Arguments
     /// * `query` - Search query containing optional filters:
-    ///   - `q`: Text search term that matches task ID, prompt, or status (case-insensitive)
-    ///   - `spawned_from`: Filter tasks spawned from a specific issue
-    ///   - `include_deleted`: Whether to include deleted tasks (default: false)
+    ///   - `q`: Text search term that matches session ID, prompt, or status (case-insensitive)
+    ///   - `spawned_from`: Filter sessions spawned from a specific issue
+    ///   - `include_deleted`: Whether to include deleted sessions (default: false)
     ///
     /// Note: Text search does NOT match against notes since notes are derived
-    /// from the status_log and not stored in the Task struct itself.
+    /// from the status_log and not stored in the Session struct itself.
     ///
     /// # Returns
-    /// A vector of all matching tasks in the store
-    async fn list_tasks(
+    /// A vector of all matching sessions in the store
+    async fn list_sessions(
         &self,
-        query: &SearchJobsQuery,
-    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
+        query: &SearchSessionsQuery,
+    ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError>;
 
-    /// Counts tasks matching the search query, ignoring pagination (cursor/limit).
-    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError>;
+    /// Counts sessions matching the search query, ignoring pagination (cursor/limit).
+    async fn count_sessions(&self, query: &SearchSessionsQuery) -> Result<u64, StoreError>;
 
-    /// Gets the status log for a task by its TaskId.
+    /// Gets the status log for a session by its SessionId.
     ///
-    /// The status log contains timing information about the task's lifecycle,
+    /// The status log contains timing information about the session's lifecycle,
     /// including when it was created, when it started running, when it completed,
     /// and any failure reason if applicable.
     ///
     /// # Arguments
-    /// * `id` - The TaskId to look up
+    /// * `id` - The SessionId to look up
     ///
     /// # Returns
     /// The TaskStatusLog if found, or an error if not found
-    async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError>;
+    async fn get_status_log(&self, id: &SessionId) -> Result<TaskStatusLog, StoreError>;
 
-    /// Gets the status logs for multiple tasks in a single batch operation.
+    /// Gets the status logs for multiple sessions in a single batch operation.
     ///
-    /// Returns a map from TaskId to TaskStatusLog. Tasks that are not found
+    /// Returns a map from SessionId to TaskStatusLog. Sessions that are not found
     /// are silently omitted from the result.
     async fn get_status_logs(
         &self,
-        ids: &[TaskId],
-    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError>;
+        ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError>;
 
     /// Gets an actor by its canonical name.
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError>;
@@ -583,7 +591,7 @@ pub trait ReadOnlyStore: Send + Sync {
     async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError>;
 }
 
-/// Trait for storing issues, patches, and tasks along with their statuses.
+/// Trait for storing issues, patches, and sessions along with their statuses.
 ///
 /// Implementations focus on persistence and referential integrity; application-specific
 /// state transition rules (such as issue lifecycle validation) must be enforced by the
@@ -713,48 +721,51 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 
-    /// Adds a task to the store.
+    /// Adds a session to the store.
     ///
-    /// Tasks start in the Created state.
+    /// Sessions start in the Created state.
     /// # Arguments
-    /// * `task` - The task to add
-    /// * `creation_time` - The timestamp when the task is being created
+    /// * `session` - The session to add
+    /// * `creation_time` - The timestamp when the session is being created
     /// * `actor` - The actor performing this mutation
     ///
-    /// Returns the new TaskId and its initial version number.
-    async fn add_task(
+    /// Returns the new SessionId and its initial version number.
+    async fn add_session(
         &self,
-        task: Task,
+        session: Session,
         creation_time: DateTime<Utc>,
         actor: &ActorRef,
-    ) -> Result<(TaskId, VersionNumber), StoreError>;
+    ) -> Result<(SessionId, VersionNumber), StoreError>;
 
-    /// Updates an existing task in the store.
+    /// Updates an existing session in the store.
     ///
-    /// This function overwrites the task data for the given vertex.
+    /// This function overwrites the session data for the given vertex.
     ///
     /// # Arguments
-    /// * `metis_id` - The TaskId of the task to update
+    /// * `metis_id` - The SessionId of the session to update
     /// * `task` - The new Task to store for this vertex
     /// * `actor` - The actor performing this mutation
     ///
     /// # Returns
-    /// The stored task version if successful, or an error if the task doesn't exist
-    async fn update_task(
+    /// The stored session version if successful, or an error if the session doesn't exist
+    async fn update_session(
         &self,
-        metis_id: &TaskId,
-        task: Task,
+        metis_id: &SessionId,
+        session: Session,
         actor: &ActorRef,
-    ) -> Result<Versioned<Task>, StoreError>;
+    ) -> Result<Versioned<Session>, StoreError>;
 
-    /// Soft-deletes a task by setting its `deleted` flag to true.
+    /// Soft-deletes a session by setting its `deleted` flag to true.
     ///
-    /// This creates a new version of the task with `deleted: true`.
-    /// The task can still be retrieved via `get_task` but will be filtered
-    /// from `list_tasks` by default. Returns the version number of the
+    /// This creates a new version of the session with `deleted: true`.
+    /// The session can still be retrieved via `get_session` but will be filtered
+    /// from `list_sessions` by default. Returns the version number of the
     /// deletion record.
-    async fn delete_task(&self, id: &TaskId, actor: &ActorRef)
-    -> Result<VersionNumber, StoreError>;
+    async fn delete_session(
+        &self,
+        id: &SessionId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
 
     /// Adds a new actor to the store.
     async fn add_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError>;

@@ -3,16 +3,16 @@ use crate::{
     command::output::{render_job_records, CommandContext},
 };
 use anyhow::Result;
-use metis_common::TaskId;
+use metis_common::SessionId;
 use std::io::{self, Write};
 
 pub async fn run(
     client: &dyn MetisClientInterface,
-    job: TaskId,
+    job: SessionId,
     context: &CommandContext,
 ) -> Result<()> {
     let response = client.kill_job(&job).await?;
-    let job = client.get_job(&response.job_id).await?;
+    let job = client.get_job(&response.session_id).await?;
 
     let mut buffer = Vec::new();
     render_job_records(context.output_format, &[job], &mut buffer)?;

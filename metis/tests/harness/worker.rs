@@ -10,10 +10,10 @@ use metis::command::output::{CommandContext, ResolvedOutputFormat};
 use metis::worker_commands::WorkerCommands;
 use metis_common::{
     constants::{ENV_METIS_ISSUE_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN},
-    jobs::SearchJobsQuery,
     patches::SearchPatchesQuery,
+    sessions::SearchSessionsQuery,
     task_status::Status,
-    PatchId, TaskId,
+    PatchId, SessionId,
 };
 
 use metis_server::domain::actors::ActorRef;
@@ -156,10 +156,10 @@ fn metis_bin() -> std::path::PathBuf {
 /// token, and issue ID so that subprocess commands (e.g. `metis patches
 /// create`) can reach the test server and resolve the current issue.
 /// Updates the task record in the store directly.
-async fn ensure_worker_env_vars(harness: &TestHarness, job_id: &TaskId) -> Result<()> {
+async fn ensure_worker_env_vars(harness: &TestHarness, job_id: &SessionId) -> Result<()> {
     let store = harness.store();
     let versioned_task = store
-        .get_task(job_id, false)
+        .get_session(job_id, false)
         .await
         .context("failed to get task to check env vars")?;
 
@@ -188,7 +188,7 @@ async fn ensure_worker_env_vars(harness: &TestHarness, job_id: &TaskId) -> Resul
 
     if changed {
         store
-            .update_task(job_id, task, &ActorRef::test())
+            .update_session(job_id, task, &ActorRef::test())
             .await
             .context("failed to update task env vars for worker")?;
     }
@@ -220,22 +220,22 @@ async fn collect_created_patches(
 }
 
 /// Get the current status of a job.
-async fn get_job_status(harness: &TestHarness, job_id: &TaskId) -> Result<Status> {
+async fn get_job_status(harness: &TestHarness, job_id: &SessionId) -> Result<Status> {
     let client = harness.client()?;
     let jobs = client
-        .list_jobs(&SearchJobsQuery::default())
+        .list_jobs(&SearchSessionsQuery::default())
         .await
         .context("failed to list jobs for status check")?;
     let job = jobs
-        .jobs
+        .sessions
         .iter()
-        .find(|j| &j.job_id == job_id)
+        .find(|j| &j.session_id == job_id)
         .with_context(|| format!("job '{job_id}' not found after worker run"))?;
-    Ok(job.task.status)
+    Ok(job.session.status)
 }
 
 /// Wait for a job to reach Running status, polling until the timeout.
-async fn wait_for_running(harness: &TestHarness, job_id: &TaskId) -> Result<()> {
+async fn wait_for_running(harness: &TestHarness, job_id: &SessionId) -> Result<()> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         if std::time::Instant::now() > deadline {
@@ -251,7 +251,7 @@ async fn wait_for_running(harness: &TestHarness, job_id: &TaskId) -> Result<()> 
 
 pub(super) async fn run_worker_impl(
     harness: &TestHarness,
-    job_id: &TaskId,
+    job_id: &SessionId,
     commands: Vec<&str>,
     fail_after_run: bool,
 ) -> Result<WorkerResult> {
@@ -316,7 +316,7 @@ pub(super) async fn run_worker_impl(
 
 pub(super) async fn run_worker_expect_failure_impl(
     harness: &TestHarness,
-    job_id: &TaskId,
+    job_id: &SessionId,
     commands: Vec<&str>,
 ) -> Result<WorkerFailure> {
     // Ensure env vars are set for the worker subprocess.

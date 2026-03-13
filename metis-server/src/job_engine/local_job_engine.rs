@@ -11,7 +11,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
+use super::{JobEngine, JobEngineError, JobStatus, MetisJob, SessionId};
 use crate::domain::actors::Actor;
 
 /// How long completed/failed process entries are kept before being reaped.
@@ -41,7 +41,7 @@ struct ProcessInfo {
 pub struct LocalJobEngine {
     server_url: String,
     /// Maps metis_id -> process info for tracking.
-    processes: DashMap<TaskId, ProcessInfo>,
+    processes: DashMap<SessionId, ProcessInfo>,
     /// Temp directory for log files.
     log_dir: std::path::PathBuf,
     /// Optional custom spawn command (program, args). When set, this replaces
@@ -67,7 +67,7 @@ impl LocalJobEngine {
 
     fn build_env_vars(
         &self,
-        metis_id: &TaskId,
+        metis_id: &SessionId,
         auth_token: &str,
         extra_env: &HashMap<String, String>,
     ) -> HashMap<String, String> {
@@ -83,11 +83,11 @@ impl LocalJobEngine {
         env
     }
 
-    fn log_file_path(&self, metis_id: &TaskId) -> std::path::PathBuf {
+    fn log_file_path(&self, metis_id: &SessionId) -> std::path::PathBuf {
         self.log_dir.join(format!("{metis_id}.log"))
     }
 
-    async fn build_metis_job(&self, metis_id: &TaskId) -> Result<MetisJob, JobEngineError> {
+    async fn build_metis_job(&self, metis_id: &SessionId) -> Result<MetisJob, JobEngineError> {
         let info = self
             .processes
             .get(metis_id)
@@ -127,7 +127,7 @@ impl LocalJobEngine {
 
         // Collect keys to reap first, then remove individually.
         // (DashMap::retain is synchronous and we need async lock access for completion_time.)
-        let keys: Vec<TaskId> = self.processes.iter().map(|e| e.key().clone()).collect();
+        let keys: Vec<SessionId> = self.processes.iter().map(|e| e.key().clone()).collect();
 
         for key in keys {
             let should_reap = {
@@ -207,7 +207,7 @@ impl LocalJobEngine {
 impl JobEngine for LocalJobEngine {
     async fn create_job(
         &self,
-        metis_id: &TaskId,
+        metis_id: &SessionId,
         _actor: &Actor,
         auth_token: &str,
         _image: &str,
@@ -312,7 +312,7 @@ impl JobEngine for LocalJobEngine {
     async fn list_jobs(&self) -> Result<Vec<MetisJob>, JobEngineError> {
         let mut jobs = Vec::new();
 
-        let keys: Vec<TaskId> = self.processes.iter().map(|e| e.key().clone()).collect();
+        let keys: Vec<SessionId> = self.processes.iter().map(|e| e.key().clone()).collect();
         for key in keys {
             match self.build_metis_job(&key).await {
                 Ok(job) => jobs.push(job),
@@ -331,13 +331,13 @@ impl JobEngine for LocalJobEngine {
         Ok(jobs)
     }
 
-    async fn find_job_by_metis_id(&self, metis_id: &TaskId) -> Result<MetisJob, JobEngineError> {
+    async fn find_job_by_metis_id(&self, metis_id: &SessionId) -> Result<MetisJob, JobEngineError> {
         self.build_metis_job(metis_id).await
     }
 
     async fn get_logs(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         tail_lines: Option<i64>,
     ) -> Result<String, JobEngineError> {
         let info = self
@@ -361,7 +361,7 @@ impl JobEngine for LocalJobEngine {
 
     fn get_logs_stream(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         follow: bool,
     ) -> Result<mpsc::UnboundedReceiver<String>, JobEngineError> {
         let info = self
@@ -432,7 +432,7 @@ impl JobEngine for LocalJobEngine {
         Ok(rx)
     }
 
-    async fn kill_job(&self, metis_id: &TaskId) -> Result<(), JobEngineError> {
+    async fn kill_job(&self, metis_id: &SessionId) -> Result<(), JobEngineError> {
         let info = self
             .processes
             .get(metis_id)
@@ -476,7 +476,7 @@ mod tests {
 
     fn insert_process(
         engine: &LocalJobEngine,
-        metis_id: &TaskId,
+        metis_id: &SessionId,
         status: ProcessStatus,
         pid: Option<u32>,
     ) {
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn build_env_vars_includes_metis_vars() {
         let engine = make_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let extra = HashMap::from([("CUSTOM".to_string(), "value".to_string())]);
         let env = engine.build_env_vars(&metis_id, "test-token", &extra);
 
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn build_env_vars_omits_empty_server_url() {
         let engine = LocalJobEngine::new("".to_string(), None);
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let env = engine.build_env_vars(&metis_id, "tok", &HashMap::new());
 
         assert!(!env.contains_key(ENV_METIS_SERVER_URL));
@@ -527,7 +527,7 @@ mod tests {
     #[tokio::test]
     async fn build_metis_job_maps_running_status() {
         let engine = make_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         insert_process(&engine, &metis_id, ProcessStatus::Running, Some(123));
 
         let job = engine.build_metis_job(&metis_id).await.unwrap();
@@ -539,7 +539,7 @@ mod tests {
     #[tokio::test]
     async fn build_metis_job_maps_complete_status() {
         let engine = make_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         insert_process(&engine, &metis_id, ProcessStatus::Complete, Some(123));
 
         let job = engine.build_metis_job(&metis_id).await.unwrap();
@@ -551,7 +551,7 @@ mod tests {
     #[tokio::test]
     async fn build_metis_job_maps_failed_status() {
         let engine = make_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         insert_process(&engine, &metis_id, ProcessStatus::Failed, Some(123));
 
         let job = engine.build_metis_job(&metis_id).await.unwrap();
@@ -563,7 +563,7 @@ mod tests {
     #[tokio::test]
     async fn build_metis_job_returns_not_found_for_unknown_id() {
         let engine = make_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
 
         let result = engine.build_metis_job(&metis_id).await;
         assert!(matches!(result, Err(JobEngineError::NotFound(_))));
@@ -572,7 +572,7 @@ mod tests {
     #[tokio::test]
     async fn completion_time_is_stable_across_queries() {
         let engine = make_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         insert_process(&engine, &metis_id, ProcessStatus::Complete, Some(123));
 
         let job1 = engine.build_metis_job(&metis_id).await.unwrap();
@@ -583,7 +583,7 @@ mod tests {
     #[tokio::test]
     async fn kill_job_removes_process() {
         let engine = make_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         // Use None pid to avoid actually sending signals.
         insert_process(&engine, &metis_id, ProcessStatus::Running, None);
 
@@ -594,7 +594,7 @@ mod tests {
     #[tokio::test]
     async fn kill_job_with_none_pid_does_not_send_signals() {
         let engine = make_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         insert_process(&engine, &metis_id, ProcessStatus::Running, None);
 
         // Should succeed without attempting to signal PID 0.
@@ -605,7 +605,7 @@ mod tests {
     #[tokio::test]
     async fn kill_job_returns_not_found_for_unknown_id() {
         let engine = make_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
 
         let result = engine.kill_job(&metis_id).await;
         assert!(matches!(result, Err(JobEngineError::NotFound(_))));
@@ -614,8 +614,8 @@ mod tests {
     #[tokio::test]
     async fn list_jobs_returns_tracked_processes() {
         let engine = make_engine();
-        let id1 = TaskId::new();
-        let id2 = TaskId::new();
+        let id1 = SessionId::new();
+        let id2 = SessionId::new();
         insert_process(&engine, &id1, ProcessStatus::Running, Some(1));
         insert_process(&engine, &id2, ProcessStatus::Complete, Some(2));
 
@@ -625,7 +625,7 @@ mod tests {
 
     fn insert_process_with_completion_time(
         engine: &LocalJobEngine,
-        metis_id: &TaskId,
+        metis_id: &SessionId,
         status: ProcessStatus,
         completion_time: Option<DateTime<Utc>>,
     ) {
@@ -645,10 +645,10 @@ mod tests {
     #[tokio::test]
     async fn reap_removes_completed_entries_past_ttl() {
         let engine = make_engine();
-        let old_completed = TaskId::new();
-        let recent_completed = TaskId::new();
-        let running = TaskId::new();
-        let old_failed = TaskId::new();
+        let old_completed = SessionId::new();
+        let recent_completed = SessionId::new();
+        let running = SessionId::new();
+        let old_failed = SessionId::new();
 
         // Create log files so we can verify cleanup.
         let _ = std::fs::create_dir_all(&engine.log_dir);
@@ -702,7 +702,7 @@ mod tests {
     #[tokio::test]
     async fn reap_does_not_remove_entries_without_completion_time() {
         let engine = make_engine();
-        let id = TaskId::new();
+        let id = SessionId::new();
 
         // Failed but no completion_time set yet — should not be reaped.
         insert_process_with_completion_time(&engine, &id, ProcessStatus::Failed, None);
@@ -718,7 +718,7 @@ mod tests {
     use crate::domain::users::Username;
 
     fn make_actor() -> (Actor, String) {
-        Actor::new_for_session(TaskId::new(), Username::from("test-user"))
+        Actor::new_for_session(SessionId::new(), Username::from("test-user"))
     }
 
     fn dummy_env() -> HashMap<String, String> {
@@ -752,7 +752,7 @@ mod tests {
         )
     }
 
-    async fn wait_for_exit(engine: &LocalJobEngine, metis_id: &TaskId) {
+    async fn wait_for_exit(engine: &LocalJobEngine, metis_id: &SessionId) {
         let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(10);
         loop {
             let job = engine.find_job_by_metis_id(metis_id).await.unwrap();
@@ -769,7 +769,7 @@ mod tests {
     #[tokio::test]
     async fn integration_create_job_spawns_and_tracks_process() {
         let engine = make_failing_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let (actor, token) = make_actor();
 
         engine
@@ -796,7 +796,7 @@ mod tests {
     #[tokio::test]
     async fn integration_create_job_rejects_duplicate() {
         let engine = make_failing_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let (actor, token) = make_actor();
 
         engine
@@ -837,7 +837,7 @@ mod tests {
     #[tokio::test]
     async fn integration_subprocess_failure_transitions_to_failed() {
         let engine = make_failing_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let (actor, token) = make_actor();
 
         engine
@@ -866,7 +866,7 @@ mod tests {
     #[tokio::test]
     async fn integration_subprocess_success_transitions_to_complete() {
         let engine = make_succeeding_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let (actor, token) = make_actor();
 
         engine
@@ -895,7 +895,7 @@ mod tests {
     #[tokio::test]
     async fn integration_get_logs_returns_content_after_exit() {
         let engine = make_echo_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let (actor, token) = make_actor();
 
         engine
@@ -925,7 +925,7 @@ mod tests {
     #[tokio::test]
     async fn integration_get_logs_respects_tail_lines() {
         let engine = make_echo_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let (actor, token) = make_actor();
 
         engine
@@ -960,15 +960,15 @@ mod tests {
     #[tokio::test]
     async fn integration_get_logs_not_found_for_unknown_job() {
         let engine = make_failing_engine();
-        let result = engine.get_logs(&TaskId::new(), None).await;
+        let result = engine.get_logs(&SessionId::new(), None).await;
         assert!(matches!(result, Err(JobEngineError::NotFound(_))));
     }
 
     #[tokio::test]
     async fn integration_list_jobs_includes_created_jobs() {
         let engine = make_failing_engine();
-        let id1 = TaskId::new();
-        let id2 = TaskId::new();
+        let id1 = SessionId::new();
+        let id2 = SessionId::new();
         let (actor, token) = make_actor();
 
         engine
@@ -1003,7 +1003,7 @@ mod tests {
         let jobs = engine.list_jobs().await.unwrap();
         assert_eq!(jobs.len(), 2);
 
-        let ids: Vec<&TaskId> = jobs.iter().map(|j| &j.id).collect();
+        let ids: Vec<&SessionId> = jobs.iter().map(|j| &j.id).collect();
         assert!(ids.contains(&&id1));
         assert!(ids.contains(&&id2));
     }
@@ -1018,14 +1018,14 @@ mod tests {
     #[tokio::test]
     async fn integration_find_job_not_found_for_unknown_id() {
         let engine = make_failing_engine();
-        let result = engine.find_job_by_metis_id(&TaskId::new()).await;
+        let result = engine.find_job_by_metis_id(&SessionId::new()).await;
         assert!(matches!(result, Err(JobEngineError::NotFound(_))));
     }
 
     #[tokio::test]
     async fn integration_kill_job_removes_from_tracking() {
         let engine = make_failing_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let (actor, token) = make_actor();
 
         engine
@@ -1054,15 +1054,15 @@ mod tests {
     #[tokio::test]
     async fn integration_kill_job_not_found_for_unknown_id() {
         let engine = make_failing_engine();
-        let result = engine.kill_job(&TaskId::new()).await;
+        let result = engine.kill_job(&SessionId::new()).await;
         assert!(matches!(result, Err(JobEngineError::NotFound(_))));
     }
 
     #[tokio::test]
     async fn integration_kill_job_removes_from_list() {
         let engine = make_failing_engine();
-        let id1 = TaskId::new();
-        let id2 = TaskId::new();
+        let id1 = SessionId::new();
+        let id2 = SessionId::new();
         let (actor, token) = make_actor();
 
         engine
@@ -1106,7 +1106,7 @@ mod tests {
         use futures::StreamExt;
 
         let engine = make_echo_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let (actor, token) = make_actor();
 
         engine
@@ -1139,14 +1139,14 @@ mod tests {
     #[tokio::test]
     async fn integration_get_logs_stream_not_found_for_unknown_job() {
         let engine = make_failing_engine();
-        let result = engine.get_logs_stream(&TaskId::new(), false);
+        let result = engine.get_logs_stream(&SessionId::new(), false);
         assert!(matches!(result, Err(JobEngineError::NotFound(_))));
     }
 
     #[tokio::test]
     async fn integration_completion_time_set_after_exit() {
         let engine = make_failing_engine();
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let (actor, token) = make_actor();
 
         engine
@@ -1177,7 +1177,7 @@ mod tests {
             "http://test-server:8080".to_string(),
             Some((std::path::PathBuf::from("/bin/true"), vec![])),
         );
-        let metis_id = TaskId::new();
+        let metis_id = SessionId::new();
         let (actor, token) = make_actor();
 
         let mut env = HashMap::new();

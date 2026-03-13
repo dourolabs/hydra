@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use metis_common::{
     issues::{Issue, IssueStatus, IssueType},
-    jobs::Task,
     patches::{PatchStatus, Review},
+    sessions::Session,
     task_status::Status,
-    ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange, MetisId, RepoName, TaskId,
+    ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange, MetisId, RepoName, SessionId,
     VersionNumber,
 };
 use owo_colors::OwoColorize;
@@ -65,10 +65,10 @@ pub enum ActivityObjectSummary {
         description: String,
         status: PatchStatus,
         repo: RepoName,
-        created_by_job: Option<TaskId>,
+        created_by_job: Option<SessionId>,
         reviews: Vec<ReviewSummary>,
     },
-    Job {
+    Session {
         status: Status,
     },
     Document {
@@ -145,9 +145,9 @@ pub fn summarize_activity_object(entry: &ActivityLogEntry) -> Result<ActivityObj
                     .collect(),
             })
         }
-        ActivityObjectKind::Job => {
-            let task: Task = decode_activity_object(entry)?;
-            Ok(ActivityObjectSummary::Job {
+        ActivityObjectKind::Session => {
+            let task: Session = decode_activity_object(entry)?;
+            Ok(ActivityObjectSummary::Session {
                 status: task.status,
             })
         }
@@ -159,7 +159,7 @@ pub fn summarize_activity_object(entry: &ActivityLogEntry) -> Result<ActivityObj
                 body_markdown: doc.body_markdown,
             })
         }
-        _ => Ok(ActivityObjectSummary::Job {
+        _ => Ok(ActivityObjectSummary::Session {
             status: Status::Unknown,
         }),
     }
@@ -270,7 +270,7 @@ pub fn tracked_field_for_path(kind: &ActivityObjectKind, path: &str) -> Option<&
                 }
             }
         }
-        ActivityObjectKind::Job => match path {
+        ActivityObjectKind::Session => match path {
             "/status" => Some("Status"),
             "/prompt" => Some("Prompt"),
             "/last_message" => Some("Last Message"),
@@ -385,7 +385,7 @@ pub fn write_activity_log_entry_pretty(
     let kind_label = match entry.object_kind {
         ActivityObjectKind::Issue => "Issue",
         ActivityObjectKind::Patch => "Patch",
-        ActivityObjectKind::Job => "Job",
+        ActivityObjectKind::Session => "Session",
         ActivityObjectKind::Document => "Document",
         _ => "Activity",
     };
@@ -525,7 +525,7 @@ pub fn write_activity_object_summary(
             )?;
             write_activity_reviews(reviews, indent, writer)?;
         }
-        ActivityObjectSummary::Job { status } => {
+        ActivityObjectSummary::Session { status } => {
             write_activity_scalar_field(
                 "Status",
                 &Value::String(format_job_status(*status).to_string()),
@@ -790,7 +790,7 @@ fn write_changelog_created_fields(
             writeln!(writer, "{indent}Status: {status}")?;
             writeln!(writer, "{indent}Repo: {repo}")?;
         }
-        ActivityObjectSummary::Job { status } => {
+        ActivityObjectSummary::Session { status } => {
             writeln!(writer, "{indent}Status: {}", format_job_status(*status))?;
         }
         ActivityObjectSummary::Document { title, path, .. } => {

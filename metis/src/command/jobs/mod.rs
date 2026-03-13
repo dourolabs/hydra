@@ -9,8 +9,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use metis_common::{
-    activity_log_for_job_versions, constants::ENV_METIS_ISSUE_ID, jobs::Task, IssueId, MetisId,
-    RelativeVersionNumber, TaskId, Versioned,
+    activity_log_for_session_versions, constants::ENV_METIS_ISSUE_ID, sessions::Session, IssueId,
+    MetisId, RelativeVersionNumber, SessionId, Versioned,
 };
 use std::{
     io::{self, Write},
@@ -79,7 +79,7 @@ pub enum JobsCommand {
     Get {
         /// Job identifier returned by `metis jobs create` or `metis jobs list`.
         #[arg(value_name = "JOB_ID")]
-        id: TaskId,
+        id: SessionId,
 
         /// Retrieve a specific version (positive = exact version, negative = offset from latest).
         #[arg(long)]
@@ -99,13 +99,13 @@ pub enum JobsCommand {
     Kill {
         /// Job identifier returned by `metis jobs create` or `metis jobs list`.
         #[arg(value_name = "JOB_ID")]
-        job: TaskId,
+        job: SessionId,
     },
     /// Show changelog for a job (most recent first).
     Changelog {
         /// Job identifier returned by `metis jobs create` or `metis jobs list`.
         #[arg(value_name = "JOB_ID")]
-        id: TaskId,
+        id: SessionId,
 
         /// Maximum number of changelog entries to show.
         #[arg(long, default_value_t = 20)]
@@ -115,7 +115,7 @@ pub enum JobsCommand {
     WorkerRun {
         /// Job identifier returned by `metis jobs create` or `metis jobs list`.
         #[arg(value_name = "JOB_ID")]
-        job: TaskId,
+        job: SessionId,
         /// Destination directory where the context will be extracted/copied.
         #[arg(value_name = "PATH")]
         path: PathBuf,
@@ -174,7 +174,7 @@ pub async fn run(
 
 async fn get_job(
     client: &dyn MetisClientInterface,
-    job_id: &TaskId,
+    job_id: &SessionId,
     version: Option<i64>,
     context: &CommandContext,
 ) -> Result<()> {
@@ -197,7 +197,7 @@ async fn get_job(
 
 async fn changelog_job(
     client: &dyn MetisClientInterface,
-    id: TaskId,
+    id: SessionId,
     output_format: ResolvedOutputFormat,
     limit: usize,
 ) -> Result<()> {
@@ -205,19 +205,19 @@ async fn changelog_job(
         .list_job_versions(&id)
         .await
         .with_context(|| format!("failed to fetch versions for job '{id}'"))?;
-    let versions: Vec<Versioned<Task>> = response
+    let versions: Vec<Versioned<Session>> = response
         .versions
         .into_iter()
         .map(|record| {
             Versioned::new(
-                record.task,
+                record.session,
                 record.version,
                 record.timestamp,
                 record.timestamp,
             )
         })
         .collect();
-    let entries = activity_log_for_job_versions(id, &versions);
+    let entries = activity_log_for_session_versions(id, &versions);
     let mut summaries = summarize_activity_log(&entries)?;
     summaries.reverse();
     summaries.truncate(limit);

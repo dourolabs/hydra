@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
 use super::issue_graph::IssueGraphContext;
-use super::{ReadOnlyStore, Status, Store, StoreError, Task, TaskStatusLog};
+use super::{ReadOnlyStore, Session, Status, Store, StoreError, TaskStatusLog};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
@@ -20,13 +20,13 @@ use crate::domain::{
 };
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
+    DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, SessionId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
@@ -39,7 +39,7 @@ use metis_common::{
 /// It uses internal locking to make access thread-safe.
 pub struct MemoryStore {
     /// Maps task IDs to their Task data
-    tasks: DashMap<TaskId, Vec<Versioned<Task>>>,
+    tasks: DashMap<SessionId, Vec<Versioned<Session>>>,
     /// Maps issue IDs to their Issue data
     issues: DashMap<IssueId, Vec<Versioned<Issue>>>,
     /// Maps patch IDs to their Patch data
@@ -49,7 +49,7 @@ pub struct MemoryStore {
     /// Maps repository names to their configurations
     repositories: DashMap<RepoName, Vec<Versioned<Repository>>>,
     /// Maps issue IDs to tasks spawned from them
-    issue_tasks: DashMap<IssueId, Vec<TaskId>>,
+    issue_tasks: DashMap<IssueId, Vec<SessionId>>,
     /// Maps document paths to the document IDs that live under them
     documents_by_path: DashMap<String, HashSet<DocumentId>>,
     /// Maps usernames to their User data
@@ -320,8 +320,8 @@ impl MemoryStore {
     /// Returns an iterator over tasks matching the query filters (without pagination).
     fn filter_tasks<'a>(
         &'a self,
-        query: &'a SearchJobsQuery,
-    ) -> impl Iterator<Item = (TaskId, Versioned<Task>)> + 'a {
+        query: &'a SearchSessionsQuery,
+    ) -> impl Iterator<Item = (SessionId, Versioned<Session>)> + 'a {
         let include_deleted = query.include_deleted.unwrap_or(false);
         let search_term = query
             .q
@@ -521,14 +521,14 @@ impl MemoryStore {
         documents
     }
 
-    fn index_task_for_issue(&self, issue_id: &IssueId, task_id: TaskId) {
+    fn index_task_for_issue(&self, issue_id: &IssueId, task_id: SessionId) {
         let mut tasks = self.issue_tasks.entry(issue_id.clone()).or_default();
         if !tasks.contains(&task_id) {
             tasks.push(task_id);
         }
     }
 
-    fn remove_task_from_issue_index(&self, issue_id: &IssueId, task_id: &TaskId) {
+    fn remove_task_from_issue_index(&self, issue_id: &IssueId, task_id: &SessionId) {
         if let Some(mut tasks) = self.issue_tasks.get_mut(issue_id) {
             tasks.retain(|id| id != task_id);
             if tasks.is_empty() {
@@ -735,7 +735,10 @@ impl ReadOnlyStore for MemoryStore {
         Ok(blocked)
     }
 
-    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
+    async fn get_sessions_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<SessionId>, StoreError> {
         if !self.issues.contains_key(issue_id) {
             return Err(StoreError::IssueNotFound(issue_id.clone()));
         }
@@ -881,33 +884,36 @@ impl ReadOnlyStore for MemoryStore {
         Ok(documents)
     }
 
-    async fn get_task(
+    async fn get_session(
         &self,
-        id: &TaskId,
+        id: &SessionId,
         include_deleted: bool,
-    ) -> Result<Versioned<Task>, StoreError> {
+    ) -> Result<Versioned<Session>, StoreError> {
         let versioned = self
             .tasks
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+            .ok_or_else(|| StoreError::SessionNotFound(id.clone()))?;
         if !include_deleted && versioned.item.deleted {
-            return Err(StoreError::TaskNotFound(id.clone()));
+            return Err(StoreError::SessionNotFound(id.clone()));
         }
         Ok(versioned)
     }
 
-    async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
+    async fn get_session_versions(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<Versioned<Session>>, StoreError> {
         self.tasks
             .get(id)
             .map(|entry| entry.value().clone())
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
+            .ok_or_else(|| StoreError::SessionNotFound(id.clone()))
     }
 
-    async fn list_tasks(
+    async fn list_sessions(
         &self,
-        query: &SearchJobsQuery,
-    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+        query: &SearchSessionsQuery,
+    ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let items: Vec<_> = self.filter_tasks(query).collect();
         apply_memory_pagination(
             items,
@@ -918,25 +924,25 @@ impl ReadOnlyStore for MemoryStore {
         )
     }
 
-    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+    async fn count_sessions(&self, query: &SearchSessionsQuery) -> Result<u64, StoreError> {
         Ok(self.filter_tasks(query).count() as u64)
     }
 
-    async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
+    async fn get_status_log(&self, id: &SessionId) -> Result<TaskStatusLog, StoreError> {
         self.tasks
             .get(id)
-            .and_then(|entry| super::task_status_log_from_versions(entry.value()))
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
+            .and_then(|entry| super::session_status_log_from_versions(entry.value()))
+            .ok_or_else(|| StoreError::SessionNotFound(id.clone()))
     }
 
     async fn get_status_logs(
         &self,
-        ids: &[TaskId],
-    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
+        ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError> {
         let mut result = HashMap::new();
         for id in ids {
             if let Some(entry) = self.tasks.get(id) {
-                if let Some(log) = super::task_status_log_from_versions(entry.value()) {
+                if let Some(log) = super::session_status_log_from_versions(entry.value()) {
                     result.insert(id.clone(), log);
                 }
             }
@@ -1546,19 +1552,24 @@ impl Store for MemoryStore {
         self.update_document(id, document, actor).await
     }
 
-    async fn add_task(
+    async fn add_session(
         &self,
-        mut task: Task,
+        mut session: Session,
         creation_time: DateTime<Utc>,
         actor: &ActorRef,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let id = TaskId::new();
-        let spawned_from = task.spawned_from.clone();
+    ) -> Result<(SessionId, VersionNumber), StoreError> {
+        let id = SessionId::new();
+        let spawned_from = session.spawned_from.clone();
 
-        task.creation_time = Some(creation_time);
+        session.creation_time = Some(creation_time);
         self.tasks.insert(
             id.clone(),
-            vec![Self::versioned_at_with_actor(task, 1, creation_time, actor)],
+            vec![Self::versioned_at_with_actor(
+                session,
+                1,
+                creation_time,
+                actor,
+            )],
         );
 
         if let Some(issue_id) = spawned_from.as_ref() {
@@ -1568,52 +1579,53 @@ impl Store for MemoryStore {
         Ok((id, 1))
     }
 
-    async fn update_task(
+    async fn update_session(
         &self,
-        metis_id: &TaskId,
-        task: Task,
+        metis_id: &SessionId,
+        session: Session,
         actor: &ActorRef,
-    ) -> Result<Versioned<Task>, StoreError> {
+    ) -> Result<Versioned<Session>, StoreError> {
         let previous_spawned_from = match self.tasks.get(metis_id) {
             Some(entry) => entry
                 .value()
                 .last()
                 .and_then(|existing| existing.item.spawned_from.clone()),
-            None => return Err(StoreError::TaskNotFound(metis_id.clone())),
+            None => return Err(StoreError::SessionNotFound(metis_id.clone())),
         };
 
         if let Some(previous_issue) = previous_spawned_from.as_ref() {
-            if task.spawned_from.as_ref() != Some(previous_issue) {
+            if session.spawned_from.as_ref() != Some(previous_issue) {
                 self.remove_task_from_issue_index(previous_issue, metis_id);
             }
         }
 
-        // Overwrite the existing task without modifying edge structure
+        // Overwrite the existing session without modifying edge structure
         let updated = match self.tasks.get_mut(metis_id) {
             Some(mut versions) => {
                 let next_version = Self::next_version(&versions);
-                let versioned = Self::versioned_now_with_actor(task.clone(), next_version, actor);
+                let versioned =
+                    Self::versioned_now_with_actor(session.clone(), next_version, actor);
                 versions.push(versioned.clone());
                 versioned
             }
-            None => return Err(StoreError::TaskNotFound(metis_id.clone())),
+            None => return Err(StoreError::SessionNotFound(metis_id.clone())),
         };
 
-        if let Some(issue_id) = task.spawned_from.as_ref() {
+        if let Some(issue_id) = session.spawned_from.as_ref() {
             self.index_task_for_issue(issue_id, metis_id.clone());
         }
         Ok(updated)
     }
 
-    async fn delete_task(
+    async fn delete_session(
         &self,
-        id: &TaskId,
+        id: &SessionId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        let current = self.get_task(id, true).await?;
+        let current = self.get_session(id, true).await?;
         let mut task = current.item;
         task.deleted = true;
-        let versioned = self.update_task(id, task, actor).await?;
+        let versioned = self.update_session(id, task, actor).await?;
         Ok(versioned.version)
     }
 
@@ -2051,8 +2063,8 @@ mod tests {
                 Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus,
                 IssueType,
             },
-            jobs::BundleSpec,
             patches::{GithubPr, Patch, PatchStatus},
+            sessions::BundleSpec,
             task_status::Event,
             users::{User, Username},
         },
@@ -2061,7 +2073,7 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use metis_common::{
-        IssueId, RepoName, TaskId, VersionNumber, Versioned,
+        IssueId, RepoName, SessionId, VersionNumber, Versioned,
         repositories::{Repository, SearchRepositoriesQuery},
     };
     use std::{collections::HashSet, str::FromStr, sync::Arc};
@@ -2075,8 +2087,8 @@ mod tests {
         )
     }
 
-    fn spawn_task() -> Task {
-        Task::new(
+    fn spawn_task() -> Session {
+        Session::new(
             "0".to_string(),
             BundleSpec::None,
             None,
@@ -2115,7 +2127,7 @@ mod tests {
         )
     }
 
-    fn sample_document(path: Option<&str>, created_by: Option<TaskId>) -> Document {
+    fn sample_document(path: Option<&str>, created_by: Option<SessionId>) -> Document {
         Document {
             title: "Doc".to_string(),
             body_markdown: "Body".to_string(),
@@ -3046,8 +3058,8 @@ mod tests {
     #[tokio::test]
     async fn document_filters_apply_query() {
         let store = MemoryStore::new();
-        let task_id = TaskId::new();
-        let other_task = TaskId::new();
+        let task_id = SessionId::new();
+        let other_task = SessionId::new();
 
         let (first, _) = store
             .add_document(
@@ -3126,22 +3138,27 @@ mod tests {
         let task = spawn_task();
         let now = Utc::now();
         let (task_id, _) = store
-            .add_task(task.clone(), now, &ActorRef::test())
+            .add_session(task.clone(), now, &ActorRef::test())
             .await
             .unwrap();
 
-        let fetched = store.get_task(&task_id, false).await.unwrap();
+        let fetched = store.get_session(&task_id, false).await.unwrap();
         // add_task sets creation_time on the stored task
         let mut expected = task.clone();
         expected.creation_time = Some(now);
         assert_versioned(&fetched, &expected, 1);
         assert_eq!(
-            store.get_task(&task_id, false).await.unwrap().item.status,
+            store
+                .get_session(&task_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
 
         let tasks: HashSet<_> = store
-            .list_tasks(&SearchJobsQuery::default())
+            .list_sessions(&SearchSessionsQuery::default())
             .await
             .unwrap()
             .into_iter()
@@ -3157,18 +3174,18 @@ mod tests {
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
         let (task_id, _) = store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut updated = spawn_task();
         updated.prompt = "v2".to_string();
         store
-            .update_task(&task_id, updated.clone(), &ActorRef::test())
+            .update_session(&task_id, updated.clone(), &ActorRef::test())
             .await
             .unwrap();
 
-        let fetched = store.get_task(&task_id, false).await.unwrap();
+        let fetched = store.get_session(&task_id, false).await.unwrap();
         assert_versioned(&fetched, &updated, 2);
 
         let versions = store.tasks.get(&task_id).unwrap();
@@ -3182,18 +3199,18 @@ mod tests {
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
         let (task_id, _) = store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut v2 = spawn_task();
         v2.prompt = "v2".to_string();
         store
-            .update_task(&task_id, v2, &ActorRef::test())
+            .update_session(&task_id, v2, &ActorRef::test())
             .await
             .unwrap();
 
-        let versions = store.get_task_versions(&task_id).await.unwrap();
+        let versions = store.get_session_versions(&task_id).await.unwrap();
         assert_eq!(version_numbers(&versions), vec![1, 2]);
         assert_eq!(versions[0].item.prompt, "v1");
         assert_eq!(versions[1].item.prompt, "v2");
@@ -3204,7 +3221,7 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let state = test_state_with_store(store.clone()).state;
         let (task_id, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -3224,7 +3241,12 @@ mod tests {
         let versions = store.tasks.get(&task_id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2, 3, 4]);
         assert_eq!(
-            store.get_task(&task_id, false).await.unwrap().item.status,
+            store
+                .get_session(&task_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Complete
         );
     }
@@ -3237,14 +3259,14 @@ mod tests {
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
         let (task_id, _) = store
-            .add_task(task.clone(), created_at, &ActorRef::test())
+            .add_session(task.clone(), created_at, &ActorRef::test())
             .await
             .unwrap();
 
         let mut updated = task.clone();
         updated.prompt = "v2".to_string();
         store
-            .update_task(&task_id, updated, &ActorRef::test())
+            .update_session(&task_id, updated, &ActorRef::test())
             .await
             .unwrap();
 
@@ -3267,10 +3289,10 @@ mod tests {
         let log = store.get_status_log(&task_id).await.unwrap();
         assert!(matches!(log.events.last(), Some(Event::Started { .. })));
 
-        let mut running = store.get_task(&task_id, false).await.unwrap().item;
+        let mut running = store.get_session(&task_id, false).await.unwrap().item;
         running.prompt = "v3".to_string();
         store
-            .update_task(&task_id, running, &ActorRef::test())
+            .update_session(&task_id, running, &ActorRef::test())
             .await
             .unwrap();
 
@@ -3312,14 +3334,14 @@ mod tests {
         let mut pending_task = spawn_task();
         pending_task.spawned_from = Some(issue_id.clone());
         let (pending_id, _) = store
-            .add_task(pending_task, Utc::now(), &ActorRef::test())
+            .add_session(pending_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut running_task = spawn_task();
         running_task.spawned_from = Some(issue_id.clone());
         let (running_id, _) = store
-            .add_task(running_task, Utc::now(), &ActorRef::test())
+            .add_session(running_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         state
@@ -3334,7 +3356,7 @@ mod tests {
         let mut completed_task = spawn_task();
         completed_task.spawned_from = Some(issue_id.clone());
         let (completed_id, _) = store
-            .add_task(completed_task, Utc::now(), &ActorRef::test())
+            .add_session(completed_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         state
@@ -3353,12 +3375,12 @@ mod tests {
         let mut unrelated_task = spawn_task();
         unrelated_task.spawned_from = Some(other_issue.clone());
         let (unrelated_id, _) = store
-            .add_task(unrelated_task, Utc::now(), &ActorRef::test())
+            .add_session(unrelated_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let tasks: HashSet<_> = store
-            .get_tasks_for_issue(&issue_id)
+            .get_sessions_for_issue(&issue_id)
             .await
             .unwrap()
             .into_iter()
@@ -3366,7 +3388,7 @@ mod tests {
         assert_eq!(tasks, HashSet::from([pending_id, running_id, completed_id]));
 
         let other_tasks: HashSet<_> = store
-            .get_tasks_for_issue(&other_issue)
+            .get_sessions_for_issue(&other_issue)
             .await
             .unwrap()
             .into_iter()
@@ -3379,7 +3401,10 @@ mod tests {
         let store = MemoryStore::new();
         let missing_issue = IssueId::new();
 
-        let err = store.get_tasks_for_issue(&missing_issue).await.unwrap_err();
+        let err = store
+            .get_sessions_for_issue(&missing_issue)
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, StoreError::IssueNotFound(id) if id == missing_issue));
     }
@@ -3390,12 +3415,17 @@ mod tests {
 
         let root_task = spawn_task();
         let (root_id, _) = store
-            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .add_session(root_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
     }
@@ -3407,12 +3437,17 @@ mod tests {
 
         let root_task = spawn_task();
         let (root_id, _) = store
-            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .add_session(root_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
 
@@ -3421,7 +3456,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Pending
         );
     }
@@ -3433,7 +3473,7 @@ mod tests {
 
         let root_task = spawn_task();
         let (root_id, _) = store
-            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .add_session(root_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -3446,7 +3486,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Running
         );
     }
@@ -3458,12 +3503,17 @@ mod tests {
 
         let root_task = spawn_task();
         let (root_id, _) = store
-            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .add_session(root_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
 
@@ -3477,7 +3527,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Running
         );
 
@@ -3487,7 +3542,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Complete
         );
     }
@@ -3499,12 +3559,17 @@ mod tests {
 
         let root_task = spawn_task();
         let (root_id, _) = store
-            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .add_session(root_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
 
@@ -3518,7 +3583,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Running
         );
 
@@ -3535,7 +3605,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Failed
         );
     }
@@ -3547,7 +3622,7 @@ mod tests {
 
         let root_task = spawn_task();
         let (root_id, _) = store
-            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .add_session(root_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -3566,7 +3641,7 @@ mod tests {
 
         let root_task = spawn_task();
         let (root_id, _) = store
-            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .add_session(root_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -3583,7 +3658,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Failed
         );
     }
@@ -3595,7 +3675,7 @@ mod tests {
 
         let root_task = spawn_task();
         let (root_id, _) = store
-            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .add_session(root_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -3617,7 +3697,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Complete
         );
 
@@ -3633,7 +3718,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Original last_message should be preserved
-        let task = store.get_task(&root_id, false).await.unwrap();
+        let task = store.get_session(&root_id, false).await.unwrap();
         assert_eq!(task.item.status, Status::Complete);
         assert_eq!(task.item.last_message.as_deref(), Some("first message"));
     }
@@ -3645,7 +3730,7 @@ mod tests {
 
         let root_task = spawn_task();
         let (root_id, _) = store
-            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .add_session(root_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -3669,7 +3754,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Failed
         );
 
@@ -3687,7 +3777,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Original error should be preserved
-        let task = store.get_task(&root_id, false).await.unwrap();
+        let task = store.get_session(&root_id, false).await.unwrap();
         assert_eq!(task.item.status, Status::Failed);
         assert!(matches!(
             task.item.error,
@@ -3702,7 +3792,7 @@ mod tests {
 
         let root_task = spawn_task();
         let (root_id, _) = store
-            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .add_session(root_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -3741,7 +3831,7 @@ mod tests {
 
         let root_task = spawn_task();
         let (root_id, _) = store
-            .add_task(root_task, Utc::now(), &ActorRef::test())
+            .add_session(root_task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -3868,7 +3958,7 @@ mod tests {
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
-            actor_id: ActorId::Session(TaskId::new()),
+            actor_id: ActorId::Session(SessionId::new()),
             creator: Username::from("creator"),
         };
         let name = actor.name();
@@ -3888,7 +3978,7 @@ mod tests {
     #[tokio::test]
     async fn update_actor_overwrites_existing_entry() {
         let store = MemoryStore::new();
-        let task_id = TaskId::new();
+        let task_id = SessionId::new();
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
@@ -3936,7 +4026,7 @@ mod tests {
     #[tokio::test]
     async fn get_actor_missing_returns_not_found() {
         let store = MemoryStore::new();
-        let task_id = TaskId::new();
+        let task_id = SessionId::new();
         let name = format!("w-{task_id}");
 
         let err = store.get_actor(&name).await.unwrap_err();
@@ -4491,39 +4581,45 @@ mod tests {
         let store = MemoryStore::new();
         let task = spawn_task();
         let (task_id, _) = store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         // Task should be visible in list initially
-        let tasks = store.list_tasks(&SearchJobsQuery::default()).await.unwrap();
+        let tasks = store
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 1);
         assert!(!tasks[0].1.item.deleted);
 
         // Delete the task
         store
-            .delete_task(&task_id, &ActorRef::test())
+            .delete_session(&task_id, &ActorRef::test())
             .await
             .unwrap();
 
         // Deleted task should not appear in default list
-        let tasks = store.list_tasks(&SearchJobsQuery::default()).await.unwrap();
+        let tasks = store
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
         assert!(tasks.is_empty());
 
         // Deleted task should appear with include_deleted=true
         let tasks = store
-            .list_tasks(&SearchJobsQuery::new(None, None, Some(true), vec![]))
+            .list_sessions(&SearchSessionsQuery::new(None, None, Some(true), vec![]))
             .await
             .unwrap();
         assert_eq!(tasks.len(), 1);
         assert!(tasks[0].1.item.deleted);
 
         // get_task with include_deleted=false should return TaskNotFound for deleted task
-        let err = store.get_task(&task_id, false).await.unwrap_err();
-        assert!(matches!(err, StoreError::TaskNotFound(id) if id == task_id));
+        let err = store.get_session(&task_id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::SessionNotFound(id) if id == task_id));
 
         // get_task with include_deleted=true should return the deleted task
-        let deleted_task = store.get_task(&task_id, true).await.unwrap();
+        let deleted_task = store.get_session(&task_id, true).await.unwrap();
         assert!(deleted_task.item.deleted);
     }
 
@@ -4569,14 +4665,14 @@ mod tests {
     #[tokio::test]
     async fn delete_nonexistent_task_returns_error() {
         let store = MemoryStore::new();
-        let missing_id = TaskId::new();
+        let missing_id = SessionId::new();
 
         let err = store
-            .delete_task(&missing_id, &ActorRef::test())
+            .delete_session(&missing_id, &ActorRef::test())
             .await
             .unwrap_err();
 
-        assert!(matches!(err, StoreError::TaskNotFound(id) if id == missing_id));
+        assert!(matches!(err, StoreError::SessionNotFound(id) if id == missing_id));
     }
 
     #[tokio::test]
@@ -4831,34 +4927,34 @@ mod tests {
         let mut task_a1 = spawn_task();
         task_a1.spawned_from = Some(issue_a.clone());
         let (task_a1_id, _) = store
-            .add_task(task_a1, Utc::now(), &ActorRef::test())
+            .add_session(task_a1, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut task_a2 = spawn_task();
         task_a2.spawned_from = Some(issue_a.clone());
         let (task_a2_id, _) = store
-            .add_task(task_a2, Utc::now(), &ActorRef::test())
+            .add_session(task_a2, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut task_b1 = spawn_task();
         task_b1.spawned_from = Some(issue_b.clone());
         let (task_b1_id, _) = store
-            .add_task(task_b1, Utc::now(), &ActorRef::test())
+            .add_session(task_b1, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let task_orphan = spawn_task(); // no spawned_from
         let (task_orphan_id, _) = store
-            .add_task(task_orphan, Utc::now(), &ActorRef::test())
+            .add_session(task_orphan, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         // Filter by issue_a should return only tasks spawned from issue_a
-        let query = SearchJobsQuery::new(None, Some(issue_a.clone()), None, vec![]);
+        let query = SearchSessionsQuery::new(None, Some(issue_a.clone()), None, vec![]);
         let tasks: HashSet<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -4870,9 +4966,9 @@ mod tests {
         );
 
         // Filter by issue_b should return only tasks spawned from issue_b
-        let query = SearchJobsQuery::new(None, Some(issue_b.clone()), None, vec![]);
+        let query = SearchSessionsQuery::new(None, Some(issue_b.clone()), None, vec![]);
         let tasks: HashSet<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -4882,7 +4978,7 @@ mod tests {
 
         // No filter should return all tasks
         let tasks: HashSet<_> = store
-            .list_tasks(&SearchJobsQuery::default())
+            .list_sessions(&SearchSessionsQuery::default())
             .await
             .unwrap()
             .into_iter()
@@ -4902,28 +4998,28 @@ mod tests {
         let mut task1 = spawn_task();
         task1.prompt = "Fix authentication bug".to_string();
         let (task1_id, _) = store
-            .add_task(task1, Utc::now(), &ActorRef::test())
+            .add_session(task1, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut task2 = spawn_task();
         task2.prompt = "Add new feature for login".to_string();
         let (task2_id, _) = store
-            .add_task(task2, Utc::now(), &ActorRef::test())
+            .add_session(task2, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let mut task3 = spawn_task();
         task3.prompt = "Refactor database layer".to_string();
         let (task3_id, _) = store
-            .add_task(task3, Utc::now(), &ActorRef::test())
+            .add_session(task3, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         // Search for "auth" should match task1
-        let query = SearchJobsQuery::new(Some("auth".to_string()), None, None, vec![]);
+        let query = SearchSessionsQuery::new(Some("auth".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -4932,9 +5028,9 @@ mod tests {
         assert_eq!(tasks, vec![task1_id.clone()]);
 
         // Search for "login" should match task2
-        let query = SearchJobsQuery::new(Some("login".to_string()), None, None, vec![]);
+        let query = SearchSessionsQuery::new(Some("login".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -4943,9 +5039,9 @@ mod tests {
         assert_eq!(tasks, vec![task2_id.clone()]);
 
         // Search for "FIX" (case-insensitive) should match task1
-        let query = SearchJobsQuery::new(Some("FIX".to_string()), None, None, vec![]);
+        let query = SearchSessionsQuery::new(Some("FIX".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -4954,14 +5050,14 @@ mod tests {
         assert_eq!(tasks, vec![task1_id.clone()]);
 
         // Search for "nonexistent" should return empty
-        let query = SearchJobsQuery::new(Some("nonexistent".to_string()), None, None, vec![]);
-        let tasks: Vec<_> = store.list_tasks(&query).await.unwrap();
+        let query = SearchSessionsQuery::new(Some("nonexistent".to_string()), None, None, vec![]);
+        let tasks: Vec<_> = store.list_sessions(&query).await.unwrap();
         assert!(tasks.is_empty());
 
         // Empty search term should return all tasks
-        let query = SearchJobsQuery::new(Some("".to_string()), None, None, vec![]);
+        let query = SearchSessionsQuery::new(Some("".to_string()), None, None, vec![]);
         let tasks: HashSet<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -4976,15 +5072,15 @@ mod tests {
 
         let task = spawn_task();
         let (task_id, _) = store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(task, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         // Search by partial task ID
         let id_prefix = &task_id.as_ref()[..6]; // First 6 characters
-        let query = SearchJobsQuery::new(Some(id_prefix.to_string()), None, None, vec![]);
+        let query = SearchSessionsQuery::new(Some(id_prefix.to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -5000,7 +5096,7 @@ mod tests {
 
         // Create three tasks and transition them to different states
         let (task1_id, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         state
@@ -5013,7 +5109,7 @@ mod tests {
             .unwrap();
 
         let (task2_id, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         state
@@ -5035,7 +5131,7 @@ mod tests {
             .unwrap();
 
         let (task3_id, _) = store
-            .add_task(spawn_task(), Utc::now(), &ActorRef::test())
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         state
@@ -5083,7 +5179,7 @@ mod tests {
         assert!(empty.is_empty());
 
         // Non-existent task is silently omitted
-        let missing_id = TaskId::new();
+        let missing_id = SessionId::new();
         let partial = store
             .get_status_logs(&[task1_id.clone(), missing_id])
             .await
@@ -5099,40 +5195,40 @@ mod tests {
         // Create a task in Created status
         let task1 = spawn_task();
         let (task1_id, _) = store
-            .add_task(task1, Utc::now(), &ActorRef::test())
+            .add_session(task1, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         // Create a task and update to Running status
         let task2 = spawn_task();
         let (task2_id, _) = store
-            .add_task(task2, Utc::now(), &ActorRef::test())
+            .add_session(task2, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         let mut updated = spawn_task();
         updated.status = Status::Running;
         store
-            .update_task(&task2_id, updated, &ActorRef::test())
+            .update_session(&task2_id, updated, &ActorRef::test())
             .await
             .unwrap();
 
         // Create a task and update to Complete status
         let task3 = spawn_task();
         let (task3_id, _) = store
-            .add_task(task3, Utc::now(), &ActorRef::test())
+            .add_session(task3, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         let mut updated = spawn_task();
         updated.status = Status::Complete;
         store
-            .update_task(&task3_id, updated, &ActorRef::test())
+            .update_session(&task3_id, updated, &ActorRef::test())
             .await
             .unwrap();
 
         // Search for "created" should match task1
-        let query = SearchJobsQuery::new(Some("created".to_string()), None, None, vec![]);
+        let query = SearchSessionsQuery::new(Some("created".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -5141,9 +5237,9 @@ mod tests {
         assert_eq!(tasks, vec![task1_id]);
 
         // Search for "running" should match task2
-        let query = SearchJobsQuery::new(Some("running".to_string()), None, None, vec![]);
+        let query = SearchSessionsQuery::new(Some("running".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -5152,9 +5248,9 @@ mod tests {
         assert_eq!(tasks, vec![task2_id]);
 
         // Search for "complete" should match task3
-        let query = SearchJobsQuery::new(Some("complete".to_string()), None, None, vec![]);
+        let query = SearchSessionsQuery::new(Some("complete".to_string()), None, None, vec![]);
         let tasks: Vec<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -5170,40 +5266,40 @@ mod tests {
         // Add a task with Created status (default)
         let task1 = spawn_task();
         let (task1_id, _) = store
-            .add_task(task1, Utc::now(), &ActorRef::test())
+            .add_session(task1, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         // Add a task and update to Running status
         let task2 = spawn_task();
         let (task2_id, _) = store
-            .add_task(task2, Utc::now(), &ActorRef::test())
+            .add_session(task2, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         let mut updated = spawn_task();
         updated.status = Status::Running;
         store
-            .update_task(&task2_id, updated, &ActorRef::test())
+            .update_session(&task2_id, updated, &ActorRef::test())
             .await
             .unwrap();
 
         // Add a task and update to Complete status
         let task3 = spawn_task();
         let (task3_id, _) = store
-            .add_task(task3, Utc::now(), &ActorRef::test())
+            .add_session(task3, Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         let mut updated = spawn_task();
         updated.status = Status::Complete;
         store
-            .update_task(&task3_id, updated, &ActorRef::test())
+            .update_session(&task3_id, updated, &ActorRef::test())
             .await
             .unwrap();
 
         // Filter by Created should return only task1
-        let query = SearchJobsQuery::new(None, None, None, vec![Status::Created.into()]);
+        let query = SearchSessionsQuery::new(None, None, None, vec![Status::Created.into()]);
         let tasks: Vec<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -5212,9 +5308,9 @@ mod tests {
         assert_eq!(tasks, vec![task1_id]);
 
         // Filter by Running should return only task2
-        let query = SearchJobsQuery::new(None, None, None, vec![Status::Running.into()]);
+        let query = SearchSessionsQuery::new(None, None, None, vec![Status::Running.into()]);
         let tasks: Vec<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -5223,9 +5319,9 @@ mod tests {
         assert_eq!(tasks, vec![task2_id]);
 
         // Filter by Complete should return only task3
-        let query = SearchJobsQuery::new(None, None, None, vec![Status::Complete.into()]);
+        let query = SearchSessionsQuery::new(None, None, None, vec![Status::Complete.into()]);
         let tasks: Vec<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -5234,14 +5330,14 @@ mod tests {
         assert_eq!(tasks, vec![task3_id]);
 
         // Filter by Failed should return no tasks
-        let query = SearchJobsQuery::new(None, None, None, vec![Status::Failed.into()]);
-        let tasks: Vec<_> = store.list_tasks(&query).await.unwrap();
+        let query = SearchSessionsQuery::new(None, None, None, vec![Status::Failed.into()]);
+        let tasks: Vec<_> = store.list_sessions(&query).await.unwrap();
         assert!(tasks.is_empty());
 
         // No status filter should return all tasks
-        let query = SearchJobsQuery::new(None, None, None, vec![]);
+        let query = SearchSessionsQuery::new(None, None, None, vec![]);
         let tasks: Vec<_> = store
-            .list_tasks(&query)
+            .list_sessions(&query)
             .await
             .unwrap()
             .into_iter()
@@ -6123,15 +6219,15 @@ mod tests {
 
         for _ in 0..5 {
             store
-                .add_task(spawn_task(), Utc::now(), &actor)
+                .add_session(spawn_task(), Utc::now(), &actor)
                 .await
                 .unwrap();
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 
-        let mut query = SearchJobsQuery::default();
+        let mut query = SearchSessionsQuery::default();
         query.limit = Some(2);
-        let page1 = store.list_tasks(&query).await.unwrap();
+        let page1 = store.list_sessions(&query).await.unwrap();
         assert_eq!(page1.len(), 3);
 
         let cursor = metis_common::api::v1::pagination::DecodedCursor {
@@ -6140,10 +6236,10 @@ mod tests {
         }
         .encode();
 
-        let mut query2 = SearchJobsQuery::default();
+        let mut query2 = SearchSessionsQuery::default();
         query2.limit = Some(2);
         query2.cursor = Some(cursor);
-        let page2 = store.list_tasks(&query2).await.unwrap();
+        let page2 = store.list_sessions(&query2).await.unwrap();
         assert_eq!(page2.len(), 3);
 
         let cursor2 = metis_common::api::v1::pagination::DecodedCursor {
@@ -6152,10 +6248,10 @@ mod tests {
         }
         .encode();
 
-        let mut query3 = SearchJobsQuery::default();
+        let mut query3 = SearchSessionsQuery::default();
         query3.limit = Some(2);
         query3.cursor = Some(cursor2);
-        let page3 = store.list_tasks(&query3).await.unwrap();
+        let page3 = store.list_sessions(&query3).await.unwrap();
         assert_eq!(page3.len(), 1);
 
         let all_ids: Vec<_> = page1[..2]
@@ -6582,13 +6678,14 @@ mod tests {
 
         for _ in 0..4 {
             store
-                .add_task(spawn_task(), Utc::now(), &actor)
+                .add_session(spawn_task(), Utc::now(), &actor)
                 .await
                 .unwrap();
         }
 
-        let query = metis_common::api::v1::jobs::SearchJobsQuery::new(None, None, None, vec![]);
-        assert_eq!(store.count_tasks(&query).await.unwrap(), 4);
+        let query =
+            metis_common::api::v1::sessions::SearchSessionsQuery::new(None, None, None, vec![]);
+        assert_eq!(store.count_sessions(&query).await.unwrap(), 4);
     }
 
     #[tokio::test]

@@ -23,7 +23,7 @@ use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
 use crate::domain::actors::Actor;
-use crate::job_engine::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
+use crate::job_engine::{JobEngine, JobEngineError, JobStatus, MetisJob, SessionId};
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
@@ -33,7 +33,7 @@ pub struct KubernetesJobEngine {
 }
 
 fn merge_env_vars(
-    job_uuid: &TaskId,
+    job_uuid: &SessionId,
     env_vars: &HashMap<String, String>,
     server_hostname: &str,
     auth_token: &str,
@@ -87,7 +87,7 @@ fn build_image_pull_secrets(image_pull_secrets: &[String]) -> Option<Vec<LocalOb
 }
 
 impl KubernetesJobEngine {
-    fn build_metadata_labels(job_uuid: &TaskId) -> BTreeMap<String, String> {
+    fn build_metadata_labels(job_uuid: &SessionId) -> BTreeMap<String, String> {
         let mut metadata_labels = BTreeMap::new();
         metadata_labels.insert("metis-id".to_string(), job_uuid.to_string());
         metadata_labels
@@ -95,7 +95,7 @@ impl KubernetesJobEngine {
 
     fn build_env_vars(
         &self,
-        job_uuid: &TaskId,
+        job_uuid: &SessionId,
         env_vars: &HashMap<String, String>,
         auth_token: &str,
     ) -> Vec<EnvVar> {
@@ -118,12 +118,12 @@ impl KubernetesJobEngine {
         JobStatus::Pending
     }
 
-    fn job_metis_id(job: &Job) -> Option<TaskId> {
+    fn job_metis_id(job: &Job) -> Option<SessionId> {
         job.metadata
             .labels
             .as_ref()
             .and_then(|labels| labels.get("metis-id"))
-            .and_then(|value| value.parse::<TaskId>().ok())
+            .and_then(|value| value.parse::<SessionId>().ok())
     }
 
     fn job_end_time(job: &Job) -> Option<DateTime<Utc>> {
@@ -217,12 +217,12 @@ impl KubernetesJobEngine {
         }
     }
 
-    fn pod_metis_id(pod: &Pod) -> Option<TaskId> {
+    fn pod_metis_id(pod: &Pod) -> Option<SessionId> {
         pod.metadata
             .labels
             .as_ref()
             .and_then(|labels| labels.get("metis-id"))
-            .and_then(|value| value.parse::<TaskId>().ok())
+            .and_then(|value| value.parse::<SessionId>().ok())
     }
 
     fn pod_completion_time(pod: &Pod) -> Option<DateTime<Utc>> {
@@ -301,23 +301,23 @@ impl KubernetesJobEngine {
 
     async fn find_kubernetes_job_by_metis_id(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
     ) -> Result<Job, JobEngineError> {
         find_kubernetes_job_by_metis_id_impl(&self.client, &self.namespace, job_id).await
     }
 
     async fn find_kubernetes_pod_by_metis_id(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
     ) -> Result<Pod, JobEngineError> {
         find_kubernetes_pod_by_metis_id_impl(&self.client, &self.namespace, job_id).await
     }
 
-    async fn resolve_pod_name(&self, job_id: &TaskId) -> Result<String, JobEngineError> {
+    async fn resolve_pod_name(&self, job_id: &SessionId) -> Result<String, JobEngineError> {
         resolve_pod_name_impl(&self.client, &self.namespace, job_id).await
     }
 
-    async fn kill_pods_by_metis_id(&self, metis_id: &TaskId) -> Result<(), JobEngineError> {
+    async fn kill_pods_by_metis_id(&self, metis_id: &SessionId) -> Result<(), JobEngineError> {
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
         let selector = format!("metis-id={metis_id}");
         let lp = ListParams::default().labels(&selector);
@@ -376,7 +376,7 @@ impl KubernetesJobEngine {
 async fn find_kubernetes_job_by_metis_id_impl(
     client: &Client,
     namespace: &str,
-    job_id: &TaskId,
+    job_id: &SessionId,
 ) -> Result<Job, JobEngineError> {
     let jobs: Api<Job> = Api::namespaced(client.clone(), namespace);
     let selector = format!("metis-id={job_id}");
@@ -400,7 +400,7 @@ async fn find_kubernetes_job_by_metis_id_impl(
 async fn find_kubernetes_pod_by_metis_id_impl(
     client: &Client,
     namespace: &str,
-    job_id: &TaskId,
+    job_id: &SessionId,
 ) -> Result<Pod, JobEngineError> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let selector = format!("metis-id={job_id}");
@@ -456,7 +456,7 @@ async fn wait_for_pod_name_impl(
 async fn resolve_pod_name_impl(
     client: &Client,
     namespace: &str,
-    job_id: &TaskId,
+    job_id: &SessionId,
 ) -> Result<String, JobEngineError> {
     match find_kubernetes_job_by_metis_id_impl(client, namespace, job_id).await {
         Ok(job) => {
@@ -479,7 +479,7 @@ async fn resolve_pod_name_impl(
 impl JobEngine for KubernetesJobEngine {
     async fn create_job(
         &self,
-        metis_id: &TaskId,
+        metis_id: &SessionId,
         actor: &Actor,
         auth_token: &str,
         image: &str,
@@ -603,7 +603,8 @@ impl JobEngine for KubernetesJobEngine {
             .into_iter()
             .filter_map(|job| Self::to_metis_job(&job).ok())
             .collect();
-        let mut seen_ids: HashSet<TaskId> = metis_jobs.iter().map(|job| job.id.clone()).collect();
+        let mut seen_ids: HashSet<SessionId> =
+            metis_jobs.iter().map(|job| job.id.clone()).collect();
 
         let pods_api: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
         let pods = pods_api
@@ -638,7 +639,7 @@ impl JobEngine for KubernetesJobEngine {
         Ok(metis_jobs)
     }
 
-    async fn find_job_by_metis_id(&self, metis_id: &TaskId) -> Result<MetisJob, JobEngineError> {
+    async fn find_job_by_metis_id(&self, metis_id: &SessionId) -> Result<MetisJob, JobEngineError> {
         match self.find_kubernetes_job_by_metis_id(metis_id).await {
             Ok(job) => Self::to_metis_job(&job),
             Err(JobEngineError::NotFound(_)) => {
@@ -651,7 +652,7 @@ impl JobEngine for KubernetesJobEngine {
 
     async fn get_logs(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         tail_lines: Option<i64>,
     ) -> Result<String, JobEngineError> {
         let pod_name = self.resolve_pod_name(job_id).await?;
@@ -687,7 +688,7 @@ impl JobEngine for KubernetesJobEngine {
 
     fn get_logs_stream(
         &self,
-        job_id: &TaskId,
+        job_id: &SessionId,
         follow: bool,
     ) -> Result<mpsc::UnboundedReceiver<String>, JobEngineError> {
         let (tx, rx) = mpsc::unbounded();
@@ -745,7 +746,7 @@ impl JobEngine for KubernetesJobEngine {
         Ok(rx)
     }
 
-    async fn kill_job(&self, metis_id: &TaskId) -> Result<(), JobEngineError> {
+    async fn kill_job(&self, metis_id: &SessionId) -> Result<(), JobEngineError> {
         match self.find_kubernetes_job_by_metis_id(metis_id).await {
             Ok(job) => {
                 let job_name = job.metadata.name.ok_or_else(|| {
@@ -805,7 +806,7 @@ mod tests {
 
     #[test]
     fn merge_env_vars_combines_task_and_system_values() {
-        let job_id: TaskId = "t-abcd".parse().unwrap();
+        let job_id: SessionId = "t-abcd".parse().unwrap();
         let mut task_env = HashMap::from([
             ("CUSTOM".to_string(), "1".to_string()),
             ("OPENAI_API_KEY".to_string(), "openai-key".to_string()),
@@ -854,7 +855,7 @@ mod tests {
 
     #[test]
     fn merge_env_vars_skips_empty_server_hostname() {
-        let job_id: TaskId = "t-abcd".parse().unwrap();
+        let job_id: SessionId = "t-abcd".parse().unwrap();
         let merged = merge_env_vars(&job_id, &HashMap::new(), "   ", "auth-token");
 
         let merged_map: HashMap<_, _> = merged
@@ -882,7 +883,7 @@ mod tests {
 
     #[test]
     fn to_metis_job_from_pod_uses_pod_metadata() {
-        let job_id: TaskId = "t-abcd".parse().unwrap();
+        let job_id: SessionId = "t-abcd".parse().unwrap();
         let creation = Time(Utc::now());
         let start = Time(Utc::now());
         let finished = Time(Utc::now());
@@ -924,7 +925,7 @@ mod tests {
 
     #[test]
     fn pod_failure_message_prefers_terminated_message() {
-        let job_id: TaskId = "t-abcd".parse().unwrap();
+        let job_id: SessionId = "t-abcd".parse().unwrap();
         let pod = Pod {
             metadata: ObjectMeta {
                 name: Some("pod-name".into()),

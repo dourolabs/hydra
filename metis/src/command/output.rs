@@ -13,9 +13,9 @@ use metis_common::{
     },
     documents::{DocumentSummaryRecord, DocumentVersionRecord},
     issues::{Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord},
-    jobs::{JobSummary, JobSummaryRecord, JobVersionRecord, Task},
     patches::{PatchStatus, PatchSummaryRecord, PatchVersionRecord},
     repositories::RepositoryRecord,
+    sessions::{Session, SessionSummary, SessionSummaryRecord, SessionVersionRecord},
     task_status::{Status, TaskError},
     whoami::ActorIdentity,
     NotificationId,
@@ -119,7 +119,7 @@ pub fn render_patch_summary_records(
 
 pub fn render_job_records(
     format: ResolvedOutputFormat,
-    jobs: &[JobVersionRecord],
+    jobs: &[SessionVersionRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
     match format {
@@ -130,7 +130,7 @@ pub fn render_job_records(
 
 pub fn render_job_summary_records(
     format: ResolvedOutputFormat,
-    jobs: &[JobSummaryRecord],
+    jobs: &[SessionSummaryRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
     match format {
@@ -479,7 +479,7 @@ fn format_patch_status(status: PatchStatus) -> &'static str {
     }
 }
 
-fn render_job_records_jsonl(jobs: &[JobVersionRecord], writer: &mut impl Write) -> Result<()> {
+fn render_job_records_jsonl(jobs: &[SessionVersionRecord], writer: &mut impl Write) -> Result<()> {
     for job in jobs {
         serde_json::to_writer(&mut *writer, job)?;
         writer.write_all(b"\n")?;
@@ -488,7 +488,7 @@ fn render_job_records_jsonl(jobs: &[JobVersionRecord], writer: &mut impl Write) 
     Ok(())
 }
 
-fn render_job_records_pretty(jobs: &[JobVersionRecord], writer: &mut impl Write) -> Result<()> {
+fn render_job_records_pretty(jobs: &[SessionVersionRecord], writer: &mut impl Write) -> Result<()> {
     if jobs.is_empty() {
         writeln!(writer, "No Metis jobs found.")?;
         writer.flush()?;
@@ -503,12 +503,12 @@ fn render_job_records_pretty(jobs: &[JobVersionRecord], writer: &mut impl Write)
 
     let now = Utc::now();
     for job in jobs {
-        let status_display = format_status(&job.task.status);
-        let runtime = format_runtime(&job.task, now).unwrap_or_else(|| "-".into());
+        let status_display = format_status(&job.session.status);
+        let runtime = format_runtime(&job.session, now).unwrap_or_else(|| "-".into());
         let notes = job_note(job).unwrap_or_else(|| "-".into());
-        let cells = job_row_cells(job.job_id.as_ref(), status_display, &runtime);
+        let cells = job_row_cells(job.session_id.as_ref(), status_display, &runtime);
         let plain_prefix = job_row_prefix(&cells);
-        let colored_prefix = colored_job_row_prefix(&cells, &job.task.status);
+        let colored_prefix = colored_job_row_prefix(&cells, &job.session.status);
         for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
             .into_iter()
             .enumerate()
@@ -526,7 +526,7 @@ fn render_job_records_pretty(jobs: &[JobVersionRecord], writer: &mut impl Write)
 }
 
 fn render_job_summary_records_jsonl(
-    jobs: &[JobSummaryRecord],
+    jobs: &[SessionSummaryRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
     for job in jobs {
@@ -538,7 +538,7 @@ fn render_job_summary_records_jsonl(
 }
 
 fn render_job_summary_records_pretty(
-    jobs: &[JobSummaryRecord],
+    jobs: &[SessionSummaryRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
     if jobs.is_empty() {
@@ -555,12 +555,12 @@ fn render_job_summary_records_pretty(
 
     let now = Utc::now();
     for job in jobs {
-        let status_display = format_status(&job.task.status);
-        let runtime = format_summary_runtime(&job.task, now).unwrap_or_else(|| "-".into());
+        let status_display = format_status(&job.session.status);
+        let runtime = format_summary_runtime(&job.session, now).unwrap_or_else(|| "-".into());
         let notes = job_summary_note(job).unwrap_or_else(|| "-".into());
-        let cells = job_row_cells(job.job_id.as_ref(), status_display, &runtime);
+        let cells = job_row_cells(job.session_id.as_ref(), status_display, &runtime);
         let plain_prefix = job_row_prefix(&cells);
-        let colored_prefix = colored_job_row_prefix(&cells, &job.task.status);
+        let colored_prefix = colored_job_row_prefix(&cells, &job.session.status);
         for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
             .into_iter()
             .enumerate()
@@ -893,12 +893,12 @@ fn format_status(status: &Status) -> &'static str {
     }
 }
 
-fn job_note(job: &JobVersionRecord) -> Option<String> {
-    job.task.error.as_ref().map(format_task_error)
+fn job_note(job: &SessionVersionRecord) -> Option<String> {
+    job.session.error.as_ref().map(format_task_error)
 }
 
-fn job_summary_note(job: &JobSummaryRecord) -> Option<String> {
-    job.task.error.as_ref().map(format_task_error)
+fn job_summary_note(job: &SessionSummaryRecord) -> Option<String> {
+    job.session.error.as_ref().map(format_task_error)
 }
 
 fn format_task_error(error: &TaskError) -> String {
@@ -965,7 +965,7 @@ fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize) -> Vec<Str
     }
 }
 
-pub(crate) fn format_runtime(task: &Task, now: DateTime<Utc>) -> Option<String> {
+pub(crate) fn format_runtime(task: &Session, now: DateTime<Utc>) -> Option<String> {
     format_runtime_fields(
         task.status,
         task.start_time,
@@ -975,7 +975,7 @@ pub(crate) fn format_runtime(task: &Task, now: DateTime<Utc>) -> Option<String> 
     )
 }
 
-fn format_summary_runtime(summary: &JobSummary, now: DateTime<Utc>) -> Option<String> {
+fn format_summary_runtime(summary: &SessionSummary, now: DateTime<Utc>) -> Option<String> {
     format_runtime_fields(
         summary.status,
         summary.start_time,
@@ -1150,7 +1150,7 @@ mod tests {
     use metis_common::{
         documents::{Document, DocumentVersionRecord},
         whoami::WhoAmIResponse,
-        DocumentId, TaskId,
+        DocumentId, SessionId,
     };
     use std::str::FromStr;
 
@@ -1182,7 +1182,7 @@ mod tests {
         let server = MockServer::start();
         let client = MetisClient::new(server.base_url(), TEST_METIS_TOKEN).expect("client");
         let whoami = WhoAmIResponse::new(ActorIdentity::Session {
-            session_id: TaskId::from_str("t-task").expect("task id"),
+            session_id: SessionId::from_str("t-task").expect("task id"),
             creator: "test-creator".into(),
         });
 
@@ -1273,7 +1273,7 @@ mod tests {
             "Doc".to_string(),
             body_lines.join("\n"),
             Some("docs/runbook.md".to_string()),
-            Some(TaskId::new()),
+            Some(SessionId::new()),
             false,
         )
         .unwrap();
@@ -1306,7 +1306,7 @@ mod tests {
             "Doc".to_string(),
             body_lines.join("\n"),
             Some("docs/runbook.md".to_string()),
-            Some(TaskId::new()),
+            Some(SessionId::new()),
             false,
         )
         .unwrap();

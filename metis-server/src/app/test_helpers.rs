@@ -2,7 +2,7 @@ use crate::{
     app::{AppState, ServiceState},
     domain::{
         issues::{Issue, IssueDependency, IssueStatus, IssueType},
-        jobs::{BundleSpec, Task},
+        sessions::{BundleSpec, Session},
         task_status::Status,
         users::Username,
     },
@@ -13,8 +13,8 @@ use metis_common::IssueId;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
-pub fn sample_task() -> Task {
-    Task::new(
+pub fn sample_task() -> Session {
+    Session::new(
         "Spawn me".to_string(),
         BundleSpec::None,
         None,
@@ -31,8 +31,8 @@ pub fn sample_task() -> Task {
     )
 }
 
-pub fn task_for_issue(issue_id: &IssueId) -> Task {
-    Task::new(
+pub fn task_for_issue(issue_id: &IssueId) -> Session {
+    Session::new(
         "Spawn me".to_string(),
         BundleSpec::None,
         Some(issue_id.clone()),
