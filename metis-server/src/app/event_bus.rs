@@ -47,7 +47,7 @@ pub enum MutationPayload {
         new: Patch,
         actor: ActorRef,
     },
-    Job {
+    Session {
         old: Option<Session>,
         new: Session,
         actor: ActorRef,
@@ -80,7 +80,7 @@ impl MutationPayload {
         match self {
             MutationPayload::Issue { actor, .. }
             | MutationPayload::Patch { actor, .. }
-            | MutationPayload::Job { actor, .. }
+            | MutationPayload::Session { actor, .. }
             | MutationPayload::Document { actor, .. }
             | MutationPayload::Label { actor, .. }
             | MutationPayload::Message { actor, .. }
@@ -99,8 +99,8 @@ pub enum EventType {
     PatchCreated,
     PatchUpdated,
     PatchDeleted,
-    JobCreated,
-    JobUpdated,
+    SessionCreated,
+    SessionUpdated,
     DocumentCreated,
     DocumentUpdated,
     DocumentDeleted,
@@ -164,16 +164,16 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
-    JobCreated {
+    SessionCreated {
         seq: u64,
-        task_id: SessionId,
+        session_id: SessionId,
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
-    JobUpdated {
+    SessionUpdated {
         seq: u64,
-        task_id: SessionId,
+        session_id: SessionId,
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
@@ -257,8 +257,8 @@ impl ServerEvent {
             | ServerEvent::PatchCreated { seq, .. }
             | ServerEvent::PatchUpdated { seq, .. }
             | ServerEvent::PatchDeleted { seq, .. }
-            | ServerEvent::JobCreated { seq, .. }
-            | ServerEvent::JobUpdated { seq, .. }
+            | ServerEvent::SessionCreated { seq, .. }
+            | ServerEvent::SessionUpdated { seq, .. }
             | ServerEvent::DocumentCreated { seq, .. }
             | ServerEvent::DocumentUpdated { seq, .. }
             | ServerEvent::DocumentDeleted { seq, .. }
@@ -280,8 +280,8 @@ impl ServerEvent {
             | ServerEvent::PatchCreated { payload, .. }
             | ServerEvent::PatchUpdated { payload, .. }
             | ServerEvent::PatchDeleted { payload, .. }
-            | ServerEvent::JobCreated { payload, .. }
-            | ServerEvent::JobUpdated { payload, .. }
+            | ServerEvent::SessionCreated { payload, .. }
+            | ServerEvent::SessionUpdated { payload, .. }
             | ServerEvent::DocumentCreated { payload, .. }
             | ServerEvent::DocumentUpdated { payload, .. }
             | ServerEvent::DocumentDeleted { payload, .. }
@@ -303,8 +303,8 @@ impl ServerEvent {
             ServerEvent::PatchCreated { .. } => EventType::PatchCreated,
             ServerEvent::PatchUpdated { .. } => EventType::PatchUpdated,
             ServerEvent::PatchDeleted { .. } => EventType::PatchDeleted,
-            ServerEvent::JobCreated { .. } => EventType::JobCreated,
-            ServerEvent::JobUpdated { .. } => EventType::JobUpdated,
+            ServerEvent::SessionCreated { .. } => EventType::SessionCreated,
+            ServerEvent::SessionUpdated { .. } => EventType::SessionUpdated,
             ServerEvent::DocumentCreated { .. } => EventType::DocumentCreated,
             ServerEvent::DocumentUpdated { .. } => EventType::DocumentUpdated,
             ServerEvent::DocumentDeleted { .. } => EventType::DocumentDeleted,
@@ -447,30 +447,30 @@ impl EventBus {
         });
     }
 
-    pub fn emit_job_created(
+    pub fn emit_session_created(
         &self,
-        task_id: SessionId,
+        session_id: SessionId,
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::JobCreated {
+        self.send(ServerEvent::SessionCreated {
             seq: self.next_seq(),
-            task_id,
+            session_id,
             version,
             timestamp: Utc::now(),
             payload,
         });
     }
 
-    pub fn emit_job_updated(
+    pub fn emit_session_updated(
         &self,
-        task_id: SessionId,
+        session_id: SessionId,
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::JobUpdated {
+        self.send(ServerEvent::SessionUpdated {
             seq: self.next_seq(),
-            task_id,
+            session_id,
             version,
             timestamp: Utc::now(),
             payload,
@@ -853,13 +853,13 @@ impl StoreWithEvents {
             .inner
             .add_session(session, creation_time, &actor)
             .await?;
-        let payload = Arc::new(MutationPayload::Job {
+        let payload = Arc::new(MutationPayload::Session {
             old: None,
             new: new_session,
             actor,
         });
         self.event_bus
-            .emit_job_created(session_id.clone(), version, payload);
+            .emit_session_created(session_id.clone(), version, payload);
         Ok((session_id, version))
     }
 
@@ -877,13 +877,13 @@ impl StoreWithEvents {
             .map(|v| v.item);
         let new_session = session.clone();
         let result = self.inner.update_session(metis_id, session, &actor).await?;
-        let payload = Arc::new(MutationPayload::Job {
+        let payload = Arc::new(MutationPayload::Session {
             old: old_session,
             new: new_session,
             actor,
         });
         self.event_bus
-            .emit_job_updated(metis_id.clone(), result.version, payload);
+            .emit_session_updated(metis_id.clone(), result.version, payload);
         Ok(result)
     }
 
@@ -1977,7 +1977,7 @@ mod tests {
             .add_session_with_actor(task, chrono::Utc::now(), ActorRef::test())
             .await
             .unwrap();
-        let _ = rx.recv().await.unwrap(); // consume JobCreated
+        let _ = rx.recv().await.unwrap(); // consume SessionCreated
 
         let updated_task = StoreTask {
             prompt: "test task".to_string(),
@@ -2004,19 +2004,19 @@ mod tests {
             .await
             .unwrap();
 
-        let event = rx.recv().await.expect("should receive JobUpdated");
+        let event = rx.recv().await.expect("should receive SessionUpdated");
         match &event {
-            ServerEvent::JobUpdated { payload, .. } => match payload.as_ref() {
-                MutationPayload::Job { old, new, .. } => {
+            ServerEvent::SessionUpdated { payload, .. } => match payload.as_ref() {
+                MutationPayload::Session { old, new, .. } => {
                     let old = old.as_ref().expect("update event should carry old state");
                     assert_eq!(old.status, Status::Created);
                     assert!(old.last_message.is_none());
                     assert_eq!(new.status, Status::Running);
                     assert_eq!(new.last_message.as_deref(), Some("doing work"));
                 }
-                other => panic!("expected Job payload, got {other:?}"),
+                other => panic!("expected Session payload, got {other:?}"),
             },
-            other => panic!("expected JobUpdated, got {other:?}"),
+            other => panic!("expected SessionUpdated, got {other:?}"),
         }
     }
 
