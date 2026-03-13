@@ -13,7 +13,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROMPTS_DIR="${SCRIPT_DIR}/agent-prompts"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROMPTS_DIR="${REPO_ROOT}/prompts/agents"
 
 AGENTS=("swe" "pm" "reviewer" "merger")
 

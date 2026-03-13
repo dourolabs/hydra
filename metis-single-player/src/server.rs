@@ -145,11 +145,14 @@ fn cmd_init() -> Result<()> {
     Ok(())
 }
 
-const PLAYBOOK_ADD_NEW_REPO: &str = include_str!("../../playbooks/add-new-repo.md");
-const PLAYBOOK_DESIGN_REVIEW: &str = include_str!("../../playbooks/design-review.md");
+const PLAYBOOK_ADD_NEW_REPO: &str = include_str!("../../prompts/playbooks/add-new-repo.md");
+const PLAYBOOK_DESIGN_REVIEW: &str = include_str!("../../prompts/playbooks/design-review.md");
 
 /// Upload default playbooks to the server's document store.
 fn upload_default_playbooks(auth_token: &str) -> Result<()> {
+    use metis::client::MetisClient;
+    use metis_common::documents::{Document, UpsertDocumentRequest};
+
     let playbooks = [
         (
             "Add new repo to metis",
@@ -163,31 +166,23 @@ fn upload_default_playbooks(auth_token: &str) -> Result<()> {
         ),
     ];
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()?;
+    let client = MetisClient::new(LOCAL_SERVER_URL, auth_token)?;
+
+    let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
 
     for (title, body, path) in playbooks {
-        let payload = serde_json::json!({
-            "document": {
-                "title": title,
-                "body_markdown": body,
-                "path": path,
-            }
-        });
+        let document = Document::new(
+            title.to_string(),
+            body.to_string(),
+            Some(path.to_string()),
+            None,
+            false,
+        )
+        .with_context(|| format!("invalid document path {path}"))?;
+        let request = UpsertDocumentRequest::new(document);
 
-        let resp = client
-            .post(format!("{LOCAL_SERVER_URL}/v1/documents"))
-            .bearer_auth(auth_token)
-            .json(&payload)
-            .send()
+        rt.block_on(client.create_document(&request))
             .with_context(|| format!("failed to upload playbook {path}"))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().unwrap_or_default();
-            bail!("failed to upload playbook {path}: {status} {body}");
-        }
 
         println!("Uploaded playbook: {path}");
     }
