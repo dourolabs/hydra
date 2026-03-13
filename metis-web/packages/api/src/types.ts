@@ -133,6 +133,7 @@ export type { UpsertRepositoryResponse } from "./generated/UpsertRepositoryRespo
 export type { User } from "./generated/User";
 export type { UserSummary } from "./generated/UserSummary";
 export type { Username } from "./generated/Username";
+export type { VersionResponse } from "./generated/VersionResponse";
 export type { Versioned } from "./generated/Versioned";
 export type { WhoAmIResponse } from "./generated/WhoAmIResponse";
 export type { WorkerContext } from "./generated/WorkerContext";
