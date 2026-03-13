@@ -45,7 +45,7 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
             None,
             vec![Status::Pending.into(), Status::Running.into()],
         );
-        let active_ids: Vec<_> = match self.state.list_tasks_with_query(&query).await {
+        let active_ids: Vec<_> = match self.state.list_sessions_with_query(&query).await {
             Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
             Err(err) => {
                 error!(error = %err, "failed to list active tasks");

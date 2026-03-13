@@ -855,7 +855,7 @@ async fn build_snapshot(state: &AppState) -> SnapshotEventData {
     }
 
     if let Ok(tasks) = state
-        .list_tasks_with_query(&sessions::SearchSessionsQuery::default())
+        .list_sessions_with_query(&sessions::SearchSessionsQuery::default())
         .await
     {
         for (id, versioned) in tasks {

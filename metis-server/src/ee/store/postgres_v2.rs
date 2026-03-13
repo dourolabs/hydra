@@ -11,9 +11,9 @@ use crate::{
         documents::Document,
         issues::{
             Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
-            JobSettings, TodoItem,
+            SessionSettings, TodoItem,
         },
-        jobs::{BundleSpec, Task},
+        sessions::{BundleSpec, Session},
         labels::Label,
         messages::Message,
         notifications::Notification,
@@ -28,14 +28,14 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::sessions::SearchJobsQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, Rgb,
-    TaskId, VersionNumber, Versioned,
+    SessionId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -153,7 +153,7 @@ impl PostgresStoreV2 {
         }
     }
 
-    async fn ensure_task_exists(&self, id: &TaskId) -> Result<(), StoreError> {
+    async fn ensure_session_exists(&self, id: &SessionId) -> Result<(), StoreError> {
         let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT COUNT(1) FROM {TABLE_TASKS_V2} WHERE id = $1"
         ))
@@ -241,8 +241,8 @@ impl PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for issue '{id}'"))
         })?;
 
-        let job_settings_json = serde_json::to_value(&issue.job_settings)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize job_settings: {e}")))?;
+        let job_settings_json = serde_json::to_value(&issue.session_settings)
+            .map_err(|e| StoreError::Internal(format!("failed to serialize session_settings: {e}")))?;
         let todo_list_json = serde_json::to_value(&issue.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
         let query = format!(
@@ -326,9 +326,9 @@ impl PostgresStoreV2 {
         let issue_type = IssueType::from_str(&row.issue_type)
             .map_err(|e| StoreError::Internal(format!("invalid issue_type: {e}")))?;
         let status = IssueStatus::from_str(&row.status).map_err(StoreError::InvalidIssueStatus)?;
-        let job_settings: JobSettings =
+        let session_settings: SessionSettings =
             serde_json::from_value(row.job_settings.clone()).map_err(|e| {
-                StoreError::Internal(format!("failed to deserialize job_settings: {e}"))
+                StoreError::Internal(format!("failed to deserialize session_settings: {e}"))
             })?;
         let todo_list: Vec<TodoItem> = serde_json::from_value(row.todo_list.clone())
             .map_err(|e| StoreError::Internal(format!("failed to deserialize todo_list: {e}")))?;
@@ -340,7 +340,7 @@ impl PostgresStoreV2 {
             progress: row.progress.clone(),
             status,
             assignee: row.assignee.clone(),
-            job_settings,
+            session_settings,
             todo_list,
             dependencies: vec![],
             patches: vec![],
@@ -619,7 +619,7 @@ impl PostgresStoreV2 {
             .created_by
             .as_ref()
             .map(|s| {
-                TaskId::from_str(s)
+                SessionId::from_str(s)
                     .map_err(|e| StoreError::Internal(format!("invalid created_by task id: {e}")))
             })
             .transpose()?;
@@ -655,25 +655,25 @@ impl PostgresStoreV2 {
     }
 
     // -------------------------------------------------------------------------
-    // Task helpers
+    // Session helpers
     // -------------------------------------------------------------------------
 
-    async fn insert_task(
+    async fn insert_session(
         &self,
-        id: &TaskId,
+        id: &SessionId,
         version_number: VersionNumber,
-        task: &Task,
+        session: &Session,
         actor: Option<&Value>,
     ) -> Result<(), StoreError> {
         let version_number = i64::try_from(version_number).map_err(|_| {
             StoreError::Internal(format!("version number overflow for task '{id}'"))
         })?;
 
-        let context_json = serde_json::to_value(&task.context)
+        let context_json = serde_json::to_value(&session.context)
             .map_err(|e| StoreError::Internal(format!("failed to serialize context: {e}")))?;
-        let env_vars_json = serde_json::to_value(&task.env_vars)
+        let env_vars_json = serde_json::to_value(&session.env_vars)
             .map_err(|e| StoreError::Internal(format!("failed to serialize env_vars: {e}")))?;
-        let error_json = task
+        let error_json = session
             .error
             .as_ref()
             .map(|e| {
@@ -683,7 +683,7 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        let secrets_json = task
+        let secrets_json = session
             .secrets
             .as_ref()
             .map(|s| {
@@ -693,7 +693,7 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        let status_str = match task.status {
+        let status_str = match session.status {
             Status::Created => "created",
             Status::Pending => "pending",
             Status::Running => "running",
@@ -708,24 +708,24 @@ impl PostgresStoreV2 {
         sqlx::query(&query)
             .bind(id.as_ref())
             .bind(version_number)
-            .bind(&task.prompt)
+            .bind(&session.prompt)
             .bind(&context_json)
-            .bind(task.spawned_from.as_ref().map(|i| i.as_ref()))
-            .bind(task.creator.as_str())
-            .bind(task.image.as_deref())
-            .bind(task.model.as_deref())
+            .bind(session.spawned_from.as_ref().map(|i| i.as_ref()))
+            .bind(session.creator.as_str())
+            .bind(session.image.as_deref())
+            .bind(session.model.as_deref())
             .bind(&env_vars_json)
-            .bind(task.cpu_limit.as_deref())
-            .bind(task.memory_limit.as_deref())
+            .bind(session.cpu_limit.as_deref())
+            .bind(session.memory_limit.as_deref())
             .bind(status_str)
-            .bind(task.last_message.as_deref())
+            .bind(session.last_message.as_deref())
             .bind(&error_json)
-            .bind(task.deleted)
+            .bind(session.deleted)
             .bind(actor)
             .bind(&secrets_json)
-            .bind(task.creation_time)
-            .bind(task.start_time)
-            .bind(task.end_time)
+            .bind(session.creation_time)
+            .bind(session.start_time)
+            .bind(session.end_time)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -733,7 +733,7 @@ impl PostgresStoreV2 {
         Ok(())
     }
 
-    fn row_to_task(&self, row: &TaskRow) -> Result<Task, StoreError> {
+    fn row_to_session(&self, row: &TaskRow) -> Result<Session, StoreError> {
         let context: BundleSpec = serde_json::from_value(row.context.clone())
             .map_err(|e| StoreError::Internal(format!("failed to deserialize context: {e}")))?;
         let env_vars: HashMap<String, String> = serde_json::from_value(row.env_vars.clone())
@@ -779,7 +779,7 @@ impl PostgresStoreV2 {
             }
         };
 
-        Ok(Task {
+        Ok(Session {
             prompt: row.prompt.clone(),
             context,
             spawned_from,
@@ -840,7 +840,7 @@ impl PostgresStoreV2 {
             .created_by
             .as_ref()
             .map(|s| {
-                TaskId::from_str(s)
+                SessionId::from_str(s)
                     .map_err(|e| StoreError::Internal(format!("invalid created_by task id: {e}")))
             })
             .transpose()?;
@@ -1691,7 +1691,7 @@ fn build_documents_predicates_pg(query: &SearchDocumentsQuery) -> (Vec<String>, 
 }
 
 /// Build WHERE predicates and bindings for tasks queries (PostgreSQL `$N` placeholders).
-fn build_tasks_predicates_pg(query: &SearchJobsQuery) -> (Vec<String>, Vec<String>) {
+fn build_tasks_predicates_pg(query: &SearchSessionsQuery) -> (Vec<String>, Vec<String>) {
     let mut predicates = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
 
@@ -2137,10 +2137,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .collect()
     }
 
-    async fn get_sessions_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
+    async fn get_sessions_for_issue(&self, issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
         // Use spawned_from filter at the database level for efficiency
-        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, vec![]);
+        let query = SearchSessionsQuery::new(None, Some(issue_id.clone()), None, vec![]);
         let tasks = self.list_sessions(&query).await?;
         Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }
@@ -2530,12 +2530,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     // -------------------------------------------------------------------------
-    // Task methods
+    // Session methods
     // -------------------------------------------------------------------------
 
     async fn get_session(
         &self,
-        id: &TaskId,
+        id: &SessionId,
         include_deleted: bool,
     ) -> Result<Versioned<Session>, StoreError> {
         let query = format!(
@@ -2561,7 +2561,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 row.id
             ))
         })?;
-        let task = self.row_to_task(&row)?;
+        let task = self.row_to_session(&row)?;
         Ok(Versioned::with_optional_actor(
             task,
             version,
@@ -2571,7 +2571,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         ))
     }
 
-    async fn get_session_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Session>>, StoreError> {
+    async fn get_session_versions(&self, id: &SessionId) -> Result<Vec<Versioned<Session>>, StoreError> {
         let query = format!(
             "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time
              FROM {TABLE_TASKS_V2}
@@ -2596,7 +2596,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                     row.id
                 ))
             })?;
-            let task = self.row_to_task(&row)?;
+            let task = self.row_to_session(&row)?;
             results.push(Versioned::with_optional_actor(
                 task,
                 version,
@@ -2611,8 +2611,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn list_sessions(
         &self,
-        query: &SearchJobsQuery,
-    ) -> Result<Vec<(TaskId, Versioned<Session>)>, StoreError> {
+        query: &SearchSessionsQuery,
+    ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         // Use a subquery to get the latest version of each task first,
         // then apply filters. This ensures we filter on the current state
         // of each task, not historical versions.
@@ -2651,8 +2651,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
                     row.id
                 ))
             })?;
-            let task = self.row_to_task(&row)?;
-            let task_id = row.id.parse::<TaskId>().map_err(|err| {
+            let task = self.row_to_session(&row)?;
+            let task_id = row.id.parse::<SessionId>().map_err(|err| {
                 StoreError::Internal(format!("invalid task id stored in database: {err}"))
             })?;
             tasks.push((
@@ -2670,7 +2670,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(tasks)
     }
 
-    async fn count_sessions(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
+    async fn count_sessions(&self, query: &SearchSessionsQuery) -> Result<u64, StoreError> {
         let subquery = format!(
             "SELECT DISTINCT ON (id) id, prompt, spawned_from, status, deleted \
              FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
@@ -2696,7 +2696,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(count as u64)
     }
 
-    async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
+    async fn get_status_log(&self, id: &SessionId) -> Result<TaskStatusLog, StoreError> {
         let versions = self.get_session_versions(id).await?;
         crate::store::session_status_log_from_versions(&versions)
             .ok_or_else(|| StoreError::SessionNotFound(id.clone()))
@@ -2704,8 +2704,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_status_logs(
         &self,
-        ids: &[TaskId],
-    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
+        ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -2723,7 +2723,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .await
             .map_err(map_sqlx_error)?;
 
-        let mut grouped: HashMap<TaskId, Vec<Versioned<Session>>> = HashMap::new();
+        let mut grouped: HashMap<SessionId, Vec<Versioned<Session>>> = HashMap::new();
         for row in rows {
             let version = VersionNumber::try_from(row.version_number).map_err(|_| {
                 StoreError::Internal(format!(
@@ -2731,8 +2731,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
                     row.id
                 ))
             })?;
-            let task = self.row_to_task(&row)?;
-            let task_id = row.id.parse::<TaskId>().map_err(|err| {
+            let task = self.row_to_session(&row)?;
+            let task_id = row.id.parse::<SessionId>().map_err(|err| {
                 StoreError::Internal(format!("invalid task id stored in database: {err}"))
             })?;
             grouped
@@ -3695,7 +3695,7 @@ impl Store for PostgresStoreV2 {
     }
 
     // -------------------------------------------------------------------------
-    // Task methods
+    // Session methods
     // -------------------------------------------------------------------------
 
     async fn add_session(
@@ -3703,27 +3703,27 @@ impl Store for PostgresStoreV2 {
         mut session: Session,
         creation_time: DateTime<Utc>,
         actor: &ActorRef,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let id = TaskId::new();
+    ) -> Result<(SessionId, VersionNumber), StoreError> {
+        let id = SessionId::new();
 
-        if let Some(issue_id) = task.spawned_from.as_ref() {
+        if let Some(issue_id) = session.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
         }
 
-        task.creation_time = Some(creation_time);
+        session.creation_time = Some(creation_time);
         let actor_json = actor_to_json(actor);
-        self.insert_task(&id, 1, &task, Some(&actor_json)).await?;
+        self.insert_session(&id, 1, &session, Some(&actor_json)).await?;
         Ok((id, 1))
     }
 
     async fn update_session(
         &self,
-        metis_id: &TaskId,
+        metis_id: &SessionId,
         session: Session,
         actor: &ActorRef,
     ) -> Result<Versioned<Session>, StoreError> {
-        self.ensure_task_exists(metis_id).await?;
-        if let Some(issue_id) = task.spawned_from.as_ref() {
+        self.ensure_session_exists(metis_id).await?;
+        if let Some(issue_id) = session.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
         }
 
@@ -3731,27 +3731,27 @@ impl Store for PostgresStoreV2 {
             .fetch_latest_version_number(TABLE_TASKS_V2, metis_id.as_ref())
             .await?
             .ok_or_else(|| {
-                StoreError::Internal(format!("task '{metis_id}' was missing during update"))
+                StoreError::Internal(format!("session '{metis_id}' was missing during update"))
             })?;
         let next_version = latest_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!("version number overflow for task '{metis_id}'"))
+            StoreError::Internal(format!("version number overflow for session '{metis_id}'"))
         })?;
 
         let actor_json = actor_to_json(actor);
-        self.insert_task(metis_id, next_version, &task, Some(&actor_json))
+        self.insert_session(metis_id, next_version, &session, Some(&actor_json))
             .await?;
         self.get_session(metis_id, true).await
     }
 
     async fn delete_session(
         &self,
-        id: &TaskId,
+        id: &SessionId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_session(id, true).await?;
-        let mut task = current.item;
-        task.deleted = true;
-        let versioned = self.update_session(id, task, actor).await?;
+        let mut session = current.item;
+        session.deleted = true;
+        let versioned = self.update_session(id, session, actor).await?;
         Ok(versioned.version)
     }
 
@@ -4458,10 +4458,10 @@ mod tests {
             actors::Actor,
             documents::Document,
             issues::{
-                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
+                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, SessionSettings,
                 TodoItem,
             },
-            jobs::BundleSpec,
+            sessions::BundleSpec,
             patches::{CommitRange, GitOid, GithubPr, Patch, PatchStatus, Review},
             users::{User, Username},
         },
@@ -4469,7 +4469,7 @@ mod tests {
     };
     use chrono::Timelike;
     use metis_common::{
-        PatchId, RepoName, TaskId, VersionNumber, Versioned,
+        PatchId, RepoName, SessionId, VersionNumber, Versioned,
         repositories::{
             MergeRequestConfig, RepoWorkflowConfig, Repository, ReviewRequestConfig,
             SearchRepositoriesQuery,
@@ -4520,7 +4520,7 @@ mod tests {
         )
     }
 
-    fn sample_document(path: &str, created_by: Option<TaskId>) -> Document {
+    fn sample_document(path: &str, created_by: Option<SessionId>) -> Document {
         Document {
             title: "Doc".to_string(),
             body_markdown: "Body".to_string(),
@@ -4530,8 +4530,8 @@ mod tests {
         }
     }
 
-    fn sample_task() -> Task {
-        Task::new(
+    fn sample_session() -> Session {
+        Session::new(
             "prompt".to_string(),
             BundleSpec::None,
             None,
@@ -4548,9 +4548,9 @@ mod tests {
         )
     }
 
-    /// Task with creator and other fields set for round-trip tests.
-    fn task_with_creator_for_round_trip() -> Task {
-        Task::new(
+    /// Session with creator and other fields set for round-trip tests.
+    fn session_with_creator_for_round_trip() -> Session {
+        Session::new(
             "round-trip prompt".to_string(),
             BundleSpec::None,
             None,
@@ -4595,9 +4595,9 @@ mod tests {
         dt.with_nanosecond(micros_only).unwrap()
     }
 
-    /// Task with every optional field set so serialization round-trip can assert full equality.
-    fn sample_task_all_fields() -> Task {
-        let mut task = Task::new(
+    /// Session with every optional field set so serialization round-trip can assert full equality.
+    fn sample_session_all_fields() -> Session {
+        let mut session = Session::new(
             "full prompt".to_string(),
             BundleSpec::None,
             None,
@@ -4612,17 +4612,17 @@ mod tests {
             Some("last message".to_string()),
             None,
         );
-        task.start_time = Some(truncate_to_micros(
+        session.start_time = Some(truncate_to_micros(
             Utc::now() - chrono::Duration::minutes(10),
         ));
-        task.end_time = Some(truncate_to_micros(
+        session.end_time = Some(truncate_to_micros(
             Utc::now() - chrono::Duration::minutes(5),
         ));
-        task
+        session
     }
 
     /// Patch with every optional field set so serialization round-trip can assert full equality.
-    fn sample_patch_all_fields(created_by: Option<TaskId>) -> Patch {
+    fn sample_patch_all_fields(created_by: Option<SessionId>) -> Patch {
         let base_oid = GitOid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
         let head_oid = GitOid::from_str("fedcba9876543210fedcba9876543210fedcba98").unwrap();
         let mut patch = Patch::new(
@@ -4667,7 +4667,7 @@ mod tests {
             "50%".to_string(),
             IssueStatus::Open,
             Some("assignee".to_string()),
-            Some(JobSettings {
+            Some(SessionSettings {
                 repo_name: Some(RepoName::from_str("org/proj").unwrap()),
                 remote_url: Some("https://git.example.com/org/proj.git".to_string()),
                 image: Some("img:v1".to_string()),
@@ -4728,7 +4728,7 @@ mod tests {
     #[ignore]
     async fn task_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
-        let task = task_with_creator_for_round_trip();
+        let task = session_with_creator_for_round_trip();
 
         let (task_id, version) = store
             .add_session(task.clone(), Utc::now(), &ActorRef::test())
@@ -4907,7 +4907,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut task = sample_task();
+        let mut task = sample_session();
         task.spawned_from = Some(issue_id.clone());
         let (task_id, _) = handles
             .store
@@ -4965,7 +4965,7 @@ mod tests {
         let tasks = handles.store.get_sessions_for_issue(&issue_id).await.unwrap();
         assert_eq!(tasks, vec![task_id.clone()]);
 
-        let query = SearchJobsQuery::new(None, None, None, vec![Status::Complete.into()]);
+        let query = SearchSessionsQuery::new(None, None, None, vec![Status::Complete.into()]);
         let complete: Vec<_> = handles
             .store
             .list_sessions(&query)
@@ -4989,7 +4989,7 @@ mod tests {
             .unwrap();
 
         // Create four tasks under the same issue
-        let mut task1 = sample_task();
+        let mut task1 = sample_session();
         task1.spawned_from = Some(issue_id.clone());
         let (task1_id, _) = handles
             .store
@@ -4997,7 +4997,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut task2 = sample_task();
+        let mut task2 = sample_session();
         task2.spawned_from = Some(issue_id.clone());
         let (task2_id, _) = handles
             .store
@@ -5005,7 +5005,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut task3 = sample_task();
+        let mut task3 = sample_session();
         task3.spawned_from = Some(issue_id.clone());
         let (task3_id, _) = handles
             .store
@@ -5013,7 +5013,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut task4 = sample_task();
+        let mut task4 = sample_session();
         task4.spawned_from = Some(issue_id.clone());
         let (task4_id, _) = handles
             .store
@@ -5075,7 +5075,7 @@ mod tests {
             .unwrap();
 
         // Filter by multiple statuses: Created and Running
-        let query = SearchJobsQuery::new(
+        let query = SearchSessionsQuery::new(
             None,
             None,
             None,
@@ -5088,18 +5088,18 @@ mod tests {
         assert!(ids.contains(&task2_id));
 
         // Filter by single status: Complete
-        let query = SearchJobsQuery::new(None, None, None, vec![Status::Complete.into()]);
+        let query = SearchSessionsQuery::new(None, None, None, vec![Status::Complete.into()]);
         let tasks = handles.store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].0, task3_id);
 
         // Empty status vec returns all tasks (no filter)
-        let query = SearchJobsQuery::new(None, None, None, vec![]);
+        let query = SearchSessionsQuery::new(None, None, None, vec![]);
         let tasks = handles.store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 4);
 
         // Filter by three statuses: Running, Complete, Failed
-        let query = SearchJobsQuery::new(
+        let query = SearchSessionsQuery::new(
             None,
             None,
             None,
@@ -5212,7 +5212,7 @@ mod tests {
     #[ignore]
     async fn task_serialization_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
-        let task = sample_task_all_fields();
+        let task = sample_session_all_fields();
 
         let now = truncate_to_micros(Utc::now());
         let (task_id, _) = store
@@ -5226,7 +5226,7 @@ mod tests {
         expected.creation_time = Some(now);
         assert_eq!(
             fetched.item, expected,
-            "Task must round-trip all fields (creator, secrets, image, model, etc.)"
+            "Session must round-trip all fields (creator, secrets, image, model, etc.)"
         );
     }
 
@@ -5236,7 +5236,7 @@ mod tests {
     async fn patch_serialization_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
         let (task_id, _) = store
-            .add_session(sample_task_all_fields(), Utc::now(), &ActorRef::test())
+            .add_session(sample_session_all_fields(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         let patch = sample_patch_all_fields(Some(task_id));
@@ -5292,7 +5292,7 @@ mod tests {
     async fn document_serialization_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
         let (task_id, _) = store
-            .add_session(sample_task_all_fields(), Utc::now(), &ActorRef::test())
+            .add_session(sample_session_all_fields(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         let doc = sample_document("docs/roundtrip.md", Some(task_id));
@@ -7023,12 +7023,12 @@ mod tests {
 
         for _ in 0..4 {
             store
-                .add_session(sample_task(), Utc::now(), &actor)
+                .add_session(sample_session(), Utc::now(), &actor)
                 .await
                 .unwrap();
         }
 
-        let query = SearchJobsQuery::new(None, None, None, vec![]);
+        let query = SearchSessionsQuery::new(None, None, None, vec![]);
         assert_eq!(store.count_sessions(&query).await.unwrap(), 4);
     }
 

@@ -30,7 +30,7 @@ impl ScheduledWorker for ProcessPendingJobsWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
         let query = SearchSessionsQuery::new(None, None, None, vec![Status::Created.into()]);
-        let pending_ids: Vec<_> = match self.state.list_tasks_with_query(&query).await {
+        let pending_ids: Vec<_> = match self.state.list_sessions_with_query(&query).await {
             Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
             Err(err) => {
                 error!(error = %err, "failed to list created tasks");
