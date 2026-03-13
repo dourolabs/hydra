@@ -16,7 +16,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@dashboard:view` — User can see the issue list on the dashboard (planned)
 - `@dashboard:inbox` — User can filter dashboard to inbox items
 - `@dashboard:search` — User can search for issues by title
-- `@dashboard:child-job-indicator` — User sees a pulsing status box for a child issue with a running job
+- `@dashboard:child-session-indicator` — User sees a pulsing status box for a child issue with a running session
 
 ## Navigation
 
@@ -54,9 +54,9 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@errors:404` — User sees a not-found message for non-existent entities
 - `@errors:server-error` — User sees an error message when the server returns 500
 
-## Jobs
+## Sessions
 
-- `@jobs:kill` — User can kill a running job with confirmation
+- `@sessions:kill` — User can kill a running session with confirmation
 
 ## Mobile Viewport
 
