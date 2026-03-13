@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { IssueSummaryRecord, JobSummaryRecord } from "@metis/api";
+import type { IssueSummaryRecord, SessionSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 import { computeIssueProgress, computeIsActiveMap, countNeedsAttentionBadge } from "./computeIssueProgress";
@@ -63,22 +63,22 @@ function makeNode(
 
 function makeJob(
   overrides: Partial<{
-    job_id: string;
+    session_id: string;
     status: string;
     start_time: string | null;
   }> = {},
-): JobSummaryRecord {
+): SessionSummaryRecord {
   return {
-    job_id: overrides.job_id ?? "t-default",
+    session_id: overrides.session_id ?? "s-default",
     version: 1n,
     timestamp: "2026-01-01T00:00:00Z",
-    task: {
+    session: {
       prompt: "test job",
       creator: "testuser",
       status: overrides.status ?? "running",
       start_time: overrides.start_time ?? "2026-01-01T00:00:00Z",
     },
-  } as JobSummaryRecord;
+  } as SessionSummaryRecord;
 }
 
 // ---------------------------------------------------------------------------

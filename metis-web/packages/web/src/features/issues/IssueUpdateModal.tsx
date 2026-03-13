@@ -51,7 +51,7 @@ export function IssueUpdateModal({
           status: params.status,
           progress: params.progress,
         },
-        job_id: null,
+        session_id: null,
       }),
     onMutate: async (params) => {
       await queryClient.cancelQueries({ queryKey: ["issue", issueId] });

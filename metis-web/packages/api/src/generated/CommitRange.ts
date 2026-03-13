@@ -4,4 +4,4 @@ import type { GitOid } from "./GitOid";
 /**
  * A base–head SHA pair identifying the exact commit range a patch covers.
  */
-export type CommitRange = { base: GitOid; head: GitOid };
+export type CommitRange = { base: GitOid, head: GitOid, };

@@ -54,7 +54,7 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
           ...(params.assignee && { assignee: params.assignee }),
           ...(params.repoName && { job_settings: { repo_name: params.repoName } }),
         },
-        job_id: null,
+        session_id: null,
       }),
     onSuccess: (data) => {
       setTitle("");

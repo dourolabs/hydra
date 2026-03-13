@@ -3,37 +3,36 @@
 /**
  * Query parameters for the GET /v1/events SSE endpoint.
  */
-export type EventsQuery = {
-  /**
-   * Comma-separated entity types to filter (e.g. "issues,jobs").
-   */
-  types: string | null;
-  /**
-   * Comma-separated issue IDs to filter.
-   */
-  issue_ids: string | null;
-  /**
-   * Comma-separated job IDs to filter.
-   */
-  job_ids: string | null;
-  /**
-   * Comma-separated patch IDs to filter.
-   */
-  patch_ids: string | null;
-  /**
-   * Comma-separated label IDs to filter.
-   */
-  label_ids: string | null;
-  /**
-   * Comma-separated document IDs to filter.
-   */
-  document_ids: string | null;
-  /**
-   * Comma-separated message IDs to filter.
-   */
-  message_ids: string | null;
-  /**
-   * Comma-separated notification IDs to filter.
-   */
-  notification_ids: string | null;
-};
+export type EventsQuery = { 
+/**
+ * Comma-separated entity types to filter (e.g. "issues,jobs").
+ */
+types: string | null, 
+/**
+ * Comma-separated issue IDs to filter.
+ */
+issue_ids: string | null, 
+/**
+ * Comma-separated session IDs to filter.
+ */
+session_ids: string | null, 
+/**
+ * Comma-separated patch IDs to filter.
+ */
+patch_ids: string | null, 
+/**
+ * Comma-separated label IDs to filter.
+ */
+label_ids: string | null, 
+/**
+ * Comma-separated document IDs to filter.
+ */
+document_ids: string | null, 
+/**
+ * Comma-separated message IDs to filter.
+ */
+message_ids: string | null, 
+/**
+ * Comma-separated notification IDs to filter.
+ */
+notification_ids: string | null, };

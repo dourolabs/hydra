@@ -1,15 +1,15 @@
 import { Link } from "react-router-dom";
-import type { Task } from "@metis/api";
+import type { Session } from "@metis/api";
 import { Badge } from "@metis/ui";
 import { normalizeSessionStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import styles from "./SessionSettings.module.css";
 
 interface SessionSettingsProps {
-  task: Task;
+  task: Session;
 }
 
-function formatContext(context: Task["context"]): string {
+function formatContext(context: Session["context"]): string {
   switch (context.type) {
     case "git_repository":
       return `${context.url}${context.rev ? ` @ ${context.rev}` : ""}`;
@@ -22,13 +22,13 @@ function formatContext(context: Task["context"]): string {
   }
 }
 
-function formatError(error: Task["error"]): string | null {
+function formatError(error: Session["error"]): string | null {
   if (!error) return null;
   if (error === "unknown") return "Unknown error";
   return error.job_engine_error.reason;
 }
 
-function formatEnvVars(envVars: Task["env_vars"]): string | null {
+function formatEnvVars(envVars: Session["env_vars"]): string | null {
   if (!envVars) return null;
   const keys = Object.keys(envVars);
   if (keys.length === 0) return null;

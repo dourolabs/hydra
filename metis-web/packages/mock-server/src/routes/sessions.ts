@@ -4,45 +4,45 @@ import type { Store } from "../store.js";
 import { generateId } from "../id.js";
 import { DEV_USERNAME } from "../auth.js";
 import type {
-  Task,
-  CreateJobRequest,
-  CreateJobResponse,
-  JobVersionRecord,
-  ListJobsResponse,
-  ListJobVersionsResponse,
-  JobSummaryRecord,
-  JobSummary,
-  KillJobResponse,
-  JobStatusUpdate,
-  SetJobStatusResponse,
+  Session,
+  CreateSessionRequest,
+  CreateSessionResponse,
+  SessionVersionRecord,
+  ListSessionsResponse,
+  ListSessionVersionsResponse,
+  SessionSummaryRecord,
+  SessionSummary,
+  KillSessionResponse,
+  SessionStatusUpdate,
+  SetSessionStatusResponse,
   WorkerContext,
   Status,
 } from "@metis/api";
 
 const COLLECTION = "sessions";
-const SSE_PREFIX = "job";
+const SSE_PREFIX = "session";
 
 function toVersionRecord(
-  jobId: string,
+  sessionId: string,
   version: number,
   timestamp: string,
-  task: Task,
-): JobVersionRecord {
+  task: Session,
+): SessionVersionRecord {
   return {
-    job_id: jobId,
+    session_id: sessionId,
     version: BigInt(version),
     timestamp,
-    task,
+    session: task,
   };
 }
 
 function toSummaryRecord(
-  jobId: string,
+  sessionId: string,
   version: number,
   timestamp: string,
-  task: Task,
-): JobSummaryRecord {
-  const summary: JobSummary = {
+  task: Session,
+): SessionSummaryRecord {
+  const summary: SessionSummary = {
     prompt: task.prompt.slice(0, 100),
     spawned_from: task.spawned_from,
     creator: task.creator,
@@ -54,10 +54,10 @@ function toSummaryRecord(
     end_time: task.end_time,
   };
   return {
-    job_id: jobId,
+    session_id: sessionId,
     version: BigInt(version),
     timestamp,
-    task: summary,
+    session: summary,
   };
 }
 
@@ -66,10 +66,10 @@ export function createSessionRoutes(store: Store): Hono {
 
   // POST /v1/sessions
   app.post("/v1/sessions", async (c) => {
-    const body = await c.req.json<CreateJobRequest>();
+    const body = await c.req.json<CreateSessionRequest>();
     const id = generateId("session");
     const now = new Date().toISOString();
-    const task: Task = {
+    const task: Session = {
       prompt: body.prompt,
       context: body.context,
       spawned_from: body.issue_id,
@@ -79,8 +79,8 @@ export function createSessionRoutes(store: Store): Hono {
       status: "pending" as Status,
       creation_time: now,
     };
-    store.create<Task>(COLLECTION, id, task, SSE_PREFIX);
-    const resp: CreateJobResponse = { job_id: id };
+    store.create<Session>(COLLECTION, id, task, SSE_PREFIX);
+    const resp: CreateSessionResponse = { session_id: id };
     return c.json(resp, 201);
   });
 
@@ -91,7 +91,7 @@ export function createSessionRoutes(store: Store): Hono {
     const spawnedFrom = c.req.query("spawned_from");
     const status = c.req.query("status");
 
-    const items = store.list<Task>(COLLECTION, includeDeleted);
+    const items = store.list<Session>(COLLECTION, includeDeleted);
 
     let filtered = items;
     if (q) {
@@ -108,17 +108,17 @@ export function createSessionRoutes(store: Store): Hono {
       filtered = filtered.filter(({ entry }) => statuses.has(entry.data.status));
     }
 
-    const jobs: JobSummaryRecord[] = filtered.map(({ id, entry }) =>
+    const sessions: SessionSummaryRecord[] = filtered.map(({ id, entry }) =>
       toSummaryRecord(id, entry.version, entry.timestamp, entry.data),
     );
-    const resp: ListJobsResponse = { jobs };
+    const resp: ListSessionsResponse = { sessions };
     return c.json(resp);
   });
 
   // GET /v1/sessions/:id
   app.get("/v1/sessions/:id", (c) => {
     const id = c.req.param("id");
-    const entry = store.get<Task>(COLLECTION, id);
+    const entry = store.get<Session>(COLLECTION, id);
     if (!entry) {
       return c.json({ error: `session '${id}' not found` }, 404);
     }
@@ -129,7 +129,7 @@ export function createSessionRoutes(store: Store): Hono {
   app.get("/v1/sessions/:id/versions/:version", (c) => {
     const id = c.req.param("id");
     const version = Number(c.req.param("version"));
-    const entry = store.getVersion<Task>(COLLECTION, id, version);
+    const entry = store.getVersion<Session>(COLLECTION, id, version);
     if (!entry) {
       return c.json({ error: `session '${id}' version ${version} not found` }, 404);
     }
@@ -142,18 +142,18 @@ export function createSessionRoutes(store: Store): Hono {
   // the store immediately, so refetches still return "running".
   app.delete("/v1/sessions/:id", (c) => {
     const id = c.req.param("id");
-    const entry = store.get<Task>(COLLECTION, id);
+    const entry = store.get<Session>(COLLECTION, id);
     if (!entry) {
       return c.json({ error: `session '${id}' not found` }, 404);
     }
-    const resp: KillJobResponse = { job_id: id, status: "failed" };
+    const resp: KillSessionResponse = { session_id: id, status: "failed" };
     return c.json(resp);
   });
 
   // GET /v1/sessions/:id/logs
   app.get("/v1/sessions/:id/logs", (c) => {
     const id = c.req.param("id");
-    const entry = store.get<Task>(COLLECTION, id);
+    const entry = store.get<Session>(COLLECTION, id);
     if (!entry) {
       return c.json({ error: `session '${id}' not found` }, 404);
     }
@@ -174,13 +174,13 @@ export function createSessionRoutes(store: Store): Hono {
   // POST /v1/sessions/:id/status
   app.post("/v1/sessions/:id/status", async (c) => {
     const id = c.req.param("id");
-    const body = await c.req.json<JobStatusUpdate>();
-    const entry = store.get<Task>(COLLECTION, id);
+    const body = await c.req.json<SessionStatusUpdate>();
+    const entry = store.get<Session>(COLLECTION, id);
     if (!entry) {
       return c.json({ error: `session '${id}' not found` }, 404);
     }
     let newStatus: Status;
-    const updates: Partial<Task> = {};
+    const updates: Partial<Session> = {};
     if (body.status === "complete") {
       newStatus = "complete";
       updates.last_message = body.last_message;
@@ -192,16 +192,16 @@ export function createSessionRoutes(store: Store): Hono {
     } else {
       newStatus = "unknown";
     }
-    const updated: Task = { ...entry.data, ...updates, status: newStatus };
-    store.update<Task>(COLLECTION, id, updated, SSE_PREFIX);
-    const resp: SetJobStatusResponse = { job_id: id, status: newStatus };
+    const updated: Session = { ...entry.data, ...updates, status: newStatus };
+    store.update<Session>(COLLECTION, id, updated, SSE_PREFIX);
+    const resp: SetSessionStatusResponse = { session_id: id, status: newStatus };
     return c.json(resp);
   });
 
   // GET /v1/sessions/:id/context
   app.get("/v1/sessions/:id/context", (c) => {
     const id = c.req.param("id");
-    const entry = store.get<Task>(COLLECTION, id);
+    const entry = store.get<Session>(COLLECTION, id);
     if (!entry) {
       return c.json({ error: `session '${id}' not found` }, 404);
     }
@@ -220,14 +220,14 @@ export function createSessionRoutes(store: Store): Hono {
   // GET /v1/sessions/:id/versions
   app.get("/v1/sessions/:id/versions", (c) => {
     const id = c.req.param("id");
-    const allVersions = store.listVersions<Task>(COLLECTION, id);
+    const allVersions = store.listVersions<Session>(COLLECTION, id);
     if (allVersions.length === 0) {
       return c.json({ error: `session '${id}' not found` }, 404);
     }
     const versions = allVersions.map((v) =>
       toVersionRecord(id, v.version, v.timestamp, v.data),
     );
-    const resp: ListJobVersionsResponse = { versions };
+    const resp: ListSessionVersionsResponse = { versions };
     return c.json(resp);
   });
 

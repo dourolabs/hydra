@@ -96,7 +96,7 @@ export function IssueCreateModal({
             job_settings: { repo_name: params.repoName },
           }),
         },
-        job_id: null,
+        session_id: null,
         ...(params.labelNames && params.labelNames.length > 0 && {
           label_names: params.labelNames,
         }),

@@ -61,9 +61,9 @@ export function SessionLogPage() {
           {/* Session metadata header */}
           <div className={styles.header}>
             <div className={styles.headerTop}>
-              <span className={styles.sessionId}>{record.job_id}</span>
-              <Badge status={normalizeSessionStatus(record.task.status)} />
-              {record.task.status === "running" && (
+              <span className={styles.sessionId}>{record.session_id}</span>
+              <Badge status={normalizeSessionStatus(record.session.status)} />
+              {record.session.status === "running" && (
                 killRequested ? (
                   <span className={styles.terminating}>
                     <Spinner size="sm" />
@@ -90,14 +90,14 @@ export function SessionLogPage() {
               <div className={styles.metaItem}>
                 <span className={styles.metaLabel}>Runtime</span>
                 <span className={styles.metaValue}>
-                  {getRuntime(record.task.start_time, record.task.end_time)}
+                  {getRuntime(record.session.start_time, record.session.end_time)}
                 </span>
               </div>
-              {record.task.creation_time && (
+              {record.session.creation_time && (
                 <div className={styles.metaItem}>
                   <span className={styles.metaLabel}>Created</span>
                   <span className={styles.metaValue}>
-                    {new Date(record.task.creation_time).toLocaleString()}
+                    {new Date(record.session.creation_time).toLocaleString()}
                   </span>
                 </div>
               )}
@@ -109,7 +109,7 @@ export function SessionLogPage() {
 
           {/* Tab content */}
           {activeTab === "logs" && (
-            <SessionLogViewer sessionId={record.job_id} status={record.task.status} />
+            <SessionLogViewer sessionId={record.session_id} status={record.session.status} />
           )}
           {activeTab === "settings" && <SessionSettings task={record.task} />}
 
@@ -117,7 +117,7 @@ export function SessionLogPage() {
             open={killModalOpen}
             onClose={() => setKillModalOpen(false)}
             onKillSuccess={() => setKillRequested(true)}
-            sessionId={record.job_id}
+            sessionId={record.session_id}
           />
         </>
       )}

@@ -1,12 +1,12 @@
 import type { SessionSummary } from "@metis/ui";
-import type { JobSummaryRecord } from "@metis/api";
+import type { SessionSummaryRecord } from "@metis/api";
 
-export function toSessionSummary(record: JobSummaryRecord): SessionSummary {
-  const status = record.task.status === "unknown" ? "created" : record.task.status;
+export function toSessionSummary(record: SessionSummaryRecord): SessionSummary {
+  const status = record.session.status === "unknown" ? "created" : record.session.status;
   return {
-    sessionId: record.job_id,
+    sessionId: record.session_id,
     status,
-    startTime: record.task.start_time,
-    endTime: record.task.end_time,
+    startTime: record.session.start_time,
+    endTime: record.session.end_time,
   };
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { JobSummaryRecord } from "@metis/api";
+import type { SessionSummaryRecord } from "@metis/api";
 import { formatDuration } from "../../utils/time";
 
 interface SessionDuration {
@@ -7,29 +7,29 @@ interface SessionDuration {
   isRunning: boolean;
 }
 
-export function useSessionDuration(sessions: JobSummaryRecord[] | undefined): SessionDuration {
+export function useSessionDuration(sessions: SessionSummaryRecord[] | undefined): SessionDuration {
   const runningSession = useMemo(
-    () => sessions?.find((s) => s.task.status === "running" || s.task.status === "pending"),
+    () => sessions?.find((s) => s.session.status === "running" || s.session.status === "pending"),
     [sessions],
   );
 
   const lastFinishedSession = useMemo(() => {
     if (runningSession || !sessions) return undefined;
     return sessions
-      .filter((s) => s.task.status === "complete" || s.task.status === "failed")
+      .filter((s) => s.session.status === "complete" || s.session.status === "failed")
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
   }, [sessions, runningSession]);
 
   const [elapsed, setElapsed] = useState(() => {
-    if (!runningSession?.task.start_time) return 0;
-    return Date.now() - new Date(runningSession.task.start_time).getTime();
+    if (!runningSession?.session.start_time) return 0;
+    return Date.now() - new Date(runningSession.session.start_time).getTime();
   });
 
   useEffect(() => {
-    if (!runningSession?.task.start_time) return;
-    setElapsed(Date.now() - new Date(runningSession.task.start_time).getTime());
+    if (!runningSession?.session.start_time) return;
+    setElapsed(Date.now() - new Date(runningSession.session.start_time).getTime());
     const id = setInterval(() => {
-      setElapsed(Date.now() - new Date(runningSession.task.start_time!).getTime());
+      setElapsed(Date.now() - new Date(runningSession.session.start_time!).getTime());
     }, 1000);
     return () => clearInterval(id);
   }, [runningSession]);
@@ -38,10 +38,10 @@ export function useSessionDuration(sessions: JobSummaryRecord[] | undefined): Se
     return { durationText: formatDuration(elapsed), isRunning: true };
   }
 
-  if (lastFinishedSession?.task.start_time && lastFinishedSession.task.end_time) {
+  if (lastFinishedSession?.session.start_time && lastFinishedSession.session.end_time) {
     return {
       durationText: formatDuration(
-        new Date(lastFinishedSession.task.end_time).getTime() - new Date(lastFinishedSession.task.start_time).getTime(),
+        new Date(lastFinishedSession.session.end_time).getTime() - new Date(lastFinishedSession.session.start_time).getTime(),
       ),
       isRunning: false,
     };

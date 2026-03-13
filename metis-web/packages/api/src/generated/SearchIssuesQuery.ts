@@ -2,27 +2,20 @@
 import type { IssueStatus } from "./IssueStatus";
 import type { IssueType } from "./IssueType";
 
-export type SearchIssuesQuery = {
-  issue_type: IssueType | null;
-  status: IssueStatus | null;
-  assignee: string | null;
-  q: string | null;
-  graph: string;
-  include_deleted: boolean | null;
-  /**
-   * Filter issues by label IDs (comma-separated in query string).
-   */
-  labels: string;
-  /**
-   * Maximum number of results to return. When omitted, all results are returned.
-   */
-  limit: number | null;
-  /**
-   * Opaque cursor from a previous response's `next_cursor` field.
-   */
-  cursor: string | null;
-  /**
-   * When true, include `total_count` in the response.
-   */
-  count: boolean | null;
-};
+export type SearchIssuesQuery = { issue_type: IssueType | null, status: IssueStatus | null, assignee: string | null, q: string | null, graph: string, include_deleted: boolean | null, 
+/**
+ * Filter issues by label IDs (comma-separated in query string).
+ */
+labels: string, 
+/**
+ * Maximum number of results to return. When omitted, all results are returned.
+ */
+limit: number | null, 
+/**
+ * Opaque cursor from a previous response's `next_cursor` field.
+ */
+cursor: string | null, 
+/**
+ * When true, include `total_count` in the response.
+ */
+count: boolean | null, };

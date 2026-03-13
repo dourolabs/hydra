@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { JobSummaryRecord } from "@metis/api";
+import type { SessionSummaryRecord } from "@metis/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { topologicalSortWorkItems } from "../issues/topologicalSort";
@@ -9,7 +9,7 @@ import styles from "./HeterogeneousItemList.module.css";
 
 interface HeterogeneousItemListProps {
   items: WorkItem[];
-  sessionsByIssue: Map<string, JobSummaryRecord[]>;
+  sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   childStatusMap: Map<string, ChildStatus[]>;
   isActiveMap: Map<string, boolean>;
   isLoading: boolean;

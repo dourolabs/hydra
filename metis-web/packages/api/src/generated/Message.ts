@@ -4,10 +4,4 @@ import type { ActorId } from "./ActorId";
 /**
  * The message domain type (inner type for Versioned<Message>).
  */
-export type Message = {
-  sender: ActorId | null;
-  recipient: ActorId;
-  body: string;
-  deleted: boolean;
-  is_read: boolean;
-};
+export type Message = { sender: ActorId | null, recipient: ActorId, body: string, deleted: boolean, is_read: boolean, };

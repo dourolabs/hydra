@@ -1,15 +1,15 @@
 import { ApiError } from "./errors";
-import type { CreateJobRequest } from "./generated/CreateJobRequest";
-import type { CreateJobResponse } from "./generated/CreateJobResponse";
-import type { SearchJobsQuery } from "./generated/SearchJobsQuery";
-import type { ListJobsResponse } from "./generated/ListJobsResponse";
-import type { JobVersionRecord } from "./generated/JobVersionRecord";
-import type { KillJobResponse } from "./generated/KillJobResponse";
+import type { CreateSessionRequest } from "./generated/CreateSessionRequest";
+import type { CreateSessionResponse } from "./generated/CreateSessionResponse";
+import type { SearchSessionsQuery } from "./generated/SearchSessionsQuery";
+import type { ListSessionsResponse } from "./generated/ListSessionsResponse";
+import type { SessionVersionRecord } from "./generated/SessionVersionRecord";
+import type { KillSessionResponse } from "./generated/KillSessionResponse";
 import type { LogsQuery } from "./generated/LogsQuery";
-import type { JobStatusUpdate } from "./generated/JobStatusUpdate";
-import type { SetJobStatusResponse } from "./generated/SetJobStatusResponse";
+import type { SessionStatusUpdate } from "./generated/SessionStatusUpdate";
+import type { SetSessionStatusResponse } from "./generated/SetSessionStatusResponse";
 import type { WorkerContext } from "./generated/WorkerContext";
-import type { ListJobVersionsResponse } from "./generated/ListJobVersionsResponse";
+import type { ListSessionVersionsResponse } from "./generated/ListSessionVersionsResponse";
 import type { UpsertIssueRequest } from "./generated/UpsertIssueRequest";
 import type { UpsertIssueResponse } from "./generated/UpsertIssueResponse";
 import type { IssueVersionRecord } from "./generated/IssueVersionRecord";
@@ -153,29 +153,29 @@ export class MetisApiClient {
   // ---------------------------------------------------------------------------
 
   /** POST /v1/sessions */
-  createSession(request: CreateJobRequest): Promise<CreateJobResponse> {
+  createSession(request: CreateSessionRequest): Promise<CreateSessionResponse> {
     return this.post("/v1/sessions", request);
   }
 
   /** GET /v1/sessions */
-  listSessions(query?: Partial<SearchJobsQuery>): Promise<ListJobsResponse> {
+  listSessions(query?: Partial<SearchSessionsQuery>): Promise<ListSessionsResponse> {
     return this.get("/v1/sessions", query as Record<string, unknown>);
   }
 
   /** GET /v1/sessions/:sessionId */
-  getSession(sessionId: string): Promise<JobVersionRecord> {
+  getSession(sessionId: string): Promise<SessionVersionRecord> {
     return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}`);
   }
 
   /** GET /v1/sessions/:sessionId/versions/:version */
-  getSessionVersion(sessionId: string, version: number): Promise<JobVersionRecord> {
+  getSessionVersion(sessionId: string, version: number): Promise<SessionVersionRecord> {
     return this.get(
       `/v1/sessions/${encodeURIComponent(sessionId)}/versions/${encodeURIComponent(String(version))}`,
     );
   }
 
   /** DELETE /v1/sessions/:sessionId */
-  killSession(sessionId: string): Promise<KillJobResponse> {
+  killSession(sessionId: string): Promise<KillSessionResponse> {
     return this.del(`/v1/sessions/${encodeURIComponent(sessionId)}`);
   }
 
@@ -200,7 +200,7 @@ export class MetisApiClient {
   }
 
   /** POST /v1/sessions/:sessionId/status */
-  setSessionStatus(sessionId: string, status: JobStatusUpdate): Promise<SetJobStatusResponse> {
+  setSessionStatus(sessionId: string, status: SessionStatusUpdate): Promise<SetSessionStatusResponse> {
     return this.post(`/v1/sessions/${encodeURIComponent(sessionId)}/status`, status);
   }
 
@@ -210,7 +210,7 @@ export class MetisApiClient {
   }
 
   /** GET /v1/sessions/:sessionId/versions */
-  listSessionVersions(sessionId: string): Promise<ListJobVersionsResponse> {
+  listSessionVersions(sessionId: string): Promise<ListSessionVersionsResponse> {
     return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/versions`);
   }
 

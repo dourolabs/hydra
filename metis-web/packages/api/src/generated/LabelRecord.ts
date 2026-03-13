@@ -5,12 +5,4 @@ import type { Rgb } from "./Rgb";
 /**
  * Full label record returned by GET endpoints.
  */
-export type LabelRecord = {
-  label_id: LabelId;
-  name: string;
-  color: Rgb;
-  recurse: boolean;
-  hidden: boolean;
-  created_at: string;
-  updated_at: string;
-};
+export type LabelRecord = { label_id: LabelId, name: string, color: Rgb, recurse: boolean, hidden: boolean, created_at: string, updated_at: string, };

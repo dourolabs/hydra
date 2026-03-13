@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { JobVersionRecord } from "@metis/api";
+import type { SessionVersionRecord } from "@metis/api";
 import { Modal, Button } from "@metis/ui";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
@@ -21,11 +21,11 @@ export function KillSessionModal({ open, onClose, onKillSuccess, sessionId }: Ki
     mutationFn: () => apiClient.killSession(sessionId),
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey: ["session", sessionId] });
-      const previous = queryClient.getQueryData<JobVersionRecord>(["session", sessionId]);
+      const previous = queryClient.getQueryData<SessionVersionRecord>(["session", sessionId]);
       if (previous) {
-        queryClient.setQueryData<JobVersionRecord>(["session", sessionId], {
+        queryClient.setQueryData<SessionVersionRecord>(["session", sessionId], {
           ...previous,
-          task: { ...previous.task, status: "failed" },
+          session: { ...previous.session, status: "failed" },
         });
       }
       return { previous };

@@ -2,7 +2,7 @@ import React, { useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar, Badge, useKeyboardClick } from "@metis/ui";
-import type { JobSummaryRecord, LabelSummary } from "@metis/api";
+import type { SessionSummaryRecord, LabelSummary } from "@metis/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./useTransitiveWorkItems";
 import { StatusBoxes } from "./StatusBoxes";
@@ -68,7 +68,7 @@ const TYPE_ICONS: Record<WorkItem["kind"], (() => React.JSX.Element) | null> = {
 
 interface ItemRowProps {
   item: WorkItem;
-  sessions?: JobSummaryRecord[];
+  sessions?: SessionSummaryRecord[];
   childStatuses?: ChildStatus[];
   isActive?: boolean;
   filterRootId?: string | null;
@@ -176,7 +176,7 @@ export const ItemRow = React.memo(function ItemRow({ item, sessions, childStatus
     item.kind === "issue" && !item.isTerminal && !!assignee && assignee === currentUsername;
 
   // Session status (issues only) — isActive is tree-computed, fall back to direct session check
-  const hasRunningJob = isActive ?? (sessions?.some((j) => j.task.status === "running" || j.task.status === "pending") ?? false);
+  const hasRunningJob = isActive ?? (sessions?.some((j) => j.session.status === "running" || j.session.status === "pending") ?? false);
 
   // Session duration display (extracted to hook to isolate timer re-renders)
   const { durationText, isRunning } = useSessionDuration(sessions);
