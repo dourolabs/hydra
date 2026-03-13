@@ -369,7 +369,7 @@ impl TestHarness {
         );
         let before: Vec<TaskId> = self
             .state
-            .list_tasks_with_query(&query)
+            .list_sessions_with_query(&query)
             .await
             .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
             .context("failed to list created tasks before step_pending_jobs")?;

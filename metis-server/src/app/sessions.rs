@@ -630,7 +630,7 @@ impl AppState {
 
             if let Err(err) = self
                 .store
-                .delete_task_with_actor(&session_id, actor.clone())
+                .delete_session_with_actor(&session_id, actor.clone())
                 .await
             {
                 warn!(
@@ -904,7 +904,7 @@ impl AppState {
             .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
     }
 
-    pub async fn list_tasks_with_query(
+    pub async fn list_sessions_with_query(
         &self,
         query: &SearchSessionsQuery,
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {

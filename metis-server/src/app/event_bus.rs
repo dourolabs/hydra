@@ -874,7 +874,7 @@ impl StoreWithEvents {
         Ok(result)
     }
 
-    pub async fn delete_task_with_actor(
+    pub async fn delete_session_with_actor(
         &self,
         id: &SessionId,
         actor: ActorRef,
