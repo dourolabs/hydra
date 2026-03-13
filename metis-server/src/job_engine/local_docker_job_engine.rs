@@ -273,7 +273,7 @@ impl JobEngine for LocalDockerJobEngine {
             env: Some(env),
             cmd: Some(vec![
                 "metis".to_string(),
-                "jobs".to_string(),
+                "sessions".to_string(),
                 "worker-run".to_string(),
                 metis_id.to_string(),
                 ".".to_string(),
