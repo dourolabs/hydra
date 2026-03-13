@@ -256,17 +256,17 @@ impl UserHandle {
             .context("UserHandle::list_patches failed")
     }
 
-    /// List jobs, optionally filtered by issue ID.
-    pub async fn list_jobs_for_issue(
+    /// List sessions, optionally filtered by issue ID.
+    pub async fn list_sessions_for_issue(
         &self,
         issue_id: &IssueId,
     ) -> Result<Vec<metis_common::sessions::SessionSummaryRecord>> {
         let query = SearchSessionsQuery::new(None, Some(issue_id.clone()), None, vec![]);
         let response = self
             .client
-            .list_jobs(&query)
+            .list_sessions(&query)
             .await
-            .context("UserHandle::list_jobs_for_issue failed")?;
+            .context("UserHandle::list_sessions_for_issue failed")?;
         Ok(response.sessions)
     }
 
@@ -347,11 +347,11 @@ impl UserHandle {
         Ok(response.issue_id)
     }
 
-    // ── Job operations ───────────────────────────────────────────────
+    // ── Session operations ───────────────────────────────────────────────
 
-    /// Create a job for the given repo with the given prompt.
-    /// Returns the new job's task ID.
-    pub async fn create_job(&self, repo: &RepoName, prompt: &str) -> Result<SessionId> {
+    /// Create a session for the given repo with the given prompt.
+    /// Returns the new session's task ID.
+    pub async fn create_session(&self, repo: &RepoName, prompt: &str) -> Result<SessionId> {
         let request = CreateSessionRequest::new(
             prompt.to_string(),
             None,
@@ -364,18 +364,18 @@ impl UserHandle {
         );
         let response = self
             .client
-            .create_job(&request)
+            .create_session(&request)
             .await
-            .context("UserHandle::create_job failed")?;
+            .context("UserHandle::create_session failed")?;
         Ok(response.session_id)
     }
 
-    /// Create a job for the given repo, prompt, and issue.
+    /// Create a session for the given repo, prompt, and issue.
     ///
-    /// Like [`create_job`](Self::create_job) but links the job to the given
+    /// Like [`create_session`](Self::create_session) but links the session to the given
     /// issue, which sets the `spawned_from` field on the task. This ensures
     /// that `METIS_ISSUE_ID` is available for subprocess commands.
-    pub async fn create_job_for_issue(
+    pub async fn create_session_for_issue(
         &self,
         repo: &RepoName,
         prompt: &str,
@@ -393,9 +393,9 @@ impl UserHandle {
         );
         let response = self
             .client
-            .create_job(&request)
+            .create_session(&request)
             .await
-            .context("UserHandle::create_job_for_issue failed")?;
+            .context("UserHandle::create_session_for_issue failed")?;
         Ok(response.session_id)
     }
 

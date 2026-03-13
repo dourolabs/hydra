@@ -27,7 +27,7 @@ async fn document_operations_through_worker() -> Result<()> {
     // Phase 1: PM worker creates a document via CLI.
     let phase1_issue = user.create_issue("phase1 doc worker").await?;
     let phase1_job = user
-        .create_job_for_issue(&repo, "create document", &phase1_issue)
+        .create_session_for_issue(&repo, "create document", &phase1_issue)
         .await?;
 
     harness
@@ -73,7 +73,7 @@ async fn document_operations_through_worker() -> Result<()> {
     // Phase 2: PM worker updates the document with revised content.
     let phase2_issue = user.create_issue("phase2 doc worker").await?;
     let phase2_job = user
-        .create_job_for_issue(&repo, "update document", &phase2_issue)
+        .create_session_for_issue(&repo, "update document", &phase2_issue)
         .await?;
 
     harness
@@ -104,7 +104,7 @@ async fn document_operations_through_worker() -> Result<()> {
     // Phase 3: PM worker creates a review child issue referencing the document.
     let phase3_issue = user.create_issue("phase3 doc worker").await?;
     let phase3_job = user
-        .create_job_for_issue(&repo, "create review issue", &phase3_issue)
+        .create_session_for_issue(&repo, "create review issue", &phase3_issue)
         .await?;
 
     harness

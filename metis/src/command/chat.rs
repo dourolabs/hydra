@@ -63,7 +63,7 @@ When the user asks "what's going on with issue X?":
 Issues:   metis issues list | describe | create | update
 Patches:  metis patches list | describe | create | review | update
 Documents: metis documents list | get | put | sync | push
-Jobs:     metis jobs list | logs | create | kill
+Sessions: metis sessions list | logs | create | kill
 Users:    metis users info
 
 ## Guidelines

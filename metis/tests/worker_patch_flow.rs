@@ -15,7 +15,7 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
 
     let issue_id = user.create_issue("worker integration patch flow").await?;
     let job_id = user
-        .create_job_for_issue(&repo, "worker integration patch flow", &issue_id)
+        .create_session_for_issue(&repo, "worker integration patch flow", &issue_id)
         .await?;
 
     let result = harness

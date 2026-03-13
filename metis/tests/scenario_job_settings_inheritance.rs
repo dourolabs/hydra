@@ -49,7 +49,7 @@ async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
     let job_id = &task_ids[0];
 
     // Retrieve the spawned task and verify inherited settings.
-    let job = user.client().get_job(job_id).await?;
+    let job = user.client().get_session(job_id).await?;
 
     // Verify image is inherited.
     assert_eq!(
@@ -157,7 +157,7 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
     assert_eq!(swe_tasks.len(), 1, "child should be scheduled for SWE");
 
     // Verify the spawned task has the correct BundleSpec.
-    let child_job = user.client().get_job(&swe_tasks[0]).await?;
+    let child_job = user.client().get_session(&swe_tasks[0]).await?;
     match &child_job.session.context {
         BundleSpec::ServiceRepository { name, .. } => {
             assert_eq!(

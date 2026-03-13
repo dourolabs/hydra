@@ -17,7 +17,7 @@ async fn run_worker_creates_patch() -> Result<()> {
     let repo = metis_common::RepoName::from_str("acme/worker-test")?;
     let issue_id = user.create_issue("worker patch integration test").await?;
     let job_id = user
-        .create_job_for_issue(&repo, "worker patch integration test", &issue_id)
+        .create_session_for_issue(&repo, "worker patch integration test", &issue_id)
         .await?;
 
     let result = harness
@@ -60,7 +60,7 @@ async fn run_worker_captures_command_outputs() -> Result<()> {
     let user = harness.default_user();
 
     let repo = metis_common::RepoName::from_str("acme/outputs-test")?;
-    let job_id = user.create_job(&repo, "output capture test").await?;
+    let job_id = user.create_session(&repo, "output capture test").await?;
 
     let result = harness
         .run_worker(&job_id, vec!["echo hello world"])
@@ -86,7 +86,7 @@ async fn run_worker_expect_failure_captures_error() -> Result<()> {
     let user = harness.default_user();
 
     let repo = metis_common::RepoName::from_str("acme/fail-test")?;
-    let job_id = user.create_job(&repo, "failure test").await?;
+    let job_id = user.create_session(&repo, "failure test").await?;
 
     let failure = harness
         .run_worker_expect_failure(&job_id, vec!["exit 1"])

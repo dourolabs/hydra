@@ -22,7 +22,7 @@ async fn cannot_close_issue_with_open_children() -> Result<()> {
     let parent_id = user.create_issue("parent for 7a").await?;
     let issue_id = user.create_issue("worker issue 7a").await?;
     let job_id = user
-        .create_job_for_issue(&repo, "test lifecycle 7a", &issue_id)
+        .create_session_for_issue(&repo, "test lifecycle 7a", &issue_id)
         .await?;
 
     // Worker creates a child under the parent, then tries to close the parent.
@@ -49,7 +49,7 @@ async fn cannot_close_issue_with_open_children() -> Result<()> {
     // Now close the child via CLI, then close the parent.
     let issue_id2 = user.create_issue("closer worker 7a").await?;
     let job_id2 = user
-        .create_job_for_issue(&repo, "close child 7a", &issue_id2)
+        .create_session_for_issue(&repo, "close child 7a", &issue_id2)
         .await?;
 
     // List children of the parent to find the child ID.
@@ -97,7 +97,7 @@ async fn cannot_close_issue_with_incomplete_todos() -> Result<()> {
     let parent_id = user.create_issue("parent for 7b").await?;
     let issue_id = user.create_issue("worker issue 7b").await?;
     let job_id = user
-        .create_job_for_issue(&repo, "test lifecycle 7b", &issue_id)
+        .create_session_for_issue(&repo, "test lifecycle 7b", &issue_id)
         .await?;
 
     // Worker creates an issue with todos, marks some done, then tries to close.
@@ -133,7 +133,7 @@ async fn cannot_close_issue_with_incomplete_todos() -> Result<()> {
     // Now mark the last todo done and close successfully.
     let issue_id2 = user.create_issue("closer worker 7b").await?;
     let job_id2 = user
-        .create_job_for_issue(&repo, "close todos 7b", &issue_id2)
+        .create_session_for_issue(&repo, "close todos 7b", &issue_id2)
         .await?;
 
     // Find the target issue.
@@ -177,7 +177,7 @@ async fn cannot_close_issue_with_open_blockers() -> Result<()> {
 
     let issue_id = user.create_issue("worker issue 7c").await?;
     let job_id = user
-        .create_job_for_issue(&repo, "test lifecycle 7c", &issue_id)
+        .create_session_for_issue(&repo, "test lifecycle 7c", &issue_id)
         .await?;
 
     // Worker creates issue A, then B blocked-on A, then tries to close B.
@@ -213,7 +213,7 @@ async fn cannot_close_issue_with_open_blockers() -> Result<()> {
     // Close blocker A first, then close B.
     let issue_id2 = user.create_issue("closer worker 7c").await?;
     let job_id2 = user
-        .create_job_for_issue(&repo, "close blocker 7c", &issue_id2)
+        .create_session_for_issue(&repo, "close blocker 7c", &issue_id2)
         .await?;
 
     harness
@@ -252,7 +252,7 @@ async fn failed_blocker_allows_closure() -> Result<()> {
 
     let issue_id = user.create_issue("worker issue 7d").await?;
     let job_id = user
-        .create_job_for_issue(&repo, "test lifecycle 7d", &issue_id)
+        .create_session_for_issue(&repo, "test lifecycle 7d", &issue_id)
         .await?;
 
     // Worker creates issue A, then B blocked-on A, fails A, then closes B.

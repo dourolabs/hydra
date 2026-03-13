@@ -939,7 +939,7 @@ pub async fn resolve_service_repo_name(
         anyhow!("service repo name must be resolved from a job; provide --job or set METIS_ID")
     })?;
     let job = client
-        .get_job(job_id)
+        .get_session(job_id)
         .await
         .with_context(|| format!("failed to fetch job '{job_id}' to resolve service repo"))?;
 
@@ -1186,11 +1186,11 @@ mod tests {
             .expect("failed to create metis client")
     }
 
-    fn mock_get_job(server: &MockServer, job: SessionVersionRecord) -> Mock {
+    fn mock_get_session(server: &MockServer, session: SessionVersionRecord) -> Mock {
         server.mock(move |when, then| {
             when.method(GET)
-                .path(format!("/v1/sessions/{}", job.session_id.as_ref()));
-            then.status(200).json_body_obj(&job);
+                .path(format!("/v1/sessions/{}", session.session_id.as_ref()));
+            then.status(200).json_body_obj(&session);
         })
     }
 
@@ -1492,7 +1492,7 @@ mod tests {
         );
         let server = MockServer::start();
         let client = metis_client(&server);
-        let job_mock = mock_get_job(&server, job_record.clone());
+        let session_mock = mock_get_session(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
         let issue_record = sample_issue_record(&issue_id, Vec::new());
@@ -1514,7 +1514,7 @@ mod tests {
         )
         .await?;
 
-        job_mock.assert();
+        session_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
         get_issue_mock.assert();
@@ -1593,7 +1593,7 @@ mod tests {
         );
         let server = MockServer::start();
         let client = metis_client(&server);
-        let job_mock = mock_get_job(&server, job_record.clone());
+        let session_mock = mock_get_session(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
         let issue_record = sample_issue_record(&issue_id, Vec::new());
@@ -1616,7 +1616,7 @@ mod tests {
         )
         .await?;
 
-        job_mock.assert();
+        session_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
         get_issue_mock.assert();
@@ -1766,7 +1766,7 @@ mod tests {
         );
         let server = MockServer::start();
         let client = metis_client(&server);
-        let job_mock = mock_get_job(&server, job_record.clone());
+        let session_mock = mock_get_session(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
         let issue_record = sample_issue_record(&issue_id, Vec::new());
@@ -1789,7 +1789,7 @@ mod tests {
         )
         .await?;
 
-        job_mock.assert();
+        session_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
         get_issue_mock.assert();
@@ -1863,7 +1863,7 @@ mod tests {
         );
         let server = MockServer::start();
         let client = metis_client(&server);
-        mock_get_job(&server, job_record);
+        mock_get_session(&server, job_record);
         mock_create_patch(&server, expected_request, patch_response);
         mock_get_patch(&server, patch_record);
         let issue_record = sample_issue_record(&issue_id, Vec::new());
@@ -1946,14 +1946,14 @@ mod tests {
             ),
             None,
         );
-        let job_mock = mock_get_job(&server, job_record.clone());
+        let session_mock = mock_get_session(&server, job_record.clone());
 
         let repo_name = resolve_service_repo_name(&client, Some(&job_id)).await?;
         assert!(
             repo_name.is_none(),
             "non-service jobs should not resolve to a service repository name"
         );
-        job_mock.assert();
+        session_mock.assert();
         Ok(())
     }
 

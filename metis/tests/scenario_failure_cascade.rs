@@ -124,7 +124,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
 
     let task_a = {
         let jobs = client
-            .list_jobs(&SearchSessionsQuery::new(
+            .list_sessions(&SearchSessionsQuery::new(
                 None,
                 Some(child_a_id.clone()),
                 None,
@@ -141,7 +141,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
 
     let task_b = {
         let jobs = client
-            .list_jobs(&SearchSessionsQuery::new(
+            .list_sessions(&SearchSessionsQuery::new(
                 None,
                 Some(child_b_id.clone()),
                 None,
@@ -241,7 +241,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
     harness.step_monitor_jobs().await?;
 
     let jobs_c = client
-        .list_jobs(&SearchSessionsQuery::new(
+        .list_sessions(&SearchSessionsQuery::new(
             None,
             Some(child_c_id.clone()),
             None,

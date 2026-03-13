@@ -27,13 +27,14 @@ use crate::{client::MetisClientInterface, command::output::CommandContext};
 
 pub async fn run(
     client: &dyn MetisClientInterface,
-    job: SessionId,
+    session: SessionId,
     dest: PathBuf,
     issue_id: Option<IssueId>,
     use_tempdir: bool,
     commands: &dyn WorkerCommands,
     _context: &CommandContext,
 ) -> Result<()> {
+    let job = session;
     let WorkerContext {
         request_context,
         variables,
@@ -41,7 +42,7 @@ pub async fn run(
         model,
         build_cache,
         ..
-    } = client.get_job_context(&job).await?;
+    } = client.get_session_context(&job).await?;
     let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
     let dest = if use_tempdir {
         let tmp = tempfile::tempdir().context("failed to create temporary working directory")?;
@@ -342,7 +343,7 @@ pub async fn run(
 
     log_status("Phase: status submission — starting");
     let status_start = Instant::now();
-    if let Err(err) = submit_job_status(client, &job, status_update).await {
+    if let Err(err) = submit_session_status(client, &job, status_update).await {
         let elapsed = status_start.elapsed().as_secs_f64();
         log_status(format!("Phase: status submission — failed ({elapsed:.2}s)"));
         errors.push(err);
@@ -386,27 +387,29 @@ fn ensure_color_output_env(env: &mut HashMap<String, String>) {
         .or_insert_with(|| "1".to_string());
 }
 
-async fn submit_job_status(
+async fn submit_session_status(
     client: &dyn MetisClientInterface,
     job: &SessionId,
     status: SessionStatusUpdate,
 ) -> Result<()> {
-    log_status(format!("Updating status for job '{job}' via metis-server…"));
-    match client.set_job_status(job, &status).await {
+    log_status(format!(
+        "Updating status for session '{job}' via metis-server…"
+    ));
+    match client.set_session_status(job, &status).await {
         Ok(response) => {
             let last_message_length = status
                 .last_message()
                 .map(|message| message.len())
                 .unwrap_or(0);
             log_status(format!(
-                "Status updated for job '{}'. Stored last message length: {}",
+                "Status updated for session '{}'. Stored last message length: {}",
                 response.session_id, last_message_length,
             ));
             Ok(())
         }
         Err(err) if err.to_string().contains("409 Conflict") => {
             log_status(format!(
-                "Status for job '{job}' was already set (conflict); ignoring."
+                "Status for session '{job}' was already set (conflict); ignoring."
             ));
             Ok(())
         }

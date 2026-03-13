@@ -28,7 +28,7 @@ async fn worker_receives_user_secret_from_api() -> Result<()> {
     let repo = metis_common::RepoName::from_str("acme/secrets-test")?;
     let issue_id = user.create_issue("test secret precedence").await?;
     let job_id = user
-        .create_job_for_issue(&repo, "test secret precedence", &issue_id)
+        .create_session_for_issue(&repo, "test secret precedence", &issue_id)
         .await?;
 
     // The worker command prints CLAUDE_CODE_OAUTH_TOKEN so we can verify it.

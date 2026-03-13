@@ -28,7 +28,7 @@ async fn todo_management_through_worker() -> Result<()> {
     // Phase 1: Add 3 todo items via worker CLI.
     let phase1_issue = user.create_issue("phase1 worker").await?;
     let phase1_job = user
-        .create_job_for_issue(&repo, "add todos", &phase1_issue)
+        .create_session_for_issue(&repo, "add todos", &phase1_issue)
         .await?;
 
     harness
@@ -56,7 +56,7 @@ async fn todo_management_through_worker() -> Result<()> {
     // Phase 2: Mark one todo done.
     let phase2_issue = user.create_issue("phase2 worker").await?;
     let phase2_job = user
-        .create_job_for_issue(&repo, "mark todo done", &phase2_issue)
+        .create_session_for_issue(&repo, "mark todo done", &phase2_issue)
         .await?;
 
     harness
@@ -79,7 +79,7 @@ async fn todo_management_through_worker() -> Result<()> {
     // Phase 3: Replace entire todo list with new items.
     let phase3_issue = user.create_issue("phase3 worker").await?;
     let phase3_job = user
-        .create_job_for_issue(&repo, "replace todos", &phase3_issue)
+        .create_session_for_issue(&repo, "replace todos", &phase3_issue)
         .await?;
 
     harness
@@ -113,7 +113,7 @@ async fn todo_management_through_worker() -> Result<()> {
     // Phase 4: Mark all done and close issue.
     let phase4_issue = user.create_issue("phase4 worker").await?;
     let phase4_job = user
-        .create_job_for_issue(&repo, "close issue", &phase4_issue)
+        .create_session_for_issue(&repo, "close issue", &phase4_issue)
         .await?;
 
     harness

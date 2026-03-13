@@ -19,7 +19,7 @@ async fn worker_surfaces_error_for_closing_issue_with_open_children() -> Result<
     let parent_id = user.create_issue("parent for children test").await?;
     let issue_id = user.create_issue("worker child closure test").await?;
     let job_id = user
-        .create_job_for_issue(&repo, "worker child closure test", &issue_id)
+        .create_session_for_issue(&repo, "worker child closure test", &issue_id)
         .await?;
 
     let failure = harness
@@ -64,7 +64,7 @@ async fn worker_surfaces_error_for_closing_issue_with_open_todos() -> Result<()>
     let parent_id = user.create_issue("parent for todos test").await?;
     let issue_id = user.create_issue("worker todo closure test").await?;
     let job_id = user
-        .create_job_for_issue(&repo, "worker todo closure test", &issue_id)
+        .create_session_for_issue(&repo, "worker todo closure test", &issue_id)
         .await?;
 
     let failure = harness

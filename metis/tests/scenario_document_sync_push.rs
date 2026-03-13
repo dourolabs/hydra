@@ -25,7 +25,7 @@ async fn document_sync_push_through_worker() -> Result<()> {
     // ── Phase 1: Create a document via a worker CLI command ─────────
     let phase1_issue = user.create_issue("create initial document").await?;
     let phase1_job = user
-        .create_job_for_issue(&repo, "create document", &phase1_issue)
+        .create_session_for_issue(&repo, "create document", &phase1_issue)
         .await?;
 
     harness
@@ -49,7 +49,7 @@ async fn document_sync_push_through_worker() -> Result<()> {
     // ── Phase 2: Sync, edit, and push via a second worker ───────────
     let phase2_issue = user.create_issue("sync edit and push document").await?;
     let phase2_job = user
-        .create_job_for_issue(&repo, "sync and push document", &phase2_issue)
+        .create_session_for_issue(&repo, "sync and push document", &phase2_issue)
         .await?;
 
     harness

@@ -340,7 +340,7 @@ impl PatchAssertions for PatchVersionRecord {
 /// Structured assertions on job records.
 ///
 /// ```ignore
-/// let job = user.client().get_job(&job_id).await?;
+/// let job = user.client().get_session(&job_id).await?;
 /// job.assert_status(Status::Complete);
 /// job.assert_env_var("METIS_TOKEN", "secret");
 /// ```
@@ -528,7 +528,7 @@ pub fn find_summary_children_by_type_and_status<'a>(
 ///     Duration::from_millis(50),
 ///     "job to reach Running status",
 ///     || async {
-///         let job = client.get_job(&job_id).await.unwrap();
+///         let job = client.get_session(&job_id).await.unwrap();
 ///         job.task.status == Status::Running
 ///     },
 /// ).await?;

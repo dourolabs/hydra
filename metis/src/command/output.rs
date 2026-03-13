@@ -117,25 +117,25 @@ pub fn render_patch_summary_records(
     }
 }
 
-pub fn render_job_records(
+pub fn render_session_records(
     format: ResolvedOutputFormat,
     jobs: &[SessionVersionRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
     match format {
-        ResolvedOutputFormat::Jsonl => render_job_records_jsonl(jobs, writer),
-        ResolvedOutputFormat::Pretty => render_job_records_pretty(jobs, writer),
+        ResolvedOutputFormat::Jsonl => render_session_records_jsonl(jobs, writer),
+        ResolvedOutputFormat::Pretty => render_session_records_pretty(jobs, writer),
     }
 }
 
-pub fn render_job_summary_records(
+pub fn render_session_summary_records(
     format: ResolvedOutputFormat,
     jobs: &[SessionSummaryRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
     match format {
-        ResolvedOutputFormat::Jsonl => render_job_summary_records_jsonl(jobs, writer),
-        ResolvedOutputFormat::Pretty => render_job_summary_records_pretty(jobs, writer),
+        ResolvedOutputFormat::Jsonl => render_session_summary_records_jsonl(jobs, writer),
+        ResolvedOutputFormat::Pretty => render_session_summary_records_pretty(jobs, writer),
     }
 }
 
@@ -479,7 +479,10 @@ fn format_patch_status(status: PatchStatus) -> &'static str {
     }
 }
 
-fn render_job_records_jsonl(jobs: &[SessionVersionRecord], writer: &mut impl Write) -> Result<()> {
+fn render_session_records_jsonl(
+    jobs: &[SessionVersionRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
     for job in jobs {
         serde_json::to_writer(&mut *writer, job)?;
         writer.write_all(b"\n")?;
@@ -488,9 +491,12 @@ fn render_job_records_jsonl(jobs: &[SessionVersionRecord], writer: &mut impl Wri
     Ok(())
 }
 
-fn render_job_records_pretty(jobs: &[SessionVersionRecord], writer: &mut impl Write) -> Result<()> {
+fn render_session_records_pretty(
+    jobs: &[SessionVersionRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
     if jobs.is_empty() {
-        writeln!(writer, "No Metis jobs found.")?;
+        writeln!(writer, "No Metis sessions found.")?;
         writer.flush()?;
         return Ok(());
     }
@@ -505,11 +511,11 @@ fn render_job_records_pretty(jobs: &[SessionVersionRecord], writer: &mut impl Wr
     for job in jobs {
         let status_display = format_status(&job.session.status);
         let runtime = format_runtime(&job.session, now).unwrap_or_else(|| "-".into());
-        let notes = job_note(job).unwrap_or_else(|| "-".into());
-        let cells = job_row_cells(job.session_id.as_ref(), status_display, &runtime);
-        let plain_prefix = job_row_prefix(&cells);
-        let colored_prefix = colored_job_row_prefix(&cells, &job.session.status);
-        for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
+        let notes = session_note(job).unwrap_or_else(|| "-".into());
+        let cells = session_row_cells(job.session_id.as_ref(), status_display, &runtime);
+        let plain_prefix = session_row_prefix(&cells);
+        let colored_prefix = colored_session_row_prefix(&cells, &job.session.status);
+        for (index, line) in format_session_lines(&plain_prefix, &notes, terminal_width)
             .into_iter()
             .enumerate()
         {
@@ -525,7 +531,7 @@ fn render_job_records_pretty(jobs: &[SessionVersionRecord], writer: &mut impl Wr
     Ok(())
 }
 
-fn render_job_summary_records_jsonl(
+fn render_session_summary_records_jsonl(
     jobs: &[SessionSummaryRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
@@ -537,12 +543,12 @@ fn render_job_summary_records_jsonl(
     Ok(())
 }
 
-fn render_job_summary_records_pretty(
+fn render_session_summary_records_pretty(
     jobs: &[SessionSummaryRecord],
     writer: &mut impl Write,
 ) -> Result<()> {
     if jobs.is_empty() {
-        writeln!(writer, "No Metis jobs found.")?;
+        writeln!(writer, "No Metis sessions found.")?;
         writer.flush()?;
         return Ok(());
     }
@@ -557,11 +563,11 @@ fn render_job_summary_records_pretty(
     for job in jobs {
         let status_display = format_status(&job.session.status);
         let runtime = format_summary_runtime(&job.session, now).unwrap_or_else(|| "-".into());
-        let notes = job_summary_note(job).unwrap_or_else(|| "-".into());
-        let cells = job_row_cells(job.session_id.as_ref(), status_display, &runtime);
-        let plain_prefix = job_row_prefix(&cells);
-        let colored_prefix = colored_job_row_prefix(&cells, &job.session.status);
-        for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
+        let notes = session_summary_note(job).unwrap_or_else(|| "-".into());
+        let cells = session_row_cells(job.session_id.as_ref(), status_display, &runtime);
+        let plain_prefix = session_row_prefix(&cells);
+        let colored_prefix = colored_session_row_prefix(&cells, &job.session.status);
+        for (index, line) in format_session_lines(&plain_prefix, &notes, terminal_width)
             .into_iter()
             .enumerate()
         {
@@ -836,21 +842,21 @@ fn render_versioned_messages_pretty(
     Ok(())
 }
 
-struct JobRowCells {
+struct SessionRowCells {
     id: String,
     status: String,
     runtime: String,
 }
 
-fn job_row_cells(id: &str, status: &str, runtime: &str) -> JobRowCells {
-    JobRowCells {
+fn session_row_cells(id: &str, status: &str, runtime: &str) -> SessionRowCells {
+    SessionRowCells {
         id: format!("{id:<NAME_WIDTH$}"),
         status: format!("{status:<STATUS_WIDTH$}"),
         runtime: format!("{runtime:<RUNTIME_WIDTH$}"),
     }
 }
 
-fn job_row_prefix(cells: &JobRowCells) -> String {
+fn session_row_prefix(cells: &SessionRowCells) -> String {
     format!(
         "{:<name_width$} {:<status_width$} {:<runtime_width$} ",
         cells.id,
@@ -862,7 +868,7 @@ fn job_row_prefix(cells: &JobRowCells) -> String {
     )
 }
 
-fn colored_job_row_prefix(cells: &JobRowCells, status: &Status) -> String {
+fn colored_session_row_prefix(cells: &SessionRowCells, status: &Status) -> String {
     format!(
         "{} {} {} ",
         cells.id.bright_cyan(),
@@ -893,11 +899,11 @@ fn format_status(status: &Status) -> &'static str {
     }
 }
 
-fn job_note(job: &SessionVersionRecord) -> Option<String> {
+fn session_note(job: &SessionVersionRecord) -> Option<String> {
     job.session.error.as_ref().map(format_task_error)
 }
 
-fn job_summary_note(job: &SessionSummaryRecord) -> Option<String> {
+fn session_summary_note(job: &SessionSummaryRecord) -> Option<String> {
     job.session.error.as_ref().map(format_task_error)
 }
 
@@ -918,7 +924,7 @@ fn current_terminal_width() -> usize {
 }
 
 fn header_row() -> (String, String) {
-    let cells = job_row_cells("ID", "STATUS", "RUNTIME");
+    let cells = session_row_cells("ID", "STATUS", "RUNTIME");
     let plain = format!(
         "{} {} {} {}",
         cells.id, cells.status, cells.runtime, "NOTES"
@@ -933,7 +939,7 @@ fn header_row() -> (String, String) {
     (plain, colored)
 }
 
-fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize) -> Vec<String> {
+fn format_session_lines(prefix: &str, notes: &str, terminal_width: usize) -> Vec<String> {
     let indent = " ".repeat(prefix.len());
     let available_width = terminal_width.saturating_sub(prefix.len()).max(1);
     let notes_width = available_width.min(MAX_NOTES_WIDTH);
@@ -1201,13 +1207,13 @@ mod tests {
 
     #[test]
     fn wraps_notes_to_terminal_width_and_indents_followup_lines() {
-        let cells = job_row_cells("job-123", "running", "12s");
-        let prefix = job_row_prefix(&cells);
+        let cells = session_row_cells("job-123", "running", "12s");
+        let prefix = session_row_prefix(&cells);
         let terminal_width = prefix.len() + 80;
         let notes =
             "This is a long note that should wrap to the next line when it exceeds the terminal width.";
 
-        let lines = format_job_lines(&prefix, notes, terminal_width);
+        let lines = format_session_lines(&prefix, notes, terminal_width);
         let wrapped_notes = textwrap::wrap(
             notes,
             Options::new(MAX_NOTES_WIDTH)
@@ -1227,12 +1233,12 @@ mod tests {
 
     #[test]
     fn caps_notes_width_when_terminal_is_wide() {
-        let cells = job_row_cells("job-123", "running", "12s");
-        let prefix = job_row_prefix(&cells);
+        let cells = session_row_cells("job-123", "running", "12s");
+        let prefix = session_row_prefix(&cells);
         let terminal_width = 400;
         let notes = "a".repeat(170);
 
-        let lines = format_job_lines(&prefix, &notes, terminal_width);
+        let lines = format_session_lines(&prefix, &notes, terminal_width);
 
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].len() - prefix.len(), MAX_NOTES_WIDTH);
@@ -1243,12 +1249,12 @@ mod tests {
 
     #[test]
     fn notes_are_truncated_after_five_lines() {
-        let cells = job_row_cells("job-123", "running", "12s");
-        let prefix = job_row_prefix(&cells);
+        let cells = session_row_cells("job-123", "running", "12s");
+        let prefix = session_row_prefix(&cells);
         let terminal_width = prefix.len() + 20;
         let notes = "word ".repeat(120);
 
-        let lines = format_job_lines(&prefix, &notes, terminal_width);
+        let lines = format_session_lines(&prefix, &notes, terminal_width);
 
         assert_eq!(lines.len(), MAX_NOTE_LINES);
         assert!(lines.last().unwrap().contains("..."));

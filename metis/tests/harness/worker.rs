@@ -220,10 +220,10 @@ async fn collect_created_patches(
 }
 
 /// Get the current status of a job.
-async fn get_job_status(harness: &TestHarness, job_id: &SessionId) -> Result<Status> {
+async fn get_session_status(harness: &TestHarness, job_id: &SessionId) -> Result<Status> {
     let client = harness.client()?;
     let jobs = client
-        .list_jobs(&SearchSessionsQuery::default())
+        .list_sessions(&SearchSessionsQuery::default())
         .await
         .context("failed to list jobs for status check")?;
     let job = jobs
@@ -241,7 +241,7 @@ async fn wait_for_running(harness: &TestHarness, job_id: &SessionId) -> Result<(
         if std::time::Instant::now() > deadline {
             bail!("timed out waiting for job '{job_id}' to reach Running status");
         }
-        let status = get_job_status(harness, job_id).await?;
+        let status = get_session_status(harness, job_id).await?;
         if status == Status::Running {
             return Ok(());
         }
@@ -284,7 +284,7 @@ pub(super) async fn run_worker_impl(
     let worker_dir = temp_dir.path().to_path_buf();
 
     let context = CommandContext::new(ResolvedOutputFormat::Pretty);
-    let run_result = metis::command::jobs::worker_run::run(
+    let run_result = metis::command::sessions::worker_run::run(
         harness.default_user().client(),
         job_id.clone(),
         worker_dir,
@@ -305,7 +305,7 @@ pub(super) async fn run_worker_impl(
     }
 
     let patches_created = collect_created_patches(harness, &before_patch_ids).await?;
-    let final_status = get_job_status(harness, job_id).await?;
+    let final_status = get_session_status(harness, job_id).await?;
 
     Ok(WorkerResult {
         outputs,
@@ -334,7 +334,7 @@ pub(super) async fn run_worker_expect_failure_impl(
     let worker_dir = temp_dir.path().to_path_buf();
 
     let context = CommandContext::new(ResolvedOutputFormat::Pretty);
-    let run_result = metis::command::jobs::worker_run::run(
+    let run_result = metis::command::sessions::worker_run::run(
         harness.default_user().client(),
         job_id.clone(),
         worker_dir,
@@ -346,7 +346,7 @@ pub(super) async fn run_worker_expect_failure_impl(
     .await;
 
     let outputs = bash_commands.outputs();
-    let final_status = get_job_status(harness, job_id).await?;
+    let final_status = get_session_status(harness, job_id).await?;
 
     match run_result {
         Ok(()) => Err(anyhow::anyhow!(
