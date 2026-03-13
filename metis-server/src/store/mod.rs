@@ -395,7 +395,7 @@ pub trait ReadOnlyStore: Send + Sync {
     /// # Arguments
     /// * `id` - The SessionId to look up
     /// * `include_deleted` - If true, returns the session even if it has been soft-deleted.
-    ///   If false, returns `StoreError::SessionNotFound` for deleted tasks.
+    ///   If false, returns `StoreError::SessionNotFound` for deleted sessions.
     ///
     /// # Returns
     /// The session if found, or an error if not found
