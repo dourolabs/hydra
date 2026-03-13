@@ -8,10 +8,11 @@ import styles from "./SecretsSection.module.css";
 interface SecretRowProps {
   name: string;
   label: string;
+  description?: string;
   configured: boolean;
 }
 
-export function SecretRow({ name, label, configured }: SecretRowProps) {
+export function SecretRow({ name, label, description, configured }: SecretRowProps) {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -77,6 +78,7 @@ export function SecretRow({ name, label, configured }: SecretRowProps) {
         <div className={styles.secretInfo}>
           <span className={styles.secretName}>{name}</span>
           <span className={styles.secretLabel}>{label}</span>
+          {description && <span className={styles.secretDescription}>{description}</span>}
         </div>
         <div className={styles.secretStatus}>
           <span className={configured ? styles.statusConfigured : styles.statusNotSet}>
