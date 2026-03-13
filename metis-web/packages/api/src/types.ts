@@ -50,7 +50,6 @@ export type { IssueSummary } from "./generated/IssueSummary";
 export type { IssueSummaryRecord } from "./generated/IssueSummaryRecord";
 export type { IssueType } from "./generated/IssueType";
 export type { IssueVersionRecord } from "./generated/IssueVersionRecord";
-export type { JobSettings } from "./generated/JobSettings";
 export type { KillSessionResponse } from "./generated/KillSessionResponse";
 export type { Label } from "./generated/Label";
 export type { LabelId } from "./generated/LabelId";

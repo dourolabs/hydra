@@ -1,11 +1,11 @@
-import type { JobSettings } from "@metis/api";
+import type { SessionSettings } from "@metis/api";
 import styles from "./IssueSettings.module.css";
 
 interface IssueSettingsProps {
-  jobSettings?: JobSettings | null;
+  jobSettings?: SessionSettings | null;
 }
 
-const FIELDS: { key: keyof JobSettings; label: string }[] = [
+const FIELDS: { key: keyof SessionSettings; label: string }[] = [
   { key: "repo_name", label: "Repository" },
   { key: "remote_url", label: "Remote URL" },
   { key: "image", label: "Image" },

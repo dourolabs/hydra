@@ -25,7 +25,7 @@
       "progress": "Provider selected (Keycloak). Authorization code flow implemented. Token refresh in progress.",
       "status": "in-progress",
       "assignee": "bob",
-      "job_settings": {
+      "session_settings": {
         "repo_name": "acme/web-app"
       },
       "dependencies": [

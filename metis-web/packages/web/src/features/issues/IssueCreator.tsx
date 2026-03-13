@@ -52,7 +52,7 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
           dependencies: [],
           patches: [],
           ...(params.assignee && { assignee: params.assignee }),
-          ...(params.repoName && { job_settings: { repo_name: params.repoName } }),
+          ...(params.repoName && { session_settings: { repo_name: params.repoName } }),
         },
         session_id: null,
       }),
