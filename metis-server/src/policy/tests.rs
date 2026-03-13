@@ -673,10 +673,10 @@ fn make_dummy_patch() -> crate::domain::patches::Patch {
     )
 }
 
-fn make_dummy_task() -> crate::store::Task {
-    crate::store::Task::new(
+fn make_dummy_task() -> crate::store::Session {
+    crate::store::Session::new(
         "test prompt".to_string(),
-        crate::domain::jobs::BundleSpec::None,
+        crate::domain::sessions::BundleSpec::None,
         None,
         Username::from("test-creator"),
         None,
@@ -798,7 +798,7 @@ async fn check_update_job_delegates_to_check_restrictions() {
     );
     let store = MemoryStore::new();
     let task = make_dummy_task();
-    let task_id = metis_common::TaskId::new();
+    let task_id = metis_common::SessionId::new();
     let actor = ActorRef::test();
 
     let result = engine
@@ -812,7 +812,7 @@ async fn check_update_job_passes_when_allowed() {
     let engine = PolicyEngine::new(vec![Box::new(AllowAllRestriction)], Vec::new());
     let store = MemoryStore::new();
     let task = make_dummy_task();
-    let task_id = metis_common::TaskId::new();
+    let task_id = metis_common::SessionId::new();
     let actor = ActorRef::test();
 
     let result = engine

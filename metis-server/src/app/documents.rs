@@ -3,7 +3,7 @@ use crate::{
     store::{ReadOnlyStore, Status, StoreError},
 };
 use metis_common::{
-    DocumentId, TaskId, VersionNumber, Versioned, api::v1::documents::SearchDocumentsQuery,
+    DocumentId, SessionId, VersionNumber, Versioned, api::v1::documents::SearchDocumentsQuery,
 };
 use thiserror::Error;
 use tracing::info;
@@ -16,17 +16,17 @@ pub enum UpsertDocumentError {
     JobNotFound {
         #[source]
         source: StoreError,
-        job_id: TaskId,
+        job_id: SessionId,
     },
     #[error("failed to validate job status for '{job_id}'")]
     JobStatusLookup {
         #[source]
         source: StoreError,
-        job_id: TaskId,
+        job_id: SessionId,
     },
     #[error("created_by must reference a running job")]
     JobNotRunning {
-        job_id: TaskId,
+        job_id: SessionId,
         status: Option<Status>,
     },
     #[error("document '{document_id}' not found")]

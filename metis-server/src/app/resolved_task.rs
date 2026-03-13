@@ -1,5 +1,5 @@
 use super::{AppState, BundleResolutionError, ResolvedBundle};
-use crate::domain::jobs::{Bundle, BundleSpec, Task};
+use crate::domain::sessions::{Bundle, BundleSpec, Session};
 use crate::store::StoreError;
 use std::collections::HashMap;
 
@@ -22,24 +22,24 @@ pub enum TaskResolutionError {
 }
 
 impl AppState {
-    pub async fn resolve_task(&self, task: &Task) -> Result<ResolvedTask, TaskResolutionError> {
-        let context = self.resolve_context(task).await?;
-        let image = Self::resolve_image(task, &context, &self.config.job.default_image)?;
+    pub async fn resolve_task(&self, session: &Session) -> Result<ResolvedTask, TaskResolutionError> {
+        let context = self.resolve_context(session).await?;
+        let image = Self::resolve_image(session, &context, &self.config.job.default_image)?;
 
         Ok(ResolvedTask {
             context,
             image,
-            env_vars: task.env_vars.clone(),
-            secrets: task.secrets.clone(),
+            env_vars: session.env_vars.clone(),
+            secrets: session.secrets.clone(),
         })
     }
 
-    async fn resolve_context(&self, task: &Task) -> Result<ResolvedBundle, BundleResolutionError> {
-        self.resolve_bundle_spec(task.context.clone()).await
+    async fn resolve_context(&self, session: &Session) -> Result<ResolvedBundle, BundleResolutionError> {
+        self.resolve_bundle_spec(session.context.clone()).await
     }
 
     fn resolve_image(
-        task: &Task,
+        session: &Session,
         resolved: &ResolvedBundle,
         fallback_image: &str,
     ) -> Result<String, TaskResolutionError> {
@@ -57,7 +57,7 @@ impl AppState {
             }
         };
 
-        if let Some(image) = image_from(task.image.as_ref())? {
+        if let Some(image) = image_from(session.image.as_ref())? {
             return Ok(image);
         }
 

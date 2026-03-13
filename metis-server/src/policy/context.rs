@@ -36,9 +36,9 @@ pub enum OperationPayload {
     },
     /// A job/task is being created or updated.
     Job {
-        task_id: Option<metis_common::TaskId>,
-        new: crate::store::Task,
-        old: Option<crate::store::Task>,
+        task_id: Option<metis_common::SessionId>,
+        new: crate::store::Session,
+        old: Option<crate::store::Session>,
     },
     /// A document is being created or updated.
     Document {

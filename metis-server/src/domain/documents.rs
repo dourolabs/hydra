@@ -1,5 +1,5 @@
 use metis_common::api::v1 as api;
-use metis_common::{DocumentPath, TaskId};
+use metis_common::{DocumentPath, SessionId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -10,7 +10,7 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<DocumentPath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<TaskId>,
+    pub created_by: Option<SessionId>,
     #[serde(default)]
     pub deleted: bool,
 }

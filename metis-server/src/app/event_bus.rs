@@ -9,17 +9,17 @@ use crate::domain::{
     patches::Patch,
     users::{User, Username},
 };
-use crate::store::{ReadOnlyStore, RelationshipType, Store, StoreError, Task, TaskStatusLog};
+use crate::store::{ReadOnlyStore, RelationshipType, Session, Store, StoreError, TaskStatusLog};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
-    DocumentId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, TaskId,
+    DocumentId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, SessionId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     api::v1::notifications::ListNotificationsQuery,
@@ -48,8 +48,8 @@ pub enum MutationPayload {
         actor: ActorRef,
     },
     Job {
-        old: Option<Task>,
-        new: Task,
+        old: Option<Session>,
+        new: Session,
         actor: ActorRef,
     },
     Document {
@@ -166,14 +166,14 @@ pub enum ServerEvent {
     },
     JobCreated {
         seq: u64,
-        task_id: TaskId,
+        task_id: SessionId,
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
     JobUpdated {
         seq: u64,
-        task_id: TaskId,
+        task_id: SessionId,
         version: u64,
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
@@ -447,7 +447,7 @@ impl EventBus {
         });
     }
 
-    pub fn emit_job_created(&self, task_id: TaskId, version: u64, payload: Arc<MutationPayload>) {
+    pub fn emit_job_created(&self, task_id: SessionId, version: u64, payload: Arc<MutationPayload>) {
         self.send(ServerEvent::JobCreated {
             seq: self.next_seq(),
             task_id,
@@ -457,7 +457,7 @@ impl EventBus {
         });
     }
 
-    pub fn emit_job_updated(&self, task_id: TaskId, version: u64, payload: Arc<MutationPayload>) {
+    pub fn emit_job_updated(&self, task_id: SessionId, version: u64, payload: Arc<MutationPayload>) {
         self.send(ServerEvent::JobUpdated {
             seq: self.next_seq(),
             task_id,
@@ -832,41 +832,41 @@ impl StoreWithEvents {
         Ok(version)
     }
 
-    pub async fn add_task_with_actor(
+    pub async fn add_session_with_actor(
         &self,
-        task: Task,
+        session: Session,
         creation_time: DateTime<Utc>,
         actor: ActorRef,
-    ) -> Result<(TaskId, VersionNumber), StoreError> {
-        let new_task = task.clone();
-        let (task_id, version) = self.inner.add_task(task, creation_time, &actor).await?;
+    ) -> Result<(SessionId, VersionNumber), StoreError> {
+        let new_session = session.clone();
+        let (session_id, version) = self.inner.add_session(session, creation_time, &actor).await?;
         let payload = Arc::new(MutationPayload::Job {
             old: None,
-            new: new_task,
+            new: new_session,
             actor,
         });
         self.event_bus
-            .emit_job_created(task_id.clone(), version, payload);
-        Ok((task_id, version))
+            .emit_job_created(session_id.clone(), version, payload);
+        Ok((session_id, version))
     }
 
-    pub async fn update_task_with_actor(
+    pub async fn update_session_with_actor(
         &self,
-        metis_id: &TaskId,
-        task: Task,
+        metis_id: &SessionId,
+        session: Session,
         actor: ActorRef,
-    ) -> Result<Versioned<Task>, StoreError> {
-        let old_task = self
+    ) -> Result<Versioned<Session>, StoreError> {
+        let old_session = self
             .inner
-            .get_task(metis_id, false)
+            .get_session(metis_id, false)
             .await
             .ok()
             .map(|v| v.item);
-        let new_task = task.clone();
-        let result = self.inner.update_task(metis_id, task, &actor).await?;
+        let new_session = session.clone();
+        let result = self.inner.update_session(metis_id, session, &actor).await?;
         let payload = Arc::new(MutationPayload::Job {
-            old: old_task,
-            new: new_task,
+            old: old_session,
+            new: new_session,
             actor,
         });
         self.event_bus
@@ -876,10 +876,10 @@ impl StoreWithEvents {
 
     pub async fn delete_task_with_actor(
         &self,
-        id: &TaskId,
+        id: &SessionId,
         actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.inner.delete_task(id, &actor).await
+        self.inner.delete_session(id, &actor).await
     }
 
     // ---- Repository mutations (inherent, with actor) ----
@@ -1303,8 +1303,8 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_issue_blocked_on(issue_id).await
     }
 
-    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
-        self.inner.get_tasks_for_issue(issue_id).await
+    async fn get_sessions_for_issue(&self, issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError> {
+        self.inner.get_sessions_for_issue(issue_id).await
     }
 
     // ---- Patch (read-only) ----
@@ -1373,37 +1373,37 @@ impl ReadOnlyStore for StoreWithEvents {
 
     // ---- Task/Job (read-only) ----
 
-    async fn get_task(
+    async fn get_session(
         &self,
-        id: &TaskId,
+        id: &SessionId,
         include_deleted: bool,
-    ) -> Result<Versioned<Task>, StoreError> {
-        self.inner.get_task(id, include_deleted).await
+    ) -> Result<Versioned<Session>, StoreError> {
+        self.inner.get_session(id, include_deleted).await
     }
 
-    async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
-        self.inner.get_task_versions(id).await
+    async fn get_session_versions(&self, id: &SessionId) -> Result<Vec<Versioned<Session>>, StoreError> {
+        self.inner.get_session_versions(id).await
     }
 
-    async fn list_tasks(
+    async fn list_sessions(
         &self,
-        query: &SearchJobsQuery,
-    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
-        self.inner.list_tasks(query).await
+        query: &SearchSessionsQuery,
+    ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
+        self.inner.list_sessions(query).await
     }
 
-    async fn count_tasks(&self, query: &SearchJobsQuery) -> Result<u64, StoreError> {
-        self.inner.count_tasks(query).await
+    async fn count_sessions(&self, query: &SearchSessionsQuery) -> Result<u64, StoreError> {
+        self.inner.count_sessions(query).await
     }
 
-    async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
+    async fn get_status_log(&self, id: &SessionId) -> Result<TaskStatusLog, StoreError> {
         self.inner.get_status_log(id).await
     }
 
     async fn get_status_logs(
         &self,
-        ids: &[TaskId],
-    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
+        ids: &[SessionId],
+    ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError> {
         self.inner.get_status_logs(ids).await
     }
 
@@ -1927,7 +1927,7 @@ mod tests {
 
     #[tokio::test]
     async fn job_update_event_carries_old_and_new_payload() {
-        use crate::store::Task as StoreTask;
+        use crate::store::Session as StoreTask;
 
         let bus = Arc::new(EventBus::new());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
@@ -1936,7 +1936,7 @@ mod tests {
 
         let task = StoreTask {
             prompt: "test task".to_string(),
-            context: crate::domain::jobs::BundleSpec::None,
+            context: crate::domain::sessions::BundleSpec::None,
             spawned_from: None,
             creator: crate::domain::users::Username::from("test-user"),
             image: None,
@@ -1955,14 +1955,14 @@ mod tests {
         };
 
         let (task_id, _) = store
-            .add_task_with_actor(task, chrono::Utc::now(), ActorRef::test())
+            .add_session_with_actor(task, chrono::Utc::now(), ActorRef::test())
             .await
             .unwrap();
         let _ = rx.recv().await.unwrap(); // consume JobCreated
 
         let updated_task = StoreTask {
             prompt: "test task".to_string(),
-            context: crate::domain::jobs::BundleSpec::None,
+            context: crate::domain::sessions::BundleSpec::None,
             spawned_from: None,
             creator: crate::domain::users::Username::from("test-user"),
             image: None,
@@ -1981,7 +1981,7 @@ mod tests {
         };
 
         store
-            .update_task_with_actor(&task_id, updated_task, ActorRef::test())
+            .update_session_with_actor(&task_id, updated_task, ActorRef::test())
             .await
             .unwrap();
 

@@ -1,6 +1,6 @@
 use crate::{
     app::AppState,
-    job_engine::{JobEngineError, JobStatus, TaskId},
+    job_engine::{JobEngineError, JobStatus, SessionId},
     routes::jobs::{ApiError, JobIdPath},
 };
 use axum::{
@@ -83,7 +83,7 @@ pub async fn get_job_logs(
 
 async fn fetch_logs(
     job_engine: &dyn crate::job_engine::JobEngine,
-    job_id: &TaskId,
+    job_id: &SessionId,
     tail_lines: Option<i64>,
 ) -> Result<Response, ApiError> {
     let logs = job_engine
@@ -119,7 +119,7 @@ async fn fetch_logs(
 
 async fn stream_logs_sse(
     job_engine: &dyn crate::job_engine::JobEngine,
-    job_id: &TaskId,
+    job_id: &SessionId,
     follow: bool,
 ) -> Result<Response, ApiError> {
     let mut receiver = job_engine.get_logs_stream(job_id, follow).map_err(|err| {

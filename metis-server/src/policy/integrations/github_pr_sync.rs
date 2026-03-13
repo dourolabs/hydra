@@ -107,7 +107,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
         let creator = match &actor_id {
             ActorId::Username(username) => username.clone().into(),
             ActorId::Session(session_id) => {
-                let task = ctx.app_state.get_task(session_id).await.map_err(|e| {
+                let task = ctx.app_state.get_session(session_id).await.map_err(|e| {
                     AutomationError::Other(anyhow::anyhow!(
                         "github_pr_sync: failed to load task '{session_id}': {e}"
                     ))

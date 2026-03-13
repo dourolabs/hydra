@@ -1,7 +1,7 @@
 use crate::{
     app::{AppState, ServiceState},
-    domain::{actors::ActorRef, jobs::BundleSpec, secrets::SecretManager, users::Username},
-    store::{MemoryStore, Status, Task},
+    domain::{actors::ActorRef, sessions::BundleSpec, secrets::SecretManager, users::Username},
+    store::{MemoryStore, Session, Status},
     test::{
         MockJobEngine, TestStateHandles, spawn_test_server_with_state, test_app_config,
         test_client, test_client_without_auth,
@@ -624,8 +624,8 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
     // Create a task owned by the test creator
     let (job_id, _) = handles
         .store
-        .add_task(
-            Task {
+        .add_session(
+            Session {
                 prompt: "test prompt".to_string(),
                 context: BundleSpec::None,
                 spawned_from: None,
@@ -659,7 +659,7 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body: v1::jobs::WorkerContext = response.json().await?;
+    let body: v1::sessions::WorkerContext = response.json().await?;
 
     // User's CLAUDE_CODE_OAUTH_TOKEN should override (config has None for this key)
     assert_eq!(

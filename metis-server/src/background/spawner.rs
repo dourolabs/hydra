@@ -8,9 +8,9 @@ use crate::{
     app::AppState,
     domain::{
         issues::{Issue, IssueDependencyType, IssueStatus},
-        jobs::BundleSpec,
+        sessions::BundleSpec,
     },
-    store::{Status, StoreError, Task},
+    store::{Session, Status, StoreError},
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -32,7 +32,7 @@ pub const AGENT_NAME_ENV_VAR: &str = "METIS_AGENT_NAME";
 #[async_trait]
 pub trait Spawner: Send + Sync {
     fn name(&self) -> &str;
-    async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Task>>;
+    async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Session>>;
 }
 
 #[derive(Clone, Debug)]
@@ -61,14 +61,14 @@ impl AgentQueue {
         issue_id: &IssueId,
         issue: &Issue,
         prompt: &str,
-    ) -> anyhow::Result<Option<Task>> {
-        let job_settings = state.apply_job_settings_defaults(issue.job_settings.clone());
+    ) -> anyhow::Result<Option<Session>> {
+        let session_settings = state.apply_session_settings_defaults(issue.session_settings.clone());
         let bundle = match (
-            job_settings.remote_url.as_ref(),
-            job_settings.repo_name.as_ref(),
+            session_settings.remote_url.as_ref(),
+            session_settings.repo_name.as_ref(),
         ) {
             (Some(remote_url), _) if !remote_url.trim().is_empty() => {
-                let rev = job_settings
+                let rev = session_settings
                     .branch
                     .clone()
                     .unwrap_or_else(|| "main".to_string());
@@ -82,7 +82,7 @@ impl AgentQueue {
                     .repository_from_store(repo_name)
                     .await
                     .context("failed to load repository for issue task")?;
-                let rev = job_settings
+                let rev = session_settings
                     .branch
                     .clone()
                     .or_else(|| repository.default_branch.clone());
@@ -95,7 +95,7 @@ impl AgentQueue {
             _ => BundleSpec::None,
         };
 
-        let image = job_settings
+        let image = session_settings
             .image
             .as_ref()
             .map(|value| value.trim())
@@ -106,17 +106,17 @@ impl AgentQueue {
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.agent.name.clone());
 
-        Ok(Some(Task::new(
+        Ok(Some(Session::new(
             prompt.to_string(),
             bundle,
             Some(issue_id.clone()),
             issue.creator.clone(),
             image,
-            job_settings.model.clone(),
+            session_settings.model.clone(),
             env_vars,
-            job_settings.cpu_limit.clone(),
-            job_settings.memory_limit.clone(),
-            job_settings.secrets.clone(),
+            session_settings.cpu_limit.clone(),
+            session_settings.memory_limit.clone(),
+            session_settings.secrets.clone(),
             Status::Created,
             None,
             None,
@@ -158,7 +158,7 @@ impl AgentQueue {
 
     fn max_tries_for_issue(&self, issue: &Issue) -> i32 {
         issue
-            .job_settings
+            .session_settings
             .max_retries
             .map(|v| v as i32)
             .unwrap_or(self.agent.max_tries)
@@ -171,7 +171,7 @@ impl Spawner for AgentQueue {
         &self.agent.name
     }
 
-    async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Task>> {
+    async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Session>> {
         let task_state = agent_task_state(state, &self.agent.name)
             .await
             .context("failed to list tasks for agent queue")?;
@@ -305,10 +305,10 @@ async fn agent_task_state(
         running_tasks: 0,
         pending_tasks: 0,
     };
-    let task_ids = state.list_tasks().await?;
+    let task_ids = state.list_sessions().await?;
 
     for task_id in task_ids {
-        if let Ok(Task { env_vars, .. }) = state.get_task(&task_id).await {
+        if let Ok(Session { env_vars, .. }) = state.get_session(&task_id).await {
             if !matches!(
                 env_vars.get(AGENT_NAME_ENV_VAR),
                 Some(current) if current == agent_name
@@ -316,7 +316,7 @@ async fn agent_task_state(
                 continue;
             }
 
-            let status = state.get_task(&task_id).await?.status;
+            let status = state.get_session(&task_id).await?.status;
             match status {
                 Status::Created => task_state.pending_tasks += 1,
                 Status::Pending | Status::Running => task_state.running_tasks += 1,
@@ -343,9 +343,9 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
         .iter()
         .filter(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
     {
-        for task_id in state.get_tasks_for_issue(&dependency.issue_id).await? {
+        for task_id in state.get_sessions_for_issue(&dependency.issue_id).await? {
             if matches!(
-                state.get_task(&task_id).await?.status,
+                state.get_session(&task_id).await?.status,
                 Status::Pending | Status::Running
             ) {
                 return Ok(true);
@@ -360,8 +360,8 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
-    use crate::domain::issues::JobSettings;
-    use crate::domain::jobs::{Bundle, BundleSpec};
+    use crate::domain::issues::SessionSettings;
+    use crate::domain::sessions::{Bundle, BundleSpec};
     use crate::domain::messages::Message;
     use crate::domain::patches::{Patch, PatchStatus, Review};
     use crate::{
@@ -427,11 +427,11 @@ mod tests {
         (repo_name, repository)
     }
 
-    fn job_settings(repo_name: &RepoName) -> JobSettings {
-        JobSettings {
+    fn session_settings(repo_name: &RepoName) -> SessionSettings {
+        SessionSettings {
             repo_name: Some(repo_name.clone()),
             image: Some("repo-image".to_string()),
-            ..JobSettings::default()
+            ..SessionSettings::default()
         }
     }
 
@@ -443,10 +443,10 @@ mod tests {
         Ok((handles, repo_name))
     }
 
-    async fn record_completed_task(handles: &TestStateHandles, task: Task) -> anyhow::Result<()> {
+    async fn record_completed_task(handles: &TestStateHandles, session: Session) -> anyhow::Result<()> {
         let (task_id, _) = handles
             .store
-            .add_task(task, Utc::now(), &ActorRef::test())
+            .add_session(session, Utc::now(), &ActorRef::test())
             .await?;
         handles
             .state
@@ -479,7 +479,7 @@ mod tests {
             String::new(),
             status,
             assignee.map(str::to_string),
-            Some(job_settings(repo_name)),
+            Some(session_settings(repo_name)),
             Vec::new(),
             dependencies,
             Vec::new(),
@@ -512,7 +512,7 @@ mod tests {
             progress: String::new(),
             status,
             assignee: assignee.map(str::to_string),
-            job_settings: JobSettings::default(),
+            session_settings: SessionSettings::default(),
             todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),
@@ -526,8 +526,8 @@ mod tests {
         spawned_from: Option<IssueId>,
         image: Option<&str>,
         env_vars: HashMap<String, String>,
-    ) -> Task {
-        Task::new(
+    ) -> Session {
+        Session::new(
             prompt.to_string(),
             context,
             spawned_from,
@@ -597,7 +597,7 @@ mod tests {
         let mut spawned_from_issue_ids = HashSet::new();
         let default_branch = "main".to_string();
         for task in tasks {
-            let Task {
+            let Session {
                 prompt,
                 context,
                 spawned_from,
@@ -653,7 +653,7 @@ mod tests {
 
         handles
             .store
-            .add_task(
+            .add_session(
                 task(
                     "Fix the issue",
                     BundleSpec::None,
@@ -705,7 +705,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: job_settings(&repo_name),
+                    session_settings: session_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: vec![patch_id.clone()],
@@ -874,7 +874,7 @@ mod tests {
 
         let (task_id, _) = handles
             .store
-            .add_task(
+            .add_session(
                 task(
                     "Parent task",
                     BundleSpec::None,
@@ -932,7 +932,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
+                    session_settings: SessionSettings {
                         repo_name: None,
                         remote_url: None,
                         image: Some("metis-worker:latest".to_string()),
@@ -963,7 +963,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
+                    session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
                         remote_url: None,
                         image: None,
@@ -1004,7 +1004,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn uses_job_settings_max_retries_override() -> anyhow::Result<()> {
+    async fn uses_session_settings_max_retries_override() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
         queue.agent.max_tries = 3;
 
@@ -1020,7 +1020,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
+                    session_settings: SessionSettings {
                         repo_name: Some(repo_name),
                         remote_url: None,
                         image: Some("metis-worker:latest".to_string()),
@@ -1067,7 +1067,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: job_settings(&repo_name),
+                    session_settings: session_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -1079,8 +1079,8 @@ mod tests {
 
         let (task_id, _) = handles
             .store
-            .add_task(
-                Task {
+            .add_session(
+                Session {
                     prompt: "Existing".to_string(),
                     context: BundleSpec::None,
                     spawned_from: Some(issue_id.clone()),
@@ -1134,7 +1134,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: job_settings(&repo_name),
+                    session_settings: session_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -1154,7 +1154,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: job_settings(&repo_name),
+                    session_settings: session_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -1166,8 +1166,8 @@ mod tests {
 
         handles
             .store
-            .add_task(
-                Task {
+            .add_session(
+                Session {
                     prompt: "Pending work".to_string(),
                     context: BundleSpec::None,
                     spawned_from: Some(first_issue_id.clone()),
@@ -1539,7 +1539,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
+                    session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
                         remote_url: None,
                         image: Some(default_image.clone()),
@@ -1591,7 +1591,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawner_passes_secrets_from_job_settings() -> anyhow::Result<()> {
+    async fn spawner_passes_secrets_from_session_settings() -> anyhow::Result<()> {
         let (repo_name, repository) = repository();
         let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
         seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
@@ -1607,7 +1607,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
+                    session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
                         remote_url: None,
                         image: Some("worker:latest".to_string()),
@@ -1653,7 +1653,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
+                    session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
                         remote_url: None,
                         image: Some("worker:latest".to_string()),
@@ -1795,7 +1795,7 @@ mod tests {
         // Create an active task for this issue.
         let (task_id, _) = handles
             .store
-            .add_task(
+            .add_session(
                 task(
                     "Existing task",
                     BundleSpec::None,

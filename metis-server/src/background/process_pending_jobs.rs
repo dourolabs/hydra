@@ -1,11 +1,11 @@
 use crate::{
-    app::{AppState, WORKER_NAME_TASK_LIFECYCLE},
+    app::{AppState, WORKER_NAME_SESSION_LIFECYCLE},
     background::scheduler::{ScheduledWorker, WorkerOutcome},
     domain::actors::ActorRef,
     store::Status,
 };
 use async_trait::async_trait;
-use metis_common::jobs::SearchJobsQuery;
+use metis_common::sessions::SearchSessionsQuery;
 use tracing::{error, info};
 
 const WORKER_NAME: &str = "process_pending_jobs";
@@ -29,7 +29,7 @@ impl ProcessPendingJobsWorker {
 impl ScheduledWorker for ProcessPendingJobsWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
-        let query = SearchJobsQuery::new(None, None, None, vec![Status::Created.into()]);
+        let query = SearchSessionsQuery::new(None, None, None, vec![Status::Created.into()]);
         let pending_ids: Vec<_> = match self.state.list_tasks_with_query(&query).await {
             Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
             Err(err) => {
@@ -56,7 +56,7 @@ impl ScheduledWorker for ProcessPendingJobsWorker {
         );
 
         let lifecycle_actor = ActorRef::System {
-            worker_name: WORKER_NAME_TASK_LIFECYCLE.into(),
+            worker_name: WORKER_NAME_SESSION_LIFECYCLE.into(),
             on_behalf_of: None,
         };
         for metis_id in &pending_ids {
@@ -82,8 +82,8 @@ impl ScheduledWorker for ProcessPendingJobsWorker {
 mod tests {
     use super::*;
     use crate::{
-        domain::{actors::ActorRef, jobs::BundleSpec, users::Username},
-        store::{Status, Task},
+        domain::{actors::ActorRef, sessions::BundleSpec, users::Username},
+        store::{Session, Status},
         test_utils::{FailingStore, test_state, test_state_with_store},
     };
     use chrono::Utc;
@@ -102,7 +102,7 @@ mod tests {
     #[tokio::test]
     async fn starts_pending_tasks_and_reports_progress() {
         let state = test_state();
-        let task = Task::new(
+        let task = Session::new(
             "do work".to_string(),
             BundleSpec::None,
             None,
@@ -118,11 +118,11 @@ mod tests {
             None,
         );
         let first_id = state
-            .add_task(task.clone(), Utc::now(), ActorRef::test())
+            .add_session(task.clone(), Utc::now(), ActorRef::test())
             .await
             .expect("first task should be added");
         let second_id = state
-            .add_task(task, Utc::now(), ActorRef::test())
+            .add_session(task, Utc::now(), ActorRef::test())
             .await
             .expect("second task should be added");
 
@@ -139,7 +139,7 @@ mod tests {
 
         assert_eq!(
             state
-                .get_task(&first_id)
+                .get_session(&first_id)
                 .await
                 .expect("task should exist")
                 .status,
@@ -147,7 +147,7 @@ mod tests {
         );
         assert_eq!(
             state
-                .get_task(&second_id)
+                .get_session(&second_id)
                 .await
                 .expect("task should exist")
                 .status,

@@ -20,11 +20,11 @@ use metis_common::{
             ResyncEventData, SnapshotEventData, SseEventType,
         },
         issues::{IssueSummary, IssueSummaryRecord},
-        jobs::JobVersionRecord,
+        sessions::SessionVersionRecord,
         messages::VersionedMessage,
         patches::PatchVersionRecord,
     },
-    ids::{DocumentId, IssueId, MessageId, PatchId, TaskId},
+    ids::{DocumentId, IssueId, MessageId, PatchId, SessionId},
 };
 use std::{collections::HashMap, convert::Infallible, sync::Arc};
 use tokio::sync::broadcast::error::RecvError;
@@ -175,7 +175,7 @@ pub async fn get_events(
 struct EventFilter {
     entity_types: Option<Vec<String>>,
     issue_ids: Option<Vec<IssueId>>,
-    job_ids: Option<Vec<TaskId>>,
+    job_ids: Option<Vec<SessionId>>,
     patch_ids: Option<Vec<PatchId>>,
     label_ids: Option<Vec<LabelId>>,
     document_ids: Option<Vec<DocumentId>>,
@@ -202,11 +202,11 @@ impl EventFilter {
             .map_err(|e| format!("invalid issue_ids: {e}"))?;
 
         let job_ids = query
-            .job_ids
+            .session_ids
             .as_ref()
             .map(|s| {
                 s.split(',')
-                    .map(|t| t.trim().parse::<TaskId>())
+                    .map(|t| t.trim().parse::<SessionId>())
                     .collect::<Result<Vec<_>, _>>()
             })
             .transpose()
@@ -350,7 +350,7 @@ impl EventFilter {
 #[derive(Debug)]
 enum EntityId<'a> {
     Issue(&'a IssueId),
-    Task(&'a TaskId),
+    Task(&'a SessionId),
     Patch(&'a PatchId),
     Label(&'a LabelId),
     Document(&'a DocumentId),
@@ -465,21 +465,21 @@ async fn serialize_entity(
             serde_json::to_value(summary_record).ok()?
         }
         MutationPayload::Job { new, .. } => {
-            let task_id: TaskId = entity_id.parse().ok()?;
-            let mut api_task: metis_common::api::v1::jobs::Task = new.clone().into();
+            let task_id: SessionId = entity_id.parse().ok()?;
+            let mut api_task: metis_common::api::v1::sessions::Session = new.clone().into();
             if let Ok(log) = state.get_status_log(&task_id).await {
                 api_task.creation_time = log.creation_time();
                 api_task.start_time = log.start_time();
                 api_task.end_time = log.end_time();
             }
-            let full_record = JobVersionRecord::new(
+            let full_record = SessionVersionRecord::new(
                 task_id,
                 version,
                 timestamp,
                 api_task,
                 Some(payload.actor().clone()),
             );
-            let summary_record = metis_common::api::v1::jobs::JobSummaryRecord::from(&full_record);
+            let summary_record = metis_common::api::v1::sessions::SessionSummaryRecord::from(&full_record);
             serde_json::to_value(summary_record).ok()?
         }
         MutationPayload::Document { new, .. } => {
@@ -659,7 +659,7 @@ async fn server_event_to_sse(
             payload,
             ..
         } => (
-            SseEventType::JobCreated,
+            SseEventType::SessionCreated,
             "job",
             task_id.to_string(),
             *version,
@@ -673,7 +673,7 @@ async fn server_event_to_sse(
             payload,
             ..
         } => (
-            SseEventType::JobUpdated,
+            SseEventType::SessionUpdated,
             "job",
             task_id.to_string(),
             *version,
@@ -835,7 +835,7 @@ async fn build_sse_event(event: &ServerEvent, state: &AppState) -> Event {
 
 /// Builds a snapshot of current entity version numbers.
 async fn build_snapshot(state: &AppState) -> SnapshotEventData {
-    use metis_common::api::v1::{documents, jobs, patches};
+    use metis_common::api::v1::{documents, sessions, patches};
 
     let mut versions = HashMap::new();
 
@@ -855,7 +855,7 @@ async fn build_snapshot(state: &AppState) -> SnapshotEventData {
     }
 
     if let Ok(tasks) = state
-        .list_tasks_with_query(&jobs::SearchJobsQuery::default())
+        .list_tasks_with_query(&sessions::SearchSessionsQuery::default())
         .await
     {
         for (id, versioned) in tasks {
@@ -881,7 +881,7 @@ mod tests {
     use crate::app::event_bus::MutationPayload;
     use crate::domain::actors::ActorRef;
     use crate::domain::issues::{Issue, IssueStatus, IssueType};
-    use crate::domain::jobs::{BundleSpec, Task};
+    use crate::domain::sessions::{BundleSpec, Session};
     use crate::domain::task_status::Status;
     use crate::domain::users::Username;
     use crate::store::{MemoryStore, Store};
@@ -906,8 +906,8 @@ mod tests {
         )
     }
 
-    fn dummy_task() -> Task {
-        Task::new(
+    fn dummy_task() -> Session {
+        Session::new(
             "test prompt".to_string(),
             BundleSpec::None,
             None,
@@ -1053,7 +1053,7 @@ mod tests {
         // Create a task in the store so the status log exists.
         let task = dummy_task();
         let (task_id, _) = store
-            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .add_session(task.clone(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -1085,13 +1085,13 @@ mod tests {
 
         let (event_type, data) = server_event_to_sse(&event, &state).await;
 
-        assert_eq!(event_type, SseEventType::JobUpdated);
+        assert_eq!(event_type, SseEventType::SessionUpdated);
         assert_eq!(data.entity_type, "job");
         assert_eq!(data.entity_id, task_id.to_string());
 
         let entity = data.entity.expect("entity should be present");
         let obj = entity.as_object().expect("entity should be a JSON object");
-        let task_obj = obj.get("task").expect("should contain task field");
+        let task_obj = obj.get("session").expect("should contain session field");
 
         // Verify time fields are populated.
         assert!(
@@ -1113,7 +1113,7 @@ mod tests {
         // Create a task in the store so the status log exists.
         let task = dummy_task();
         let (task_id, _) = store
-            .add_task(task.clone(), Utc::now(), &ActorRef::test())
+            .add_session(task.clone(), Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
@@ -1133,10 +1133,10 @@ mod tests {
 
         let (event_type, data) = server_event_to_sse(&event, &state).await;
 
-        assert_eq!(event_type, SseEventType::JobCreated);
+        assert_eq!(event_type, SseEventType::SessionCreated);
         let entity = data.entity.expect("entity should be present");
         let obj = entity.as_object().expect("entity should be a JSON object");
-        let task_obj = obj.get("task").expect("should contain task field");
+        let task_obj = obj.get("session").expect("should contain session field");
 
         // creation_time should be present for a newly created job.
         assert!(

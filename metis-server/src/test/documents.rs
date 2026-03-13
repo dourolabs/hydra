@@ -1,7 +1,7 @@
 use crate::{
     domain::{
         actors::ActorRef,
-        jobs::{BundleSpec, Task},
+        sessions::{BundleSpec, Session},
         users::Username,
     },
     store::Status,
@@ -11,7 +11,7 @@ use crate::{
 };
 use chrono::Utc;
 use metis_common::{
-    DocumentId, TaskId,
+    DocumentId, SessionId,
     api::v1::documents::{
         Document, DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
         SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
@@ -20,8 +20,8 @@ use metis_common::{
 use reqwest::StatusCode;
 use std::collections::HashMap;
 
-fn sample_task(status: Status) -> Task {
-    Task::new(
+fn sample_task(status: Status) -> Session {
+    Session::new(
         "prompt".to_string(),
         BundleSpec::None,
         None,
@@ -162,7 +162,7 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     // Missing job returns 400
     let server = spawn_test_server().await?;
     let client = test_client();
-    let missing_job = TaskId::new();
+    let missing_job = SessionId::new();
     let response = client
         .post(format!("{}/v1/documents", server.base_url()))
         .json(&UpsertDocumentRequest::new(
@@ -184,7 +184,7 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     let task = sample_task(Status::Created);
     let (non_running, _) = handles
         .store
-        .add_task(task, Utc::now(), &ActorRef::test())
+        .add_session(task, Utc::now(), &ActorRef::test())
         .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
@@ -209,11 +209,11 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     let task = sample_task(Status::Running);
     let (running_job, _) = handles
         .store
-        .add_task(task.clone(), Utc::now(), &ActorRef::test())
+        .add_session(task.clone(), Utc::now(), &ActorRef::test())
         .await?;
     handles
         .store
-        .update_task(&running_job, task, &ActorRef::test())
+        .update_session(&running_job, task, &ActorRef::test())
         .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
@@ -242,11 +242,11 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
     let task = sample_task(Status::Running);
     let (running_task, _) = handles
         .store
-        .add_task(task.clone(), Utc::now(), &ActorRef::test())
+        .add_session(task.clone(), Utc::now(), &ActorRef::test())
         .await?;
     handles
         .store
-        .update_task(&running_task, task, &ActorRef::test())
+        .update_session(&running_task, task, &ActorRef::test())
         .await?;
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();

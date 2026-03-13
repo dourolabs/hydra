@@ -247,10 +247,10 @@ impl PatchWorkflowAutomation {
             .resolve_config(&patch.service_repo_name, ctx.store)
             .await;
 
-        let (creator, job_settings, parent_dependencies) = if let Some(parent) = parent_issue {
+        let (creator, session_settings, parent_dependencies) = if let Some(parent) = parent_issue {
             (
                 parent.issue.creator.clone(),
-                Some(parent.issue.job_settings.clone()),
+                Some(parent.issue.session_settings.clone()),
                 vec![IssueDependency::new(
                     IssueDependencyType::ChildOf,
                     parent.issue_id.clone(),
@@ -285,7 +285,7 @@ impl PatchWorkflowAutomation {
                     String::new(),
                     IssueStatus::Open,
                     assignee,
-                    job_settings.clone(),
+                    session_settings.clone(),
                     Vec::new(),
                     parent_dependencies.clone(),
                     vec![patch_id.clone()],
@@ -347,7 +347,7 @@ impl PatchWorkflowAutomation {
                 String::new(),
                 IssueStatus::Open,
                 assignee,
-                job_settings,
+                session_settings,
                 Vec::new(),
                 dependencies,
                 vec![patch_id.clone()],
@@ -380,7 +380,7 @@ impl PatchWorkflowAutomation {
 
     /// Resolves the parent issue for a patch by tracing its lineage.
     ///
-    /// First tries: `patch.created_by` (TaskId) -> `task.spawned_from` (IssueId).
+    /// First tries: `patch.created_by` (SessionId) -> `task.spawned_from` (IssueId).
     /// Fallback: finds a non-MergeRequest, non-ReviewRequest issue that references
     /// this patch via `get_issues_for_patch`.
     async fn resolve_parent_issue(
@@ -393,7 +393,7 @@ impl PatchWorkflowAutomation {
 
         // Try tracing via created_by -> task.spawned_from
         if let Some(ref task_id) = patch.created_by {
-            match store.get_task(task_id, false).await {
+            match store.get_session(task_id, false).await {
                 Ok(task) => {
                     if let Some(ref issue_id) = task.item.spawned_from {
                         match store.get_issue(issue_id, false).await {

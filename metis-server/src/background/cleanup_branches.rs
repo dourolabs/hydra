@@ -3,7 +3,7 @@ use crate::{
     background::scheduler::{ScheduledWorker, WorkerOutcome},
 };
 use async_trait::async_trait;
-use metis_common::{IssueId, SearchRepositoriesQuery, TaskId};
+use metis_common::{IssueId, SearchRepositoriesQuery, SessionId};
 use octocrab::Octocrab;
 use std::str::FromStr;
 use tracing::{debug, info, warn};
@@ -196,8 +196,8 @@ impl CleanupBranchesWorker {
                     Err(_) => false, // Unknown issue -- do not delete
                 }
             }
-            MetisIdKind::Task(id) => {
-                match self.state.store().get_task(id, true).await {
+            MetisIdKind::Session(id) => {
+                match self.state.store().get_session(id, true).await {
                     Ok(versioned) => versioned.item.deleted,
                     Err(_) => false, // Unknown task -- do not delete
                 }
@@ -217,7 +217,7 @@ struct MetisBranch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MetisIdKind {
     Issue(IssueId),
-    Task(TaskId),
+    Session(SessionId),
 }
 
 /// Minimal representation of a Git reference from the GitHub API.
@@ -273,12 +273,10 @@ fn parse_metis_branch(ref_name: &str) -> Option<MetisBranch> {
         return None;
     }
 
-    let id_kind = if id_str.starts_with(IssueId::prefix()) {
-        let id = IssueId::from_str(id_str).ok()?;
+    let id_kind = if let Ok(id) = IssueId::from_str(id_str) {
         MetisIdKind::Issue(id)
-    } else if id_str.starts_with(TaskId::prefix()) {
-        let id = TaskId::from_str(id_str).ok()?;
-        MetisIdKind::Task(id)
+    } else if let Ok(id) = SessionId::from_str(id_str) {
+        MetisIdKind::Session(id)
     } else {
         return None;
     };
@@ -419,7 +417,7 @@ mod tests {
         assert!(branch.is_some());
         let branch = branch.unwrap();
         assert_eq!(branch.suffix, "head");
-        assert!(matches!(branch.id_kind, MetisIdKind::Task(_)));
+        assert!(matches!(branch.id_kind, MetisIdKind::Session(_)));
     }
 
     #[test]
@@ -428,7 +426,7 @@ mod tests {
         assert!(branch.is_some());
         let branch = branch.unwrap();
         assert_eq!(branch.suffix, "base");
-        assert!(matches!(branch.id_kind, MetisIdKind::Task(_)));
+        assert!(matches!(branch.id_kind, MetisIdKind::Session(_)));
     }
 
     #[test]
@@ -519,7 +517,7 @@ mod tests {
 
         let branch = MetisBranch {
             full_ref: "refs/heads/metis/t-nonexist/head".to_string(),
-            id_kind: MetisIdKind::Task(TaskId::new()),
+            id_kind: MetisIdKind::Session(SessionId::new()),
             suffix: "head".to_string(),
         };
 
@@ -561,9 +559,9 @@ mod tests {
     #[tokio::test]
     async fn is_branch_stale_returns_false_for_existing_task() {
         let handles = crate::test_utils::test_state_handles();
-        let task = crate::store::Task::new(
+        let task = crate::store::Session::new(
             "test task".to_string(),
-            crate::domain::jobs::BundleSpec::None,
+            crate::domain::sessions::BundleSpec::None,
             None,
             Username::from("test-creator"),
             None,
@@ -578,14 +576,14 @@ mod tests {
         );
         let (task_id, _) = handles
             .store
-            .add_task(task, chrono::Utc::now(), &ActorRef::test())
+            .add_session(task, chrono::Utc::now(), &ActorRef::test())
             .await
             .unwrap();
 
         let worker = CleanupBranchesWorker::new(handles.state);
         let branch = MetisBranch {
             full_ref: format!("refs/heads/metis/{task_id}/head"),
-            id_kind: MetisIdKind::Task(task_id),
+            id_kind: MetisIdKind::Session(task_id),
             suffix: "head".to_string(),
         };
 
@@ -632,9 +630,9 @@ mod tests {
     #[tokio::test]
     async fn is_branch_stale_returns_true_for_deleted_task() {
         let handles = crate::test_utils::test_state_handles();
-        let task = crate::store::Task::new(
+        let task = crate::store::Session::new(
             "deleted task".to_string(),
-            crate::domain::jobs::BundleSpec::None,
+            crate::domain::sessions::BundleSpec::None,
             None,
             Username::from("test-creator"),
             None,
@@ -649,19 +647,19 @@ mod tests {
         );
         let (task_id, _) = handles
             .store
-            .add_task(task, chrono::Utc::now(), &ActorRef::test())
+            .add_session(task, chrono::Utc::now(), &ActorRef::test())
             .await
             .unwrap();
         handles
             .store
-            .delete_task(&task_id, &ActorRef::test())
+            .delete_session(&task_id, &ActorRef::test())
             .await
             .unwrap();
 
         let worker = CleanupBranchesWorker::new(handles.state);
         let branch = MetisBranch {
             full_ref: format!("refs/heads/metis/{task_id}/head"),
-            id_kind: MetisIdKind::Task(task_id),
+            id_kind: MetisIdKind::Session(task_id),
             suffix: "head".to_string(),
         };
 
