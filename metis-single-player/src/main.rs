@@ -72,14 +72,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_without_subcommand_defaults_to_dashboard() {
+    fn parse_without_subcommand_has_no_command() {
         let sp_cli = SinglePlayerCli::try_parse_from(["metis"]).expect("parse");
         assert!(sp_cli.command.is_none());
-        let command = cli::resolve_command(sp_cli.cli.command);
-        match command {
-            cli::Commands::Dashboard => {}
-            _ => panic!("expected dashboard default"),
-        }
+        assert!(sp_cli.cli.command.is_none());
     }
 
     #[test]
