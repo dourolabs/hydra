@@ -18,8 +18,8 @@ pub async fn whoami(
         ActorId::Username(username) => ActorIdentity::User {
             username: username.into(),
         },
-        ActorId::Task(task_id) => ActorIdentity::Task {
-            task_id,
+        ActorId::Session(session_id) => ActorIdentity::Session {
+            session_id,
             creator: actor.creator.clone(),
         },
         ActorId::Issue(issue_id) => ActorIdentity::Issue {

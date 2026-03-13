@@ -106,10 +106,10 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
         // Resolve the creator username from the actor identity.
         let creator = match &actor_id {
             ActorId::Username(username) => username.clone().into(),
-            ActorId::Task(task_id) => {
-                let task = ctx.app_state.get_task(task_id).await.map_err(|e| {
+            ActorId::Session(session_id) => {
+                let task = ctx.app_state.get_task(session_id).await.map_err(|e| {
                     AutomationError::Other(anyhow::anyhow!(
-                        "github_pr_sync: failed to load task '{task_id}': {e}"
+                        "github_pr_sync: failed to load task '{session_id}': {e}"
                     ))
                 })?;
                 task.creator

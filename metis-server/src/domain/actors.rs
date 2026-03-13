@@ -104,7 +104,7 @@ impl Actor {
 
     pub fn new_for_task(task_id: TaskId, creator: Username) -> (Actor, String) {
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
-        let actor_id = ActorId::Task(task_id);
+        let actor_id = ActorId::Session(task_id);
         let actor = Actor {
             auth_token_hash,
             auth_token_salt,

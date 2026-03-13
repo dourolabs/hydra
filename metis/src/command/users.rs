@@ -69,8 +69,8 @@ async fn show_user_info(client: &dyn MetisClientInterface, username: Option<Stri
                 .context("failed to fetch current user")?;
             match whoami.actor {
                 ActorIdentity::User { username } => username.to_string(),
-                ActorIdentity::Task { task_id, .. } => {
-                    bail!("current actor is a task ({task_id}), not a user; please specify a username")
+                ActorIdentity::Session { session_id, .. } => {
+                    bail!("current actor is a session ({session_id}), not a user; please specify a username")
                 }
                 _ => {
                     bail!("current actor is not a user; please specify a username")
@@ -201,8 +201,8 @@ mod tests {
     async fn show_user_info_fails_when_actor_is_task() {
         let server = MockServer::start();
         let task_id = metis_common::TaskId::new();
-        let whoami_response = WhoAmIResponse::new(ActorIdentity::Task {
-            task_id: task_id.clone(),
+        let whoami_response = WhoAmIResponse::new(ActorIdentity::Session {
+            session_id: task_id.clone(),
             creator: Username::from("test-creator"),
         });
 

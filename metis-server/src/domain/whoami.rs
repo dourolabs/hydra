@@ -9,8 +9,8 @@ pub enum ActorIdentity {
     User {
         username: Username,
     },
-    Task {
-        task_id: TaskId,
+    Session {
+        session_id: TaskId,
         creator: Username,
     },
     Issue {
@@ -36,8 +36,11 @@ impl From<ActorIdentity> for api::whoami::ActorIdentity {
             ActorIdentity::User { username } => api::whoami::ActorIdentity::User {
                 username: username.into(),
             },
-            ActorIdentity::Task { task_id, creator } => api::whoami::ActorIdentity::Task {
-                task_id,
+            ActorIdentity::Session {
+                session_id,
+                creator,
+            } => api::whoami::ActorIdentity::Session {
+                session_id,
                 creator: creator.into(),
             },
             ActorIdentity::Issue { issue_id, creator } => api::whoami::ActorIdentity::Issue {

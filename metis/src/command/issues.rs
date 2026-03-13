@@ -1537,7 +1537,9 @@ async fn resolve_creator_username(client: &dyn MetisClientInterface) -> Result<U
         .context("failed to resolve authenticated actor")?;
     match response.actor {
         ActorIdentity::User { username } => Ok(username),
-        ActorIdentity::Task { creator, .. } | ActorIdentity::Issue { creator, .. } => Ok(creator),
+        ActorIdentity::Session { creator, .. } | ActorIdentity::Issue { creator, .. } => {
+            Ok(creator)
+        }
         other => bail!("unexpected actor identity: {other:?}"),
     }
 }
@@ -3377,8 +3379,8 @@ mod tests {
     async fn resolve_creator_username_uses_whoami_creator_for_task() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let whoami_response = WhoAmIResponse::new(ActorIdentity::Task {
-            task_id: TaskId::from_str("t-abcd").unwrap(),
+        let whoami_response = WhoAmIResponse::new(ActorIdentity::Session {
+            session_id: TaskId::from_str("t-abcd").unwrap(),
             creator: Username::from("whoami-creator"),
         });
         let whoami_mock = server.mock(|when, then| {
