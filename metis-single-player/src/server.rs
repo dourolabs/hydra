@@ -137,6 +137,9 @@ fn cmd_init() -> Result<()> {
     // Auto-populate default agents and their prompts.
     create_default_agents(&auth_token)?;
 
+    // Upload default playbooks to the document store.
+    upload_default_playbooks(&auth_token)?;
+
     let engine_label = if job_engine == "docker" {
         "Docker"
     } else {
@@ -156,9 +159,13 @@ fn cmd_init() -> Result<()> {
 }
 
 // Embedded agent prompts (compiled into the binary).
-const SWE_PROMPT: &str = include_str!("../../scripts/agent-prompts/swe.md");
-const PM_PROMPT: &str = include_str!("../../scripts/agent-prompts/pm.md");
-const REVIEWER_PROMPT: &str = include_str!("../../scripts/agent-prompts/reviewer.md");
+const SWE_PROMPT: &str = include_str!("../../prompts/agents/swe.md");
+const PM_PROMPT: &str = include_str!("../../prompts/agents/pm.md");
+const REVIEWER_PROMPT: &str = include_str!("../../prompts/agents/reviewer.md");
+
+// Embedded playbook content (compiled into the binary).
+const PLAYBOOK_ADD_NEW_REPO: &str = include_str!("../../prompts/playbooks/add-new-repo.md");
+const PLAYBOOK_DESIGN_REVIEW: &str = include_str!("../../prompts/playbooks/design-review.md");
 
 /// Create the default agents (swe, pm, reviewer) and upload their prompts
 /// to the running server via the MetisClient.
@@ -182,6 +189,46 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
         rt.block_on(client.create_agent(&request))
             .with_context(|| format!("failed to create agent '{name}'"))?;
         println!("Created agent: {name}");
+    }
+
+    Ok(())
+}
+
+/// Upload default playbooks to the server's document store.
+fn upload_default_playbooks(auth_token: &str) -> Result<()> {
+    use metis_common::api::v1::documents::{Document, UpsertDocumentRequest};
+
+    let playbooks = [
+        (
+            "Add new repo to metis",
+            PLAYBOOK_ADD_NEW_REPO,
+            "playbooks/add-new-repo.md",
+        ),
+        (
+            "Design Document Review",
+            PLAYBOOK_DESIGN_REVIEW,
+            "playbooks/design-review.md",
+        ),
+    ];
+
+    let client = MetisClient::new(LOCAL_SERVER_URL, auth_token)?;
+    let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+
+    for (title, body, path) in playbooks {
+        let document = Document::new(
+            title.to_string(),
+            body.to_string(),
+            Some(path.to_string()),
+            None,
+            false,
+        )
+        .with_context(|| format!("invalid document path {path}"))?;
+        let request = UpsertDocumentRequest::new(document);
+
+        rt.block_on(client.create_document(&request))
+            .with_context(|| format!("failed to upload playbook {path}"))?;
+
+        println!("Uploaded playbook: {path}");
     }
 
     Ok(())
