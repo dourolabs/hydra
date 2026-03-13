@@ -198,7 +198,7 @@ impl NotificationPolicy for WalkUpPolicy {
                     _ => vec![],
                 }
             }
-            MutationPayload::Job { new, .. } => {
+            MutationPayload::Session { new, .. } => {
                 // Source issue = spawned_from
                 new.spawned_from.iter().cloned().collect()
             }
@@ -302,10 +302,10 @@ pub fn generate_summary(event: &ServerEvent) -> String {
             }
             format!("Patch {id} was updated")
         }
-        MutationPayload::Job { old, new, .. } => {
+        MutationPayload::Session { old, new, .. } => {
             let id = match event {
-                ServerEvent::JobCreated { task_id, .. } => task_id.to_string(),
-                ServerEvent::JobUpdated { task_id, .. } => task_id.to_string(),
+                ServerEvent::SessionCreated { session_id, .. } => session_id.to_string(),
+                ServerEvent::SessionUpdated { session_id, .. } => session_id.to_string(),
                 _ => "unknown".to_string(),
             };
             if old.is_none() {
@@ -372,7 +372,7 @@ pub fn event_object_kind(event: &ServerEvent) -> &'static str {
         ServerEvent::PatchCreated { .. }
         | ServerEvent::PatchUpdated { .. }
         | ServerEvent::PatchDeleted { .. } => "patch",
-        ServerEvent::JobCreated { .. } | ServerEvent::JobUpdated { .. } => "job",
+        ServerEvent::SessionCreated { .. } | ServerEvent::SessionUpdated { .. } => "session",
         ServerEvent::DocumentCreated { .. }
         | ServerEvent::DocumentUpdated { .. }
         | ServerEvent::DocumentDeleted { .. } => "document",
@@ -393,9 +393,8 @@ pub fn event_object_id(event: &ServerEvent) -> MetisId {
         ServerEvent::PatchCreated { patch_id, .. }
         | ServerEvent::PatchUpdated { patch_id, .. }
         | ServerEvent::PatchDeleted { patch_id, .. } => patch_id.clone().into(),
-        ServerEvent::JobCreated { task_id, .. } | ServerEvent::JobUpdated { task_id, .. } => {
-            task_id.clone().into()
-        }
+        ServerEvent::SessionCreated { session_id, .. }
+        | ServerEvent::SessionUpdated { session_id, .. } => session_id.clone().into(),
         ServerEvent::DocumentCreated { document_id, .. }
         | ServerEvent::DocumentUpdated { document_id, .. }
         | ServerEvent::DocumentDeleted { document_id, .. } => document_id.clone().into(),
@@ -419,8 +418,8 @@ pub fn event_version(event: &ServerEvent) -> VersionNumber {
         | ServerEvent::PatchCreated { version, .. }
         | ServerEvent::PatchUpdated { version, .. }
         | ServerEvent::PatchDeleted { version, .. }
-        | ServerEvent::JobCreated { version, .. }
-        | ServerEvent::JobUpdated { version, .. }
+        | ServerEvent::SessionCreated { version, .. }
+        | ServerEvent::SessionUpdated { version, .. }
         | ServerEvent::DocumentCreated { version, .. }
         | ServerEvent::DocumentUpdated { version, .. }
         | ServerEvent::DocumentDeleted { version, .. }
@@ -438,13 +437,13 @@ pub fn event_type_str(event: &ServerEvent) -> &'static str {
     match event {
         ServerEvent::IssueCreated { .. }
         | ServerEvent::PatchCreated { .. }
-        | ServerEvent::JobCreated { .. }
+        | ServerEvent::SessionCreated { .. }
         | ServerEvent::DocumentCreated { .. }
         | ServerEvent::LabelCreated { .. }
         | ServerEvent::MessageCreated { .. } => "created",
         ServerEvent::IssueUpdated { .. }
         | ServerEvent::PatchUpdated { .. }
-        | ServerEvent::JobUpdated { .. }
+        | ServerEvent::SessionUpdated { .. }
         | ServerEvent::DocumentUpdated { .. }
         | ServerEvent::LabelUpdated { .. }
         | ServerEvent::MessageUpdated { .. } => "updated",
@@ -468,7 +467,7 @@ pub fn event_source_issue_id(event: &ServerEvent) -> Option<IssueId> {
             | ServerEvent::IssueDeleted { issue_id, .. } => Some(issue_id.clone()),
             _ => None,
         },
-        MutationPayload::Job { new, .. } => new.spawned_from.clone(),
+        MutationPayload::Session { new, .. } => new.spawned_from.clone(),
         MutationPayload::Patch { .. }
         | MutationPayload::Document { .. }
         | MutationPayload::Label { .. }
@@ -647,15 +646,15 @@ mod tests {
             end_time: None,
         };
 
-        let payload = Arc::new(MutationPayload::Job {
+        let payload = Arc::new(MutationPayload::Session {
             old: None,
             new: task.clone(),
             actor: test_actor(),
         });
-        let task_id = metis_common::SessionId::new();
-        let event = ServerEvent::JobCreated {
+        let session_id = metis_common::SessionId::new();
+        let event = ServerEvent::SessionCreated {
             seq: 1,
-            task_id,
+            session_id,
             version: 1,
             timestamp: Utc::now(),
             payload,

@@ -369,9 +369,8 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
         | ServerEvent::PatchUpdated { patch_id, .. }
         | ServerEvent::PatchDeleted { patch_id, .. } => ("patches", EntityId::Patch(patch_id)),
 
-        ServerEvent::JobCreated { task_id, .. } | ServerEvent::JobUpdated { task_id, .. } => {
-            ("jobs", EntityId::Task(task_id))
-        }
+        ServerEvent::SessionCreated { session_id, .. }
+        | ServerEvent::SessionUpdated { session_id, .. } => ("jobs", EntityId::Task(session_id)),
 
         ServerEvent::LabelCreated { label_id, .. }
         | ServerEvent::LabelUpdated { label_id, .. }
@@ -464,7 +463,7 @@ async fn serialize_entity(
                 metis_common::api::v1::patches::PatchSummaryRecord::from(&full_record);
             serde_json::to_value(summary_record).ok()?
         }
-        MutationPayload::Job { new, .. } => {
+        MutationPayload::Session { new, .. } => {
             let task_id: SessionId = entity_id.parse().ok()?;
             let mut api_task: metis_common::api::v1::sessions::Session = new.clone().into();
             if let Ok(log) = state.get_status_log(&task_id).await {
@@ -653,8 +652,8 @@ async fn server_event_to_sse(
             *timestamp,
             payload,
         ),
-        ServerEvent::JobCreated {
-            task_id,
+        ServerEvent::SessionCreated {
+            session_id,
             version,
             timestamp,
             payload,
@@ -662,13 +661,13 @@ async fn server_event_to_sse(
         } => (
             SseEventType::SessionCreated,
             "job",
-            task_id.to_string(),
+            session_id.to_string(),
             *version,
             *timestamp,
             payload,
         ),
-        ServerEvent::JobUpdated {
-            task_id,
+        ServerEvent::SessionUpdated {
+            session_id,
             version,
             timestamp,
             payload,
@@ -676,7 +675,7 @@ async fn server_event_to_sse(
         } => (
             SseEventType::SessionUpdated,
             "job",
-            task_id.to_string(),
+            session_id.to_string(),
             *version,
             *timestamp,
             payload,
@@ -1068,17 +1067,17 @@ mod tests {
             .await
             .unwrap();
 
-        // Build a JobUpdated event (simulating what the event bus emits).
+        // Build a SessionUpdated event (simulating what the event bus emits).
         let mut running_task = task.clone();
         running_task.status = Status::Running;
-        let payload = Arc::new(MutationPayload::Job {
+        let payload = Arc::new(MutationPayload::Session {
             old: Some(task),
             new: running_task,
             actor: ActorRef::test(),
         });
-        let event = ServerEvent::JobUpdated {
+        let event = ServerEvent::SessionUpdated {
             seq: 3,
-            task_id: task_id.clone(),
+            session_id: task_id.clone(),
             version: 3,
             timestamp: Utc::now(),
             payload,
@@ -1118,15 +1117,15 @@ mod tests {
             .await
             .unwrap();
 
-        // Build a JobCreated event.
-        let payload = Arc::new(MutationPayload::Job {
+        // Build a SessionCreated event.
+        let payload = Arc::new(MutationPayload::Session {
             old: None,
             new: task,
             actor: ActorRef::test(),
         });
-        let event = ServerEvent::JobCreated {
+        let event = ServerEvent::SessionCreated {
             seq: 1,
-            task_id: task_id.clone(),
+            session_id: task_id.clone(),
             version: 1,
             timestamp: Utc::now(),
             payload,
