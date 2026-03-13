@@ -1019,14 +1019,14 @@ impl SqliteStore {
 
     fn row_to_session_id(id: &str) -> Result<SessionId, StoreError> {
         id.parse::<SessionId>().map_err(|err| {
-            StoreError::Internal(format!("invalid task id stored in database: {err}"))
+            StoreError::Internal(format!("invalid session id stored in database: {err}"))
         })
     }
 
     fn row_to_versioned_session(&self, row: &TaskRow) -> Result<Versioned<Session>, StoreError> {
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
             StoreError::Internal(format!(
-                "invalid version number stored for task '{}'",
+                "invalid version number stored for session '{}'",
                 row.id
             ))
         })?;
