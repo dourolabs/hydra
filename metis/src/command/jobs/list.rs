@@ -139,7 +139,7 @@ mod tests {
 
         let mock = server.mock(|when, then| {
             when.method(GET)
-                .path("/v1/jobs")
+                .path("/v1/sessions")
                 .query_param("spawned_from", spawned_from.as_ref())
                 .matches(only_spawned_from_query);
             then.status(200).json_body_obj(&list_response);

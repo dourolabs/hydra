@@ -22,13 +22,13 @@ pub mod kill;
 pub mod logs;
 pub mod status;
 
-pub async fn create_job(
+pub async fn create_session(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     Json(payload): Json<v1::sessions::CreateSessionRequest>,
 ) -> Result<Json<v1::sessions::CreateSessionResponse>, ApiError> {
-    info!("create_job invoked");
-    let job_id = state
+    info!("create_session invoked");
+    let session_id = state
         .create_session(payload, ActorRef::from(&actor), actor.creator.clone())
         .await
         .map_err(|err| match err {
@@ -41,7 +41,7 @@ pub async fn create_job(
                     error!(
                         error = %other,
                         issue_id = %issue_id,
-                        "failed to load issue for job creation"
+                        "failed to load issue for session creation"
                     );
                     ApiError::internal(format!("Failed to load issue '{issue_id}': {other}"))
                 }
@@ -53,14 +53,14 @@ pub async fn create_job(
         })?;
 
     info!(
-        job_id = %job_id,
+        session_id = %session_id,
         "task stored, will be started by background thread"
     );
 
-    Ok(Json(v1::sessions::CreateSessionResponse::new(job_id)))
+    Ok(Json(v1::sessions::CreateSessionResponse::new(session_id)))
 }
 
-pub async fn list_jobs(
+pub async fn list_sessions(
     State(state): State<AppState>,
     Query(query): Query<v1::sessions::SearchSessionsQuery>,
 ) -> Result<Json<v1::sessions::ListSessionsResponse>, ApiError> {
@@ -68,7 +68,7 @@ pub async fn list_jobs(
         query = ?query.q,
         spawned_from = ?query.spawned_from,
         include_deleted = ?query.include_deleted,
-        "list_jobs invoked"
+        "list_sessions invoked"
     );
     let namespace = state.config.metis.namespace.clone();
 
@@ -115,8 +115,8 @@ pub async fn list_jobs(
 
     info!(
         namespace = %namespace,
-        job_count = summaries.len(),
-        "list_jobs completed successfully"
+        session_count = summaries.len(),
+        "list_sessions completed successfully"
     );
 
     let total_count = if query.count == Some(true) {
@@ -135,29 +135,29 @@ pub async fn list_jobs(
     Ok(Json(response))
 }
 
-pub async fn get_job(
+pub async fn get_session(
     State(state): State<AppState>,
-    JobIdPath(job_id): JobIdPath,
+    SessionIdPath(session_id): SessionIdPath,
 ) -> Result<Json<v1::sessions::SessionVersionRecord>, ApiError> {
-    info!(job_id = %job_id, "get_job invoked");
+    info!(session_id = %session_id, "get_session invoked");
 
     let versions = state
-        .get_session_versions(&job_id)
+        .get_session_versions(&session_id)
         .await
         .map_err(|err| match err {
             StoreError::SessionNotFound(_) => {
-                error!(job_id = %job_id, "job not found");
-                ApiError::not_found(format!("job '{job_id}' not found"))
+                error!(session_id = %session_id, "session not found");
+                ApiError::not_found(format!("session '{session_id}' not found"))
             }
             err => {
-                error!(job_id = %job_id, error = %err, "failed to load job");
-                ApiError::internal(format!("Failed to load job '{job_id}': {err}"))
+                error!(session_id = %session_id, error = %err, "failed to load session");
+                ApiError::internal(format!("Failed to load session '{session_id}': {err}"))
             }
         })?;
 
     let latest = versions.last().ok_or_else(|| {
-        error!(job_id = %job_id, "job has no versions");
-        ApiError::not_found(format!("job '{job_id}' not found"))
+        error!(session_id = %session_id, "session has no versions");
+        ApiError::not_found(format!("session '{session_id}' not found"))
     })?;
 
     let status_log = crate::store::session_status_log_from_versions(&versions);
@@ -168,32 +168,32 @@ pub async fn get_job(
         api_task.end_time = log.end_time();
     }
     let record = v1::sessions::SessionVersionRecord::new(
-        job_id.clone(),
+        session_id.clone(),
         latest.version,
         latest.timestamp,
         api_task,
         latest.actor.clone(),
     );
-    info!(job_id = %record.session_id, "get_job completed successfully");
+    info!(session_id = %record.session_id, "get_session completed successfully");
     Ok(Json(record))
 }
 
-pub async fn list_job_versions(
+pub async fn list_session_versions(
     State(state): State<AppState>,
-    JobIdPath(job_id): JobIdPath,
+    SessionIdPath(session_id): SessionIdPath,
 ) -> Result<Json<v1::sessions::ListSessionVersionsResponse>, ApiError> {
-    info!(job_id = %job_id, "list_job_versions invoked");
+    info!(session_id = %session_id, "list_session_versions invoked");
     let versions = state
-        .get_session_versions(&job_id)
+        .get_session_versions(&session_id)
         .await
         .map_err(|err| match err {
             StoreError::SessionNotFound(_) => {
-                error!(job_id = %job_id, "job not found");
-                ApiError::not_found(format!("job '{job_id}' not found"))
+                error!(session_id = %session_id, "session not found");
+                ApiError::not_found(format!("session '{session_id}' not found"))
             }
             other => {
-                error!(job_id = %job_id, error = %other, "failed to load job versions");
-                ApiError::internal(format!("Failed to load job '{job_id}': {other}"))
+                error!(session_id = %session_id, error = %other, "failed to load session versions");
+                ApiError::internal(format!("Failed to load session '{session_id}': {other}"))
             }
         })?;
 
@@ -201,7 +201,7 @@ pub async fn list_job_versions(
         .into_iter()
         .map(|version| {
             v1::sessions::SessionVersionRecord::new(
-                job_id.clone(),
+                session_id.clone(),
                 version.version,
                 version.timestamp,
                 version.item.into(),
@@ -212,53 +212,55 @@ pub async fn list_job_versions(
 
     let response = v1::sessions::ListSessionVersionsResponse::new(records);
     info!(
-        job_id = %job_id,
+        session_id = %session_id,
         returned = response.versions.len(),
-        "list_job_versions completed"
+        "list_session_versions completed"
     );
     Ok(Json(response))
 }
 
-pub async fn get_job_version(
+pub async fn get_session_version(
     State(state): State<AppState>,
-    JobVersionPath {
-        job_id,
+    SessionVersionPath {
+        session_id,
         version: raw_version,
-    }: JobVersionPath,
+    }: SessionVersionPath,
 ) -> Result<Json<v1::sessions::SessionVersionRecord>, ApiError> {
-    info!(job_id = %job_id, raw_version = raw_version.as_i64(), "get_job_version invoked");
+    info!(session_id = %session_id, raw_version = raw_version.as_i64(), "get_session_version invoked");
     let versions = state
-        .get_session_versions(&job_id)
+        .get_session_versions(&session_id)
         .await
         .map_err(|err| match err {
             StoreError::SessionNotFound(_) => {
-                error!(job_id = %job_id, "job not found");
-                ApiError::not_found(format!("job '{job_id}' not found"))
+                error!(session_id = %session_id, "session not found");
+                ApiError::not_found(format!("session '{session_id}' not found"))
             }
             other => {
-                error!(job_id = %job_id, error = %other, "failed to load job versions");
-                ApiError::internal(format!("Failed to load job '{job_id}': {other}"))
+                error!(session_id = %session_id, error = %other, "failed to load session versions");
+                ApiError::internal(format!("Failed to load session '{session_id}': {other}"))
             }
         })?;
 
     let max_version = versions.iter().map(|v| v.version).max().unwrap_or(0);
-    let version = super::resolve_version(raw_version, max_version, "job", job_id.as_ref())?;
+    let version = super::resolve_version(raw_version, max_version, "session", session_id.as_ref())?;
 
     let entry = versions
         .into_iter()
         .find(|entry| entry.version == version)
         .ok_or_else(|| {
-            ApiError::not_found(format!("job '{job_id}' version {version} not found"))
+            ApiError::not_found(format!(
+                "session '{session_id}' version {version} not found"
+            ))
         })?;
 
     let response = v1::sessions::SessionVersionRecord::new(
-        job_id.clone(),
+        session_id.clone(),
         entry.version,
         entry.timestamp,
         entry.item.into(),
         entry.actor,
     );
-    info!(job_id = %job_id, version, "get_job_version completed");
+    info!(session_id = %session_id, version, "get_session_version completed");
     Ok(Json(response))
 }
 
@@ -285,43 +287,46 @@ impl From<TaskResolutionError> for ApiError {
 }
 
 #[derive(Debug, Clone)]
-pub struct JobIdPath(pub SessionId);
+pub struct SessionIdPath(pub SessionId);
 
 #[async_trait]
-impl<S> FromRequestParts<S> for JobIdPath
+impl<S> FromRequestParts<S> for SessionIdPath
 where
     S: Send + Sync,
 {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path(job_id) = Path::<SessionId>::from_request_parts(parts, state)
+        let Path(session_id) = Path::<SessionId>::from_request_parts(parts, state)
             .await
             .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
-        Ok(Self(job_id))
+        Ok(Self(session_id))
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct JobVersionPath {
-    pub job_id: SessionId,
+pub struct SessionVersionPath {
+    pub session_id: SessionId,
     pub version: super::RelativeVersionNumber,
 }
 
 #[async_trait]
-impl<S> FromRequestParts<S> for JobVersionPath
+impl<S> FromRequestParts<S> for SessionVersionPath
 where
     S: Send + Sync,
 {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path((job_id, version)) =
+        let Path((session_id, version)) =
             Path::<(SessionId, super::RelativeVersionNumber)>::from_request_parts(parts, state)
                 .await
                 .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
-        Ok(Self { job_id, version })
+        Ok(Self {
+            session_id,
+            version,
+        })
     }
 }

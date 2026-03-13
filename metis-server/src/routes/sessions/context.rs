@@ -1,20 +1,20 @@
 use crate::{
     app::AppState,
-    routes::jobs::{ApiError, JobIdPath},
+    routes::sessions::{ApiError, SessionIdPath},
 };
 use axum::{Json, extract::State};
 use metis_common::{api::v1, constants::ENV_METIS_ID};
 use tracing::{error, info};
 
-pub async fn get_job_context(
+pub async fn get_session_context(
     State(state): State<AppState>,
-    JobIdPath(job_id): JobIdPath,
+    SessionIdPath(session_id): SessionIdPath,
 ) -> Result<Json<v1::sessions::WorkerContext>, ApiError> {
-    info!(job_id = %job_id, "get_job_context invoked");
+    info!(session_id = %session_id, "get_session_context invoked");
 
-    let task = state.get_session(&job_id).await.map_err(|err| {
-        error!(error = %err, job_id = %job_id, "failed to get task");
-        ApiError::not_found(format!("Job '{job_id}' not found"))
+    let task = state.get_session(&session_id).await.map_err(|err| {
+        error!(error = %err, session_id = %session_id, "failed to get task");
+        ApiError::not_found(format!("Session '{session_id}' not found"))
     })?;
 
     let resolved = state.resolve_task(&task).await.map_err(ApiError::from)?;
@@ -23,7 +23,7 @@ pub async fn get_job_context(
     state
         .resolve_secrets_into_env_vars(&task.creator, &mut env_vars, &task.secrets)
         .await;
-    env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
+    env_vars.insert(ENV_METIS_ID.to_string(), session_id.to_string());
 
     let build_cache = state.config.build_cache.to_context();
     let context = v1::sessions::WorkerContext::new(
@@ -33,6 +33,6 @@ pub async fn get_job_context(
         env_vars,
         build_cache,
     );
-    info!(job_id = %job_id, "get_job_context completed");
+    info!(session_id = %session_id, "get_session_context completed");
     Ok(Json(context))
 }

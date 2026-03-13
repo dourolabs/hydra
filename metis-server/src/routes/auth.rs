@@ -1,7 +1,7 @@
 use crate::{
     app::AppState,
     domain::actors::{AuthToken, AuthTokenError},
-    routes::jobs::ApiError,
+    routes::sessions::ApiError,
     store::StoreError,
 };
 use axum::{

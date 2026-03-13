@@ -42,7 +42,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
+        .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({ "prompt": "0" }))
         .send()
         .await?;
@@ -79,7 +79,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
 
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
+        .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
             "prompt": "0",
             "context": { "type": "service_repository", "name": repo_name.to_string() }
@@ -121,7 +121,7 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
 
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
+        .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
             "prompt": "0",
             "image": "ghcr.io/example/custom:dev"
@@ -151,7 +151,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
 
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
+        .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
             "prompt": "0",
             "context": { "type": "service_repository", "name": repo_name.to_string() },
@@ -178,7 +178,7 @@ async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
 
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
+        .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
             "prompt": "0",
             "variables": { "FOO": "bar", "PROMPT": "custom prompt" }
@@ -241,7 +241,7 @@ async fn session_settings_override_request_with_remote_url_priority() -> anyhow:
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
+        .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
             "prompt": "0",
             "context": { "type": "git_repository", "url": "https://task.example.com/base.git", "rev": "task-branch" },
@@ -266,7 +266,7 @@ async fn session_settings_override_request_with_remote_url_priority() -> anyhow:
 
     let context_response = client
         .get(format!(
-            "{}/v1/jobs/{}/context",
+            "{}/v1/sessions/{}/context",
             server.base_url(),
             body.session_id.as_ref()
         ))
@@ -329,7 +329,7 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
+        .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
             "prompt": "0",
             "context": { "type": "git_repository", "url": "https://task.example.com/base.git", "rev": "task-branch" },
@@ -354,7 +354,7 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
 
     let context_response = client
         .get(format!(
-            "{}/v1/jobs/{}/context",
+            "{}/v1/sessions/{}/context",
             server.base_url(),
             body.session_id.as_ref()
         ))
@@ -400,7 +400,7 @@ async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
 
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
+        .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({ "prompt": "0" }))
         .send()
         .await?;
@@ -409,7 +409,7 @@ async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
     let body: CreateSessionResponse = response.json().await?;
     let context_response = client
         .get(format!(
-            "{}/v1/jobs/{}/context",
+            "{}/v1/sessions/{}/context",
             server.base_url(),
             body.session_id.as_ref()
         ))
@@ -434,7 +434,7 @@ async fn create_job_rejects_unknown_service_repository() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
+        .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
             "prompt": "0",
             "context": { "type": "service_repository", "name": "missing/repo" }
@@ -456,7 +456,7 @@ async fn list_jobs_returns_empty_list_when_store_is_empty() -> anyhow::Result<()
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
-        .get(format!("{}/v1/jobs", server.base_url()))
+        .get(format!("{}/v1/sessions", server.base_url()))
         .send()
         .await?;
 
@@ -474,7 +474,7 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
     let client = test_client();
 
     let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
+        .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({ "prompt": "0" }))
         .send()
         .await?;
@@ -491,7 +491,7 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
 
     let response = client
         .post(format!(
-            "{}/v1/jobs/{}/status",
+            "{}/v1/sessions/{}/status",
             server.base_url(),
             created.session_id
         ))
@@ -503,7 +503,7 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
 
     let versions: ListSessionVersionsResponse = client
         .get(format!(
-            "{}/v1/jobs/{}/versions",
+            "{}/v1/sessions/{}/versions",
             server.base_url(),
             created.session_id
         ))
@@ -540,7 +540,7 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
 
     let version: SessionVersionRecord = client
         .get(format!(
-            "{}/v1/jobs/{}/versions/4",
+            "{}/v1/sessions/{}/versions/4",
             server.base_url(),
             created.session_id
         ))
@@ -564,7 +564,7 @@ async fn job_version_endpoints_return_404s() -> anyhow::Result<()> {
     let missing_id = task_id("t-missing");
     let response = client
         .get(format!(
-            "{}/v1/jobs/{}/versions",
+            "{}/v1/sessions/{}/versions",
             server.base_url(),
             missing_id
         ))
@@ -574,7 +574,7 @@ async fn job_version_endpoints_return_404s() -> anyhow::Result<()> {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
+        .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({ "prompt": "0" }))
         .send()
         .await?;
@@ -584,7 +584,7 @@ async fn job_version_endpoints_return_404s() -> anyhow::Result<()> {
 
     let response = client
         .get(format!(
-            "{}/v1/jobs/{}/versions/99",
+            "{}/v1/sessions/{}/versions/99",
             server.base_url(),
             created.session_id
         ))
@@ -601,7 +601,7 @@ async fn get_job_rejects_empty_job_id() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
-        .get(format!("{}/v1/jobs/%20", server.base_url()))
+        .get(format!("{}/v1/sessions/%20", server.base_url()))
         .send()
         .await?;
 
@@ -656,7 +656,11 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
 
     let client = test_client();
     let response = client
-        .get(format!("{}/v1/jobs/%20{}%20", server.base_url(), job_id))
+        .get(format!(
+            "{}/v1/sessions/%20{}%20",
+            server.base_url(),
+            job_id
+        ))
         .send()
         .await?;
 
@@ -675,7 +679,7 @@ async fn get_job_returns_not_found_for_missing_job() -> anyhow::Result<()> {
     let client = test_client();
     let missing_id = task_id("t-missing");
     let response = client
-        .get(format!("{}/v1/jobs/{missing_id}", server.base_url()))
+        .get(format!("{}/v1/sessions/{missing_id}", server.base_url()))
         .send()
         .await?;
 
@@ -683,7 +687,7 @@ async fn get_job_returns_not_found_for_missing_job() -> anyhow::Result<()> {
     let body: serde_json::Value = response.json().await?;
     assert_eq!(
         body,
-        json!({ "error": format!("job '{missing_id}' not found") })
+        json!({ "error": format!("session '{missing_id}' not found") })
     );
     Ok(())
 }
@@ -693,7 +697,7 @@ async fn get_job_logs_rejects_empty_job_id() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
-        .get(format!("{}/v1/jobs/ /logs", server.base_url()))
+        .get(format!("{}/v1/sessions/ /logs", server.base_url()))
         .send()
         .await?;
 
@@ -717,7 +721,7 @@ async fn get_job_logs_returns_bad_request_when_multiple_jobs_found() -> anyhow::
 
     let client = test_client();
     let response = client
-        .get(format!("{}/v1/jobs/{job_id}/logs", server.base_url()))
+        .get(format!("{}/v1/sessions/{job_id}/logs", server.base_url()))
         .send()
         .await?;
 
@@ -736,7 +740,10 @@ async fn get_job_logs_returns_not_found_for_missing_job() -> anyhow::Result<()> 
     let client = test_client();
     let missing_id = task_id("t-missing");
     let response = client
-        .get(format!("{}/v1/jobs/{missing_id}/logs", server.base_url()))
+        .get(format!(
+            "{}/v1/sessions/{missing_id}/logs",
+            server.base_url()
+        ))
         .send()
         .await?;
 
@@ -766,7 +773,7 @@ async fn get_job_logs_streams_when_watching_running_job() -> anyhow::Result<()> 
     let client = test_client();
     let response = client
         .get(format!(
-            "{}/v1/jobs/{job_id}/logs?watch=true",
+            "{}/v1/sessions/{job_id}/logs?watch=true",
             server.base_url()
         ))
         .send()
@@ -785,7 +792,7 @@ async fn kill_job_rejects_empty_job_id() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
-        .delete(format!("{}/v1/jobs/%20", server.base_url()))
+        .delete(format!("{}/v1/sessions/%20", server.base_url()))
         .send()
         .await?;
 
@@ -804,7 +811,7 @@ async fn kill_job_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
     let client = test_client();
     let missing_id = task_id("t-missing");
     let response = client
-        .delete(format!("{}/v1/jobs/{missing_id}", server.base_url()))
+        .delete(format!("{}/v1/sessions/{missing_id}", server.base_url()))
         .send()
         .await?;
 
@@ -828,7 +835,7 @@ async fn kill_job_handles_multiple_matches_conflict() -> anyhow::Result<()> {
 
     let client = test_client();
     let response = client
-        .delete(format!("{}/v1/jobs/{job_id}", server.base_url()))
+        .delete(format!("{}/v1/sessions/{job_id}", server.base_url()))
         .send()
         .await?;
 
@@ -846,7 +853,7 @@ async fn set_job_status_rejects_empty_job_id() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/jobs/ /status", server.base_url()))
+        .post(format!("{}/v1/sessions/ /status", server.base_url()))
         .json(&json!({ "status": "complete" }))
         .send()
         .await?;
@@ -866,7 +873,10 @@ async fn set_job_status_returns_not_found_for_missing_job() -> anyhow::Result<()
     let client = test_client();
     let missing_id = task_id("t-missing");
     let response = client
-        .post(format!("{}/v1/jobs/{missing_id}/status", server.base_url()))
+        .post(format!(
+            "{}/v1/sessions/{missing_id}/status",
+            server.base_url()
+        ))
         .json(&json!({ "status": "complete" }))
         .send()
         .await?;
@@ -940,7 +950,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
 
     let client = test_client();
     let response = client
-        .post(format!("{}/v1/jobs/{job_id}/status", server.base_url()))
+        .post(format!("{}/v1/sessions/{job_id}/status", server.base_url()))
         .json(&json!({ "status": "complete" }))
         .send()
         .await?;
@@ -994,7 +1004,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
     let client = test_client();
 
     let response = client
-        .post(format!("{}/v1/jobs/{job_id}/status", server.base_url()))
+        .post(format!("{}/v1/sessions/{job_id}/status", server.base_url()))
         .json(&json!({ "status": "failed", "reason": "boom" }))
         .send()
         .await?;
@@ -1013,7 +1023,7 @@ async fn get_job_context_rejects_empty_job_id() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
-        .get(format!("{}/v1/jobs/ /context", server.base_url()))
+        .get(format!("{}/v1/sessions/ /context", server.base_url()))
         .send()
         .await?;
 
@@ -1033,7 +1043,7 @@ async fn get_job_context_returns_not_found_for_unknown_job() -> anyhow::Result<(
     let missing_id = task_id("t-missing");
     let response = client
         .get(format!(
-            "{}/v1/jobs/{missing_id}/context",
+            "{}/v1/sessions/{missing_id}/context",
             server.base_url()
         ))
         .send()
@@ -1142,7 +1152,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
     let client = test_client();
     let response = client
         .get(format!(
-            "{}/v1/jobs/{ctx_job_id}/context",
+            "{}/v1/sessions/{ctx_job_id}/context",
             server.base_url()
         ))
         .send()
@@ -1196,7 +1206,10 @@ async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
 
     let client = test_client();
     let response = client
-        .get(format!("{}/v1/jobs/{job_id}/context", server.base_url()))
+        .get(format!(
+            "{}/v1/sessions/{job_id}/context",
+            server.base_url()
+        ))
         .send()
         .await?;
 
@@ -1241,7 +1254,10 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
 
     let client = test_client();
     let response = client
-        .get(format!("{}/v1/jobs/{job_id}/context", server.base_url()))
+        .get(format!(
+            "{}/v1/sessions/{job_id}/context",
+            server.base_url()
+        ))
         .send()
         .await?;
 

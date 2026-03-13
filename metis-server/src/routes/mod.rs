@@ -7,7 +7,6 @@ pub mod documents;
 pub mod events;
 pub mod github;
 pub mod issues;
-pub mod jobs;
 pub mod labels;
 pub mod login;
 pub mod merge_queues;
@@ -16,6 +15,7 @@ pub mod notifications;
 pub mod patches;
 pub mod repositories;
 pub mod secrets;
+pub mod sessions;
 pub mod users;
 pub mod whoami;
 

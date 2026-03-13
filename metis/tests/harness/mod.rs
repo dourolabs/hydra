@@ -22,8 +22,8 @@ use metis_common::{
 use metis_server::{
     app::{AppState, ServiceState},
     background::{
-        monitor_running_jobs::MonitorRunningJobsWorker,
-        process_pending_jobs::ProcessPendingJobsWorker,
+        monitor_running_sessions::MonitorRunningSessionsWorker,
+        process_pending_sessions::ProcessPendingSessionsWorker,
         run_spawners::RunSpawnersWorker,
         scheduler::{ScheduledWorker, WorkerOutcome},
     },
@@ -378,7 +378,7 @@ impl TestHarness {
             .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
             .context("failed to list created tasks before step_pending_jobs")?;
 
-        let worker = ProcessPendingJobsWorker::new(self.state.clone());
+        let worker = ProcessPendingSessionsWorker::new(self.state.clone());
         let outcome = worker.run_iteration().await;
 
         if let WorkerOutcome::TransientError { reason } = outcome {
@@ -409,7 +409,7 @@ impl TestHarness {
     /// Reconciles task status with the job engine, reaps orphaned jobs,
     /// and cleans up tasks whose parent issues have been deleted.
     pub async fn step_monitor_jobs(&self) -> Result<()> {
-        let worker = MonitorRunningJobsWorker::new(self.state.clone());
+        let worker = MonitorRunningSessionsWorker::new(self.state.clone());
         let outcome = worker.run_iteration().await;
 
         if let WorkerOutcome::TransientError { reason } = outcome {

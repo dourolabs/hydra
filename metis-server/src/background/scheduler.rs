@@ -3,8 +3,9 @@
 use crate::{
     app::AppState,
     background::{
-        cleanup_branches::CleanupBranchesWorker, monitor_running_jobs::MonitorRunningJobsWorker,
-        process_pending_jobs::ProcessPendingJobsWorker, run_spawners::RunSpawnersWorker,
+        cleanup_branches::CleanupBranchesWorker,
+        monitor_running_sessions::MonitorRunningSessionsWorker,
+        process_pending_sessions::ProcessPendingSessionsWorker, run_spawners::RunSpawnersWorker,
     },
     config::WorkerSchedulerConfig,
     policy::integrations::github_pr_poller::GithubPollerWorker,
@@ -94,8 +95,14 @@ impl BackgroundScheduler {
 
 pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
     let scheduler_config = state.config.background.scheduler.clone();
-    let process_interval_secs = scheduler_config.process_pending_jobs.interval_secs.max(1);
-    let monitor_interval_secs = scheduler_config.monitor_running_jobs.interval_secs.max(1);
+    let process_interval_secs = scheduler_config
+        .process_pending_sessions
+        .interval_secs
+        .max(1);
+    let monitor_interval_secs = scheduler_config
+        .monitor_running_sessions
+        .interval_secs
+        .max(1);
     let spawner_interval_secs = scheduler_config.run_spawners.interval_secs.max(1);
     let github_interval_secs = scheduler_config
         .github_poller
@@ -104,14 +111,14 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
         .max(1);
     let cleanup_branches_interval_secs = scheduler_config.cleanup_branches.interval_secs.max(1);
     log_worker_config(
-        "process_pending_jobs",
+        "process_pending_sessions",
         process_interval_secs,
-        &scheduler_config.process_pending_jobs,
+        &scheduler_config.process_pending_sessions,
     );
     log_worker_config(
-        "monitor_running_jobs",
+        "monitor_running_sessions",
         monitor_interval_secs,
-        &scheduler_config.monitor_running_jobs,
+        &scheduler_config.monitor_running_sessions,
     );
     log_worker_config(
         "run_spawners",
@@ -132,19 +139,19 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
     let workers = vec![
         WorkerHandle::new(
             worker_settings_from_config(
-                "process_pending_jobs",
+                "process_pending_sessions",
                 process_interval_secs,
-                &scheduler_config.process_pending_jobs,
+                &scheduler_config.process_pending_sessions,
             ),
-            Arc::new(ProcessPendingJobsWorker::new(state.clone())),
+            Arc::new(ProcessPendingSessionsWorker::new(state.clone())),
         ),
         WorkerHandle::new(
             worker_settings_from_config(
-                "monitor_running_jobs",
+                "monitor_running_sessions",
                 monitor_interval_secs,
-                &scheduler_config.monitor_running_jobs,
+                &scheduler_config.monitor_running_sessions,
             ),
-            Arc::new(MonitorRunningJobsWorker::new(state.clone())),
+            Arc::new(MonitorRunningSessionsWorker::new(state.clone())),
         ),
         WorkerHandle::new(
             worker_settings_from_config(

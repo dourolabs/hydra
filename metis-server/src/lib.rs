@@ -206,7 +206,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
 /// Build the base Axum router with all metis API routes.
 ///
 /// The returned router has public routes (health check, login) and
-/// authenticated routes (issues, patches, jobs, etc.) but does **not** have
+/// authenticated routes (issues, patches, sessions, etc.) but does **not** have
 /// state applied. Call `.with_state(state)` after merging any additional
 /// routes your application needs.
 pub fn build_router(state: &AppState) -> Router<AppState> {
@@ -320,8 +320,8 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
         )
         .route("/v1/github/token", get(routes::github::get_github_token))
         .route(
-            "/v1/jobs",
-            get(routes::jobs::list_jobs).post(routes::jobs::create_job),
+            "/v1/sessions",
+            get(routes::sessions::list_sessions).post(routes::sessions::create_session),
         )
         .route(
             "/v1/agents",
@@ -334,28 +334,28 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
                 .delete(routes::agents::delete_agent),
         )
         .route(
-            "/v1/jobs/:job_id",
-            get(routes::jobs::get_job).delete(routes::jobs::kill::kill_job),
+            "/v1/sessions/:session_id",
+            get(routes::sessions::get_session).delete(routes::sessions::kill::kill_session),
         )
         .route(
-            "/v1/jobs/:job_id/versions",
-            get(routes::jobs::list_job_versions),
+            "/v1/sessions/:session_id/versions",
+            get(routes::sessions::list_session_versions),
         )
         .route(
-            "/v1/jobs/:job_id/versions/:version_number",
-            get(routes::jobs::get_job_version),
+            "/v1/sessions/:session_id/versions/:version_number",
+            get(routes::sessions::get_session_version),
         )
         .route(
-            "/v1/jobs/:job_id/logs",
-            get(routes::jobs::logs::get_job_logs),
+            "/v1/sessions/:session_id/logs",
+            get(routes::sessions::logs::get_session_logs),
         )
         .route(
-            "/v1/jobs/:job_id/status",
-            post(routes::jobs::status::set_job_status),
+            "/v1/sessions/:session_id/status",
+            post(routes::sessions::status::set_session_status),
         )
         .route(
-            "/v1/jobs/:job_id/context",
-            get(routes::jobs::context::get_job_context),
+            "/v1/sessions/:session_id/context",
+            get(routes::sessions::context::get_session_context),
         )
         .route(
             "/v1/messages",

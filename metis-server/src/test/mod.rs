@@ -7,7 +7,6 @@ mod github_app;
 mod github_token;
 mod health;
 mod issues;
-mod jobs;
 mod labels;
 mod library_api;
 mod local_auth;
@@ -19,6 +18,7 @@ mod notifications;
 mod patches;
 mod repositories;
 mod secrets;
+mod sessions;
 mod users;
 mod whoami;
 

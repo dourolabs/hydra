@@ -8,25 +8,25 @@ use async_trait::async_trait;
 use metis_common::sessions::SearchSessionsQuery;
 use tracing::{error, info};
 
-/// Scheduled worker that monitors running jobs once per iteration.
+/// Scheduled worker that monitors running sessions once per iteration.
 ///
 /// A successful iteration returns `Progress`, empty queues return `Idle`,
 /// and store failures map to `TransientError` so the scheduler can back off.
-const WORKER_NAME: &str = "monitor_running_jobs";
+const WORKER_NAME: &str = "monitor_running_sessions";
 
 #[derive(Clone)]
-pub struct MonitorRunningJobsWorker {
+pub struct MonitorRunningSessionsWorker {
     state: AppState,
 }
 
-impl MonitorRunningJobsWorker {
+impl MonitorRunningSessionsWorker {
     pub fn new(state: AppState) -> Self {
         Self { state }
     }
 }
 
 #[async_trait]
-impl ScheduledWorker for MonitorRunningJobsWorker {
+impl ScheduledWorker for MonitorRunningSessionsWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
         // Kill any jobs that are running in the engine but missing from the store
@@ -118,7 +118,7 @@ mod tests {
     #[tokio::test]
     async fn returns_idle_when_no_running_tasks_exist() {
         let handles = test_state_handles();
-        let worker = MonitorRunningJobsWorker::new(handles.state);
+        let worker = MonitorRunningSessionsWorker::new(handles.state);
 
         let outcome = worker.run_iteration().await;
 
@@ -157,7 +157,7 @@ mod tests {
 
         engine.insert_job(&task_id, JobStatus::Running).await;
 
-        let worker = MonitorRunningJobsWorker::new(handles.state.clone());
+        let worker = MonitorRunningSessionsWorker::new(handles.state.clone());
         let outcome = worker.run_iteration().await;
 
         assert_eq!(
@@ -182,7 +182,7 @@ mod tests {
     #[tokio::test]
     async fn returns_transient_error_when_store_fails() {
         let handles = test_state_with_store(Arc::new(FailingStore));
-        let worker = MonitorRunningJobsWorker::new(handles.state);
+        let worker = MonitorRunningSessionsWorker::new(handles.state);
 
         let outcome = worker.run_iteration().await;
 
@@ -240,7 +240,7 @@ mod tests {
             .await
             .unwrap();
 
-        let worker = MonitorRunningJobsWorker::new(handles.state);
+        let worker = MonitorRunningSessionsWorker::new(handles.state);
         worker.run_iteration().await;
 
         let result = handles.store.get_session(&task_id, false).await;

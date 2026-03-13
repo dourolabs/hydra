@@ -434,7 +434,7 @@ impl MetisClient {
         &self,
         request: &CreateSessionRequest,
     ) -> Result<CreateSessionResponse> {
-        let url = self.endpoint("/v1/jobs")?;
+        let url = self.endpoint("/v1/sessions")?;
         let response = self
             .authed(self.http.post(url))
             .json(request)
@@ -452,7 +452,7 @@ impl MetisClient {
 
     /// Call `GET /v1/jobs` to list existing jobs.
     pub async fn list_jobs(&self, query: &SearchSessionsQuery) -> Result<ListSessionsResponse> {
-        let url = self.endpoint("/v1/jobs")?;
+        let url = self.endpoint("/v1/sessions")?;
         let response = self
             .authed(self.http.get(url))
             .query(query)
@@ -473,7 +473,7 @@ impl MetisClient {
         &self,
         job_id: &SessionId,
     ) -> Result<ListSessionVersionsResponse> {
-        let path = format!("/v1/jobs/{job_id}/versions");
+        let path = format!("/v1/sessions/{job_id}/versions");
         let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.get(url))
@@ -491,7 +491,7 @@ impl MetisClient {
 
     /// Call `GET /v1/jobs/:job_id` to fetch an individual job summary.
     pub async fn get_job(&self, job_id: &SessionId) -> Result<SessionVersionRecord> {
-        let path = format!("/v1/jobs/{job_id}");
+        let path = format!("/v1/sessions/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.get(url))
@@ -513,7 +513,7 @@ impl MetisClient {
         job_id: &SessionId,
         version: RelativeVersionNumber,
     ) -> Result<SessionVersionRecord> {
-        let path = format!("/v1/jobs/{job_id}/versions/{version}");
+        let path = format!("/v1/sessions/{job_id}/versions/{version}");
         let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.get(url))
@@ -531,7 +531,7 @@ impl MetisClient {
 
     /// Call `DELETE /v1/jobs/:job_id` to terminate a running job.
     pub async fn kill_job(&self, job_id: &SessionId) -> Result<KillSessionResponse> {
-        let path = format!("/v1/jobs/{job_id}");
+        let path = format!("/v1/sessions/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.delete(url))
@@ -552,7 +552,7 @@ impl MetisClient {
     /// When `query.watch` is `Some(true)` the returned stream yields log lines
     /// as new SSE events arrive.
     pub async fn get_job_logs(&self, job_id: &SessionId, query: &LogsQuery) -> Result<LogStream> {
-        let path = format!("/v1/jobs/{job_id}/logs");
+        let path = format!("/v1/sessions/{job_id}/logs");
         let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.get(url))
@@ -584,7 +584,7 @@ impl MetisClient {
         job_id: &SessionId,
         status: &SessionStatusUpdate,
     ) -> Result<SetSessionStatusResponse> {
-        let path = format!("/v1/jobs/{job_id}/status");
+        let path = format!("/v1/sessions/{job_id}/status");
         let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.post(url))
@@ -603,7 +603,7 @@ impl MetisClient {
 
     /// Call `GET /v1/jobs/:job_id/context` to retrieve the stored job context.
     pub async fn get_job_context(&self, job_id: &SessionId) -> Result<WorkerContext> {
-        let path = format!("/v1/jobs/{job_id}/context");
+        let path = format!("/v1/sessions/{job_id}/context");
         let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.get(url))

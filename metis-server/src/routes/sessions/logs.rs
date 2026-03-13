@@ -1,7 +1,7 @@
 use crate::{
     app::AppState,
     job_engine::{JobEngineError, JobStatus, SessionId},
-    routes::jobs::{ApiError, JobIdPath},
+    routes::sessions::{ApiError, SessionIdPath},
 };
 use axum::{
     extract::{Query, State},
@@ -16,37 +16,37 @@ use metis_common::api::v1::logs::LogsQuery;
 use std::convert::Infallible;
 use tracing::{error, info};
 
-pub async fn get_job_logs(
+pub async fn get_session_logs(
     State(state): State<AppState>,
-    JobIdPath(job_id): JobIdPath,
+    SessionIdPath(session_id): SessionIdPath,
     Query(query): Query<LogsQuery>,
 ) -> Result<Response, ApiError> {
     let watch_requested = query.watch.unwrap_or(false);
     let tail_lines = query.tail_lines;
     info!(
-        job_id = %job_id,
+        session_id = %session_id,
         watch = watch_requested,
-        "get_job_logs invoked"
+        "get_session_logs invoked"
     );
 
-    // Check if job exists and get its status to determine if we should follow logs
+    // Check if session exists and get its status to determine if we should follow logs
     let job = state
         .job_engine
-        .find_job_by_metis_id(&job_id)
+        .find_job_by_metis_id(&session_id)
         .await
         .map_err(|err| match err {
             JobEngineError::NotFound(metis_id) => {
                 let message = format!("Job '{metis_id}' not found");
-                error!(job_id = %job_id, error = %message, "job not found");
+                error!(session_id = %session_id, error = %message, "session not found");
                 ApiError::not_found(message)
             }
             JobEngineError::MultipleFound(metis_id) => {
                 let message = format!("Multiple jobs found for metis-id '{metis_id}'");
-                error!(job_id = %job_id, error = %message, "multiple jobs found");
+                error!(session_id = %session_id, error = %message, "multiple jobs found");
                 ApiError::bad_request(message)
             }
             err => {
-                error!(job_id = %job_id, error = ?err, "failed to find job");
+                error!(session_id = %session_id, error = ?err, "failed to find session");
                 ApiError::internal(err)
             }
         })?;
@@ -55,27 +55,27 @@ pub async fn get_job_logs(
 
     if watch_requested {
         info!(
-            job_id = %job_id,
+            session_id = %session_id,
             follow = follow,
-            "streaming job logs via SSE"
+            "streaming session logs via SSE"
         );
-        let response = stream_logs_sse(state.job_engine.as_ref(), &job_id, follow).await?;
+        let response = stream_logs_sse(state.job_engine.as_ref(), &session_id, follow).await?;
         info!(
-            job_id = %job_id,
+            session_id = %session_id,
             follow = follow,
-            "get_job_logs streaming response ready"
+            "get_session_logs streaming response ready"
         );
         Ok(response)
     } else {
         info!(
-            job_id = %job_id,
-            "fetching job logs once"
+            session_id = %session_id,
+            "fetching session logs once"
         );
-        let response = fetch_logs(state.job_engine.as_ref(), &job_id, tail_lines).await?;
+        let response = fetch_logs(state.job_engine.as_ref(), &session_id, tail_lines).await?;
         info!(
-            job_id = %job_id,
+            session_id = %session_id,
             tail_lines = ?tail_lines,
-            "get_job_logs returning log snapshot"
+            "get_session_logs returning log snapshot"
         );
         Ok(response)
     }
@@ -83,14 +83,14 @@ pub async fn get_job_logs(
 
 async fn fetch_logs(
     job_engine: &dyn crate::job_engine::JobEngine,
-    job_id: &SessionId,
+    session_id: &SessionId,
     tail_lines: Option<i64>,
 ) -> Result<Response, ApiError> {
     let logs = job_engine
-        .get_logs(job_id, tail_lines)
+        .get_logs(session_id, tail_lines)
         .await
         .map_err(|err| {
-            error!(job_id = %job_id, error = ?err, "failed to fetch logs");
+            error!(session_id = %session_id, error = ?err, "failed to fetch logs");
             match err {
                 JobEngineError::NotFound(metis_id) => {
                     ApiError::not_found(format!("Job '{metis_id}' not found"))
@@ -101,7 +101,7 @@ async fn fetch_logs(
 
     let byte_len = logs.len();
     info!(
-        job_id = %job_id,
+        session_id = %session_id,
         tail_lines = ?tail_lines,
         byte_len,
         "prepared single-shot log response"
@@ -119,18 +119,20 @@ async fn fetch_logs(
 
 async fn stream_logs_sse(
     job_engine: &dyn crate::job_engine::JobEngine,
-    job_id: &SessionId,
+    session_id: &SessionId,
     follow: bool,
 ) -> Result<Response, ApiError> {
-    let mut receiver = job_engine.get_logs_stream(job_id, follow).map_err(|err| {
-        error!(job_id = %job_id, error = ?err, "failed to create log stream");
-        match err {
-            JobEngineError::NotFound(metis_id) => {
-                ApiError::not_found(format!("Job '{metis_id}' not found"))
+    let mut receiver = job_engine
+        .get_logs_stream(session_id, follow)
+        .map_err(|err| {
+            error!(session_id = %session_id, error = ?err, "failed to create log stream");
+            match err {
+                JobEngineError::NotFound(metis_id) => {
+                    ApiError::not_found(format!("Job '{metis_id}' not found"))
+                }
+                err => ApiError::internal(err),
             }
-            err => ApiError::internal(err),
-        }
-    })?;
+        })?;
 
     let (tx, rx) = mpsc::unbounded::<Result<Event, Infallible>>();
 
@@ -151,7 +153,7 @@ async fn stream_logs_sse(
 
     let response = sse.into_response();
     info!(
-        job_id = %job_id,
+        session_id = %session_id,
         follow = follow,
         "prepared SSE log response"
     );

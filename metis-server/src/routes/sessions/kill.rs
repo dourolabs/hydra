@@ -3,43 +3,43 @@ use axum::{Json, extract::State};
 use metis_common::api::v1;
 use tracing::{error, info};
 
-use super::{ApiError, JobIdPath};
+use super::{ApiError, SessionIdPath};
 
-pub async fn kill_job(
+pub async fn kill_session(
     State(state): State<AppState>,
-    JobIdPath(job_id): JobIdPath,
+    SessionIdPath(session_id): SessionIdPath,
 ) -> Result<Json<v1::sessions::KillSessionResponse>, ApiError> {
-    info!(job_id = %job_id, "kill_job invoked");
+    info!(session_id = %session_id, "kill_session invoked");
     state
         .job_engine
-        .kill_job(&job_id)
+        .kill_job(&session_id)
         .await
         .map_err(|err| match err {
             JobEngineError::NotFound(metis_id) => {
                 let message = format!("Job '{metis_id}' not found");
-                error!(job_id = %job_id, error = %message, "job not found");
+                error!(session_id = %session_id, error = %message, "session not found");
                 ApiError::not_found(message)
             }
             JobEngineError::MultipleFound(metis_id) => {
                 let message = format!("Multiple jobs found for metis-id '{metis_id}'");
-                error!(job_id = %job_id, error = %message, "multiple jobs found");
+                error!(session_id = %session_id, error = %message, "multiple jobs found");
                 ApiError::conflict(message)
             }
             #[cfg(feature = "kubernetes")]
             JobEngineError::Kubernetes(kube_err) => {
-                error!(job_id = %job_id, error = ?kube_err, "kubernetes error while killing job");
+                error!(session_id = %session_id, error = ?kube_err, "kubernetes error while killing session");
                 ApiError::internal(kube_err)
             }
             other => {
-                error!(job_id = %job_id, error = %other, "failed to kill job");
+                error!(session_id = %session_id, error = %other, "failed to kill session");
                 ApiError::internal(other)
             }
         })?;
 
-    info!(job_id = %job_id, "kill_job completed successfully");
+    info!(session_id = %session_id, "kill_session completed successfully");
 
     Ok(Json(v1::sessions::KillSessionResponse::new(
-        job_id,
+        session_id,
         "killed".to_string(),
     )))
 }
