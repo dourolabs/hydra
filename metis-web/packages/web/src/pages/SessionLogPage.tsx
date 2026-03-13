@@ -111,7 +111,7 @@ export function SessionLogPage() {
           {activeTab === "logs" && (
             <SessionLogViewer sessionId={record.session_id} status={record.session.status} />
           )}
-          {activeTab === "settings" && <SessionSettings task={record.task} />}
+          {activeTab === "settings" && <SessionSettings task={record.session} />}
 
           <KillSessionModal
             open={killModalOpen}
