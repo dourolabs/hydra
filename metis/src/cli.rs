@@ -12,7 +12,7 @@ use crate::{
         self,
         output::{resolve_output_format, CommandContext, OutputFormat},
     },
-    config::{self, AppConfig},
+    config::{self, empty_app_config, AppConfig},
     constants, github_device_flow,
 };
 use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN};
@@ -129,10 +129,36 @@ pub enum Commands {
     },
 }
 
+/// Check whether both server URL and token are available via CLI flags or env vars.
+fn has_env_credentials(cli: &Cli) -> bool {
+    let has_url = cli
+        .server_url
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty());
+    let has_token = cli
+        .token
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty());
+    has_url && has_token
+}
+
+/// Resolve the app config: if env vars provide both server URL and token,
+/// skip config file loading entirely; otherwise load from the config file.
+pub fn resolve_app_config(cli: &Cli) -> Result<(AppConfig, PathBuf)> {
+    let config_path = resolve_config_path(cli);
+    if has_env_credentials(cli) {
+        Ok((empty_app_config(), config_path))
+    } else {
+        let app_config = load_app_config(&config_path)?;
+        Ok((app_config, config_path))
+    }
+}
+
 /// Run the CLI with the given parsed arguments.
 pub async fn run(cli: Cli) -> Result<()> {
-    let config_path = resolve_config_path(&cli);
-    let app_config = load_app_config(&config_path)?;
+    let (app_config, config_path) = resolve_app_config(&cli)?;
     let server_url = resolve_server_url(&cli, &app_config)?;
     let unauth_client = MetisClientUnauthenticated::new(&server_url)?;
     let client =
@@ -259,7 +285,6 @@ pub fn resolve_server_url(cli: &Cli, app_config: &AppConfig) -> Result<String> {
 mod tests {
     use super::*;
     use crate::command::agents::AgentsCommand;
-    use crate::config::empty_app_config;
     use clap::Parser;
     use tempfile::tempdir;
 
@@ -355,5 +380,113 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
         let err: anyhow::Error = io_err.into();
         assert!(!is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn resolve_app_config_uses_empty_config_when_env_vars_present() {
+        let cli = Cli {
+            server_url: Some("http://localhost:9000".to_string()),
+            token: Some("test-token".to_string()),
+            ..base_cli()
+        };
+
+        let (config, _) = resolve_app_config(&cli).expect("resolve app config");
+        assert!(
+            config.servers.is_empty(),
+            "expected empty config when env vars are set"
+        );
+    }
+
+    #[test]
+    fn resolve_app_config_skips_config_file_when_env_vars_present() {
+        // Even with a nonexistent config path, env vars should bypass config loading.
+        let cli = Cli {
+            config: Some(PathBuf::from("/nonexistent/config.toml")),
+            server_url: Some("http://localhost:9000".to_string()),
+            token: Some("test-token".to_string()),
+            ..base_cli()
+        };
+
+        let (config, _) = resolve_app_config(&cli).expect("should not fail on missing config");
+        assert!(config.servers.is_empty());
+    }
+
+    #[test]
+    fn resolve_app_config_falls_back_to_config_file_without_env_vars() {
+        let temp = tempdir().expect("tempdir");
+        let config_path = temp.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            "[[servers]]\nurl = \"http://127.0.0.1:8080\"\ndefault = true\n",
+        )
+        .expect("write config");
+
+        let cli = Cli {
+            config: Some(config_path),
+            ..base_cli()
+        };
+
+        let (config, _) = resolve_app_config(&cli).expect("resolve app config");
+        let server = config.default_server().expect("default server");
+        assert_eq!(server.url, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn resolve_app_config_errors_when_no_env_vars_and_no_config_file() {
+        let cli = Cli {
+            config: Some(PathBuf::from("/nonexistent/config.toml")),
+            ..base_cli()
+        };
+
+        let err = resolve_app_config(&cli).unwrap_err();
+        assert!(
+            err.to_string().contains("No configuration file found"),
+            "expected config file error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn has_env_credentials_requires_both_url_and_token() {
+        // Only URL set
+        let cli = Cli {
+            server_url: Some("http://localhost:9000".to_string()),
+            ..base_cli()
+        };
+        assert!(!has_env_credentials(&cli));
+
+        // Only token set
+        let cli = Cli {
+            token: Some("test-token".to_string()),
+            ..base_cli()
+        };
+        assert!(!has_env_credentials(&cli));
+
+        // Both set
+        let cli = Cli {
+            server_url: Some("http://localhost:9000".to_string()),
+            token: Some("test-token".to_string()),
+            ..base_cli()
+        };
+        assert!(has_env_credentials(&cli));
+
+        // Neither set
+        assert!(!has_env_credentials(&base_cli()));
+    }
+
+    #[test]
+    fn has_env_credentials_ignores_empty_strings() {
+        let cli = Cli {
+            server_url: Some("".to_string()),
+            token: Some("test-token".to_string()),
+            ..base_cli()
+        };
+        assert!(!has_env_credentials(&cli));
+
+        let cli = Cli {
+            server_url: Some("http://localhost:9000".to_string()),
+            token: Some("  ".to_string()),
+            ..base_cli()
+        };
+        assert!(!has_env_credentials(&cli));
     }
 }
