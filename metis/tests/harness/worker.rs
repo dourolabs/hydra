@@ -10,8 +10,8 @@ use metis::command::output::{CommandContext, ResolvedOutputFormat};
 use metis::worker_commands::WorkerCommands;
 use metis_common::{
     constants::{ENV_METIS_ISSUE_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN},
-    sessions::SearchSessionsQuery,
     patches::SearchPatchesQuery,
+    sessions::SearchSessionsQuery,
     task_status::Status,
     PatchId, SessionId,
 };

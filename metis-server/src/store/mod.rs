@@ -14,9 +14,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, SessionId,
@@ -152,7 +152,9 @@ pub(crate) fn status_to_db_str(status: Status) -> &'static str {
     }
 }
 
-pub(crate) fn session_status_log_from_versions(versions: &[Versioned<Session>]) -> Option<TaskStatusLog> {
+pub(crate) fn session_status_log_from_versions(
+    versions: &[Versioned<Session>],
+) -> Option<TaskStatusLog> {
     let (first, rest) = versions.split_first()?;
     let mut log = TaskStatusLog::new(first.item.status, first.timestamp);
     let mut last_status = first.item.status;
@@ -323,7 +325,10 @@ pub trait ReadOnlyStore: Send + Sync {
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 
     /// Lists all session IDs spawned from the provided issue.
-    async fn get_sessions_for_issue(&self, issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError>;
+    async fn get_sessions_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<SessionId>, StoreError>;
 
     /// Retrieves a patch by its PatchId.
     ///
@@ -401,7 +406,10 @@ pub trait ReadOnlyStore: Send + Sync {
     ) -> Result<Versioned<Session>, StoreError>;
 
     /// Retrieves all versions of a session in ascending version order.
-    async fn get_session_versions(&self, id: &SessionId) -> Result<Vec<Versioned<Session>>, StoreError>;
+    async fn get_session_versions(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<Versioned<Session>>, StoreError>;
 
     /// Lists all sessions in the store that match the provided search query.
     ///
@@ -753,8 +761,11 @@ pub trait Store: ReadOnlyStore {
     /// The session can still be retrieved via `get_session` but will be filtered
     /// from `list_sessions` by default. Returns the version number of the
     /// deletion record.
-    async fn delete_session(&self, id: &SessionId, actor: &ActorRef)
-    -> Result<VersionNumber, StoreError>;
+    async fn delete_session(
+        &self,
+        id: &SessionId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
 
     /// Adds a new actor to the store.
     async fn add_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError>;

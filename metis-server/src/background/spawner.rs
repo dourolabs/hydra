@@ -62,7 +62,8 @@ impl AgentQueue {
         issue: &Issue,
         prompt: &str,
     ) -> anyhow::Result<Option<Session>> {
-        let session_settings = state.apply_session_settings_defaults(issue.session_settings.clone());
+        let session_settings =
+            state.apply_session_settings_defaults(issue.session_settings.clone());
         let bundle = match (
             session_settings.remote_url.as_ref(),
             session_settings.repo_name.as_ref(),
@@ -361,9 +362,9 @@ mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
     use crate::domain::issues::SessionSettings;
-    use crate::domain::sessions::{Bundle, BundleSpec};
     use crate::domain::messages::Message;
     use crate::domain::patches::{Patch, PatchStatus, Review};
+    use crate::domain::sessions::{Bundle, BundleSpec};
     use crate::{
         app::Repository,
         config::{DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
@@ -443,7 +444,10 @@ mod tests {
         Ok((handles, repo_name))
     }
 
-    async fn record_completed_task(handles: &TestStateHandles, session: Session) -> anyhow::Result<()> {
+    async fn record_completed_task(
+        handles: &TestStateHandles,
+        session: Session,
+    ) -> anyhow::Result<()> {
         let (task_id, _) = handles
             .store
             .add_session(session, Utc::now(), &ActorRef::test())

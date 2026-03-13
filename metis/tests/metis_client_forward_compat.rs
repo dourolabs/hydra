@@ -12,14 +12,14 @@ use metis_common::{
         ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
         UpsertIssueRequest,
     },
-    session_status::SessionStatusUpdate,
-    sessions::{Bundle, BundleSpec, CreateSessionRequest, SearchSessionsQuery},
     login::LoginRequest,
     logs::LogsQuery,
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
     repositories::{
         CreateRepositoryRequest, Repository, SearchRepositoriesQuery, UpdateRepositoryRequest,
     },
+    session_status::SessionStatusUpdate,
+    sessions::{Bundle, BundleSpec, CreateSessionRequest, SearchSessionsQuery},
     task_status::Status,
     users::Username,
     whoami::ActorIdentity,
@@ -637,7 +637,8 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(github_client.client_id, "abc123");
 
     // Ensure unknown job status variants remain deserializable.
-    let delayed_status: SessionStatusUpdate = serde_json::from_value(json!({ "status": "delayed" }))?;
+    let delayed_status: SessionStatusUpdate =
+        serde_json::from_value(json!({ "status": "delayed" }))?;
     assert!(matches!(delayed_status, SessionStatusUpdate::Unknown));
 
     Ok(())
@@ -750,7 +751,11 @@ fn forward_patch_json(
     })
 }
 
-fn forward_patch_summary_json(patch_id: &PatchId, repo_name: &RepoName, job_id: &SessionId) -> Value {
+fn forward_patch_summary_json(
+    patch_id: &PatchId,
+    repo_name: &RepoName,
+    job_id: &SessionId,
+) -> Value {
     json!({
         "patch_id": patch_id,
         "version": 0,

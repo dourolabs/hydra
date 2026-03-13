@@ -131,7 +131,11 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
                 vec![],
             ))
             .await?;
-        assert_eq!(jobs.sessions.len(), 1, "child A should have exactly one task");
+        assert_eq!(
+            jobs.sessions.len(),
+            1,
+            "child A should have exactly one task"
+        );
         jobs.sessions[0].session_id.clone()
     };
 
@@ -144,7 +148,11 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
                 vec![],
             ))
             .await?;
-        assert_eq!(jobs.sessions.len(), 1, "child B should have exactly one task");
+        assert_eq!(
+            jobs.sessions.len(),
+            1,
+            "child B should have exactly one task"
+        );
         jobs.sessions[0].session_id.clone()
     };
 

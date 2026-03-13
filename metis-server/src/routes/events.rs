@@ -20,9 +20,9 @@ use metis_common::{
             ResyncEventData, SnapshotEventData, SseEventType,
         },
         issues::{IssueSummary, IssueSummaryRecord},
-        sessions::SessionVersionRecord,
         messages::VersionedMessage,
         patches::PatchVersionRecord,
+        sessions::SessionVersionRecord,
     },
     ids::{DocumentId, IssueId, MessageId, PatchId, SessionId},
 };
@@ -479,7 +479,8 @@ async fn serialize_entity(
                 api_task,
                 Some(payload.actor().clone()),
             );
-            let summary_record = metis_common::api::v1::sessions::SessionSummaryRecord::from(&full_record);
+            let summary_record =
+                metis_common::api::v1::sessions::SessionSummaryRecord::from(&full_record);
             serde_json::to_value(summary_record).ok()?
         }
         MutationPayload::Document { new, .. } => {
@@ -835,7 +836,7 @@ async fn build_sse_event(event: &ServerEvent, state: &AppState) -> Event {
 
 /// Builds a snapshot of current entity version numbers.
 async fn build_snapshot(state: &AppState) -> SnapshotEventData {
-    use metis_common::api::v1::{documents, sessions, patches};
+    use metis_common::api::v1::{documents, patches, sessions};
 
     let mut versions = HashMap::new();
 

@@ -4,8 +4,8 @@ use crate::config::BuildCacheSection;
 use crate::domain::{
     actors::ActorRef,
     issues::{Issue, IssueStatus, IssueType, SessionSettings},
-    sessions::{Bundle, BundleSpec},
     patches::{Patch, PatchStatus},
+    sessions::{Bundle, BundleSpec},
     users::Username,
 };
 use crate::{
@@ -22,7 +22,10 @@ use metis_common::{
     BuildCacheStorageConfig,
     api::v1::{
         self,
-        sessions::{CreateSessionResponse, SessionVersionRecord, ListSessionVersionsResponse, ListSessionsResponse},
+        sessions::{
+            CreateSessionResponse, ListSessionVersionsResponse, ListSessionsResponse,
+            SessionVersionRecord,
+        },
     },
 };
 use reqwest::StatusCode;

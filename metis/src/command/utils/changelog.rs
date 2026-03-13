@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use metis_common::{
     issues::{Issue, IssueStatus, IssueType},
-    sessions::Session,
     patches::{PatchStatus, Review},
+    sessions::Session,
     task_status::Status,
     ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange, MetisId, RepoName, SessionId,
     VersionNumber,

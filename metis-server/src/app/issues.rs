@@ -851,7 +851,11 @@ mod tests {
                 .await
                 .unwrap();
             let (grandchild_task_id, _) = store
-                .add_session_with_actor(task_for_issue(&grandchild_id), Utc::now(), ActorRef::test())
+                .add_session_with_actor(
+                    task_for_issue(&grandchild_id),
+                    Utc::now(),
+                    ActorRef::test(),
+                )
                 .await
                 .unwrap();
             (parent_task_id, child_task_id, grandchild_task_id)

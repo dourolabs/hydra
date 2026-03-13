@@ -6,13 +6,13 @@ use metis::config::{AppConfig, ServerSection};
 use metis_common::{
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, IssueVersionRecord,
-        SessionSettings, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
+        ListIssuesResponse, SearchIssuesQuery, SessionSettings, UpsertIssueRequest,
     },
-    sessions::{BundleSpec, CreateSessionRequest, SearchSessionsQuery},
     patches::{
         GithubPr, ListPatchesResponse, Patch, PatchStatus, PatchVersionRecord, SearchPatchesQuery,
         UpsertPatchRequest,
     },
+    sessions::{BundleSpec, CreateSessionRequest, SearchSessionsQuery},
     users::Username,
     IssueId, PatchId, RepoName, SessionId,
 };

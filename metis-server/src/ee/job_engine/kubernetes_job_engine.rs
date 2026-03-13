@@ -603,7 +603,8 @@ impl JobEngine for KubernetesJobEngine {
             .into_iter()
             .filter_map(|job| Self::to_metis_job(&job).ok())
             .collect();
-        let mut seen_ids: HashSet<SessionId> = metis_jobs.iter().map(|job| job.id.clone()).collect();
+        let mut seen_ids: HashSet<SessionId> =
+            metis_jobs.iter().map(|job| job.id.clone()).collect();
 
         let pods_api: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
         let pods = pods_api

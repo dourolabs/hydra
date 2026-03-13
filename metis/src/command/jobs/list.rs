@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 use metis_common::{
-    sessions::{SessionSummaryRecord, SearchSessionsQuery},
+    sessions::{SearchSessionsQuery, SessionSummaryRecord},
     IssueId,
 };
 use std::io::{self, Write};
@@ -56,7 +56,7 @@ mod tests {
     };
     use chrono::Utc;
     use httpmock::prelude::*;
-    use metis_common::sessions::{BundleSpec, SessionVersionRecord, ListSessionsResponse, Session};
+    use metis_common::sessions::{BundleSpec, ListSessionsResponse, Session, SessionVersionRecord};
     use metis_common::task_status::Status;
     use metis_common::users::Username;
     use std::collections::HashMap;

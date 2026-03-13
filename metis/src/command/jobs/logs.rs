@@ -87,7 +87,9 @@ mod tests {
     };
     use chrono::Utc;
     use httpmock::prelude::*;
-    use metis_common::sessions::{SessionSummaryRecord, SessionVersionRecord, ListSessionsResponse, Session};
+    use metis_common::sessions::{
+        ListSessionsResponse, Session, SessionSummaryRecord, SessionVersionRecord,
+    };
     use metis_common::task_status::Status;
     use metis_common::users::Username;
     use reqwest::Client as HttpClient;
@@ -161,10 +163,11 @@ mod tests {
             when.method(GET)
                 .path("/v1/jobs")
                 .query_param("spawned_from", issue_id.as_ref());
-            then.status(200).json_body_obj(&ListSessionsResponse::new(vec![
-                SessionSummaryRecord::from(&job_record("t-newest")),
-                SessionSummaryRecord::from(&job_record("t-older")),
-            ]));
+            then.status(200)
+                .json_body_obj(&ListSessionsResponse::new(vec![
+                    SessionSummaryRecord::from(&job_record("t-newest")),
+                    SessionSummaryRecord::from(&job_record("t-older")),
+                ]));
         });
         let log_mock = server.mock(|when, then| {
             when.method(GET)

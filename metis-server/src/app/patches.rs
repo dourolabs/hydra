@@ -3,7 +3,8 @@ use crate::{
     store::{ReadOnlyStore, Status, StoreError},
 };
 use metis_common::{
-    PatchId, SessionId, VersionNumber, Versioned, api::v1 as api, api::v1::patches::SearchPatchesQuery,
+    PatchId, SessionId, VersionNumber, Versioned, api::v1 as api,
+    api::v1::patches::SearchPatchesQuery,
 };
 use thiserror::Error;
 

@@ -13,11 +13,11 @@ use crate::{
             Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
             SessionSettings, TodoItem,
         },
-        sessions::{BundleSpec, Session},
         labels::Label,
         messages::Message,
         notifications::Notification,
         patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
+        sessions::{BundleSpec, Session},
         task_status::{Status, TaskError},
         users::{User, Username},
     },
@@ -28,10 +28,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, Rgb,
@@ -241,8 +241,9 @@ impl PostgresStoreV2 {
             StoreError::Internal(format!("version number overflow for issue '{id}'"))
         })?;
 
-        let job_settings_json = serde_json::to_value(&issue.session_settings)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize session_settings: {e}")))?;
+        let job_settings_json = serde_json::to_value(&issue.session_settings).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize session_settings: {e}"))
+        })?;
         let todo_list_json = serde_json::to_value(&issue.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
         let query = format!(
@@ -326,8 +327,8 @@ impl PostgresStoreV2 {
         let issue_type = IssueType::from_str(&row.issue_type)
             .map_err(|e| StoreError::Internal(format!("invalid issue_type: {e}")))?;
         let status = IssueStatus::from_str(&row.status).map_err(StoreError::InvalidIssueStatus)?;
-        let session_settings: SessionSettings =
-            serde_json::from_value(row.job_settings.clone()).map_err(|e| {
+        let session_settings: SessionSettings = serde_json::from_value(row.job_settings.clone())
+            .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize session_settings: {e}"))
             })?;
         let todo_list: Vec<TodoItem> = serde_json::from_value(row.todo_list.clone())
@@ -2137,7 +2138,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .collect()
     }
 
-    async fn get_sessions_for_issue(&self, issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError> {
+    async fn get_sessions_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<SessionId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
         // Use spawned_from filter at the database level for efficiency
         let query = SearchSessionsQuery::new(None, Some(issue_id.clone()), None, vec![]);
@@ -2571,7 +2575,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
         ))
     }
 
-    async fn get_session_versions(&self, id: &SessionId) -> Result<Vec<Versioned<Session>>, StoreError> {
+    async fn get_session_versions(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let query = format!(
             "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time
              FROM {TABLE_TASKS_V2}
@@ -3712,7 +3719,8 @@ impl Store for PostgresStoreV2 {
 
         session.creation_time = Some(creation_time);
         let actor_json = actor_to_json(actor);
-        self.insert_session(&id, 1, &session, Some(&actor_json)).await?;
+        self.insert_session(&id, 1, &session, Some(&actor_json))
+            .await?;
         Ok((id, 1))
     }
 
@@ -4458,11 +4466,11 @@ mod tests {
             actors::Actor,
             documents::Document,
             issues::{
-                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, SessionSettings,
-                TodoItem,
+                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
+                SessionSettings, TodoItem,
             },
-            sessions::BundleSpec,
             patches::{CommitRange, GitOid, GithubPr, Patch, PatchStatus, Review},
+            sessions::BundleSpec,
             users::{User, Username},
         },
         test_utils::test_state_with_store,
@@ -4962,7 +4970,11 @@ mod tests {
             Status::Complete
         );
 
-        let tasks = handles.store.get_sessions_for_issue(&issue_id).await.unwrap();
+        let tasks = handles
+            .store
+            .get_sessions_for_issue(&issue_id)
+            .await
+            .unwrap();
         assert_eq!(tasks, vec![task_id.clone()]);
 
         let query = SearchSessionsQuery::new(None, None, None, vec![Status::Complete.into()]);

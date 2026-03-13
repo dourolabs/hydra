@@ -15,18 +15,18 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Subcommand;
 use metis_common::{
-    activity_log_for_issue_versions, activity_log_for_session_versions,
-    activity_log_for_patch_versions,
+    activity_log_for_issue_versions, activity_log_for_patch_versions,
+    activity_log_for_session_versions,
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
     constants::ENV_METIS_ISSUE_ID,
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
         IssueGraphSelector, IssueGraphWildcard, IssueId, IssueStatus, IssueSummaryRecord,
-        IssueType, IssueVersionRecord, SessionSettings, ReplaceTodoListRequest, SearchIssuesQuery,
+        IssueType, IssueVersionRecord, ReplaceTodoListRequest, SearchIssuesQuery, SessionSettings,
         SetTodoItemStatusRequest, TodoItem, UpsertIssueRequest,
     },
-    sessions::{SessionSummaryRecord, SearchSessionsQuery, Session},
     patches::{PatchVersionRecord, Review},
+    sessions::{SearchSessionsQuery, Session, SessionSummaryRecord},
     users::Username,
     whoami::ActorIdentity,
     ActivityLogEntry, ActivityObjectKind, LabelId, MetisId, PatchId, RelativeVersionNumber,
@@ -1294,8 +1294,8 @@ async fn create_issue(
         false,
         false,
     )?;
-    let job_settings =
-        (job_settings_requested || !SessionSettings::is_default(&job_settings)).then_some(job_settings);
+    let job_settings = (job_settings_requested || !SessionSettings::is_default(&job_settings))
+        .then_some(job_settings);
 
     let issue = Issue::new(
         issue_type,
@@ -2199,13 +2199,13 @@ mod tests {
     use httpmock::prelude::*;
     use metis_common::issues::{
         AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueSummaryRecord,
-        IssueVersionRecord, SessionSettings, ListIssueVersionsResponse, ListIssuesResponse,
-        ReplaceTodoListRequest, SetTodoItemStatusRequest, TodoItem, TodoListResponse,
-        UpsertIssueRequest, UpsertIssueResponse,
+        IssueVersionRecord, ListIssueVersionsResponse, ListIssuesResponse, ReplaceTodoListRequest,
+        SessionSettings, SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
+        UpsertIssueResponse,
     };
     use metis_common::{
-        sessions::{BundleSpec, ListSessionsResponse, Session},
         patches::{ListPatchVersionsResponse, Patch, PatchStatus, PatchVersionRecord, Review},
+        sessions::{BundleSpec, ListSessionsResponse, Session},
         task_status::Status,
         users::Username,
         whoami::{ActorIdentity, WhoAmIResponse},

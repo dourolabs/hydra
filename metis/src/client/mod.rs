@@ -30,11 +30,6 @@ use metis_common::{
         ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse,
         UpsertIssueRequest, UpsertIssueResponse,
     },
-    session_status::{SessionStatusUpdate, SetSessionStatusResponse},
-    sessions::{
-        CreateSessionRequest, CreateSessionResponse, SessionVersionRecord, KillSessionResponse,
-        ListSessionVersionsResponse, ListSessionsResponse, SearchSessionsQuery, WorkerContext,
-    },
     logs::LogsQuery,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
     patches::{
@@ -46,6 +41,12 @@ use metis_common::{
         CreateRepositoryRequest, DeleteRepositoryResponse, ListRepositoriesResponse,
         RepositoryRecord, SearchRepositoriesQuery, UpdateRepositoryRequest,
         UpsertRepositoryResponse,
+    },
+    session_status::{SessionStatusUpdate, SetSessionStatusResponse},
+    sessions::{
+        CreateSessionRequest, CreateSessionResponse, KillSessionResponse,
+        ListSessionVersionsResponse, ListSessionsResponse, SearchSessionsQuery,
+        SessionVersionRecord, WorkerContext,
     },
     users::UserSummary,
     whoami::WhoAmIResponse,
@@ -429,7 +430,10 @@ impl MetisClient {
     }
 
     /// Call `POST /v1/jobs` to create a new job.
-    pub async fn create_job(&self, request: &CreateSessionRequest) -> Result<CreateSessionResponse> {
+    pub async fn create_job(
+        &self,
+        request: &CreateSessionRequest,
+    ) -> Result<CreateSessionResponse> {
         let url = self.endpoint("/v1/jobs")?;
         let response = self
             .authed(self.http.post(url))
@@ -465,7 +469,10 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/:job_id/versions` to list job history.
-    pub async fn list_job_versions(&self, job_id: &SessionId) -> Result<ListSessionVersionsResponse> {
+    pub async fn list_job_versions(
+        &self,
+        job_id: &SessionId,
+    ) -> Result<ListSessionVersionsResponse> {
         let path = format!("/v1/jobs/{job_id}/versions");
         let url = self.endpoint(&path)?;
         let response = self

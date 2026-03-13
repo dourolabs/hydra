@@ -14,9 +14,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, SessionId,
@@ -447,7 +447,12 @@ impl EventBus {
         });
     }
 
-    pub fn emit_job_created(&self, task_id: SessionId, version: u64, payload: Arc<MutationPayload>) {
+    pub fn emit_job_created(
+        &self,
+        task_id: SessionId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
         self.send(ServerEvent::JobCreated {
             seq: self.next_seq(),
             task_id,
@@ -457,7 +462,12 @@ impl EventBus {
         });
     }
 
-    pub fn emit_job_updated(&self, task_id: SessionId, version: u64, payload: Arc<MutationPayload>) {
+    pub fn emit_job_updated(
+        &self,
+        task_id: SessionId,
+        version: u64,
+        payload: Arc<MutationPayload>,
+    ) {
         self.send(ServerEvent::JobUpdated {
             seq: self.next_seq(),
             task_id,
@@ -839,7 +849,10 @@ impl StoreWithEvents {
         actor: ActorRef,
     ) -> Result<(SessionId, VersionNumber), StoreError> {
         let new_session = session.clone();
-        let (session_id, version) = self.inner.add_session(session, creation_time, &actor).await?;
+        let (session_id, version) = self
+            .inner
+            .add_session(session, creation_time, &actor)
+            .await?;
         let payload = Arc::new(MutationPayload::Job {
             old: None,
             new: new_session,
@@ -1303,7 +1316,10 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_issue_blocked_on(issue_id).await
     }
 
-    async fn get_sessions_for_issue(&self, issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError> {
+    async fn get_sessions_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<SessionId>, StoreError> {
         self.inner.get_sessions_for_issue(issue_id).await
     }
 
@@ -1381,7 +1397,10 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_session(id, include_deleted).await
     }
 
-    async fn get_session_versions(&self, id: &SessionId) -> Result<Vec<Versioned<Session>>, StoreError> {
+    async fn get_session_versions(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<Versioned<Session>>, StoreError> {
         self.inner.get_session_versions(id).await
     }
 

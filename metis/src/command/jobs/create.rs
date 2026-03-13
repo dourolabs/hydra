@@ -5,8 +5,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
 use metis_common::{
-    sessions::{BundleSpec, CreateSessionRequest, SearchSessionsQuery},
     logs::LogsQuery,
+    sessions::{BundleSpec, CreateSessionRequest, SearchSessionsQuery},
     task_status::{Status, TaskError},
     IssueId, RepoName, SessionId,
 };
@@ -248,8 +248,8 @@ mod tests {
     use httpmock::Mock;
     use metis_common::{
         sessions::{
-            BundleSpec, CreateSessionResponse, SessionSummaryRecord, SessionVersionRecord,
-            ListSessionsResponse, Session,
+            BundleSpec, CreateSessionResponse, ListSessionsResponse, Session, SessionSummaryRecord,
+            SessionVersionRecord,
         },
         task_status::{Status, TaskError},
         users::Username,
@@ -305,7 +305,8 @@ mod tests {
 
     fn mock_get_job(server: &MockServer, job: SessionVersionRecord) -> Mock {
         server.mock(|when, then| {
-            when.method(GET).path(format!("/v1/jobs/{}", job.session_id));
+            when.method(GET)
+                .path(format!("/v1/jobs/{}", job.session_id));
             then.status(200).json_body_obj(&job);
         })
     }

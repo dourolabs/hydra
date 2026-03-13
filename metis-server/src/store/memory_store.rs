@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
 use super::issue_graph::IssueGraphContext;
-use super::{ReadOnlyStore, Status, Store, StoreError, Session, TaskStatusLog};
+use super::{ReadOnlyStore, Session, Status, Store, StoreError, TaskStatusLog};
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
@@ -20,10 +20,10 @@ use crate::domain::{
 };
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, SessionId,
@@ -735,7 +735,10 @@ impl ReadOnlyStore for MemoryStore {
         Ok(blocked)
     }
 
-    async fn get_sessions_for_issue(&self, issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError> {
+    async fn get_sessions_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<SessionId>, StoreError> {
         if !self.issues.contains_key(issue_id) {
             return Err(StoreError::IssueNotFound(issue_id.clone()));
         }
@@ -897,7 +900,10 @@ impl ReadOnlyStore for MemoryStore {
         Ok(versioned)
     }
 
-    async fn get_session_versions(&self, id: &SessionId) -> Result<Vec<Versioned<Session>>, StoreError> {
+    async fn get_session_versions(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<Versioned<Session>>, StoreError> {
         self.tasks
             .get(id)
             .map(|entry| entry.value().clone())
@@ -1558,7 +1564,12 @@ impl Store for MemoryStore {
         session.creation_time = Some(creation_time);
         self.tasks.insert(
             id.clone(),
-            vec![Self::versioned_at_with_actor(session, 1, creation_time, actor)],
+            vec![Self::versioned_at_with_actor(
+                session,
+                1,
+                creation_time,
+                actor,
+            )],
         );
 
         if let Some(issue_id) = spawned_from.as_ref() {
@@ -1592,7 +1603,8 @@ impl Store for MemoryStore {
         let updated = match self.tasks.get_mut(metis_id) {
             Some(mut versions) => {
                 let next_version = Self::next_version(&versions);
-                let versioned = Self::versioned_now_with_actor(session.clone(), next_version, actor);
+                let versioned =
+                    Self::versioned_now_with_actor(session.clone(), next_version, actor);
                 versions.push(versioned.clone());
                 versioned
             }
@@ -2051,8 +2063,8 @@ mod tests {
                 Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus,
                 IssueType,
             },
-            sessions::BundleSpec,
             patches::{GithubPr, Patch, PatchStatus},
+            sessions::BundleSpec,
             task_status::Event,
             users::{User, Username},
         },
@@ -3136,7 +3148,12 @@ mod tests {
         expected.creation_time = Some(now);
         assert_versioned(&fetched, &expected, 1);
         assert_eq!(
-            store.get_session(&task_id, false).await.unwrap().item.status,
+            store
+                .get_session(&task_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
 
@@ -3224,7 +3241,12 @@ mod tests {
         let versions = store.tasks.get(&task_id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2, 3, 4]);
         assert_eq!(
-            store.get_session(&task_id, false).await.unwrap().item.status,
+            store
+                .get_session(&task_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Complete
         );
     }
@@ -3379,7 +3401,10 @@ mod tests {
         let store = MemoryStore::new();
         let missing_issue = IssueId::new();
 
-        let err = store.get_sessions_for_issue(&missing_issue).await.unwrap_err();
+        let err = store
+            .get_sessions_for_issue(&missing_issue)
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, StoreError::IssueNotFound(id) if id == missing_issue));
     }
@@ -3395,7 +3420,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
     }
@@ -3412,7 +3442,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
 
@@ -3421,7 +3456,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Pending
         );
     }
@@ -3446,7 +3486,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Running
         );
     }
@@ -3463,7 +3508,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
 
@@ -3477,7 +3527,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Running
         );
 
@@ -3487,7 +3542,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Complete
         );
     }
@@ -3504,7 +3564,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
 
@@ -3518,7 +3583,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Running
         );
 
@@ -3535,7 +3605,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Failed
         );
     }
@@ -3583,7 +3658,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Failed
         );
     }
@@ -3617,7 +3697,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Complete
         );
 
@@ -3669,7 +3754,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_session(&root_id, false).await.unwrap().item.status,
+            store
+                .get_session(&root_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Failed
         );
 
@@ -4496,7 +4586,10 @@ mod tests {
             .unwrap();
 
         // Task should be visible in list initially
-        let tasks = store.list_sessions(&SearchSessionsQuery::default()).await.unwrap();
+        let tasks = store
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 1);
         assert!(!tasks[0].1.item.deleted);
 
@@ -4507,7 +4600,10 @@ mod tests {
             .unwrap();
 
         // Deleted task should not appear in default list
-        let tasks = store.list_sessions(&SearchSessionsQuery::default()).await.unwrap();
+        let tasks = store
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
         assert!(tasks.is_empty());
 
         // Deleted task should appear with include_deleted=true
@@ -6587,7 +6683,8 @@ mod tests {
                 .unwrap();
         }
 
-        let query = metis_common::api::v1::sessions::SearchSessionsQuery::new(None, None, None, vec![]);
+        let query =
+            metis_common::api::v1::sessions::SearchSessionsQuery::new(None, None, None, vec![]);
         assert_eq!(store.count_sessions(&query).await.unwrap(), 4);
     }
 

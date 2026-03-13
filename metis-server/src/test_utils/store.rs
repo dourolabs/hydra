@@ -10,15 +10,15 @@ use crate::{
         patches::Patch,
         users::{User, Username},
     },
-    store::{ReadOnlyStore, Store, StoreError, Session, TaskStatusLog},
+    store::{ReadOnlyStore, Session, Store, StoreError, TaskStatusLog},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, SessionId,
@@ -92,7 +92,10 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
-    async fn get_sessions_for_issue(&self, _issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError> {
+    async fn get_sessions_for_issue(
+        &self,
+        _issue_id: &IssueId,
+    ) -> Result<Vec<SessionId>, StoreError> {
         fail()
     }
 
@@ -164,7 +167,10 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
-    async fn get_session_versions(&self, _id: &SessionId) -> Result<Vec<Versioned<Session>>, StoreError> {
+    async fn get_session_versions(
+        &self,
+        _id: &SessionId,
+    ) -> Result<Vec<Versioned<Session>>, StoreError> {
         fail()
     }
 

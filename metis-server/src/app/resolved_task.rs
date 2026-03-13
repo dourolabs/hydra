@@ -22,7 +22,10 @@ pub enum TaskResolutionError {
 }
 
 impl AppState {
-    pub async fn resolve_task(&self, session: &Session) -> Result<ResolvedTask, TaskResolutionError> {
+    pub async fn resolve_task(
+        &self,
+        session: &Session,
+    ) -> Result<ResolvedTask, TaskResolutionError> {
         let context = self.resolve_context(session).await?;
         let image = Self::resolve_image(session, &context, &self.config.job.default_image)?;
 
@@ -34,7 +37,10 @@ impl AppState {
         })
     }
 
-    async fn resolve_context(&self, session: &Session) -> Result<ResolvedBundle, BundleResolutionError> {
+    async fn resolve_context(
+        &self,
+        session: &Session,
+    ) -> Result<ResolvedBundle, BundleResolutionError> {
         self.resolve_bundle_spec(session.context.clone()).await
     }
 

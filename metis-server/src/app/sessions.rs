@@ -2,7 +2,7 @@ use crate::{
     config::non_empty,
     domain::{actors::ActorRef, issues::SessionSettings, sessions::BundleSpec, users::Username},
     job_engine::{JobEngineError, JobStatus},
-    store::{ReadOnlyStore, Status, StoreError, Session, TaskError, TaskStatusLog},
+    store::{ReadOnlyStore, Session, Status, StoreError, TaskError, TaskStatusLog},
 };
 use chrono::{DateTime, Duration, Utc};
 use metis_common::{
@@ -169,7 +169,10 @@ impl AppState {
         Ok(session_id)
     }
 
-    pub(crate) fn apply_session_settings_defaults(&self, mut settings: SessionSettings) -> SessionSettings {
+    pub(crate) fn apply_session_settings_defaults(
+        &self,
+        mut settings: SessionSettings,
+    ) -> SessionSettings {
         if settings.model.is_none() {
             if let Some(default_model) =
                 self.config.job.default_model.as_deref().and_then(non_empty)
@@ -207,9 +210,11 @@ impl AppState {
             )
             .await
             .map_err(|source| match source {
-                StoreError::InvalidStatusTransition => SetSessionStatusError::InvalidStatusTransition {
-                    session_id: session_id.clone(),
-                },
+                StoreError::InvalidStatusTransition => {
+                    SetSessionStatusError::InvalidStatusTransition {
+                        session_id: session_id.clone(),
+                    }
+                }
                 other => SetSessionStatusError::Store {
                     source: other,
                     session_id: session_id.clone(),
@@ -217,7 +222,10 @@ impl AppState {
             })?;
         }
 
-        Ok(SetSessionStatusResponse::new(session_id, status.as_status()))
+        Ok(SetSessionStatusResponse::new(
+            session_id,
+            status.as_status(),
+        ))
     }
 
     /// Loads all user secrets and injects them as env vars, then falls back to config
@@ -891,7 +899,10 @@ impl AppState {
         store.get_session_versions(session_id).await
     }
 
-    pub async fn get_sessions_for_issue(&self, issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError> {
+    pub async fn get_sessions_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<SessionId>, StoreError> {
         let store = self.store.as_ref();
         store.get_sessions_for_issue(issue_id).await
     }
@@ -917,7 +928,10 @@ impl AppState {
         store.count_sessions(query).await
     }
 
-    pub async fn get_status_log(&self, session_id: &SessionId) -> Result<TaskStatusLog, StoreError> {
+    pub async fn get_status_log(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<TaskStatusLog, StoreError> {
         let store = self.store.as_ref();
         store.get_status_log(session_id).await
     }
@@ -969,7 +983,12 @@ mod tests {
 
         {
             let store = state.store.as_ref();
-            let status = store.get_session(&session_id, false).await.unwrap().item.status;
+            let status = store
+                .get_session(&session_id, false)
+                .await
+                .unwrap()
+                .item
+                .status;
             assert_eq!(status, Status::Pending);
         }
 
@@ -1066,7 +1085,12 @@ mod tests {
             .await;
 
         let store = state.store.as_ref();
-        let status = store.get_session(&session_id, false).await.unwrap().item.status;
+        let status = store
+            .get_session(&session_id, false)
+            .await
+            .unwrap()
+            .item
+            .status;
         assert_eq!(status, Status::Pending);
     }
 
@@ -1093,7 +1117,12 @@ mod tests {
             .await;
 
         let store = state.store.as_ref();
-        let status = store.get_session(&session_id, false).await.unwrap().item.status;
+        let status = store
+            .get_session(&session_id, false)
+            .await
+            .unwrap()
+            .item
+            .status;
         assert_eq!(status, Status::Failed);
     }
 
@@ -1180,7 +1209,12 @@ mod tests {
 
         let store = state.store.as_ref();
         assert_eq!(
-            store.get_session(&session_id, false).await.unwrap().item.status,
+            store
+                .get_session(&session_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Failed
         );
 
@@ -1213,7 +1247,12 @@ mod tests {
         };
 
         job_engine
-            .insert_job_with_metadata(&session_id, JobStatus::Complete, Some(completion_time), None)
+            .insert_job_with_metadata(
+                &session_id,
+                JobStatus::Complete,
+                Some(completion_time),
+                None,
+            )
             .await;
 
         state
@@ -1222,7 +1261,12 @@ mod tests {
 
         let store = state.store.as_ref();
         assert_eq!(
-            store.get_session(&session_id, false).await.unwrap().item.status,
+            store
+                .get_session(&session_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Failed
         );
         let status_log = store.get_status_log(&session_id).await.unwrap();

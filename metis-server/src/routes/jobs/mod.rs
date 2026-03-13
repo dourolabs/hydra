@@ -74,10 +74,13 @@ pub async fn list_jobs(
 
     // All filtering (q, spawned_from, include_deleted) is done at the Store level.
     // Text search (q) matches task ID, prompt, and status (NOT notes).
-    let tasks = state.list_sessions_with_query(&query).await.map_err(|err| {
-        error!(error = %err, "failed to list tasks");
-        ApiError::internal(format!("Failed to list tasks: {err}"))
-    })?;
+    let tasks = state
+        .list_sessions_with_query(&query)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to list tasks");
+            ApiError::internal(format!("Failed to list tasks: {err}"))
+        })?;
 
     // Timing fields (creation_time, start_time, end_time) are denormalized
     // on the task and flow through the domain→API conversion automatically.

@@ -13,9 +13,9 @@ use metis_common::{
         Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, SessionSettings,
         UpsertIssueRequest,
     },
-    sessions::SearchSessionsQuery,
     patches::{PatchStatus, UpsertPatchRequest},
     repositories::Repository,
+    sessions::SearchSessionsQuery,
     users::{User, Username},
     IssueId, PatchId, RepoName, SessionId,
 };
@@ -303,7 +303,11 @@ impl TestHarness {
     /// `METIS_TOKEN`, `METIS_ISSUE_ID`) are set in the job context so that
     /// subprocess commands (like `metis patches create`) can reach the test
     /// server.
-    pub async fn run_worker(&self, job_id: &SessionId, commands: Vec<&str>) -> Result<WorkerResult> {
+    pub async fn run_worker(
+        &self,
+        job_id: &SessionId,
+        commands: Vec<&str>,
+    ) -> Result<WorkerResult> {
         worker::run_worker_impl(self, job_id, commands, false).await
     }
 

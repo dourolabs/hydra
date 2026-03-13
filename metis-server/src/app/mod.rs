@@ -3,7 +3,6 @@ mod app_state;
 mod documents;
 pub mod event_bus;
 mod issues;
-mod sessions;
 mod labels;
 mod merge_queue;
 mod messages;
@@ -11,12 +10,14 @@ mod notifications;
 mod patches;
 mod repositories;
 mod resolved_task;
+mod sessions;
 #[cfg(test)]
 pub mod test_helpers;
 mod users;
 
 use crate::{
-    domain::sessions::Bundle, domain::patches::Patch, merge_queue::MergeQueueImpl, store::StoreError,
+    domain::patches::Patch, domain::sessions::Bundle, merge_queue::MergeQueueImpl,
+    store::StoreError,
 };
 use git2::Repository as GitRepository;
 use metis_common::{PatchId, RepoName, merge_queues::MergeQueue};
@@ -30,14 +31,14 @@ pub use app_state::AppState;
 pub use documents::UpsertDocumentError;
 pub use event_bus::{EventBus, ServerEvent, StoreWithEvents};
 pub use issues::{UpdateTodoListError, UpsertIssueError};
-pub use sessions::{CreateSessionError, SetSessionStatusError};
-pub(crate) use sessions::{WORKER_NAME_CLEANUP_ORPHANED_SESSIONS, WORKER_NAME_SESSION_LIFECYCLE};
 pub use labels::{CreateLabelError, UpdateLabelError};
 pub use messages::MessageError;
 pub use metis_common::repositories::{Repository, RepositoryRecord};
 pub use notifications::NotificationError;
 pub use patches::UpsertPatchError;
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
+pub use sessions::{CreateSessionError, SetSessionStatusError};
+pub(crate) use sessions::{WORKER_NAME_CLEANUP_ORPHANED_SESSIONS, WORKER_NAME_SESSION_LIFECYCLE};
 pub use users::LoginError;
 pub(crate) use users::WORKER_NAME_LOGIN;
 

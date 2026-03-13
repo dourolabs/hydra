@@ -17,10 +17,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
-use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::messages::SearchMessagesQuery;
 use metis_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::sessions::SearchSessionsQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, LabelId, MessageId, MetisId, NotificationId, PatchId, RepoName, SessionId,
@@ -34,7 +34,7 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use super::{ReadOnlyStore, Status, Store, StoreError, Session, TaskError, TaskStatusLog};
+use super::{ReadOnlyStore, Session, Status, Store, StoreError, TaskError, TaskStatusLog};
 
 const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
 const TABLE_ACTORS_V2: &str = "actors_v2";
@@ -553,8 +553,10 @@ impl SqliteStore {
             StoreError::Internal(format!("version number overflow for issue '{id}'"))
         })?;
 
-        let session_settings_json = serde_json::to_string(&issue.session_settings)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize session_settings: {e}")))?;
+        let session_settings_json =
+            serde_json::to_string(&issue.session_settings).map_err(|e| {
+                StoreError::Internal(format!("failed to serialize session_settings: {e}"))
+            })?;
         let todo_list_json = serde_json::to_string(&issue.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to serialize todo_list: {e}")))?;
         sqlx::query(
@@ -1049,9 +1051,10 @@ impl SqliteStore {
         let issue_type = IssueType::from_str(&row.issue_type)
             .map_err(|e| StoreError::Internal(format!("invalid issue_type: {e}")))?;
         let status = IssueStatus::from_str(&row.status).map_err(StoreError::InvalidIssueStatus)?;
-        let session_settings: SessionSettings = serde_json::from_str(&row.session_settings).map_err(|e| {
-            StoreError::Internal(format!("failed to deserialize session_settings: {e}"))
-        })?;
+        let session_settings: SessionSettings = serde_json::from_str(&row.session_settings)
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize session_settings: {e}"))
+            })?;
         let todo_list: Vec<TodoItem> = serde_json::from_str(&row.todo_list)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize todo_list: {e}")))?;
         Ok(Issue {
@@ -2060,7 +2063,10 @@ impl ReadOnlyStore for SqliteStore {
             .collect()
     }
 
-    async fn get_sessions_for_issue(&self, issue_id: &IssueId) -> Result<Vec<SessionId>, StoreError> {
+    async fn get_sessions_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<SessionId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
         let query = SearchSessionsQuery::new(None, Some(issue_id.clone()), None, vec![]);
         let tasks = self.list_sessions(&query).await?;
@@ -2496,7 +2502,10 @@ impl ReadOnlyStore for SqliteStore {
         self.row_to_versioned_task(&row)
     }
 
-    async fn get_session_versions(&self, id: &SessionId) -> Result<Vec<Versioned<Session>>, StoreError> {
+    async fn get_session_versions(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let rows = sqlx::query_as::<_, TaskRow>(
             &format!(
                 "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time
@@ -5625,7 +5634,10 @@ mod tests {
             .await
             .unwrap();
 
-        let tasks = store.list_sessions(&SearchSessionsQuery::default()).await.unwrap();
+        let tasks = store
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
         let ids: HashSet<_> = tasks.into_iter().map(|(id, _)| id).collect();
         assert_eq!(ids, HashSet::from([id1, id2]));
     }
@@ -5803,7 +5815,10 @@ mod tests {
             .unwrap();
 
         // Should not appear in default list
-        let tasks = store.list_sessions(&SearchSessionsQuery::default()).await.unwrap();
+        let tasks = store
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
         assert!(tasks.is_empty());
 
         // Should appear when include_deleted is true
@@ -7045,7 +7060,8 @@ mod tests {
                 .unwrap();
         }
 
-        let query = metis_common::api::v1::sessions::SearchSessionsQuery::new(None, None, None, vec![]);
+        let query =
+            metis_common::api::v1::sessions::SearchSessionsQuery::new(None, None, None, vec![]);
         assert_eq!(store.count_sessions(&query).await.unwrap(), 4);
     }
 

@@ -1,6 +1,6 @@
 use crate::{
     app::{AppState, ServiceState},
-    domain::{actors::ActorRef, sessions::BundleSpec, secrets::SecretManager, users::Username},
+    domain::{actors::ActorRef, secrets::SecretManager, sessions::BundleSpec, users::Username},
     store::{MemoryStore, Session, Status},
     test::{
         MockJobEngine, TestStateHandles, spawn_test_server_with_state, test_app_config,

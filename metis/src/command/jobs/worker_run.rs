@@ -519,7 +519,11 @@ fn initialize_tracking_branches(
     Ok(())
 }
 
-fn finalize_task_run(repo_root: &Path, task_id: &SessionId, github_token: Option<&str>) -> Result<()> {
+fn finalize_task_run(
+    repo_root: &Path,
+    task_id: &SessionId,
+    github_token: Option<&str>,
+) -> Result<()> {
     log_status(format!(
         "Auto-committing worker changes for task '{task_id}' and syncing tracking branches…"
     ));

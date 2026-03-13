@@ -7,13 +7,13 @@ use metis_common::{
     activity_log_for_patch_versions,
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     issues::{IssueId, UpsertIssueRequest},
-    sessions::BundleSpec,
     patches::{
         Patch, PatchStatus, PatchSummaryRecord, PatchVersionRecord, Review, SearchPatchesQuery,
         UpsertPatchRequest, UpsertPatchResponse,
     },
     repositories::SearchRepositoriesQuery,
     review_utils::{find_last_commit_range_change_timestamp, has_approved_non_dismissed_review},
+    sessions::BundleSpec,
     users::Username,
     whoami::ActorIdentity,
     PatchId, RelativeVersionNumber, RepoName, SessionId, Versioned,
@@ -1158,11 +1158,11 @@ mod tests {
     use httpmock::{prelude::*, Mock};
     use metis_common::{
         issues::{Issue, IssueStatus, IssueType, IssueVersionRecord, UpsertIssueResponse},
-        sessions::{BundleSpec, SessionVersionRecord, Session},
         patches::{
             CommitRange, CreatePatchAssetResponse, GitOid, ListPatchVersionsResponse,
             ListPatchesResponse, Patch, PatchVersionRecord, Review, UpsertPatchResponse,
         },
+        sessions::{BundleSpec, Session, SessionVersionRecord},
         task_status::Status,
         users::Username,
         whoami::{ActorIdentity, WhoAmIResponse},
