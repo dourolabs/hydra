@@ -26,13 +26,13 @@ pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_SESSIONS: &str = "cleanup_orphaned
 pub enum CreateSessionError {
     #[error(transparent)]
     TaskResolution(#[from] TaskResolutionError),
-    #[error("failed to load issue '{issue_id}' for job creation")]
+    #[error("failed to load issue '{issue_id}' for session creation")]
     IssueLookup {
         #[source]
         source: StoreError,
         issue_id: IssueId,
     },
-    #[error("failed to store job")]
+    #[error("failed to store session")]
     Store {
         #[source]
         source: StoreError,
@@ -41,15 +41,15 @@ pub enum CreateSessionError {
 
 #[derive(Debug, Error)]
 pub enum SetSessionStatusError {
-    #[error("job '{session_id}' not found in store")]
+    #[error("session '{session_id}' not found in store")]
     NotFound {
         #[source]
         source: StoreError,
         session_id: SessionId,
     },
-    #[error("invalid status transition for job '{session_id}'")]
+    #[error("invalid status transition for session '{session_id}'")]
     InvalidStatusTransition { session_id: SessionId },
-    #[error("failed to update status for job '{session_id}'")]
+    #[error("failed to update status for session '{session_id}'")]
     Store {
         #[source]
         source: StoreError,
