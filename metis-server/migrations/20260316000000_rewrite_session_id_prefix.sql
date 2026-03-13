@@ -10,9 +10,9 @@ UPDATE metis.label_associations SET object_id = 's-' || SUBSTRING(object_id FROM
 UPDATE metis.notifications SET recipient = REPLACE(recipient, 'w-t-', 'w-s-') WHERE recipient LIKE '%w-t-%';
 UPDATE metis.notifications SET source_actor = REPLACE(source_actor, 'w-t-', 'w-s-') WHERE source_actor LIKE '%w-t-%';
 
--- JSON-serialized ActorId in actors_v2.user_or_worker:
+-- JSON-serialized ActorId in actors_v2.actor_id:
 -- Normalize "Task":"t-xxx" -> "Session":"s-xxx" and "Session":"t-xxx" -> "Session":"s-xxx"
-UPDATE metis.actors_v2 SET user_or_worker = REPLACE(REPLACE(user_or_worker::TEXT, '"Task":"t-', '"Session":"s-'), '"Session":"t-', '"Session":"s-')::JSONB WHERE user_or_worker::TEXT LIKE '%"t-%';
+UPDATE metis.actors_v2 SET actor_id = REPLACE(REPLACE(actor_id::TEXT, '"Task":"t-', '"Session":"s-'), '"Session":"t-', '"Session":"s-')::JSONB WHERE actor_id::TEXT LIKE '%"t-%';
 
 -- Actor columns across versioned tables (ActorRef JSON with nested ActorId):
 -- Apply same replacements for embedded session IDs in JSON
