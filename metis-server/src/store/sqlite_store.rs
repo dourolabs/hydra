@@ -1017,13 +1017,13 @@ impl SqliteStore {
         })
     }
 
-    fn row_to_task_id(id: &str) -> Result<SessionId, StoreError> {
+    fn row_to_session_id(id: &str) -> Result<SessionId, StoreError> {
         id.parse::<SessionId>().map_err(|err| {
             StoreError::Internal(format!("invalid task id stored in database: {err}"))
         })
     }
 
-    fn row_to_versioned_task(&self, row: &TaskRow) -> Result<Versioned<Session>, StoreError> {
+    fn row_to_versioned_session(&self, row: &TaskRow) -> Result<Versioned<Session>, StoreError> {
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
             StoreError::Internal(format!(
                 "invalid version number stored for task '{}'",
@@ -2499,7 +2499,7 @@ impl ReadOnlyStore for SqliteStore {
         if !include_deleted && row.deleted {
             return Err(StoreError::SessionNotFound(id.clone()));
         }
-        self.row_to_versioned_task(&row)
+        self.row_to_versioned_session(&row)
     }
 
     async fn get_session_versions(
@@ -2525,7 +2525,7 @@ impl ReadOnlyStore for SqliteStore {
 
         let mut results: Vec<Versioned<Session>> = rows
             .iter()
-            .map(|row| self.row_to_versioned_task(row))
+            .map(|row| self.row_to_versioned_session(row))
             .collect::<Result<Vec<_>, _>>()?;
 
         let creation_time = results.first().map(|r| r.timestamp);
@@ -2571,8 +2571,8 @@ impl ReadOnlyStore for SqliteStore {
 
         let mut tasks = Vec::with_capacity(rows.len());
         for row in &rows {
-            let task_id = Self::row_to_task_id(&row.id)?;
-            let versioned = self.row_to_versioned_task(row)?;
+            let task_id = Self::row_to_session_id(&row.id)?;
+            let versioned = self.row_to_versioned_session(row)?;
             tasks.push((task_id, versioned));
         }
 
@@ -2641,8 +2641,8 @@ impl ReadOnlyStore for SqliteStore {
 
         let mut grouped: HashMap<SessionId, Vec<Versioned<Session>>> = HashMap::new();
         for row in &rows {
-            let task_id = Self::row_to_task_id(&row.id)?;
-            let versioned = self.row_to_versioned_task(row)?;
+            let task_id = Self::row_to_session_id(&row.id)?;
+            let versioned = self.row_to_versioned_session(row)?;
             grouped.entry(task_id).or_default().push(versioned);
         }
 
