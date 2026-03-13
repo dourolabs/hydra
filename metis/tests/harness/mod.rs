@@ -298,7 +298,7 @@ impl TestHarness {
     /// creation, and status update. Only the AI model invocation is replaced
     /// (via `BashCommands`).
     ///
-    /// The job must already exist (e.g. via `user.create_job()`). This method
+    /// The job must already exist (e.g. via `user.create_session()`). This method
     /// ensures the required environment variables (`METIS_SERVER_URL`,
     /// `METIS_TOKEN`, `METIS_ISSUE_ID`) are set in the job context so that
     /// subprocess commands (like `metis patches create`) can reach the test

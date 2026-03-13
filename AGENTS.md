@@ -9,7 +9,7 @@ For frontend development and visual testing, see `metis-web/AGENTS.md`.
 ## Build, Test, and Development Commands
 - `cargo check --workspace` quickly verifies the entire workspace compiles.
 - `cargo build --workspace --all-targets` produces debug binaries; add `--release` when publishing images.
-- `cargo run -p metis -- jobs list` runs the CLI against a server; substitute other subcommands from `metis/src/command`.
+- `cargo run -p metis -- sessions list` runs the CLI against a server; substitute other subcommands from `metis/src/command`.
 - `METIS_CONFIG=metis-server/config.yaml cargo run -p metis-server` launches the HTTP service with the desired config.
 - `./scripts/docker-build.sh` builds all deployment containers.
 

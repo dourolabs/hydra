@@ -1,7 +1,7 @@
 use crate::{
     client::MetisClientInterface,
     command::{
-        output::{render_job_records, CommandContext, ResolvedOutputFormat},
+        output::{render_session_records, CommandContext, ResolvedOutputFormat},
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
     worker_commands::ModelAwareCommands,
@@ -23,17 +23,17 @@ pub mod list;
 pub mod logs;
 pub mod worker_run;
 
-pub use list::DEFAULT_JOB_LIMIT;
+pub use list::DEFAULT_SESSION_LIMIT;
 
 #[derive(Subcommand)]
-pub enum JobsCommand {
+pub enum SessionsCommand {
     /// Create a new orchestration worker.
     Create {
-        /// Wait for the job to complete and stream its logs.
+        /// Wait for the session to complete and stream its logs.
         #[arg(long = "wait")]
         wait: bool,
 
-        /// Service repo name (preferred) or git URL to use as the job context.
+        /// Service repo name (preferred) or git URL to use as the session context.
         #[arg(long = "repo", value_name = "REPO")]
         repo: Option<String>,
 
@@ -41,15 +41,15 @@ pub enum JobsCommand {
         #[arg(long = "rev", value_name = "REV", requires = "repo")]
         rev: Option<String>,
 
-        /// Override the worker Docker image for this task.
+        /// Override the worker Docker image for this session.
         #[arg(long = "image", value_name = "IMAGE")]
         image: Option<String>,
 
-        /// Override or set job variable (format: KEY=VALUE). Can be repeated.
+        /// Override or set session variable (format: KEY=VALUE). Can be repeated.
         #[arg(long = "var", value_name = "KEY=VALUE")]
         var: Vec<String>,
 
-        /// Issue to associate with the job (defaults to METIS_ISSUE_ID).
+        /// Issue to associate with the session (defaults to METIS_ISSUE_ID).
         #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_METIS_ISSUE_ID)]
         issue_id: Option<IssueId>,
 
@@ -61,61 +61,61 @@ pub enum JobsCommand {
         )]
         prompt: Vec<String>,
     },
-    /// List all Metis jobs in the configured namespace. Returns summary records with a truncated prompt; use `get` for full details.
+    /// List all Metis sessions in the configured namespace. Returns summary records with a truncated prompt; use `get` for full details.
     List {
-        /// Number of jobs to display (most recent first).
+        /// Number of sessions to display (most recent first).
         #[arg(
             short = 'n',
             long = "limit",
             value_name = "COUNT",
-            default_value_t = DEFAULT_JOB_LIMIT,
+            default_value_t = DEFAULT_SESSION_LIMIT,
         )]
         limit: usize,
-        /// Filter jobs that were spawned from a specific issue.
+        /// Filter sessions that were spawned from a specific issue.
         #[arg(long = "from", value_name = "ISSUE_ID")]
         spawned_from: Option<IssueId>,
     },
-    /// Get the full details of a single job by ID. Returns the complete job record including the full prompt, context, and configuration.
+    /// Get the full details of a single session by ID. Returns the complete session record including the full prompt, context, and configuration.
     Get {
-        /// Job identifier returned by `metis jobs create` or `metis jobs list`.
-        #[arg(value_name = "JOB_ID")]
+        /// Session identifier returned by `metis sessions create` or `metis sessions list`.
+        #[arg(value_name = "SESSION_ID")]
         id: SessionId,
 
         /// Retrieve a specific version (positive = exact version, negative = offset from latest).
         #[arg(long)]
         version: Option<i64>,
     },
-    /// Show logs for an existing Metis job.
+    /// Show logs for an existing Metis session.
     Logs {
-        /// Job identifier returned by `metis jobs create` or `metis jobs list`, or an IssueId to stream the most recent job spawned from that issue.
+        /// Session identifier returned by `metis sessions create` or `metis sessions list`, or an IssueId to stream the most recent session spawned from that issue.
         #[arg(value_name = "ID")]
         id: MetisId,
 
-        /// Stream logs if the job is still running.
+        /// Stream logs if the session is still running.
         #[arg(short = 'w', long = "watch")]
         watch: bool,
     },
-    /// Terminate a running Metis job.
+    /// Terminate a running Metis session.
     Kill {
-        /// Job identifier returned by `metis jobs create` or `metis jobs list`.
-        #[arg(value_name = "JOB_ID")]
-        job: SessionId,
+        /// Session identifier returned by `metis sessions create` or `metis sessions list`.
+        #[arg(value_name = "SESSION_ID")]
+        session: SessionId,
     },
-    /// Show changelog for a job (most recent first).
+    /// Show changelog for a session (most recent first).
     Changelog {
-        /// Job identifier returned by `metis jobs create` or `metis jobs list`.
-        #[arg(value_name = "JOB_ID")]
+        /// Session identifier returned by `metis sessions create` or `metis sessions list`.
+        #[arg(value_name = "SESSION_ID")]
         id: SessionId,
 
         /// Maximum number of changelog entries to show.
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
-    /// Retrieve a job's context locally and run it via Codex or Claude.
+    /// Retrieve a session's context locally and run it via Codex or Claude.
     WorkerRun {
-        /// Job identifier returned by `metis jobs create` or `metis jobs list`.
-        #[arg(value_name = "JOB_ID")]
-        job: SessionId,
+        /// Session identifier returned by `metis sessions create` or `metis sessions list`.
+        #[arg(value_name = "SESSION_ID")]
+        session: SessionId,
         /// Destination directory where the context will be extracted/copied.
         #[arg(value_name = "PATH")]
         path: PathBuf,
@@ -130,11 +130,11 @@ pub enum JobsCommand {
 
 pub async fn run(
     client: &dyn MetisClientInterface,
-    command: JobsCommand,
+    command: SessionsCommand,
     context: &CommandContext,
 ) -> Result<()> {
     match command {
-        JobsCommand::Create {
+        SessionsCommand::Create {
             wait,
             repo,
             rev,
@@ -148,63 +148,63 @@ pub async fn run(
             )
             .await?
         }
-        JobsCommand::List {
+        SessionsCommand::List {
             limit,
             spawned_from,
         } => list::run(client, limit, spawned_from, context).await?,
-        JobsCommand::Get { id, version } => get_job(client, &id, version, context).await?,
-        JobsCommand::Changelog { id, limit } => {
-            changelog_job(client, id, context.output_format, limit).await?
+        SessionsCommand::Get { id, version } => get_session(client, &id, version, context).await?,
+        SessionsCommand::Changelog { id, limit } => {
+            changelog_session(client, id, context.output_format, limit).await?
         }
-        JobsCommand::Logs { id, watch } => logs::run(client, id, watch, context).await?,
-        JobsCommand::Kill { job } => kill::run(client, job, context).await?,
-        JobsCommand::WorkerRun {
-            job,
+        SessionsCommand::Logs { id, watch } => logs::run(client, id, watch, context).await?,
+        SessionsCommand::Kill { session } => kill::run(client, session, context).await?,
+        SessionsCommand::WorkerRun {
+            session,
             path,
             issue_id,
             tempdir,
         } => {
             let commands = ModelAwareCommands::default();
-            worker_run::run(client, job, path, issue_id, tempdir, &commands, context).await?
+            worker_run::run(client, session, path, issue_id, tempdir, &commands, context).await?
         }
     }
 
     Ok(())
 }
 
-async fn get_job(
+async fn get_session(
     client: &dyn MetisClientInterface,
-    job_id: &SessionId,
+    session_id: &SessionId,
     version: Option<i64>,
     context: &CommandContext,
 ) -> Result<()> {
-    let job = match version {
+    let session = match version {
         Some(0) => {
             bail!("--version 0 is not valid; use a positive version number or a negative offset")
         }
         Some(v) => client
-            .get_job_version(job_id, RelativeVersionNumber::new(v))
+            .get_session_version(session_id, RelativeVersionNumber::new(v))
             .await
-            .with_context(|| format!("failed to fetch version {v} of job '{job_id}'"))?,
+            .with_context(|| format!("failed to fetch version {v} of session '{session_id}'"))?,
         None => client
-            .get_job(job_id)
+            .get_session(session_id)
             .await
-            .with_context(|| format!("failed to fetch job '{job_id}'"))?,
+            .with_context(|| format!("failed to fetch session '{session_id}'"))?,
     };
-    render_job_records(context.output_format, &[job], &mut std::io::stdout())?;
+    render_session_records(context.output_format, &[session], &mut std::io::stdout())?;
     Ok(())
 }
 
-async fn changelog_job(
+async fn changelog_session(
     client: &dyn MetisClientInterface,
     id: SessionId,
     output_format: ResolvedOutputFormat,
     limit: usize,
 ) -> Result<()> {
     let response = client
-        .list_job_versions(&id)
+        .list_session_versions(&id)
         .await
-        .with_context(|| format!("failed to fetch versions for job '{id}'"))?;
+        .with_context(|| format!("failed to fetch versions for session '{id}'"))?;
     let versions: Vec<Versioned<Session>> = response
         .versions
         .into_iter()

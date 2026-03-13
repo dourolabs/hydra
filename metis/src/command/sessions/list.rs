@@ -1,6 +1,6 @@
 use crate::{
     client::MetisClientInterface,
-    command::output::{render_job_summary_records, CommandContext, ResolvedOutputFormat},
+    command::output::{render_session_summary_records, CommandContext, ResolvedOutputFormat},
 };
 use anyhow::Result;
 use metis_common::{
@@ -8,7 +8,7 @@ use metis_common::{
     IssueId,
 };
 use std::io::{self, Write};
-pub const DEFAULT_JOB_LIMIT: usize = 10;
+pub const DEFAULT_SESSION_LIMIT: usize = 10;
 
 pub async fn run(
     client: &dyn MetisClientInterface,
@@ -17,33 +17,33 @@ pub async fn run(
     context: &CommandContext,
 ) -> Result<()> {
     let response = client
-        .list_jobs(&SearchSessionsQuery::new(None, spawned_from, None, vec![]))
+        .list_sessions(&SearchSessionsQuery::new(None, spawned_from, None, vec![]))
         .await?;
     let limit = limit.max(1);
-    let total_jobs = response.sessions.len();
-    let (jobs, truncated) = truncate_jobs(response.sessions, limit);
+    let total_sessions = response.sessions.len();
+    let (sessions, truncated) = truncate_sessions(response.sessions, limit);
 
     let mut buffer = Vec::new();
-    render_job_summary_records(context.output_format, &jobs, &mut buffer)?;
+    render_session_summary_records(context.output_format, &sessions, &mut buffer)?;
     io::stdout().write_all(&buffer)?;
     io::stdout().flush()?;
 
     if truncated && context.output_format == ResolvedOutputFormat::Pretty {
-        println!("Showing {limit} of {total_jobs} jobs. Use --limit to display more.");
+        println!("Showing {limit} of {total_sessions} sessions. Use --limit to display more.");
     }
 
     Ok(())
 }
 
-pub(crate) fn truncate_jobs(
-    jobs: Vec<SessionSummaryRecord>,
+pub(crate) fn truncate_sessions(
+    sessions: Vec<SessionSummaryRecord>,
     limit: usize,
 ) -> (Vec<SessionSummaryRecord>, bool) {
-    if jobs.len() <= limit {
-        return (jobs, false);
+    if sessions.len() <= limit {
+        return (sessions, false);
     }
 
-    (jobs.into_iter().take(limit).collect(), true)
+    (sessions.into_iter().take(limit).collect(), true)
 }
 
 #[cfg(test)]
@@ -70,7 +70,7 @@ mod tests {
         }
     }
 
-    fn sample_job(id: &str) -> SessionSummaryRecord {
+    fn sample_session(id: &str) -> SessionSummaryRecord {
         SessionSummaryRecord::from(&SessionVersionRecord::new(
             task_id(id),
             0,
@@ -99,14 +99,14 @@ mod tests {
     }
 
     #[test]
-    fn truncate_jobs_keeps_all_when_below_limit() {
-        let jobs = vec![
-            sample_job("t-job-1"),
-            sample_job("t-job-2"),
-            sample_job("t-job-3"),
+    fn truncate_sessions_keeps_all_when_below_limit() {
+        let sessions = vec![
+            sample_session("t-job-1"),
+            sample_session("t-job-2"),
+            sample_session("t-job-3"),
         ];
 
-        let (kept, truncated) = truncate_jobs(jobs, 5);
+        let (kept, truncated) = truncate_sessions(sessions, 5);
 
         assert!(!truncated);
         assert_eq!(kept.len(), 3);
@@ -115,12 +115,12 @@ mod tests {
     }
 
     #[test]
-    fn truncate_jobs_limits_to_requested_count() {
-        let jobs: Vec<SessionSummaryRecord> = (0..12)
-            .map(|idx| sample_job(&format!("t-job-{idx}")))
+    fn truncate_sessions_limits_to_requested_count() {
+        let sessions: Vec<SessionSummaryRecord> = (0..12)
+            .map(|idx| sample_session(&format!("t-job-{idx}")))
             .collect();
 
-        let (kept, truncated) = truncate_jobs(jobs, 10);
+        let (kept, truncated) = truncate_sessions(sessions, 10);
 
         assert!(truncated);
         assert_eq!(kept.len(), 10);
@@ -135,7 +135,7 @@ mod tests {
         let client =
             MetisClient::new(server.base_url(), TEST_METIS_TOKEN).expect("should construct client");
 
-        let list_response = ListSessionsResponse::new(vec![sample_job("t-job-1")]);
+        let list_response = ListSessionsResponse::new(vec![sample_session("t-job-1")]);
 
         let mock = server.mock(|when, then| {
             when.method(GET)
@@ -149,7 +149,7 @@ mod tests {
 
         run(&client, 5, Some(spawned_from.clone()), &context)
             .await
-            .expect("list jobs should succeed");
+            .expect("list sessions should succeed");
 
         mock.assert();
     }

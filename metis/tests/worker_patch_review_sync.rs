@@ -99,7 +99,9 @@ async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> 
     let merge_request_issue = user.get_issue(&merge_request_issue_id).await?;
     assert_eq!(merge_request_issue.issue.status, IssueStatus::Failed);
 
-    let jobs = user.list_jobs_for_issue(&merge_request_issue_id).await?;
+    let jobs = user
+        .list_sessions_for_issue(&merge_request_issue_id)
+        .await?;
     assert!(
         jobs.is_empty(),
         "expected no followup job when merge request issue is failed"

@@ -61,10 +61,10 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Manage jobs.
-    Jobs {
+    /// Manage sessions.
+    Sessions {
         #[command(subcommand)]
-        command: command::jobs::JobsCommand,
+        command: command::sessions::SessionsCommand,
     },
     /// Manage agents.
     Agents {
@@ -224,7 +224,7 @@ pub async fn dispatch(
         }
     };
     match command {
-        Commands::Jobs { command } => command::jobs::run(client, command, context).await?,
+        Commands::Sessions { command } => command::sessions::run(client, command, context).await?,
         Commands::Agents { command } => command::agents::run(client, command, context).await?,
         Commands::Patches { command } => command::patches::run(client, command, context).await?,
         Commands::Documents { command } => {

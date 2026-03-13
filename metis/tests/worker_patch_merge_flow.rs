@@ -69,7 +69,7 @@ async fn worker_merge_pushes_to_remote() -> Result<()> {
     // ── 4. Create a job for the issue and start it ─────────────────
     let job_id = harness
         .default_user()
-        .create_job_for_issue(&repo, "merge the patch", &_parent_issue_id)
+        .create_session_for_issue(&repo, "merge the patch", &_parent_issue_id)
         .await?;
 
     harness
@@ -208,7 +208,7 @@ async fn worker_merge_restores_original_branch() -> Result<()> {
     // ── 4. Create a job for the issue and start it ─────────────────
     let job_id = harness
         .default_user()
-        .create_job_for_issue(&repo, "merge and check branch", &parent_issue_id)
+        .create_session_for_issue(&repo, "merge and check branch", &parent_issue_id)
         .await?;
 
     harness
@@ -361,11 +361,11 @@ async fn concurrent_merges_both_succeed() -> Result<()> {
     // ── 4. Create and start jobs for each patch ─────────────────
     let job_id_1 = harness
         .default_user()
-        .create_job_for_issue(&repo, "merge patch 1", &parent_issue_1)
+        .create_session_for_issue(&repo, "merge patch 1", &parent_issue_1)
         .await?;
     let job_id_2 = harness
         .default_user()
-        .create_job_for_issue(&repo, "merge patch 2", &parent_issue_2)
+        .create_session_for_issue(&repo, "merge patch 2", &parent_issue_2)
         .await?;
 
     for job_id in [&job_id_1, &job_id_2] {

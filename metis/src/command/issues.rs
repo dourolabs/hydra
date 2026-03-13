@@ -921,7 +921,7 @@ async fn fetch_job_versions(
     job_id: &SessionId,
 ) -> Result<Vec<Versioned<Session>>> {
     let response = client
-        .list_job_versions(job_id)
+        .list_session_versions(job_id)
         .await
         .with_context(|| format!("failed to fetch versions for job '{job_id}'"))?;
     Ok(response
@@ -943,7 +943,7 @@ async fn fetch_jobs_for_issue(
     issue_id: &IssueId,
 ) -> Result<Vec<SessionSummaryRecord>> {
     let response = client
-        .list_jobs(&SearchSessionsQuery::new(
+        .list_sessions(&SearchSessionsQuery::new(
             None,
             Some(issue_id.clone()),
             None,
@@ -2750,7 +2750,7 @@ mod tests {
                 .path(format!("/v1/patches/{child_patch_id}/versions").as_str());
             then.status(200).json_body_obj(&child_patch_versions);
         });
-        let list_jobs_mock = server.mock(|when, then| {
+        let list_sessions_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/sessions")
                 .query_param("spawned_from", root_id.as_ref());
@@ -2774,7 +2774,7 @@ mod tests {
         root_patch_versions_mock.assert();
         parent_patch_versions_mock.assert();
         child_patch_versions_mock.assert();
-        list_jobs_mock.assert();
+        list_sessions_mock.assert();
         assert_eq!(root_issue_mock.hits(), 1);
         assert_eq!(parent_issue_mock.hits(), 1);
         assert_eq!(list_children_mock.hits(), 1);
@@ -2787,7 +2787,7 @@ mod tests {
         assert_eq!(root_patch_versions_mock.hits(), 1);
         assert_eq!(parent_patch_versions_mock.hits(), 1);
         assert_eq!(child_patch_versions_mock.hits(), 1);
-        assert_eq!(list_jobs_mock.hits(), 1);
+        assert_eq!(list_sessions_mock.hits(), 1);
         assert_eq!(
             description.issue,
             IssueWithPatches {

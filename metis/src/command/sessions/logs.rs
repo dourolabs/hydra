@@ -1,4 +1,4 @@
-use super::create::{stream_job_logs_via_server, LogOutputTarget};
+use super::create::{stream_session_logs_via_server, LogOutputTarget};
 use crate::{
     client::MetisClientInterface,
     command::output::{CommandContext, ResolvedOutputFormat},
@@ -12,18 +12,18 @@ pub async fn run(
     watch: bool,
     context: &CommandContext,
 ) -> Result<()> {
-    if let Some(job_id) = id.as_session_id() {
-        return stream_logs_for_job(client, job_id, watch, context.output_format).await;
+    if let Some(session_id) = id.as_session_id() {
+        return stream_logs_for_session(client, session_id, watch, context.output_format).await;
     }
 
     if let Some(issue_id) = id.as_issue_id() {
         return stream_logs_for_issue(client, issue_id, watch, context.output_format).await;
     }
 
-    bail!("id '{id}' must be a job or issue id");
+    bail!("id '{id}' must be a session or issue id");
 }
 
-async fn stream_logs_for_job(
+async fn stream_logs_for_session(
     client: &dyn MetisClientInterface,
     id: SessionId,
     watch: bool,
@@ -31,10 +31,10 @@ async fn stream_logs_for_job(
 ) -> Result<()> {
     let action = if watch { "Streaming" } else { "Fetching" };
     if output_format == ResolvedOutputFormat::Pretty {
-        eprintln!("{action} logs for job '{id}' via metis-server…");
+        eprintln!("{action} logs for session '{id}' via metis-server…");
     }
 
-    stream_job_logs_via_server(client, &id, watch, LogOutputTarget::Stdout).await
+    stream_session_logs_via_server(client, &id, watch, LogOutputTarget::Stdout).await
 }
 
 async fn stream_logs_for_issue(
@@ -43,38 +43,38 @@ async fn stream_logs_for_issue(
     watch: bool,
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
-    let jobs = client
-        .list_jobs(&SearchSessionsQuery::new(
+    let sessions = client
+        .list_sessions(&SearchSessionsQuery::new(
             None,
             Some(issue_id.clone()),
             None,
             vec![],
         ))
         .await
-        .with_context(|| format!("failed to find jobs for issue '{issue_id}'"))?
+        .with_context(|| format!("failed to find sessions for issue '{issue_id}'"))?
         .sessions;
 
-    if jobs.is_empty() {
-        bail!("no jobs found spawned from issue '{issue_id}'");
+    if sessions.is_empty() {
+        bail!("no sessions found spawned from issue '{issue_id}'");
     }
 
-    // Jobs are returned from the server sorted by most recent activity,
-    // so the first job is the most recently updated one.
-    let job_ids: Vec<SessionId> = jobs.into_iter().map(|job| job.session_id).collect();
-    let chosen_job = job_ids.first().cloned().unwrap();
-    let found_jobs = job_ids
+    // Sessions are returned from the server sorted by most recent activity,
+    // so the first session is the most recently updated one.
+    let session_ids: Vec<SessionId> = sessions.into_iter().map(|s| s.session_id).collect();
+    let chosen_session = session_ids.first().cloned().unwrap();
+    let found_sessions = session_ids
         .iter()
-        .map(|job_id| job_id.as_ref())
+        .map(|session_id| session_id.as_ref())
         .collect::<Vec<_>>()
         .join(", ");
 
     if output_format == ResolvedOutputFormat::Pretty {
         eprintln!(
-            "Looking for jobs spawned from issue '{issue_id}'… found tasks: {found_jobs}. Using most recent job '{chosen_job}' for logs."
+            "Looking for sessions spawned from issue '{issue_id}'… found tasks: {found_sessions}. Using most recent session '{chosen_session}' for logs."
         );
     }
 
-    stream_logs_for_job(client, chosen_job, watch, output_format).await
+    stream_logs_for_session(client, chosen_session, watch, output_format).await
 }
 
 #[cfg(test)]
@@ -105,7 +105,7 @@ mod tests {
         ids::issue_id(value)
     }
 
-    fn job_record(id: &str) -> SessionVersionRecord {
+    fn session_record(id: &str) -> SessionVersionRecord {
         SessionVersionRecord::new(
             task_id(id),
             0,
@@ -134,39 +134,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn logs_streams_job_logs() -> Result<()> {
+    async fn logs_streams_session_logs() -> Result<()> {
         let server = MockServer::start();
-        let job_id = SessionId::from_str("t-jobxyz")?;
+        let session_id = SessionId::from_str("t-jobxyz")?;
         let log_mock = server.mock(|when, then| {
             when.method(GET)
-                .path(format!("/v1/sessions/{job_id}/logs"))
+                .path(format!("/v1/sessions/{session_id}/logs"))
                 .query_param("watch", "false");
             then.status(200)
                 .header("content-type", "text/event-stream")
-                .body("data: job logs\n\n");
+                .body("data: session logs\n\n");
         });
 
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let context = CommandContext::new(ResolvedOutputFormat::Pretty);
-        run(&client, job_id.clone().into(), false, &context).await?;
+        run(&client, session_id.clone().into(), false, &context).await?;
 
         log_mock.assert();
         Ok(())
     }
 
     #[tokio::test]
-    async fn logs_prefers_most_recent_job_for_issue() -> Result<()> {
+    async fn logs_prefers_most_recent_session_for_issue() -> Result<()> {
         let server = MockServer::start();
         let issue_id = issue_id("i-issueabc");
-        let list_jobs_mock = server.mock(|when, then| {
+        let list_sessions_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/sessions")
                 .query_param("spawned_from", issue_id.as_ref());
             then.status(200)
                 .json_body_obj(&ListSessionsResponse::new(vec![
-                    SessionSummaryRecord::from(&job_record("t-newest")),
-                    SessionSummaryRecord::from(&job_record("t-older")),
+                    SessionSummaryRecord::from(&session_record("t-newest")),
+                    SessionSummaryRecord::from(&session_record("t-older")),
                 ]));
         });
         let log_mock = server.mock(|when, then| {
@@ -175,7 +175,7 @@ mod tests {
                 .query_param("watch", "false");
             then.status(200)
                 .header("content-type", "text/event-stream")
-                .body("data: issue job logs\n\n");
+                .body("data: issue session logs\n\n");
         });
 
         let client =
@@ -183,7 +183,7 @@ mod tests {
         let context = CommandContext::new(ResolvedOutputFormat::Pretty);
         run(&client, issue_id.clone().into(), false, &context).await?;
 
-        list_jobs_mock.assert();
+        list_sessions_mock.assert();
         log_mock.assert();
         Ok(())
     }

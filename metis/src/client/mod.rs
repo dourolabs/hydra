@@ -128,24 +128,28 @@ impl ResponseExt for Response {
 pub trait MetisClientInterface: Send + Sync {
     fn base_url(&self) -> &Url;
 
-    async fn create_job(&self, request: &CreateSessionRequest) -> Result<CreateSessionResponse>;
-    async fn list_jobs(&self, query: &SearchSessionsQuery) -> Result<ListSessionsResponse>;
-    async fn get_job(&self, job_id: &SessionId) -> Result<SessionVersionRecord>;
-    async fn get_job_version(
+    async fn create_session(&self, request: &CreateSessionRequest)
+        -> Result<CreateSessionResponse>;
+    async fn list_sessions(&self, query: &SearchSessionsQuery) -> Result<ListSessionsResponse>;
+    async fn get_session(&self, job_id: &SessionId) -> Result<SessionVersionRecord>;
+    async fn get_session_version(
         &self,
         job_id: &SessionId,
         version: RelativeVersionNumber,
     ) -> Result<SessionVersionRecord>;
-    async fn kill_job(&self, job_id: &SessionId) -> Result<KillSessionResponse>;
-    async fn get_job_logs(&self, job_id: &SessionId, query: &LogsQuery) -> Result<LogStream>;
-    async fn set_job_status(
+    async fn kill_session(&self, job_id: &SessionId) -> Result<KillSessionResponse>;
+    async fn get_session_logs(&self, job_id: &SessionId, query: &LogsQuery) -> Result<LogStream>;
+    async fn set_session_status(
         &self,
         job_id: &SessionId,
         status: &SessionStatusUpdate,
     ) -> Result<SetSessionStatusResponse>;
 
-    async fn get_job_context(&self, job_id: &SessionId) -> Result<WorkerContext>;
-    async fn list_job_versions(&self, job_id: &SessionId) -> Result<ListSessionVersionsResponse>;
+    async fn get_session_context(&self, job_id: &SessionId) -> Result<WorkerContext>;
+    async fn list_session_versions(
+        &self,
+        job_id: &SessionId,
+    ) -> Result<ListSessionVersionsResponse>;
     async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse>;
     async fn update_issue(
         &self,
@@ -429,8 +433,8 @@ impl MetisClient {
         builder.bearer_auth(&self.auth_token)
     }
 
-    /// Call `POST /v1/jobs` to create a new job.
-    pub async fn create_job(
+    /// Call `POST /v1/sessions` to create a new session.
+    pub async fn create_session(
         &self,
         request: &CreateSessionRequest,
     ) -> Result<CreateSessionResponse> {
@@ -440,36 +444,36 @@ impl MetisClient {
             .json(request)
             .send()
             .await
-            .context("failed to submit create job request")?
-            .error_for_status_with_body("metis-server rejected create job request")
+            .context("failed to submit create session request")?
+            .error_for_status_with_body("metis-server rejected create session request")
             .await?;
 
         response
             .json::<CreateSessionResponse>()
             .await
-            .context("failed to decode create job response")
+            .context("failed to decode create session response")
     }
 
-    /// Call `GET /v1/jobs` to list existing jobs.
-    pub async fn list_jobs(&self, query: &SearchSessionsQuery) -> Result<ListSessionsResponse> {
+    /// Call `GET /v1/sessions` to list existing sessions.
+    pub async fn list_sessions(&self, query: &SearchSessionsQuery) -> Result<ListSessionsResponse> {
         let url = self.endpoint("/v1/sessions")?;
         let response = self
             .authed(self.http.get(url))
             .query(query)
             .send()
             .await
-            .context("failed to fetch jobs list")?
-            .error_for_status_with_body("metis-server returned an error while listing jobs")
+            .context("failed to fetch sessions list")?
+            .error_for_status_with_body("metis-server returned an error while listing sessions")
             .await?;
 
         response
             .json::<ListSessionsResponse>()
             .await
-            .context("failed to decode list jobs response")
+            .context("failed to decode list sessions response")
     }
 
-    /// Call `GET /v1/jobs/:job_id/versions` to list job history.
-    pub async fn list_job_versions(
+    /// Call `GET /v1/sessions/:session_id/versions` to list session history.
+    pub async fn list_session_versions(
         &self,
         job_id: &SessionId,
     ) -> Result<ListSessionVersionsResponse> {
@@ -479,36 +483,38 @@ impl MetisClient {
             .authed(self.http.get(url))
             .send()
             .await
-            .context("failed to fetch job versions")?
-            .error_for_status_with_body("metis-server returned an error while listing job versions")
+            .context("failed to fetch session versions")?
+            .error_for_status_with_body(
+                "metis-server returned an error while listing session versions",
+            )
             .await?;
 
         response
             .json::<ListSessionVersionsResponse>()
             .await
-            .context("failed to decode list job versions response")
+            .context("failed to decode list session versions response")
     }
 
-    /// Call `GET /v1/jobs/:job_id` to fetch an individual job summary.
-    pub async fn get_job(&self, job_id: &SessionId) -> Result<SessionVersionRecord> {
+    /// Call `GET /v1/sessions/:session_id` to fetch an individual session summary.
+    pub async fn get_session(&self, job_id: &SessionId) -> Result<SessionVersionRecord> {
         let path = format!("/v1/sessions/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.get(url))
             .send()
             .await
-            .context("failed to fetch job")?
-            .error_for_status_with_body("metis-server returned an error while fetching job")
+            .context("failed to fetch session")?
+            .error_for_status_with_body("metis-server returned an error while fetching session")
             .await?;
 
         response
             .json::<SessionVersionRecord>()
             .await
-            .context("failed to decode job response")
+            .context("failed to decode session response")
     }
 
-    /// Call `GET /v1/jobs/:job_id/versions/:version` to fetch a specific job version.
-    pub async fn get_job_version(
+    /// Call `GET /v1/sessions/:session_id/versions/:version` to fetch a specific session version.
+    pub async fn get_session_version(
         &self,
         job_id: &SessionId,
         version: RelativeVersionNumber,
@@ -519,39 +525,45 @@ impl MetisClient {
             .authed(self.http.get(url))
             .send()
             .await
-            .context("failed to fetch job version")?
-            .error_for_status_with_body("metis-server returned an error while fetching job version")
+            .context("failed to fetch session version")?
+            .error_for_status_with_body(
+                "metis-server returned an error while fetching session version",
+            )
             .await?;
 
         response
             .json::<SessionVersionRecord>()
             .await
-            .context("failed to decode job version response")
+            .context("failed to decode session version response")
     }
 
-    /// Call `DELETE /v1/jobs/:job_id` to terminate a running job.
-    pub async fn kill_job(&self, job_id: &SessionId) -> Result<KillSessionResponse> {
+    /// Call `DELETE /v1/sessions/:session_id` to terminate a running session.
+    pub async fn kill_session(&self, job_id: &SessionId) -> Result<KillSessionResponse> {
         let path = format!("/v1/sessions/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.delete(url))
             .send()
             .await
-            .context("failed to submit kill job request")?
-            .error_for_status_with_body("metis-server returned an error while killing job")
+            .context("failed to submit kill session request")?
+            .error_for_status_with_body("metis-server returned an error while killing session")
             .await?;
 
         response
             .json::<KillSessionResponse>()
             .await
-            .context("failed to decode kill job response")
+            .context("failed to decode kill session response")
     }
 
-    /// Call `GET /v1/jobs/:job_id/logs` to fetch or stream job logs.
+    /// Call `GET /v1/sessions/:session_id/logs` to fetch or stream session logs.
     ///
     /// When `query.watch` is `Some(true)` the returned stream yields log lines
     /// as new SSE events arrive.
-    pub async fn get_job_logs(&self, job_id: &SessionId, query: &LogsQuery) -> Result<LogStream> {
+    pub async fn get_session_logs(
+        &self,
+        job_id: &SessionId,
+        query: &LogsQuery,
+    ) -> Result<LogStream> {
         let path = format!("/v1/sessions/{job_id}/logs");
         let url = self.endpoint(&path)?;
         let response = self
@@ -559,8 +571,10 @@ impl MetisClient {
             .query(query)
             .send()
             .await
-            .context("failed to request job logs")?
-            .error_for_status_with_body("metis-server returned an error while fetching job logs")
+            .context("failed to request session logs")?
+            .error_for_status_with_body(
+                "metis-server returned an error while fetching session logs",
+            )
             .await?;
 
         let is_sse = response
@@ -578,8 +592,8 @@ impl MetisClient {
         }
     }
 
-    /// Call `POST /v1/jobs/:job_id/status` to update the recorded agent status.
-    pub async fn set_job_status(
+    /// Call `POST /v1/sessions/:session_id/status` to update the recorded agent status.
+    pub async fn set_session_status(
         &self,
         job_id: &SessionId,
         status: &SessionStatusUpdate,
@@ -591,31 +605,35 @@ impl MetisClient {
             .json(status)
             .send()
             .await
-            .context("failed to submit set job status request")?
-            .error_for_status_with_body("metis-server returned an error while setting job status")
+            .context("failed to submit set session status request")?
+            .error_for_status_with_body(
+                "metis-server returned an error while setting session status",
+            )
             .await?;
 
         response
             .json::<SetSessionStatusResponse>()
             .await
-            .context("failed to decode set job status response")
+            .context("failed to decode set session status response")
     }
 
-    /// Call `GET /v1/jobs/:job_id/context` to retrieve the stored job context.
-    pub async fn get_job_context(&self, job_id: &SessionId) -> Result<WorkerContext> {
+    /// Call `GET /v1/sessions/:session_id/context` to retrieve the stored session context.
+    pub async fn get_session_context(&self, job_id: &SessionId) -> Result<WorkerContext> {
         let path = format!("/v1/sessions/{job_id}/context");
         let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.get(url))
             .send()
             .await
-            .context("failed to request job context")?
-            .error_for_status_with_body("metis-server returned an error while fetching job context")
+            .context("failed to request session context")?
+            .error_for_status_with_body(
+                "metis-server returned an error while fetching session context",
+            )
             .await?;
         response
             .json::<WorkerContext>()
             .await
-            .context("failed to decode job context response")
+            .context("failed to decode session context response")
     }
 
     /// Call `POST /v1/issues` to create a new issue.
@@ -1916,48 +1934,54 @@ impl MetisClientInterface for MetisClient {
         self.base_url()
     }
 
-    async fn create_job(&self, request: &CreateSessionRequest) -> Result<CreateSessionResponse> {
-        MetisClient::create_job(self, request).await
+    async fn create_session(
+        &self,
+        request: &CreateSessionRequest,
+    ) -> Result<CreateSessionResponse> {
+        MetisClient::create_session(self, request).await
     }
 
-    async fn list_jobs(&self, query: &SearchSessionsQuery) -> Result<ListSessionsResponse> {
-        MetisClient::list_jobs(self, query).await
+    async fn list_sessions(&self, query: &SearchSessionsQuery) -> Result<ListSessionsResponse> {
+        MetisClient::list_sessions(self, query).await
     }
 
-    async fn get_job(&self, job_id: &SessionId) -> Result<SessionVersionRecord> {
-        MetisClient::get_job(self, job_id).await
+    async fn get_session(&self, job_id: &SessionId) -> Result<SessionVersionRecord> {
+        MetisClient::get_session(self, job_id).await
     }
 
-    async fn get_job_version(
+    async fn get_session_version(
         &self,
         job_id: &SessionId,
         version: RelativeVersionNumber,
     ) -> Result<SessionVersionRecord> {
-        MetisClient::get_job_version(self, job_id, version).await
+        MetisClient::get_session_version(self, job_id, version).await
     }
 
-    async fn kill_job(&self, job_id: &SessionId) -> Result<KillSessionResponse> {
-        MetisClient::kill_job(self, job_id).await
+    async fn kill_session(&self, job_id: &SessionId) -> Result<KillSessionResponse> {
+        MetisClient::kill_session(self, job_id).await
     }
 
-    async fn get_job_logs(&self, job_id: &SessionId, query: &LogsQuery) -> Result<LogStream> {
-        MetisClient::get_job_logs(self, job_id, query).await
+    async fn get_session_logs(&self, job_id: &SessionId, query: &LogsQuery) -> Result<LogStream> {
+        MetisClient::get_session_logs(self, job_id, query).await
     }
 
-    async fn set_job_status(
+    async fn set_session_status(
         &self,
         job_id: &SessionId,
         status: &SessionStatusUpdate,
     ) -> Result<SetSessionStatusResponse> {
-        MetisClient::set_job_status(self, job_id, status).await
+        MetisClient::set_session_status(self, job_id, status).await
     }
 
-    async fn get_job_context(&self, job_id: &SessionId) -> Result<WorkerContext> {
-        MetisClient::get_job_context(self, job_id).await
+    async fn get_session_context(&self, job_id: &SessionId) -> Result<WorkerContext> {
+        MetisClient::get_session_context(self, job_id).await
     }
 
-    async fn list_job_versions(&self, job_id: &SessionId) -> Result<ListSessionVersionsResponse> {
-        MetisClient::list_job_versions(self, job_id).await
+    async fn list_session_versions(
+        &self,
+        job_id: &SessionId,
+    ) -> Result<ListSessionVersionsResponse> {
+        MetisClient::list_session_versions(self, job_id).await
     }
 
     async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse> {

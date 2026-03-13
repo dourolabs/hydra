@@ -146,10 +146,10 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         }));
     });
 
-    let kill_job_path = job_path.clone();
+    let kill_session_path = job_path.clone();
     let job_id_for_kill_clone = job_id_for_kill.clone();
     server.mock(move |when, then| {
-        when.method(DELETE).path(kill_job_path.as_str());
+        when.method(DELETE).path(kill_session_path.as_str());
         then.status(200).json_body(json!({
             "job_id": job_id_for_kill_clone,
             "status": "terminated",
@@ -403,28 +403,35 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(login_token, "login-token");
 
     // Job endpoints
-    let create_job_request = CreateSessionRequest::new(
+    let create_session_request = CreateSessionRequest::new(
         "test prompt".to_string(),
         None,
         BundleSpec::None,
         HashMap::new(),
         None,
     );
-    let created_job = client.create_job(&create_job_request).await?;
-    assert_eq!(created_job.session_id, job_id);
+    let created_session = client.create_session(&create_session_request).await?;
+    assert_eq!(created_session.session_id, job_id);
 
-    let jobs = client.list_jobs(&SearchSessionsQuery::default()).await?;
+    let jobs = client
+        .list_sessions(&SearchSessionsQuery::default())
+        .await?;
     let listed_job = jobs.sessions.first().expect("job from list");
     // Summary records do not include context; verify core summary fields.
     assert_eq!(listed_job.session_id, job_id);
 
-    let fetched_job = client.get_job(&job_id).await?;
-    assert!(matches!(fetched_job.session.context, BundleSpec::Unknown));
+    let fetched_session = client.get_session(&job_id).await?;
+    assert!(matches!(
+        fetched_session.session.context,
+        BundleSpec::Unknown
+    ));
 
-    let kill_response = client.kill_job(&job_id).await?;
+    let kill_response = client.kill_session(&job_id).await?;
     assert_eq!(kill_response.session_id, job_id);
 
-    let mut logs = client.get_job_logs(&job_id, &LogsQuery::default()).await?;
+    let mut logs = client
+        .get_session_logs(&job_id, &LogsQuery::default())
+        .await?;
     let mut collected = Vec::new();
     while let Some(item) = logs.next().await {
         collected.push(item?);
@@ -433,7 +440,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     assert!(collected[1].contains("second log line"));
 
     let status_response = client
-        .set_job_status(
+        .set_session_status(
             &job_id,
             &SessionStatusUpdate::Failed {
                 reason: "test".to_string(),
@@ -443,10 +450,10 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     assert!(matches!(status_response.status, Status::Unknown));
 
     // Verify the job can still be fetched after a status update
-    let fetched_job_after_status = client.get_job(&job_id).await?;
-    assert_eq!(fetched_job_after_status.session_id, job_id);
+    let fetched_session_after_status = client.get_session(&job_id).await?;
+    assert_eq!(fetched_session_after_status.session_id, job_id);
 
-    let context = client.get_job_context(&job_id).await?;
+    let context = client.get_session_context(&job_id).await?;
     assert!(matches!(context.request_context, Bundle::Unknown));
 
     // Issues and todos

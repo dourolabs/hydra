@@ -17,7 +17,7 @@ async fn worker_run_executes_cleanup_on_error() -> Result<()> {
         .create_issue("worker cleanup executes on error")
         .await?;
     let job_id = user
-        .create_job_for_issue(&repo, "worker cleanup executes on error", &issue_id)
+        .create_session_for_issue(&repo, "worker cleanup executes on error", &issue_id)
         .await?;
 
     let failure = harness

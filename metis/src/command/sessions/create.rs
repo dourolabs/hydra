@@ -1,6 +1,6 @@
 use crate::{
     client::MetisClientInterface,
-    command::output::{render_job_records, CommandContext, ResolvedOutputFormat},
+    command::output::{render_session_records, CommandContext, ResolvedOutputFormat},
 };
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
@@ -50,25 +50,25 @@ pub async fn run(
         None => None,
     };
     let request = CreateSessionRequest::new(prompt, image, bundle_context, variables, issue_id);
-    let response = client.create_job(&request).await?;
-    let job_id = response.session_id;
+    let response = client.create_session(&request).await?;
+    let session_id = response.session_id;
 
-    let job = client.get_job(&job_id).await?;
+    let session = client.get_session(&session_id).await?;
     let mut buffer = Vec::new();
-    render_job_records(context.output_format, &[job], &mut buffer)?;
+    render_session_records(context.output_format, &[session], &mut buffer)?;
     io::stdout().write_all(&buffer)?;
     io::stdout().flush()?;
 
     if wait {
         if context.output_format == ResolvedOutputFormat::Pretty {
-            eprintln!("Streaming logs for job '{job_id}' via metis-server…");
+            eprintln!("Streaming logs for session '{session_id}' via metis-server…");
         }
         let log_output = match context.output_format {
             ResolvedOutputFormat::Jsonl => LogOutputTarget::Stderr,
             ResolvedOutputFormat::Pretty => LogOutputTarget::Stdout,
         };
-        stream_job_logs_via_server(client, &job_id, true, log_output).await?;
-        wait_for_job_completion_via_server(client, &job_id, context.output_format).await?;
+        stream_session_logs_via_server(client, &session_id, true, log_output).await?;
+        wait_for_session_completion_via_server(client, &session_id, context.output_format).await?;
     }
 
     Ok(())
@@ -80,9 +80,9 @@ pub(crate) enum LogOutputTarget {
     Stderr,
 }
 
-pub(crate) async fn stream_job_logs_via_server(
+pub(crate) async fn stream_session_logs_via_server(
     client: &dyn MetisClientInterface,
-    job_id: &SessionId,
+    session_id: &SessionId,
     watch: bool,
     output: LogOutputTarget,
 ) -> Result<()> {
@@ -93,9 +93,9 @@ pub(crate) async fn stream_job_logs_via_server(
     };
 
     let mut log_stream = client
-        .get_job_logs(job_id, &query)
+        .get_session_logs(session_id, &query)
         .await
-        .with_context(|| format!("failed to stream logs for job '{job_id}'"))?;
+        .with_context(|| format!("failed to stream logs for session '{session_id}'"))?;
 
     while let Some(line) = log_stream.next().await {
         let line = line?;
@@ -106,27 +106,29 @@ pub(crate) async fn stream_job_logs_via_server(
     Ok(())
 }
 
-async fn wait_for_job_completion_via_server(
+async fn wait_for_session_completion_via_server(
     client: &dyn MetisClientInterface,
-    job_id: &SessionId,
+    session_id: &SessionId,
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     loop {
-        let response = client.list_jobs(&SearchSessionsQuery::default()).await?;
-        if let Some(job) = response
+        let response = client
+            .list_sessions(&SearchSessionsQuery::default())
+            .await?;
+        if let Some(session) = response
             .sessions
             .iter()
-            .find(|job| job.session_id.as_ref() == job_id.as_ref())
+            .find(|session| session.session_id.as_ref() == session_id.as_ref())
         {
-            match job.session.status {
+            match session.session.status {
                 Status::Complete => {
                     if output_format == ResolvedOutputFormat::Pretty {
-                        eprintln!("Job '{job_id}' completed successfully.");
+                        eprintln!("Session '{session_id}' completed successfully.");
                     }
                     return Ok(());
                 }
                 Status::Failed => {
-                    let reason = job
+                    let reason = session
                         .session
                         .error
                         .as_ref()
@@ -134,8 +136,8 @@ async fn wait_for_job_completion_via_server(
                             TaskError::JobEngineError { reason } => reason.clone(),
                             other => format!("{other:?}"),
                         })
-                        .unwrap_or_else(|| "job failed without an error message".to_string());
-                    bail!("Job '{job_id}' failed: {reason}");
+                        .unwrap_or_else(|| "session failed without an error message".to_string());
+                    bail!("Session '{session_id}' failed: {reason}");
                 }
                 _ => {}
             }
@@ -267,7 +269,7 @@ mod tests {
         ids::task_id(value)
     }
 
-    fn job_record_with_status(
+    fn session_record_with_status(
         id: &str,
         status: Status,
         error: Option<TaskError>,
@@ -299,15 +301,15 @@ mod tests {
         )
     }
 
-    fn job_record(id: &str) -> SessionVersionRecord {
-        job_record_with_status(id, Status::Created, None)
+    fn session_record(id: &str) -> SessionVersionRecord {
+        session_record_with_status(id, Status::Created, None)
     }
 
-    fn mock_get_job(server: &MockServer, job: SessionVersionRecord) -> Mock {
+    fn mock_get_session(server: &MockServer, session: SessionVersionRecord) -> Mock {
         server.mock(|when, then| {
             when.method(GET)
-                .path(format!("/v1/sessions/{}", job.session_id));
-            then.status(200).json_body_obj(&job);
+                .path(format!("/v1/sessions/{}", session.session_id));
+            then.status(200).json_body_obj(&session);
         })
     }
 
@@ -343,14 +345,14 @@ mod tests {
                 .header("content-type", "text/event-stream")
                 .body("data: first log line\n\ndata: second log line\n\n");
         });
-        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
+        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
-        let completed_jobs = ListSessionsResponse::new(vec![SessionSummaryRecord::from(
-            &job_record_with_status(job_id.as_ref(), Status::Complete, None),
+        let completed_sessions = ListSessionsResponse::new(vec![SessionSummaryRecord::from(
+            &session_record_with_status(job_id.as_ref(), Status::Complete, None),
         )]);
         let list_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/sessions");
-            then.status(200).json_body_obj(&completed_jobs);
+            then.status(200).json_body_obj(&completed_sessions);
         });
 
         let context = test_context();
@@ -370,7 +372,7 @@ mod tests {
 
         create_mock.assert();
         logs_mock.assert();
-        job_mock.assert();
+        session_mock.assert();
         list_mock.assert();
     }
 
@@ -400,7 +402,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
+        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -418,7 +420,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
-        job_mock.assert();
+        session_mock.assert();
     }
 
     #[tokio::test]
@@ -447,7 +449,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
+        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -465,7 +467,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
-        job_mock.assert();
+        session_mock.assert();
     }
 
     #[tokio::test]
@@ -494,7 +496,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
+        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -512,7 +514,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
-        job_mock.assert();
+        session_mock.assert();
     }
 
     #[tokio::test]
@@ -541,7 +543,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
+        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -559,7 +561,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
-        job_mock.assert();
+        session_mock.assert();
     }
 
     #[tokio::test]
@@ -585,7 +587,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
+        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -603,7 +605,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
-        job_mock.assert();
+        session_mock.assert();
     }
 
     #[tokio::test]
@@ -630,7 +632,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateSessionResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
+        let session_mock = mock_get_session(&server, session_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -648,7 +650,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
-        job_mock.assert();
+        session_mock.assert();
     }
 
     #[tokio::test]
