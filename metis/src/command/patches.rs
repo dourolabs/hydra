@@ -7,7 +7,7 @@ use metis_common::{
     activity_log_for_patch_versions,
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     issues::{IssueId, UpsertIssueRequest},
-    jobs::BundleSpec,
+    sessions::BundleSpec,
     patches::{
         Patch, PatchStatus, PatchSummaryRecord, PatchVersionRecord, Review, SearchPatchesQuery,
         UpsertPatchRequest, UpsertPatchResponse,
@@ -16,7 +16,7 @@ use metis_common::{
     review_utils::{find_last_commit_range_change_timestamp, has_approved_non_dismissed_review},
     users::Username,
     whoami::ActorIdentity,
-    PatchId, RelativeVersionNumber, RepoName, TaskId, Versioned,
+    PatchId, RelativeVersionNumber, RepoName, SessionId, Versioned,
 };
 use serde::Serialize;
 
@@ -78,7 +78,7 @@ pub enum PatchesCommand {
 
         /// Associate the patch with a Metis job.
         #[arg(long = "job", value_name = "METIS_ID", env = ENV_METIS_ID)]
-        job: Option<TaskId>,
+        job: Option<SessionId>,
 
         /// Associate the merge-request issue with an existing issue id.
         #[arg(
@@ -477,7 +477,7 @@ async fn create_patch(
     client: &dyn MetisClientInterface,
     title: String,
     description: String,
-    job_id: Option<TaskId>,
+    job_id: Option<SessionId>,
     issue_id: IssueId,
     allow_uncommitted: bool,
     force: bool,
@@ -933,7 +933,7 @@ async fn merge_patch(
 
 pub async fn resolve_service_repo_name(
     client: &dyn MetisClientInterface,
-    job_id: Option<&TaskId>,
+    job_id: Option<&SessionId>,
 ) -> Result<Option<RepoName>> {
     let job_id = job_id.ok_or_else(|| {
         anyhow!("service repo name must be resolved from a job; provide --job or set METIS_ID")
@@ -943,7 +943,7 @@ pub async fn resolve_service_repo_name(
         .await
         .with_context(|| format!("failed to fetch job '{job_id}' to resolve service repo"))?;
 
-    if let BundleSpec::ServiceRepository { name, .. } = job.task.context {
+    if let BundleSpec::ServiceRepository { name, .. } = job.session.context {
         return Ok(Some(name));
     }
 
@@ -956,7 +956,7 @@ pub async fn create_patch_artifact_from_repo(
     diff: String,
     title: String,
     description: String,
-    job_id: Option<TaskId>,
+    job_id: Option<SessionId>,
     is_automatic_backup: bool,
     force: bool,
     service_repo_name: RepoName,
@@ -1158,7 +1158,7 @@ mod tests {
     use httpmock::{prelude::*, Mock};
     use metis_common::{
         issues::{Issue, IssueStatus, IssueType, IssueVersionRecord, UpsertIssueResponse},
-        jobs::{BundleSpec, JobVersionRecord, Task},
+        sessions::{BundleSpec, SessionVersionRecord, Session},
         patches::{
             CommitRange, CreatePatchAssetResponse, GitOid, ListPatchVersionsResponse,
             ListPatchesResponse, Patch, PatchVersionRecord, Review, UpsertPatchResponse,
@@ -1186,10 +1186,10 @@ mod tests {
             .expect("failed to create metis client")
     }
 
-    fn mock_get_job(server: &MockServer, job: JobVersionRecord) -> Mock {
+    fn mock_get_job(server: &MockServer, job: SessionVersionRecord) -> Mock {
         server.mock(move |when, then| {
             when.method(GET)
-                .path(format!("/v1/jobs/{}", job.job_id.as_ref()));
+                .path(format!("/v1/jobs/{}", job.session_id.as_ref()));
             then.status(200).json_body_obj(&job);
         })
     }
@@ -1430,11 +1430,11 @@ mod tests {
         let job_id = task_id("t-job-diff");
         let issue_id = issue_id("i-diff");
         let branch_name = current_branch(&repo_path)?;
-        let job_record = JobVersionRecord::new(
+        let job_record = SessionVersionRecord::new(
             job_id.clone(),
             0,
             Utc::now(),
-            Task::new(
+            Session::new(
                 "0".to_string(),
                 BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
@@ -1529,11 +1529,11 @@ mod tests {
         let branch_name = current_branch(&repo_path)?;
 
         let job_id = task_id("t-job-1234");
-        let job_record = JobVersionRecord::new(
+        let job_record = SessionVersionRecord::new(
             job_id.clone(),
             0,
             Utc::now(),
-            Task::new(
+            Session::new(
                 "0".to_string(),
                 BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
@@ -1706,11 +1706,11 @@ mod tests {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let branch_name = current_branch(&repo_path)?;
         let job_id = task_id("t-job-service");
-        let job_record = JobVersionRecord::new(
+        let job_record = SessionVersionRecord::new(
             job_id.clone(),
             0,
             Utc::now(),
-            Task::new(
+            Session::new(
                 "0".to_string(),
                 BundleSpec::ServiceRepository {
                     name: RepoName::from_str("dourolabs/api")?,
@@ -1803,11 +1803,11 @@ mod tests {
         let branch_name = current_branch(&repo_path)?;
         let job_id = task_id("t-job-link");
         let issue_id = issue_id("i-link");
-        let job_record = JobVersionRecord::new(
+        let job_record = SessionVersionRecord::new(
             job_id.clone(),
             0,
             Utc::now(),
-            Task::new(
+            Session::new(
                 "0".to_string(),
                 BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
@@ -1918,11 +1918,11 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_id = task_id("t-job-non-service");
-        let job_record = JobVersionRecord::new(
+        let job_record = SessionVersionRecord::new(
             job_id.clone(),
             0,
             Utc::now(),
-            Task::new(
+            Session::new(
                 "0".to_string(),
                 BundleSpec::GitRepository {
                     url: "https://github.com/dourolabs/example".to_string(),

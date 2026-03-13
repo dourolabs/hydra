@@ -18,7 +18,7 @@ use metis_common::{
         SearchDocumentsQuery, UpsertDocumentRequest,
     },
     versioning::VersionNumber,
-    DocumentId, RelativeVersionNumber, TaskId, Versioned,
+    DocumentId, RelativeVersionNumber, SessionId, Versioned,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -86,7 +86,7 @@ pub struct DocumentsListArgs {
 
     /// Filter by job id that created the document.
     #[arg(long = "created-by", value_name = "TASK_ID")]
-    pub created_by: Option<TaskId>,
+    pub created_by: Option<SessionId>,
 
     /// Include deleted documents in the listing.
     #[arg(long = "include-deleted")]
@@ -105,7 +105,7 @@ pub struct CreateDocumentArgs {
 
     /// Job id responsible for creating the document (defaults to $METIS_ID).
     #[arg(long = "created-by", value_name = "TASK_ID", env = ENV_METIS_ID)]
-    pub created_by: Option<TaskId>,
+    pub created_by: Option<SessionId>,
 
     #[command(flatten)]
     pub body: DocumentBodyInput,
@@ -1037,7 +1037,7 @@ mod tests {
             "Runbook".to_string(),
             "# Steps".to_string(),
             Some("docs/runbook.md".to_string()),
-            Some(TaskId::new()),
+            Some(SessionId::new()),
             false,
         )
         .unwrap();
@@ -1072,7 +1072,7 @@ mod tests {
         });
         let client = mock_client(&server);
 
-        let created_by = TaskId::new();
+        let created_by = SessionId::new();
         let records = list_documents(
             &client,
             DocumentsListArgs {
@@ -1093,7 +1093,7 @@ mod tests {
     #[tokio::test]
     async fn create_document_reads_body_from_file() {
         let document_id = DocumentId::new();
-        let created_by = TaskId::new();
+        let created_by = SessionId::new();
         let created_by_for_mock = created_by.clone();
         let document_id_for_mock = document_id.clone();
         let file = NamedTempFile::new().expect("temp file");

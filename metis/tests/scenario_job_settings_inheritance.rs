@@ -3,8 +3,8 @@ mod harness;
 use anyhow::Result;
 use harness::{find_summary_children_of, test_job_settings, JobAssertions, TestHarness};
 use metis_common::{
-    issues::{IssueStatus, IssueType, JobSettings},
-    jobs::BundleSpec,
+    issues::{IssueStatus, IssueType, SessionSettings},
+    sessions::BundleSpec,
 };
 use std::str::FromStr;
 
@@ -26,7 +26,7 @@ async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
     let repo = metis_common::RepoName::from_str("acme/settings-test")?;
 
     // Create an issue with full job settings.
-    let mut job_settings = JobSettings::default();
+    let mut job_settings = SessionSettings::default();
     job_settings.repo_name = Some(repo.clone());
     job_settings.image = Some("custom-worker:v2".to_string());
     job_settings.model = Some("claude-opus-4-20250514".to_string());
@@ -53,34 +53,34 @@ async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
 
     // Verify image is inherited.
     assert_eq!(
-        job.task.image.as_deref(),
+        job.session.image.as_deref(),
         Some("custom-worker:v2"),
         "spawned task should inherit the image from job settings"
     );
 
     // Verify model is inherited.
     assert_eq!(
-        job.task.model.as_deref(),
+        job.session.model.as_deref(),
         Some("claude-opus-4-20250514"),
         "spawned task should inherit the model from job settings"
     );
 
     // Verify cpu_limit is inherited.
     assert_eq!(
-        job.task.cpu_limit.as_deref(),
+        job.session.cpu_limit.as_deref(),
         Some("4"),
         "spawned task should inherit the cpu_limit from job settings"
     );
 
     // Verify memory_limit is inherited.
     assert_eq!(
-        job.task.memory_limit.as_deref(),
+        job.session.memory_limit.as_deref(),
         Some("8Gi"),
         "spawned task should inherit the memory_limit from job settings"
     );
 
     // Verify BundleSpec references the correct repository.
-    match &job.task.context {
+    match &job.session.context {
         BundleSpec::ServiceRepository { name, .. } => {
             assert_eq!(
                 name, &repo,
@@ -147,7 +147,7 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
     // IssueSummary doesn't include job_settings, so fetch the full record.
     let child = user.get_issue(&child_summary.issue_id).await?;
     assert_eq!(
-        child.issue.job_settings.repo_name,
+        child.issue.session_settings.repo_name,
         Some(repo.clone()),
         "child issue should have repo_name set"
     );
@@ -158,7 +158,7 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
 
     // Verify the spawned task has the correct BundleSpec.
     let child_job = user.client().get_job(&swe_tasks[0]).await?;
-    match &child_job.task.context {
+    match &child_job.session.context {
         BundleSpec::ServiceRepository { name, .. } => {
             assert_eq!(
                 name, &repo,

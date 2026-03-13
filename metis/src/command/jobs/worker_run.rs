@@ -9,9 +9,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
     constants::{ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ISSUE_ID},
-    job_status::JobStatusUpdate,
-    jobs::{Bundle, WorkerContext},
-    IssueId, TaskId,
+    session_status::SessionStatusUpdate,
+    sessions::{Bundle, WorkerContext},
+    IssueId, SessionId,
 };
 use tempfile::Builder;
 
@@ -27,7 +27,7 @@ use crate::{client::MetisClientInterface, command::output::CommandContext};
 
 pub async fn run(
     client: &dyn MetisClientInterface,
-    job: TaskId,
+    job: SessionId,
     dest: PathBuf,
     issue_id: Option<IssueId>,
     use_tempdir: bool,
@@ -328,11 +328,11 @@ pub async fn run(
     }
 
     let status_update = if errors.is_empty() {
-        JobStatusUpdate::Complete {
+        SessionStatusUpdate::Complete {
             last_message: Some(last_message.clone()),
         }
     } else {
-        JobStatusUpdate::Failed {
+        SessionStatusUpdate::Failed {
             reason: errors
                 .first()
                 .map(|err| err.to_string())
@@ -388,8 +388,8 @@ fn ensure_color_output_env(env: &mut HashMap<String, String>) {
 
 async fn submit_job_status(
     client: &dyn MetisClientInterface,
-    job: &TaskId,
-    status: JobStatusUpdate,
+    job: &SessionId,
+    status: SessionStatusUpdate,
 ) -> Result<()> {
     log_status(format!("Updating status for job '{job}' via metis-server…"));
     match client.set_job_status(job, &status).await {
@@ -400,7 +400,7 @@ async fn submit_job_status(
                 .unwrap_or(0);
             log_status(format!(
                 "Status updated for job '{}'. Stored last message length: {}",
-                response.job_id, last_message_length,
+                response.session_id, last_message_length,
             ));
             Ok(())
         }
@@ -417,7 +417,7 @@ async fn submit_job_status(
 fn initialize_tracking_branches(
     repo_root: &Path,
     issue_id: Option<&str>,
-    task_id: &TaskId,
+    task_id: &SessionId,
     github_token: Option<&str>,
 ) -> Result<()> {
     let issue_label = issue_id.unwrap_or("unknown");
@@ -519,7 +519,7 @@ fn initialize_tracking_branches(
     Ok(())
 }
 
-fn finalize_task_run(repo_root: &Path, task_id: &TaskId, github_token: Option<&str>) -> Result<()> {
+fn finalize_task_run(repo_root: &Path, task_id: &SessionId, github_token: Option<&str>) -> Result<()> {
     log_status(format!(
         "Auto-committing worker changes for task '{task_id}' and syncing tracking branches…"
     ));

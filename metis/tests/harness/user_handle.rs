@@ -6,15 +6,15 @@ use metis::config::{AppConfig, ServerSection};
 use metis_common::{
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, IssueVersionRecord,
-        JobSettings, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
+        SessionSettings, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
     },
-    jobs::{BundleSpec, CreateJobRequest, SearchJobsQuery},
+    sessions::{BundleSpec, CreateSessionRequest, SearchSessionsQuery},
     patches::{
         GithubPr, ListPatchesResponse, Patch, PatchStatus, PatchVersionRecord, SearchPatchesQuery,
         UpsertPatchRequest,
     },
     users::Username,
-    IssueId, PatchId, RepoName, TaskId,
+    IssueId, PatchId, RepoName, SessionId,
 };
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -260,14 +260,14 @@ impl UserHandle {
     pub async fn list_jobs_for_issue(
         &self,
         issue_id: &IssueId,
-    ) -> Result<Vec<metis_common::jobs::JobSummaryRecord>> {
-        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None, vec![]);
+    ) -> Result<Vec<metis_common::sessions::SessionSummaryRecord>> {
+        let query = SearchSessionsQuery::new(None, Some(issue_id.clone()), None, vec![]);
         let response = self
             .client
             .list_jobs(&query)
             .await
             .context("UserHandle::list_jobs_for_issue failed")?;
-        Ok(response.jobs)
+        Ok(response.sessions)
     }
 
     // ── Issue operations (extended) ──────────────────────────────────
@@ -283,7 +283,7 @@ impl UserHandle {
         issue_type: IssueType,
         status: IssueStatus,
         assignee: Option<&str>,
-        job_settings: Option<JobSettings>,
+        job_settings: Option<SessionSettings>,
     ) -> Result<IssueId> {
         let issue = Issue::new(
             issue_type,
@@ -320,7 +320,7 @@ impl UserHandle {
         description: &str,
         status: IssueStatus,
         assignee: Option<&str>,
-        job_settings: Option<JobSettings>,
+        job_settings: Option<SessionSettings>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
     ) -> Result<IssueId> {
@@ -351,8 +351,8 @@ impl UserHandle {
 
     /// Create a job for the given repo with the given prompt.
     /// Returns the new job's task ID.
-    pub async fn create_job(&self, repo: &RepoName, prompt: &str) -> Result<TaskId> {
-        let request = CreateJobRequest::new(
+    pub async fn create_job(&self, repo: &RepoName, prompt: &str) -> Result<SessionId> {
+        let request = CreateSessionRequest::new(
             prompt.to_string(),
             None,
             BundleSpec::ServiceRepository {
@@ -367,7 +367,7 @@ impl UserHandle {
             .create_job(&request)
             .await
             .context("UserHandle::create_job failed")?;
-        Ok(response.job_id)
+        Ok(response.session_id)
     }
 
     /// Create a job for the given repo, prompt, and issue.
@@ -380,8 +380,8 @@ impl UserHandle {
         repo: &RepoName,
         prompt: &str,
         issue_id: &IssueId,
-    ) -> Result<TaskId> {
-        let request = CreateJobRequest::new(
+    ) -> Result<SessionId> {
+        let request = CreateSessionRequest::new(
             prompt.to_string(),
             None,
             BundleSpec::ServiceRepository {
@@ -396,7 +396,7 @@ impl UserHandle {
             .create_job(&request)
             .await
             .context("UserHandle::create_job_for_issue failed")?;
-        Ok(response.job_id)
+        Ok(response.session_id)
     }
 
     // ── CLI operations ───────────────────────────────────────────────

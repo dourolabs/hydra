@@ -12,8 +12,8 @@ use metis_common::{
         ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
         UpsertIssueRequest,
     },
-    job_status::JobStatusUpdate,
-    jobs::{Bundle, BundleSpec, CreateJobRequest, SearchJobsQuery},
+    session_status::SessionStatusUpdate,
+    sessions::{Bundle, BundleSpec, CreateSessionRequest, SearchSessionsQuery},
     login::LoginRequest,
     logs::LogsQuery,
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
@@ -23,7 +23,7 @@ use metis_common::{
     task_status::Status,
     users::Username,
     whoami::ActorIdentity,
-    DocumentId, IssueId, PatchId, RelativeVersionNumber, RepoName, TaskId,
+    DocumentId, IssueId, PatchId, RelativeVersionNumber, RepoName, SessionId,
 };
 use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
@@ -39,7 +39,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         MetisClientUnauthenticated::with_http_client(server.base_url(), HttpClient::new())?;
 
     let now = Utc::now();
-    let job_id = TaskId::new();
+    let job_id = SessionId::new();
     let issue_id = IssueId::new();
     let dependency_id = IssueId::new();
     let patch_id = PatchId::new();
@@ -403,7 +403,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(login_token, "login-token");
 
     // Job endpoints
-    let create_job_request = CreateJobRequest::new(
+    let create_job_request = CreateSessionRequest::new(
         "test prompt".to_string(),
         None,
         BundleSpec::None,
@@ -411,18 +411,18 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         None,
     );
     let created_job = client.create_job(&create_job_request).await?;
-    assert_eq!(created_job.job_id, job_id);
+    assert_eq!(created_job.session_id, job_id);
 
-    let jobs = client.list_jobs(&SearchJobsQuery::default()).await?;
-    let listed_job = jobs.jobs.first().expect("job from list");
+    let jobs = client.list_jobs(&SearchSessionsQuery::default()).await?;
+    let listed_job = jobs.sessions.first().expect("job from list");
     // Summary records do not include context; verify core summary fields.
-    assert_eq!(listed_job.job_id, job_id);
+    assert_eq!(listed_job.session_id, job_id);
 
     let fetched_job = client.get_job(&job_id).await?;
-    assert!(matches!(fetched_job.task.context, BundleSpec::Unknown));
+    assert!(matches!(fetched_job.session.context, BundleSpec::Unknown));
 
     let kill_response = client.kill_job(&job_id).await?;
-    assert_eq!(kill_response.job_id, job_id);
+    assert_eq!(kill_response.session_id, job_id);
 
     let mut logs = client.get_job_logs(&job_id, &LogsQuery::default()).await?;
     let mut collected = Vec::new();
@@ -435,7 +435,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let status_response = client
         .set_job_status(
             &job_id,
-            &JobStatusUpdate::Failed {
+            &SessionStatusUpdate::Failed {
                 reason: "test".to_string(),
             },
         )
@@ -444,7 +444,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
 
     // Verify the job can still be fetched after a status update
     let fetched_job_after_status = client.get_job(&job_id).await?;
-    assert_eq!(fetched_job_after_status.job_id, job_id);
+    assert_eq!(fetched_job_after_status.session_id, job_id);
 
     let context = client.get_job_context(&job_id).await?;
     assert!(matches!(context.request_context, Bundle::Unknown));
@@ -637,8 +637,8 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(github_client.client_id, "abc123");
 
     // Ensure unknown job status variants remain deserializable.
-    let delayed_status: JobStatusUpdate = serde_json::from_value(json!({ "status": "delayed" }))?;
-    assert!(matches!(delayed_status, JobStatusUpdate::Unknown));
+    let delayed_status: SessionStatusUpdate = serde_json::from_value(json!({ "status": "delayed" }))?;
+    assert!(matches!(delayed_status, SessionStatusUpdate::Unknown));
 
     Ok(())
 }
@@ -654,7 +654,7 @@ fn forward_status_log_json(now: DateTime<Utc>) -> Value {
     })
 }
 
-fn forward_job_json(job_id: &TaskId, status_log: Value) -> Value {
+fn forward_job_json(job_id: &SessionId, status_log: Value) -> Value {
     json!({
         "job_id": job_id,
         "version": 0,
@@ -706,7 +706,7 @@ fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &Pa
 fn forward_patch_json(
     patch_id: &PatchId,
     repo_name: &RepoName,
-    job_id: &TaskId,
+    job_id: &SessionId,
     now: DateTime<Utc>,
 ) -> Value {
     json!({
@@ -750,7 +750,7 @@ fn forward_patch_json(
     })
 }
 
-fn forward_patch_summary_json(patch_id: &PatchId, repo_name: &RepoName, job_id: &TaskId) -> Value {
+fn forward_patch_summary_json(patch_id: &PatchId, repo_name: &RepoName, job_id: &SessionId) -> Value {
     json!({
         "patch_id": patch_id,
         "version": 0,
@@ -788,7 +788,7 @@ fn forward_patch_summary_json(patch_id: &PatchId, repo_name: &RepoName, job_id: 
     })
 }
 
-fn forward_document_json(document_id: &DocumentId, job_id: &TaskId) -> Value {
+fn forward_document_json(document_id: &DocumentId, job_id: &SessionId) -> Value {
     json!({
         "document_id": document_id,
         "version": 0,
@@ -809,7 +809,7 @@ fn forward_document_version_json(
     document_id: &DocumentId,
     version: u64,
     timestamp: DateTime<Utc>,
-    job_id: &TaskId,
+    job_id: &SessionId,
 ) -> Value {
     json!({
         "document_id": document_id,

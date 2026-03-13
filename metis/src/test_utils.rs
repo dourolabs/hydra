@@ -1,10 +1,10 @@
 #[cfg(test)]
 pub mod ids {
-    use metis_common::{IssueId, LabelId, MetisIdError, PatchId, TaskId};
+    use metis_common::{IssueId, LabelId, MetisIdError, PatchId, SessionId};
     use std::iter;
     use std::str::FromStr;
 
-    pub fn task_id(label: &str) -> TaskId {
+    pub fn task_id(label: &str) -> SessionId {
         parse_or_build(label, "t-")
     }
 

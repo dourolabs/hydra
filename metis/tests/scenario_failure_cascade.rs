@@ -12,7 +12,7 @@ use anyhow::Result;
 use harness::test_job_settings_full;
 use metis_common::{
     issues::{IssueDependency, IssueDependencyType, IssueStatus, IssueType},
-    jobs::SearchJobsQuery,
+    sessions::SearchSessionsQuery,
     RepoName,
 };
 use metis_server::job_engine::JobStatus;
@@ -124,28 +124,28 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
 
     let task_a = {
         let jobs = client
-            .list_jobs(&SearchJobsQuery::new(
+            .list_jobs(&SearchSessionsQuery::new(
                 None,
                 Some(child_a_id.clone()),
                 None,
                 vec![],
             ))
             .await?;
-        assert_eq!(jobs.jobs.len(), 1, "child A should have exactly one task");
-        jobs.jobs[0].job_id.clone()
+        assert_eq!(jobs.sessions.len(), 1, "child A should have exactly one task");
+        jobs.sessions[0].session_id.clone()
     };
 
     let task_b = {
         let jobs = client
-            .list_jobs(&SearchJobsQuery::new(
+            .list_jobs(&SearchSessionsQuery::new(
                 None,
                 Some(child_b_id.clone()),
                 None,
                 vec![],
             ))
             .await?;
-        assert_eq!(jobs.jobs.len(), 1, "child B should have exactly one task");
-        jobs.jobs[0].job_id.clone()
+        assert_eq!(jobs.sessions.len(), 1, "child B should have exactly one task");
+        jobs.sessions[0].session_id.clone()
     };
 
     // ── Step 4: Insert Running jobs into mock engine ──────────────
@@ -233,7 +233,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
     harness.step_monitor_jobs().await?;
 
     let jobs_c = client
-        .list_jobs(&SearchJobsQuery::new(
+        .list_jobs(&SearchSessionsQuery::new(
             None,
             Some(child_c_id.clone()),
             None,
@@ -241,7 +241,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         ))
         .await?;
     assert!(
-        jobs_c.jobs.is_empty(),
+        jobs_c.sessions.is_empty(),
         "child C was blocked and should never have had a task spawned"
     );
 

@@ -4,7 +4,7 @@ use crate::{
     command::output::{CommandContext, ResolvedOutputFormat},
 };
 use anyhow::{bail, Context, Result};
-use metis_common::{jobs::SearchJobsQuery, IssueId, MetisId, TaskId};
+use metis_common::{sessions::SearchSessionsQuery, IssueId, MetisId, SessionId};
 
 pub async fn run(
     client: &dyn MetisClientInterface,
@@ -12,7 +12,7 @@ pub async fn run(
     watch: bool,
     context: &CommandContext,
 ) -> Result<()> {
-    if let Some(job_id) = id.as_task_id() {
+    if let Some(job_id) = id.as_session_id() {
         return stream_logs_for_job(client, job_id, watch, context.output_format).await;
     }
 
@@ -25,7 +25,7 @@ pub async fn run(
 
 async fn stream_logs_for_job(
     client: &dyn MetisClientInterface,
-    id: TaskId,
+    id: SessionId,
     watch: bool,
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
@@ -44,7 +44,7 @@ async fn stream_logs_for_issue(
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let jobs = client
-        .list_jobs(&SearchJobsQuery::new(
+        .list_jobs(&SearchSessionsQuery::new(
             None,
             Some(issue_id.clone()),
             None,
@@ -52,7 +52,7 @@ async fn stream_logs_for_issue(
         ))
         .await
         .with_context(|| format!("failed to find jobs for issue '{issue_id}'"))?
-        .jobs;
+        .sessions;
 
     if jobs.is_empty() {
         bail!("no jobs found spawned from issue '{issue_id}'");
@@ -60,7 +60,7 @@ async fn stream_logs_for_issue(
 
     // Jobs are returned from the server sorted by most recent activity,
     // so the first job is the most recently updated one.
-    let job_ids: Vec<TaskId> = jobs.into_iter().map(|job| job.job_id).collect();
+    let job_ids: Vec<SessionId> = jobs.into_iter().map(|job| job.session_id).collect();
     let chosen_job = job_ids.first().cloned().unwrap();
     let found_jobs = job_ids
         .iter()
@@ -87,7 +87,7 @@ mod tests {
     };
     use chrono::Utc;
     use httpmock::prelude::*;
-    use metis_common::jobs::{JobSummaryRecord, JobVersionRecord, ListJobsResponse, Task};
+    use metis_common::sessions::{SessionSummaryRecord, SessionVersionRecord, ListSessionsResponse, Session};
     use metis_common::task_status::Status;
     use metis_common::users::Username;
     use reqwest::Client as HttpClient;
@@ -95,7 +95,7 @@ mod tests {
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
 
-    fn task_id(value: &str) -> TaskId {
+    fn task_id(value: &str) -> SessionId {
         ids::task_id(value)
     }
 
@@ -103,14 +103,14 @@ mod tests {
         ids::issue_id(value)
     }
 
-    fn job_record(id: &str) -> JobVersionRecord {
-        JobVersionRecord::new(
+    fn job_record(id: &str) -> SessionVersionRecord {
+        SessionVersionRecord::new(
             task_id(id),
             0,
             Utc::now(),
-            Task::new(
+            Session::new(
                 "demo".to_string(),
-                metis_common::jobs::BundleSpec::None,
+                metis_common::sessions::BundleSpec::None,
                 None,
                 Username::from("test-creator"),
                 None,
@@ -134,7 +134,7 @@ mod tests {
     #[tokio::test]
     async fn logs_streams_job_logs() -> Result<()> {
         let server = MockServer::start();
-        let job_id = TaskId::from_str("t-jobxyz")?;
+        let job_id = SessionId::from_str("t-jobxyz")?;
         let log_mock = server.mock(|when, then| {
             when.method(GET)
                 .path(format!("/v1/jobs/{job_id}/logs"))
@@ -161,9 +161,9 @@ mod tests {
             when.method(GET)
                 .path("/v1/jobs")
                 .query_param("spawned_from", issue_id.as_ref());
-            then.status(200).json_body_obj(&ListJobsResponse::new(vec![
-                JobSummaryRecord::from(&job_record("t-newest")),
-                JobSummaryRecord::from(&job_record("t-older")),
+            then.status(200).json_body_obj(&ListSessionsResponse::new(vec![
+                SessionSummaryRecord::from(&job_record("t-newest")),
+                SessionSummaryRecord::from(&job_record("t-older")),
             ]));
         });
         let log_mock = server.mock(|when, then| {
