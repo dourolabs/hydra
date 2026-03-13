@@ -36,13 +36,13 @@ pub async fn get_session_logs(
         .await
         .map_err(|err| match err {
             JobEngineError::NotFound(metis_id) => {
-                let message = format!("Job '{metis_id}' not found");
+                let message = format!("Session '{metis_id}' not found");
                 error!(session_id = %session_id, error = %message, "session not found");
                 ApiError::not_found(message)
             }
             JobEngineError::MultipleFound(metis_id) => {
-                let message = format!("Multiple jobs found for metis-id '{metis_id}'");
-                error!(session_id = %session_id, error = %message, "multiple jobs found");
+                let message = format!("Multiple sessions found for metis-id '{metis_id}'");
+                error!(session_id = %session_id, error = %message, "multiple sessions found");
                 ApiError::bad_request(message)
             }
             err => {
@@ -93,7 +93,7 @@ async fn fetch_logs(
             error!(session_id = %session_id, error = ?err, "failed to fetch logs");
             match err {
                 JobEngineError::NotFound(metis_id) => {
-                    ApiError::not_found(format!("Job '{metis_id}' not found"))
+                    ApiError::not_found(format!("Session '{metis_id}' not found"))
                 }
                 err => ApiError::internal(err),
             }
@@ -128,7 +128,7 @@ async fn stream_logs_sse(
             error!(session_id = %session_id, error = ?err, "failed to create log stream");
             match err {
                 JobEngineError::NotFound(metis_id) => {
-                    ApiError::not_found(format!("Job '{metis_id}' not found"))
+                    ApiError::not_found(format!("Session '{metis_id}' not found"))
                 }
                 err => ApiError::internal(err),
             }

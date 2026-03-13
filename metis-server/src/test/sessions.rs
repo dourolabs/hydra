@@ -33,7 +33,7 @@ use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
 #[tokio::test]
-async fn create_job_enqueues_task() -> anyhow::Result<()> {
+async fn create_session_enqueues_task() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let resolver_state = state.clone();
@@ -68,7 +68,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
+async fn create_session_allows_service_repository_bundle() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let (repo_name, repo) = service_repository();
@@ -112,7 +112,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn create_job_respects_image_override() -> anyhow::Result<()> {
+async fn create_session_respects_image_override() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let resolver_state = state.clone();
@@ -140,7 +140,7 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
+async fn create_session_image_override_beats_repo_default() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let (repo_name, repo) = service_repository();
@@ -170,7 +170,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
+async fn create_session_stores_provided_variables() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let check_state = state.clone();
@@ -374,7 +374,7 @@ async fn session_settings_use_repo_name_and_branch_overrides() -> anyhow::Result
 }
 
 #[tokio::test]
-async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
+async fn session_context_includes_build_cache_settings() -> anyhow::Result<()> {
     let mut config = test_app_config();
     config.build_cache = BuildCacheSection {
         storage: Some(BuildCacheStorageConfig::FileSystem {
@@ -430,7 +430,7 @@ async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn create_job_rejects_unknown_service_repository() -> anyhow::Result<()> {
+async fn create_session_rejects_unknown_service_repository() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
@@ -452,7 +452,7 @@ async fn create_job_rejects_unknown_service_repository() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn list_jobs_returns_empty_list_when_store_is_empty() -> anyhow::Result<()> {
+async fn list_sessions_returns_empty_list_when_store_is_empty() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
@@ -467,7 +467,7 @@ async fn list_jobs_returns_empty_list_when_store_is_empty() -> anyhow::Result<()
 }
 
 #[tokio::test]
-async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
+async fn session_versions_endpoints_return_history() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state.clone();
     let server = spawn_test_server_with_state(state.clone(), handles.store).await?;
@@ -557,7 +557,7 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn job_version_endpoints_return_404s() -> anyhow::Result<()> {
+async fn session_version_endpoints_return_404s() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
@@ -597,7 +597,7 @@ async fn job_version_endpoints_return_404s() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn get_job_rejects_empty_job_id() -> anyhow::Result<()> {
+async fn get_session_rejects_empty_session_id() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
@@ -615,7 +615,7 @@ async fn get_job_rejects_empty_job_id() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> {
+async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();
@@ -674,7 +674,7 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
 }
 
 #[tokio::test]
-async fn get_job_returns_not_found_for_missing_job() -> anyhow::Result<()> {
+async fn get_session_returns_not_found_for_missing_session() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let missing_id = task_id("t-missing");
@@ -693,7 +693,7 @@ async fn get_job_returns_not_found_for_missing_job() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn get_job_logs_rejects_empty_job_id() -> anyhow::Result<()> {
+async fn get_session_logs_rejects_empty_session_id() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
@@ -711,7 +711,7 @@ async fn get_job_logs_rejects_empty_job_id() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn get_job_logs_returns_bad_request_when_multiple_jobs_found() -> anyhow::Result<()> {
+async fn get_session_logs_returns_bad_request_when_multiple_sessions_found() -> anyhow::Result<()> {
     let engine = Arc::new(MockJobEngine::new());
     let job_id = task_id("t-jobaa");
     engine.insert_job(&job_id, JobStatus::Running).await;
@@ -729,13 +729,13 @@ async fn get_job_logs_returns_bad_request_when_multiple_jobs_found() -> anyhow::
     let body: serde_json::Value = response.json().await?;
     assert_eq!(
         body,
-        json!({ "error": format!("Multiple jobs found for metis-id '{job_id}'") })
+        json!({ "error": format!("Multiple sessions found for metis-id '{job_id}'") })
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn get_job_logs_returns_not_found_for_missing_job() -> anyhow::Result<()> {
+async fn get_session_logs_returns_not_found_for_missing_session() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let missing_id = task_id("t-missing");
@@ -751,13 +751,13 @@ async fn get_job_logs_returns_not_found_for_missing_job() -> anyhow::Result<()> 
     let body: serde_json::Value = response.json().await?;
     assert_eq!(
         body,
-        json!({ "error": format!("Job '{missing_id}' not found") })
+        json!({ "error": format!("Session '{missing_id}' not found") })
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn get_job_logs_streams_when_watching_running_job() -> anyhow::Result<()> {
+async fn get_session_logs_streams_when_watching_running_session() -> anyhow::Result<()> {
     let engine = Arc::new(MockJobEngine::new());
     let job_id = task_id("t-stream");
     engine.insert_job(&job_id, JobStatus::Running).await;
@@ -788,7 +788,7 @@ async fn get_job_logs_streams_when_watching_running_job() -> anyhow::Result<()> 
 }
 
 #[tokio::test]
-async fn kill_job_rejects_empty_job_id() -> anyhow::Result<()> {
+async fn kill_session_rejects_empty_session_id() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
@@ -806,7 +806,7 @@ async fn kill_job_rejects_empty_job_id() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn kill_job_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
+async fn kill_session_returns_not_found_for_unknown_session() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let missing_id = task_id("t-missing");
@@ -819,13 +819,13 @@ async fn kill_job_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
     let body: serde_json::Value = response.json().await?;
     assert_eq!(
         body,
-        json!({ "error": format!("Job '{missing_id}' not found") })
+        json!({ "error": format!("Session '{missing_id}' not found") })
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn kill_job_handles_multiple_matches_conflict() -> anyhow::Result<()> {
+async fn kill_session_handles_multiple_matches_conflict() -> anyhow::Result<()> {
     let engine = Arc::new(MockJobEngine::new());
     let job_id = task_id("t-dupe");
     engine.insert_job(&job_id, JobStatus::Running).await;
@@ -843,13 +843,13 @@ async fn kill_job_handles_multiple_matches_conflict() -> anyhow::Result<()> {
     let body: serde_json::Value = response.json().await?;
     assert_eq!(
         body,
-        json!({ "error": format!("Multiple jobs found for metis-id '{job_id}'") })
+        json!({ "error": format!("Multiple sessions found for metis-id '{job_id}'") })
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn set_job_status_rejects_empty_job_id() -> anyhow::Result<()> {
+async fn set_session_status_rejects_empty_session_id() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
@@ -868,7 +868,7 @@ async fn set_job_status_rejects_empty_job_id() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn set_job_status_returns_not_found_for_missing_job() -> anyhow::Result<()> {
+async fn set_session_status_returns_not_found_for_missing_session() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let missing_id = task_id("t-missing");
@@ -888,7 +888,7 @@ async fn set_job_status_returns_not_found_for_missing_job() -> anyhow::Result<()
 }
 
 #[tokio::test]
-async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
+async fn set_session_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();
@@ -965,7 +965,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
 }
 
 #[tokio::test]
-async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
+async fn set_session_status_can_mark_failed() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let (job_id, _) = handles
@@ -1019,7 +1019,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn get_job_context_rejects_empty_job_id() -> anyhow::Result<()> {
+async fn get_session_context_rejects_empty_session_id() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let response = client
@@ -1037,7 +1037,7 @@ async fn get_job_context_rejects_empty_job_id() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn get_job_context_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
+async fn get_session_context_returns_not_found_for_unknown_session() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let missing_id = task_id("t-missing");
@@ -1056,7 +1056,7 @@ async fn get_job_context_returns_not_found_for_unknown_job() -> anyhow::Result<(
 }
 
 #[tokio::test]
-async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()> {
+async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();
@@ -1172,7 +1172,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
 }
 
 #[tokio::test]
-async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
+async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();
@@ -1220,7 +1220,7 @@ async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
+async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();

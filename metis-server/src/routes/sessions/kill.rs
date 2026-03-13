@@ -16,13 +16,13 @@ pub async fn kill_session(
         .await
         .map_err(|err| match err {
             JobEngineError::NotFound(metis_id) => {
-                let message = format!("Job '{metis_id}' not found");
+                let message = format!("Session '{metis_id}' not found");
                 error!(session_id = %session_id, error = %message, "session not found");
                 ApiError::not_found(message)
             }
             JobEngineError::MultipleFound(metis_id) => {
-                let message = format!("Multiple jobs found for metis-id '{metis_id}'");
-                error!(session_id = %session_id, error = %message, "multiple jobs found");
+                let message = format!("Multiple sessions found for metis-id '{metis_id}'");
+                error!(session_id = %session_id, error = %message, "multiple sessions found");
                 ApiError::conflict(message)
             }
             #[cfg(feature = "kubernetes")]

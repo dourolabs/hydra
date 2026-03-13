@@ -634,15 +634,9 @@ impl Default for GithubPollerConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct SchedulerSection {
-    #[serde(
-        default = "default_process_pending_scheduler",
-        alias = "process_pending_jobs"
-    )]
+    #[serde(default = "default_process_pending_scheduler")]
     pub process_pending_sessions: WorkerSchedulerConfig,
-    #[serde(
-        default = "default_monitor_running_scheduler",
-        alias = "monitor_running_jobs"
-    )]
+    #[serde(default = "default_monitor_running_scheduler")]
     pub monitor_running_sessions: WorkerSchedulerConfig,
     #[serde(default = "default_run_spawners_scheduler")]
     pub run_spawners: WorkerSchedulerConfig,

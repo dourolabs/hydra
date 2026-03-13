@@ -29,7 +29,7 @@ impl MonitorRunningSessionsWorker {
 impl ScheduledWorker for MonitorRunningSessionsWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
-        // Kill any jobs that are running in the engine but missing from the store
+        // Kill any sessions that are running in the engine but missing from the store
         self.state.reap_orphaned_jobs().await;
 
         // Clean up tasks whose spawned_from issue has been deleted
@@ -71,7 +71,7 @@ impl ScheduledWorker for MonitorRunningSessionsWorker {
             "found active tasks to monitor"
         );
 
-        // Check each active job's status
+        // Check each active session's status
         let lifecycle_actor = ActorRef::System {
             worker_name: WORKER_NAME_SESSION_LIFECYCLE.into(),
             on_behalf_of: None,
@@ -126,7 +126,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reconciles_running_jobs_and_reports_progress() {
+    async fn reconciles_running_sessions_and_reports_progress() {
         let engine = Arc::new(MockJobEngine::new());
         let handles = test_state_with_engine_handles(engine.clone());
         let task = Session::new(
