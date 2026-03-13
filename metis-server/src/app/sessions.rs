@@ -249,6 +249,7 @@ impl AppState {
 
         info!(
             username = %creator,
+            ?secrets_filter,
             "resolving secrets for user"
         );
 
@@ -268,6 +269,7 @@ impl AppState {
         info!(
             username = %creator,
             user_secrets_count = user_secret_names.len(),
+            ?user_secret_names,
             "found user secrets"
         );
 
@@ -280,16 +282,25 @@ impl AppState {
                     .as_ref()
                     .is_some_and(|filter| filter.contains(secret_name));
                 if !allowed {
+                    info!(
+                        username = %creator,
+                        secret = %secret_name,
+                        "secret filtered out (not in secrets_filter and not an AI key)"
+                    );
                     continue;
                 }
             }
 
             match self.store.get_user_secret(creator, secret_name).await {
                 Ok(Some(encrypted)) => match self.secret_manager.decrypt(&encrypted) {
-                    Ok(value) if !value.trim().is_empty() => {
+                    Ok(value) => {
+                        info!(
+                            username = %creator,
+                            secret = %secret_name,
+                            "successfully decrypted and set user secret"
+                        );
                         env_vars.insert(secret_name.clone(), value);
                     }
-                    Ok(_) => {}
                     Err(err) => {
                         warn!(
                             username = %creator,
@@ -299,7 +310,13 @@ impl AppState {
                         );
                     }
                 },
-                Ok(None) => {}
+                Ok(None) => {
+                    info!(
+                        username = %creator,
+                        secret = %secret_name,
+                        "no secret found in store for this name"
+                    );
+                }
                 Err(err) => {
                     warn!(
                         username = %creator,
