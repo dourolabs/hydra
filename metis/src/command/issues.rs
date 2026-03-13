@@ -4362,7 +4362,7 @@ mod tests {
         assert!(rendered.contains("History:"));
         assert!(rendered.contains("2024-01-01T12:00:00Z Issue i-main v1 created"));
         assert!(rendered.contains("2024-01-02T09:00:00Z Patch p-main v1 created"));
-        assert!(rendered.contains("2024-01-02T12:00:00Z Job t-main v1 created"));
+        assert!(rendered.contains("2024-01-02T12:00:00Z Session t-main v1 created"));
         assert!(rendered.contains("Status: open -> in-progress"));
     }
 

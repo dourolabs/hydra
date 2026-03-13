@@ -216,8 +216,8 @@ mod tests {
 
         whoami_mock.assert();
         assert!(
-            error.to_string().contains("current actor is a task"),
-            "error should mention actor is a task: {error}"
+            error.to_string().contains("current actor is a session"),
+            "error should mention actor is a session: {error}"
         );
     }
 
