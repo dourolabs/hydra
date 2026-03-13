@@ -1,5 +1,5 @@
 use crate::{
-    BuildCacheContext, IssueId, RepoName, TaskId, VersionNumber,
+    BuildCacheContext, IssueId, RepoName, SessionId, VersionNumber,
     actor_ref::ActorRef,
     task_status::{Status, TaskError},
     users::Username,
@@ -13,7 +13,7 @@ use std::collections::HashMap;
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct Task {
+pub struct Session {
     pub prompt: String,
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -47,7 +47,7 @@ pub struct Task {
     pub end_time: Option<DateTime<Utc>>,
 }
 
-impl Task {
+impl Session {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         prompt: String,
@@ -98,7 +98,7 @@ fn default_status() -> Status {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct CreateJobRequest {
+pub struct CreateSessionRequest {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
@@ -110,7 +110,7 @@ pub struct CreateJobRequest {
     pub issue_id: Option<IssueId>,
 }
 
-impl CreateJobRequest {
+impl CreateSessionRequest {
     pub fn new(
         prompt: String,
         image: Option<String>,
@@ -137,7 +137,7 @@ pub enum BundleSpec {
     #[serde(rename = "none")]
     None,
     GitRepository {
-        /// Remote Git repository URL that should be cloned for the job context.
+        /// Remote Git repository URL that should be cloned for the session context.
         url: String,
         /// Specific git revision (branch, tag, or commit) to checkout after cloning.
         rev: String,
@@ -213,7 +213,7 @@ pub enum Bundle {
     #[serde(rename = "none")]
     None,
     GitRepository {
-        /// Remote Git repository URL that should be cloned for the job context.
+        /// Remote Git repository URL that should be cloned for the session context.
         url: String,
         /// Specific git revision (branch, tag, or commit) to checkout after cloning.
         rev: String,
@@ -284,17 +284,18 @@ impl WorkerContext {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct CreateJobResponse {
-    pub job_id: TaskId,
+pub struct CreateSessionResponse {
+    #[serde(alias = "job_id")]
+    pub session_id: SessionId,
 }
 
-impl CreateJobResponse {
-    pub fn new(job_id: TaskId) -> Self {
-        Self { job_id }
+impl CreateSessionResponse {
+    pub fn new(session_id: SessionId) -> Self {
+        Self { session_id }
     }
 }
 
-/// Lightweight summary of a job/task for list views.
+/// Lightweight summary of a session for list views.
 ///
 /// Excludes `context`, `image`, `model`, `env_vars`, `cpu_limit`,
 /// `memory_limit`, `secrets`, and `last_message`.
@@ -303,7 +304,7 @@ impl CreateJobResponse {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct JobSummary {
+pub struct SessionSummary {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
@@ -322,16 +323,16 @@ pub struct JobSummary {
     pub end_time: Option<DateTime<Utc>>,
 }
 
-impl From<&Task> for JobSummary {
-    fn from(task: &Task) -> Self {
-        let prompt = if task.prompt.chars().count() > 20 {
-            let mut s: String = task.prompt.chars().take(20).collect();
+impl From<&Session> for SessionSummary {
+    fn from(session: &Session) -> Self {
+        let prompt = if session.prompt.chars().count() > 20 {
+            let mut s: String = session.prompt.chars().take(20).collect();
             s.push_str("...");
             s
         } else {
-            task.prompt.clone()
+            session.prompt.clone()
         };
-        let error = task.error.as_ref().map(|e| match e {
+        let error = session.error.as_ref().map(|e| match e {
             TaskError::JobEngineError { reason } => {
                 if reason.chars().count() > 100 {
                     let truncated: String = reason.chars().take(100).collect();
@@ -344,41 +345,43 @@ impl From<&Task> for JobSummary {
             }
             _ => e.clone(),
         });
-        JobSummary {
+        SessionSummary {
             prompt,
-            spawned_from: task.spawned_from.clone(),
-            creator: task.creator.clone(),
-            status: task.status,
+            spawned_from: session.spawned_from.clone(),
+            creator: session.creator.clone(),
+            status: session.status,
             error,
-            deleted: task.deleted,
-            creation_time: task.creation_time,
-            start_time: task.start_time,
-            end_time: task.end_time,
+            deleted: session.deleted,
+            creation_time: session.creation_time,
+            start_time: session.start_time,
+            end_time: session.end_time,
         }
     }
 }
 
-/// Summary-level version record for job list responses.
+/// Summary-level version record for session list responses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct JobSummaryRecord {
-    pub job_id: TaskId,
+pub struct SessionSummaryRecord {
+    #[serde(alias = "job_id")]
+    pub session_id: SessionId,
     pub version: VersionNumber,
     pub timestamp: DateTime<Utc>,
-    pub task: JobSummary,
+    #[serde(alias = "task")]
+    pub session: SessionSummary,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
 }
 
-impl From<&JobVersionRecord> for JobSummaryRecord {
-    fn from(record: &JobVersionRecord) -> Self {
-        JobSummaryRecord {
-            job_id: record.job_id.clone(),
+impl From<&SessionVersionRecord> for SessionSummaryRecord {
+    fn from(record: &SessionVersionRecord) -> Self {
+        SessionSummaryRecord {
+            session_id: record.session_id.clone(),
             version: record.version,
             timestamp: record.timestamp,
-            task: JobSummary::from(&record.task),
+            session: SessionSummary::from(&record.session),
             actor: None,
         }
     }
@@ -388,18 +391,19 @@ impl From<&JobVersionRecord> for JobSummaryRecord {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct ListJobsResponse {
-    pub jobs: Vec<JobSummaryRecord>,
+pub struct ListSessionsResponse {
+    #[serde(alias = "jobs")]
+    pub sessions: Vec<SessionSummaryRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_count: Option<u64>,
 }
 
-impl ListJobsResponse {
-    pub fn new(jobs: Vec<JobSummaryRecord>) -> Self {
+impl ListSessionsResponse {
+    pub fn new(sessions: Vec<SessionSummaryRecord>) -> Self {
         Self {
-            jobs,
+            sessions,
             next_cursor: None,
             total_count: None,
         }
@@ -410,28 +414,30 @@ impl ListJobsResponse {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct JobVersionRecord {
-    pub job_id: TaskId,
+pub struct SessionVersionRecord {
+    #[serde(alias = "job_id")]
+    pub session_id: SessionId,
     pub version: VersionNumber,
     pub timestamp: DateTime<Utc>,
-    pub task: Task,
+    #[serde(alias = "task")]
+    pub session: Session,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<ActorRef>,
 }
 
-impl JobVersionRecord {
+impl SessionVersionRecord {
     pub fn new(
-        job_id: TaskId,
+        session_id: SessionId,
         version: VersionNumber,
         timestamp: DateTime<Utc>,
-        task: Task,
+        session: Session,
         actor: Option<ActorRef>,
     ) -> Self {
         Self {
-            job_id,
+            session_id,
             version,
             timestamp,
-            task,
+            session,
             actor,
         }
     }
@@ -472,15 +478,15 @@ where
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct SearchJobsQuery {
+pub struct SearchSessionsQuery {
     #[serde(default)]
     pub q: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
-    /// Filter jobs by status (comma-separated in query string). When multiple
-    /// statuses are provided, a job matches if its status is any of the given values.
+    /// Filter sessions by status (comma-separated in query string). When multiple
+    /// statuses are provided, a session matches if its status is any of the given values.
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
@@ -504,17 +510,17 @@ pub struct SearchJobsQuery {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct ListJobVersionsResponse {
-    pub versions: Vec<JobVersionRecord>,
+pub struct ListSessionVersionsResponse {
+    pub versions: Vec<SessionVersionRecord>,
 }
 
-impl ListJobVersionsResponse {
-    pub fn new(versions: Vec<JobVersionRecord>) -> Self {
+impl ListSessionVersionsResponse {
+    pub fn new(versions: Vec<SessionVersionRecord>) -> Self {
         Self { versions }
     }
 }
 
-impl SearchJobsQuery {
+impl SearchSessionsQuery {
     pub fn new(
         q: Option<String>,
         spawned_from: Option<IssueId>,
@@ -537,14 +543,15 @@ impl SearchJobsQuery {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct KillJobResponse {
-    pub job_id: TaskId,
+pub struct KillSessionResponse {
+    #[serde(alias = "job_id")]
+    pub session_id: SessionId,
     pub status: String,
 }
 
-impl KillJobResponse {
-    pub fn new(job_id: TaskId, status: String) -> Self {
-        Self { job_id, status }
+impl KillSessionResponse {
+    pub fn new(session_id: SessionId, status: String) -> Self {
+        Self { session_id, status }
     }
 }
 
@@ -555,9 +562,9 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn search_jobs_query_serializes_with_reqwest() {
+    fn search_sessions_query_serializes_with_reqwest() {
         let issue_id = IssueId::new();
-        let query = SearchJobsQuery {
+        let query = SearchSessionsQuery {
             q: Some("test query".to_string()),
             spawned_from: Some(issue_id.clone()),
             include_deleted: None,
@@ -578,8 +585,8 @@ mod tests {
     }
 
     #[test]
-    fn search_jobs_query_serializes_status_filter() {
-        let query = SearchJobsQuery::new(None, None, None, vec![Status::Running]);
+    fn search_sessions_query_serializes_status_filter() {
+        let query = SearchSessionsQuery::new(None, None, None, vec![Status::Running]);
 
         let params = serialize_query_params(&query)
             .into_iter()
@@ -588,8 +595,8 @@ mod tests {
     }
 
     #[test]
-    fn search_jobs_query_serializes_multi_status_filter() {
-        let query = SearchJobsQuery::new(
+    fn search_sessions_query_serializes_multi_status_filter() {
+        let query = SearchSessionsQuery::new(
             None,
             None,
             None,
@@ -606,8 +613,8 @@ mod tests {
     }
 
     #[test]
-    fn search_jobs_query_deserializes_comma_separated_status() {
-        let query: SearchJobsQuery =
+    fn search_sessions_query_deserializes_comma_separated_status() {
+        let query: SearchSessionsQuery =
             serde_urlencoded::from_str("status=created%2Cpending%2Crunning").unwrap();
         assert_eq!(
             query.status,
@@ -616,18 +623,18 @@ mod tests {
     }
 
     #[test]
-    fn search_jobs_query_serializes_empty_query() {
-        let query = SearchJobsQuery::default();
+    fn search_sessions_query_serializes_empty_query() {
+        let query = SearchSessionsQuery::default();
 
         let params = serialize_query_params(&query);
         assert!(
             params.is_empty(),
-            "expected no query params for empty SearchJobsQuery"
+            "expected no query params for empty SearchSessionsQuery"
         );
     }
 
-    fn make_test_task(prompt: &str) -> Task {
-        Task::new(
+    fn make_test_session(prompt: &str) -> Session {
+        Session::new(
             prompt.to_string(),
             BundleSpec::None,
             Some(IssueId::new()),
@@ -649,24 +656,24 @@ mod tests {
     }
 
     #[test]
-    fn job_summary_truncates_long_prompt() {
+    fn session_summary_truncates_long_prompt() {
         let long_prompt = "x".repeat(500);
-        let task = make_test_task(&long_prompt);
-        let summary = JobSummary::from(&task);
+        let session = make_test_session(&long_prompt);
+        let summary = SessionSummary::from(&session);
         assert_eq!(summary.prompt, format!("{}...", "x".repeat(20)));
     }
 
     #[test]
-    fn job_summary_preserves_short_prompt() {
-        let task = make_test_task("short prompt");
-        let summary = JobSummary::from(&task);
+    fn session_summary_preserves_short_prompt() {
+        let session = make_test_session("short prompt");
+        let summary = SessionSummary::from(&session);
         assert_eq!(summary.prompt, "short prompt");
     }
 
     #[test]
-    fn job_summary_excludes_heavy_fields() {
-        let task = make_test_task("test prompt");
-        let summary = JobSummary::from(&task);
+    fn session_summary_excludes_heavy_fields() {
+        let session = make_test_session("test prompt");
+        let summary = SessionSummary::from(&session);
         let value = serde_json::to_value(&summary).unwrap();
         assert!(value.get("context").is_none());
         assert!(value.get("image").is_none());
@@ -679,9 +686,9 @@ mod tests {
     }
 
     #[test]
-    fn job_summary_maps_all_fields() {
-        let task = make_test_task("my prompt");
-        let summary = JobSummary::from(&task);
+    fn session_summary_maps_all_fields() {
+        let session = make_test_session("my prompt");
+        let summary = SessionSummary::from(&session);
         assert_eq!(summary.prompt, "my prompt");
         assert!(summary.spawned_from.is_some());
         assert_eq!(summary.creator, Username::from("alice"));
@@ -694,25 +701,26 @@ mod tests {
     }
 
     #[test]
-    fn job_summary_record_from_version_record() {
-        let task = make_test_task("record test");
-        let task_id = crate::TaskId::new();
-        let record = JobVersionRecord::new(task_id.clone(), 7, chrono::Utc::now(), task, None);
-        let summary_record = JobSummaryRecord::from(&record);
-        assert_eq!(summary_record.job_id, task_id);
+    fn session_summary_record_from_version_record() {
+        let session = make_test_session("record test");
+        let session_id = crate::SessionId::new();
+        let record =
+            SessionVersionRecord::new(session_id.clone(), 7, chrono::Utc::now(), session, None);
+        let summary_record = SessionSummaryRecord::from(&record);
+        assert_eq!(summary_record.session_id, session_id);
         assert_eq!(summary_record.version, 7);
-        assert_eq!(summary_record.task.prompt, "record test");
+        assert_eq!(summary_record.session.prompt, "record test");
         assert_eq!(summary_record.actor, None);
     }
 
     #[test]
-    fn job_summary_truncates_long_error_reason() {
+    fn session_summary_truncates_long_error_reason() {
         let long_reason = "e".repeat(200);
-        let mut task = make_test_task("prompt");
-        task.error = Some(TaskError::JobEngineError {
+        let mut session = make_test_session("prompt");
+        session.error = Some(TaskError::JobEngineError {
             reason: long_reason,
         });
-        let summary = JobSummary::from(&task);
+        let summary = SessionSummary::from(&session);
         let error = summary.error.unwrap();
         match error {
             TaskError::JobEngineError { reason } => {
@@ -725,13 +733,13 @@ mod tests {
     }
 
     #[test]
-    fn job_summary_preserves_short_error_reason() {
+    fn session_summary_preserves_short_error_reason() {
         let short_reason = "something went wrong".to_string();
-        let mut task = make_test_task("prompt");
-        task.error = Some(TaskError::JobEngineError {
+        let mut session = make_test_session("prompt");
+        session.error = Some(TaskError::JobEngineError {
             reason: short_reason.clone(),
         });
-        let summary = JobSummary::from(&task);
+        let summary = SessionSummary::from(&session);
         let error = summary.error.unwrap();
         match error {
             TaskError::JobEngineError { reason } => {
@@ -742,15 +750,27 @@ mod tests {
     }
 
     #[test]
-    fn job_summary_record_omits_actor() {
-        let task = make_test_task("actor test");
-        let task_id = crate::TaskId::new();
+    fn session_summary_record_omits_actor() {
+        let session = make_test_session("actor test");
+        let session_id = crate::SessionId::new();
         let actor = ActorRef::System {
             worker_name: "worker-1".to_string(),
             on_behalf_of: None,
         };
-        let record = JobVersionRecord::new(task_id, 1, chrono::Utc::now(), task, Some(actor));
-        let summary_record = JobSummaryRecord::from(&record);
+        let record =
+            SessionVersionRecord::new(session_id, 1, chrono::Utc::now(), session, Some(actor));
+        let summary_record = SessionSummaryRecord::from(&record);
         assert_eq!(summary_record.actor, None);
+    }
+
+    #[test]
+    fn backward_compat_deserializes_job_id_field() {
+        let session_id = crate::SessionId::new();
+        let json = serde_json::json!({
+            "job_id": session_id.to_string(),
+            "status": "ok"
+        });
+        let resp: KillSessionResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(resp.session_id, session_id);
     }
 }

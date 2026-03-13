@@ -8,7 +8,8 @@ const MAX_RANDOM_LEN: usize = 12;
 const ISSUE_PREFIX: &str = "i-";
 const MESSAGE_PREFIX: &str = "m-";
 const PATCH_PREFIX: &str = "p-";
-const TASK_PREFIX: &str = "t-";
+const SESSION_PREFIX: &str = "s-";
+const LEGACY_SESSION_PREFIX: &str = "t-";
 const DOCUMENT_PREFIX: &str = "d-";
 const LABEL_PREFIX: &str = "l-";
 const NOTIFICATION_PREFIX: &str = "nf-";
@@ -77,7 +78,7 @@ pub struct MessageId(String);
 #[serde(transparent)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
-pub struct TaskId(String);
+pub struct SessionId(String);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(transparent)]
@@ -108,8 +109,8 @@ impl MetisId {
         MessageId::try_from(self.clone()).ok()
     }
 
-    pub fn as_task_id(&self) -> Option<TaskId> {
-        TaskId::try_from(self.clone()).ok()
+    pub fn as_session_id(&self) -> Option<SessionId> {
+        SessionId::try_from(self.clone()).ok()
     }
 
     pub fn as_notification_id(&self) -> Option<NotificationId> {
@@ -134,8 +135,8 @@ impl MetisId {
             PatchId::validate_str(value)
         } else if value.starts_with(DOCUMENT_PREFIX) {
             DocumentId::validate_str(value)
-        } else if value.starts_with(TASK_PREFIX) {
-            TaskId::validate_str(value)
+        } else if value.starts_with(SESSION_PREFIX) || value.starts_with(LEGACY_SESSION_PREFIX) {
+            SessionId::validate_str(value)
         } else {
             Err(MetisIdError::InvalidPrefix(value.to_string()))
         }
@@ -288,9 +289,9 @@ impl<'de> Deserialize<'de> for MessageId {
     }
 }
 
-impl TaskId {
+impl SessionId {
     pub fn generate(random_len: usize) -> Result<Self, MetisIdError> {
-        generate_with_prefix(TASK_PREFIX, random_len).map(Self)
+        generate_with_prefix(SESSION_PREFIX, random_len).map(Self)
     }
 
     pub fn new() -> Self {
@@ -298,27 +299,28 @@ impl TaskId {
     }
 
     pub const fn prefix() -> &'static str {
-        TASK_PREFIX
+        SESSION_PREFIX
     }
 
     fn validate_str(value: &str) -> Result<(), MetisIdError> {
-        validate_with_prefix(value, TASK_PREFIX)
+        validate_with_prefix(value, SESSION_PREFIX)
+            .or_else(|_| validate_with_prefix(value, LEGACY_SESSION_PREFIX))
     }
 }
 
-impl Default for TaskId {
+impl Default for SessionId {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'de> Deserialize<'de> for TaskId {
+impl<'de> Deserialize<'de> for SessionId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         let value = String::deserialize(deserializer)?;
-        TaskId::try_from(value).map_err(de::Error::custom)
+        SessionId::try_from(value).map_err(de::Error::custom)
     }
 }
 
@@ -435,11 +437,11 @@ impl TryFrom<String> for MessageId {
     }
 }
 
-impl TryFrom<String> for TaskId {
+impl TryFrom<String> for SessionId {
     type Error = MetisIdError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        TaskId::validate_str(&value)?;
+        SessionId::validate_str(&value)?;
         Ok(Self(value))
     }
 }
@@ -494,7 +496,7 @@ impl TryFrom<MetisId> for MessageId {
     }
 }
 
-impl TryFrom<MetisId> for TaskId {
+impl TryFrom<MetisId> for SessionId {
     type Error = MetisIdError;
 
     fn try_from(value: MetisId) -> Result<Self, Self::Error> {
@@ -542,8 +544,8 @@ impl From<MessageId> for MetisId {
     }
 }
 
-impl From<TaskId> for MetisId {
-    fn from(value: TaskId) -> Self {
+impl From<SessionId> for MetisId {
+    fn from(value: SessionId) -> Self {
         Self(value.0)
     }
 }
@@ -584,8 +586,8 @@ impl From<MessageId> for String {
     }
 }
 
-impl From<TaskId> for String {
-    fn from(value: TaskId) -> Self {
+impl From<SessionId> for String {
+    fn from(value: SessionId) -> Self {
         value.0
     }
 }
@@ -638,7 +640,7 @@ impl fmt::Display for MessageId {
     }
 }
 
-impl fmt::Display for TaskId {
+impl fmt::Display for SessionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
@@ -686,7 +688,7 @@ impl AsRef<str> for MessageId {
     }
 }
 
-impl AsRef<str> for TaskId {
+impl AsRef<str> for SessionId {
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -744,7 +746,7 @@ impl FromStr for MessageId {
     }
 }
 
-impl FromStr for TaskId {
+impl FromStr for SessionId {
     type Err = MetisIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

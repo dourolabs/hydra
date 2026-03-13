@@ -1,5 +1,5 @@
 use crate::api::v1::users::Username;
-use crate::{IssueId, TaskId};
+use crate::{IssueId, SessionId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -12,7 +12,8 @@ pub enum ActorIdentity {
         username: Username,
     },
     Task {
-        task_id: TaskId,
+        #[serde(alias = "task_id")]
+        task_id: SessionId,
         creator: Username,
     },
     Issue {

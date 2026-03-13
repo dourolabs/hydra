@@ -1,5 +1,5 @@
 use crate::api::v1::users::Username;
-use crate::ids::{IssueId, TaskId};
+use crate::ids::{IssueId, SessionId};
 use crate::whoami::ActorIdentity;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -10,7 +10,7 @@ use std::str::FromStr;
 #[cfg_attr(feature = "ts", ts(export))]
 pub enum ActorId {
     Username(Username),
-    Task(TaskId),
+    Task(SessionId),
     Issue(IssueId),
 }
 
@@ -97,7 +97,7 @@ impl ActorRef {
 ///
 /// Shorthand rules:
 /// - Strings starting with `"i-"` are parsed as [`IssueId`] → `ActorId::Issue`
-/// - Strings starting with `"t-"` are parsed as [`TaskId`] → `ActorId::Task`
+/// - Strings starting with `"t-"` or `"s-"` are parsed as [`SessionId`] → `ActorId::Task`
 /// - Everything else is treated as a username → `ActorId::Username`
 ///
 /// **Note:** This `FromStr` deliberately does NOT round-trip with [`Display`],
@@ -119,10 +119,10 @@ impl FromStr for ActorId {
             return Ok(ActorId::Issue(issue_id));
         }
 
-        if trimmed.starts_with("t-") {
-            let task_id = TaskId::from_str(trimmed)
-                .map_err(|e| format!("invalid task ID '{trimmed}': {e}"))?;
-            return Ok(ActorId::Task(task_id));
+        if trimmed.starts_with("t-") || trimmed.starts_with("s-") {
+            let session_id = SessionId::from_str(trimmed)
+                .map_err(|e| format!("invalid session ID '{trimmed}': {e}"))?;
+            return Ok(ActorId::Task(session_id));
         }
 
         Ok(ActorId::Username(Username::from(trimmed)))
@@ -167,7 +167,7 @@ pub fn parse_actor_name(name: &str) -> Option<ActorId> {
         if task_id.is_empty() {
             return None;
         }
-        let task_id = TaskId::from_str(task_id).ok()?;
+        let task_id = SessionId::from_str(task_id).ok()?;
         return Some(ActorId::Task(task_id));
     }
 
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn parse_actor_name_task() {
-        let task_id = TaskId::from_str("t-abcdef").unwrap();
+        let task_id = SessionId::from_str("t-abcdef").unwrap();
         let result = parse_actor_name("w-t-abcdef");
         assert_eq!(result, Some(ActorId::Task(task_id)));
     }
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn actor_id_display_task() {
-        let task_id = TaskId::from_str("t-abcdef").unwrap();
+        let task_id = SessionId::from_str("t-abcdef").unwrap();
         let actor_id = ActorId::Task(task_id);
         assert_eq!(actor_id.to_string(), "w-t-abcdef");
     }
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn try_from_actor_identity_task() {
-        let task_id = TaskId::from_str("t-abcdef").unwrap();
+        let task_id = SessionId::from_str("t-abcdef").unwrap();
         let identity = ActorIdentity::Task {
             task_id: task_id.clone(),
             creator: Username::from("bob"),

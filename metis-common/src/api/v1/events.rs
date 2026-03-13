@@ -18,9 +18,9 @@ pub struct EventsQuery {
     #[serde(default)]
     pub issue_ids: Option<String>,
 
-    /// Comma-separated job IDs to filter.
-    #[serde(default)]
-    pub job_ids: Option<String>,
+    /// Comma-separated session IDs to filter.
+    #[serde(default, alias = "job_ids")]
+    pub session_ids: Option<String>,
 
     /// Comma-separated patch IDs to filter.
     #[serde(default)]
@@ -53,8 +53,8 @@ impl EventsQuery {
         if let Some(ref ids) = self.issue_ids {
             params.push(("issue_ids", ids.clone()));
         }
-        if let Some(ref ids) = self.job_ids {
-            params.push(("job_ids", ids.clone()));
+        if let Some(ref ids) = self.session_ids {
+            params.push(("session_ids", ids.clone()));
         }
         if let Some(ref ids) = self.patch_ids {
             params.push(("patch_ids", ids.clone()));
@@ -87,8 +87,8 @@ pub enum SseEventType {
     PatchCreated,
     PatchUpdated,
     PatchDeleted,
-    JobCreated,
-    JobUpdated,
+    SessionCreated,
+    SessionUpdated,
     DocumentCreated,
     DocumentUpdated,
     DocumentDeleted,
@@ -112,8 +112,8 @@ impl SseEventType {
             Self::PatchCreated => "patch_created",
             Self::PatchUpdated => "patch_updated",
             Self::PatchDeleted => "patch_deleted",
-            Self::JobCreated => "job_created",
-            Self::JobUpdated => "job_updated",
+            Self::SessionCreated => "session_created",
+            Self::SessionUpdated => "session_updated",
             Self::DocumentCreated => "document_created",
             Self::DocumentUpdated => "document_updated",
             Self::DocumentDeleted => "document_deleted",
@@ -141,8 +141,8 @@ impl std::str::FromStr for SseEventType {
             "patch_created" => Ok(Self::PatchCreated),
             "patch_updated" => Ok(Self::PatchUpdated),
             "patch_deleted" => Ok(Self::PatchDeleted),
-            "job_created" => Ok(Self::JobCreated),
-            "job_updated" => Ok(Self::JobUpdated),
+            "session_created" | "job_created" => Ok(Self::SessionCreated),
+            "session_updated" | "job_updated" => Ok(Self::SessionUpdated),
             "document_created" => Ok(Self::DocumentCreated),
             "document_updated" => Ok(Self::DocumentUpdated),
             "document_deleted" => Ok(Self::DocumentDeleted),
@@ -170,7 +170,7 @@ pub struct EntityEventData {
     pub version: u64,
     pub timestamp: DateTime<Utc>,
     /// Full entity state after the mutation, serialized as a version record
-    /// (e.g., `IssueVersionRecord`, `JobVersionRecord`, etc.).
+    /// (e.g., `IssueVersionRecord`, `SessionVersionRecord`, etc.).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity: Option<serde_json::Value>,
 }

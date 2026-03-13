@@ -1,5 +1,5 @@
 use super::{labels::LabelSummary, users::Username};
-use crate::{PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
+use crate::{PatchId, RepoName, SessionId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -218,7 +218,7 @@ pub struct Patch {
     #[serde(default)]
     pub is_automatic_backup: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<TaskId>,
+    pub created_by: Option<SessionId>,
     /// The resolved username of the human/agent that authored the patch.
     pub creator: Username,
     #[serde(default)]
@@ -252,7 +252,7 @@ impl Patch {
         diff: String,
         status: PatchStatus,
         is_automatic_backup: bool,
-        created_by: Option<TaskId>,
+        created_by: Option<SessionId>,
         creator: Username,
         reviews: Vec<Review>,
         service_repo_name: RepoName,
@@ -507,7 +507,7 @@ pub struct PatchSummary {
     #[serde(default)]
     pub is_automatic_backup: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<TaskId>,
+    pub created_by: Option<SessionId>,
     pub creator: Username,
     pub review_summary: ReviewSummary,
     pub service_repo_name: RepoName,
@@ -754,7 +754,7 @@ mod tests {
             diff: "diff --git a/file.rs\n+added line\n".to_string(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
-            created_by: Some(crate::TaskId::new()),
+            created_by: Some(crate::SessionId::new()),
             creator: Username::from("alice"),
             reviews: vec![
                 Review::new("looks good".to_string(), true, "bob".to_string(), None),

@@ -1,7 +1,7 @@
 use super::labels::LabelSummary;
 use super::users::Username;
 pub use crate::IssueId;
-use crate::{LabelId, PatchId, RepoName, TaskId, VersionNumber, actor_ref::ActorRef};
+use crate::{LabelId, PatchId, RepoName, SessionId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
@@ -442,8 +442,12 @@ pub struct Issue {
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<String>,
-    #[serde(default, skip_serializing_if = "JobSettings::is_default")]
-    pub job_settings: JobSettings,
+    #[serde(
+        default,
+        alias = "job_settings",
+        skip_serializing_if = "SessionSettings::is_default"
+    )]
+    pub session_settings: SessionSettings,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub todo_list: Vec<TodoItem>,
     #[serde(default)]
@@ -464,7 +468,7 @@ impl Issue {
         progress: String,
         status: IssueStatus,
         assignee: Option<String>,
-        job_settings: Option<JobSettings>,
+        session_settings: Option<SessionSettings>,
         todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
@@ -478,7 +482,7 @@ impl Issue {
             progress,
             status,
             assignee,
-            job_settings: job_settings.unwrap_or_default(),
+            session_settings: session_settings.unwrap_or_default(),
             todo_list,
             dependencies,
             patches,
@@ -491,7 +495,7 @@ impl Issue {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct JobSettings {
+pub struct SessionSettings {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub repo_name: Option<RepoName>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -512,7 +516,7 @@ pub struct JobSettings {
     pub secrets: Option<Vec<String>>,
 }
 
-impl JobSettings {
+impl SessionSettings {
     pub fn is_default(value: &Self) -> bool {
         value == &Self::default()
     }
@@ -597,8 +601,8 @@ impl IssueVersionRecord {
 #[non_exhaustive]
 pub struct UpsertIssueRequest {
     pub issue: Issue,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<TaskId>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "job_id")]
+    pub session_id: Option<SessionId>,
     /// Label IDs to associate with this issue (replaces existing labels).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label_ids: Option<Vec<LabelId>>,
@@ -609,10 +613,10 @@ pub struct UpsertIssueRequest {
 }
 
 impl UpsertIssueRequest {
-    pub fn new(issue: Issue, job_id: Option<TaskId>) -> Self {
+    pub fn new(issue: Issue, session_id: Option<SessionId>) -> Self {
         Self {
             issue,
-            job_id,
+            session_id,
             label_ids: None,
             label_names: None,
         }
@@ -756,7 +760,7 @@ impl SearchIssuesQuery {
 
 /// Lightweight summary of an issue for list views.
 ///
-/// Excludes `job_settings` and the full `description` body.
+/// Excludes `session_settings` and the full `description` body.
 /// The `description` field is truncated to the first line (max 200 chars).
 /// The `progress` field is truncated to the first 200 characters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1031,12 +1035,12 @@ mod tests {
 
         assert!(issue.todo_list.is_empty());
         assert_eq!(issue.status, IssueStatus::Open);
-        assert!(JobSettings::is_default(&issue.job_settings));
+        assert!(SessionSettings::is_default(&issue.session_settings));
     }
 
     #[test]
     fn issue_todo_list_round_trips_in_order() {
-        let job_settings = JobSettings {
+        let session_settings = SessionSettings {
             repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
             remote_url: Some("https://github.com/dourolabs/metis".to_string()),
             image: Some("worker:latest".to_string()),
@@ -1065,7 +1069,7 @@ mod tests {
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
-            job_settings: job_settings.clone(),
+            session_settings: session_settings.clone(),
             todo_list: todos.clone(),
             dependencies: Vec::new(),
             patches: Vec::new(),
@@ -1077,7 +1081,7 @@ mod tests {
 
         let round_trip: Issue = serde_json::from_value(value).expect("issue should deserialize");
         assert_eq!(round_trip.todo_list, todos);
-        assert_eq!(round_trip.job_settings, job_settings);
+        assert_eq!(round_trip.session_settings, session_settings);
     }
 
     #[test]
@@ -1093,7 +1097,7 @@ mod tests {
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
-            job_settings: Default::default(),
+            session_settings: Default::default(),
             todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),
@@ -1123,7 +1127,7 @@ mod tests {
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
-            job_settings: Default::default(),
+            session_settings: Default::default(),
             todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),
@@ -1164,7 +1168,7 @@ mod tests {
             progress: "some progress text".to_string(),
             status: IssueStatus::InProgress,
             assignee: Some("bob".to_string()),
-            job_settings: JobSettings {
+            session_settings: SessionSettings {
                 repo_name: Some(RepoName::from_str("org/repo").unwrap()),
                 ..Default::default()
             },
@@ -1214,11 +1218,11 @@ mod tests {
     }
 
     #[test]
-    fn issue_summary_excludes_job_settings() {
+    fn issue_summary_excludes_session_settings() {
         let issue = make_test_issue("test issue");
         let summary = IssueSummary::from(&issue);
         let value = serde_json::to_value(&summary).unwrap();
-        assert!(value.get("job_settings").is_none());
+        assert!(value.get("session_settings").is_none());
     }
 
     #[test]

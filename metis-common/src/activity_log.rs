@@ -1,5 +1,5 @@
 use crate::{
-    DocumentId, IssueId, MetisId, PatchId, TaskId, VersionNumber, Versioned, actor_ref::ActorRef,
+    DocumentId, IssueId, MetisId, PatchId, SessionId, VersionNumber, Versioned, actor_ref::ActorRef,
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -15,7 +15,8 @@ use std::collections::BTreeSet;
 pub enum ActivityObjectKind {
     Issue,
     Patch,
-    Job,
+    #[serde(alias = "job")]
+    Session,
     Document,
 }
 
@@ -75,11 +76,11 @@ pub fn activity_log_for_document_versions(
     activity_log_from_versions(document_id.into(), ActivityObjectKind::Document, versions)
 }
 
-pub fn activity_log_for_job_versions<T: Serialize>(
-    job_id: TaskId,
+pub fn activity_log_for_session_versions<T: Serialize>(
+    session_id: SessionId,
     versions: &[Versioned<T>],
 ) -> Vec<ActivityLogEntry> {
-    activity_log_from_versions(job_id.into(), ActivityObjectKind::Job, versions)
+    activity_log_from_versions(session_id.into(), ActivityObjectKind::Session, versions)
 }
 
 pub fn activity_log_from_versions<T: Serialize>(
@@ -208,7 +209,7 @@ mod tests {
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
-            job_settings: Default::default(),
+            session_settings: Default::default(),
             todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),
@@ -311,7 +312,7 @@ mod tests {
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
-            job_settings: Default::default(),
+            session_settings: Default::default(),
             todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),

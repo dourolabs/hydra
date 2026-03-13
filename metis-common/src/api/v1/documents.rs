@@ -1,5 +1,5 @@
 use super::labels::LabelSummary;
-use crate::{DocumentId, DocumentPath, TaskId, VersionNumber, actor_ref::ActorRef};
+use crate::{DocumentId, DocumentPath, SessionId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<DocumentPath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<TaskId>,
+    pub created_by: Option<SessionId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
 }
@@ -24,7 +24,7 @@ impl Document {
         title: String,
         body_markdown: String,
         path: Option<String>,
-        created_by: Option<TaskId>,
+        created_by: Option<SessionId>,
         deleted: bool,
     ) -> Result<Self, crate::DocumentPathError> {
         let path = path.map(|p| p.parse()).transpose()?;
@@ -88,7 +88,7 @@ pub struct SearchDocumentsQuery {
     #[serde(default)]
     pub path_is_exact: Option<bool>,
     #[serde(default)]
-    pub created_by: Option<TaskId>,
+    pub created_by: Option<SessionId>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
     /// Maximum number of results to return. When omitted, all results are returned.
@@ -107,7 +107,7 @@ impl SearchDocumentsQuery {
         q: Option<String>,
         path_prefix: Option<String>,
         path_is_exact: Option<bool>,
-        created_by: Option<TaskId>,
+        created_by: Option<SessionId>,
         include_deleted: Option<bool>,
     ) -> Self {
         Self {
@@ -181,7 +181,7 @@ pub struct DocumentSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<DocumentPath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<TaskId>,
+    pub created_by: Option<SessionId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn document_new_accepts_all_fields() {
-        let created_by = TaskId::new();
+        let created_by = SessionId::new();
         let document = Document::new(
             "Title".to_string(),
             "Body".to_string(),
@@ -316,7 +316,7 @@ mod tests {
             q: Some("api".to_string()),
             path_prefix: Some("docs/".to_string()),
             path_is_exact: None,
-            created_by: Some(TaskId::new()),
+            created_by: Some(SessionId::new()),
             include_deleted: None,
             limit: None,
             cursor: None,
@@ -382,7 +382,7 @@ mod tests {
             "My Doc".to_string(),
             "# Heading\n\nLong markdown body...".to_string(),
             Some("docs/test.md".to_string()),
-            Some(TaskId::new()),
+            Some(SessionId::new()),
             false,
         )
         .unwrap();
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn document_summary_maps_all_fields() {
-        let created_by = TaskId::new();
+        let created_by = SessionId::new();
         let doc = Document::new(
             "Title".to_string(),
             "body".to_string(),
