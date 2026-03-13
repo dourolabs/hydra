@@ -649,7 +649,7 @@ impl TestHarnessBuilder {
 
         // Default user
         let (default_actor, default_token) =
-            Actor::new_for_task(TaskId::new(), Username::from("default").into());
+            Actor::new_for_session(TaskId::new(), Username::from("default").into());
         store.add_actor(default_actor, &ActorRef::test()).await?;
         let default_user = User::new(Username::from("default"), Some(1), false);
         store
@@ -663,7 +663,7 @@ impl TestHarnessBuilder {
                 continue; // Already created
             }
             let (actor, token) =
-                Actor::new_for_task(TaskId::new(), Username::from(user_name.as_str()).into());
+                Actor::new_for_session(TaskId::new(), Username::from(user_name.as_str()).into());
             store.add_actor(actor, &ActorRef::test()).await?;
             let user = User::new(
                 Username::from(user_name.as_str()),

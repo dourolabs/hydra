@@ -193,7 +193,7 @@ fn test_auth() -> (Actor, String) {
     static TEST_AUTH: OnceLock<(Actor, String)> = OnceLock::new();
     TEST_AUTH
         .get_or_init(|| {
-            Actor::new_for_task(
+            Actor::new_for_session(
                 TaskId::new(),
                 crate::domain::users::Username::from("test-creator"),
             )

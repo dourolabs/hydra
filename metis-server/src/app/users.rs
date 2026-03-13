@@ -141,7 +141,7 @@ impl AppState {
         let (actor, auth_token) = if let Some(issue_id) = task.spawned_from {
             Actor::new_for_issue(issue_id, creator)
         } else {
-            Actor::new_for_task(task_id, creator)
+            Actor::new_for_session(task_id, creator)
         };
         if let Err(err) = self
             .store
