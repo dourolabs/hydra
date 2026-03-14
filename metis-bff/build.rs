@@ -28,14 +28,6 @@ fn main() {
         }
         return;
     }
-
-    // If dist already exists with content, skip the build (dev workflow).
-    // In CI/Docker the dist won't exist yet, so we build it.
-    if dist_dir.join("index.html").exists() {
-        println!("cargo:warning=Frontend dist already exists, skipping build");
-        return;
-    }
-
     // Install dependencies if needed.
     if !frontend_dir.join("node_modules").exists() {
         println!("cargo:warning=Installing frontend dependencies...");
