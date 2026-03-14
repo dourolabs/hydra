@@ -4,6 +4,9 @@ use metis::client::MetisClient;
 use tokio::task::JoinHandle;
 use tracing::warn;
 
+use axum_extra::extract::cookie::CookieJar;
+
+use crate::auth::COOKIE_NAME;
 use crate::cache::{self, EntityCache};
 use crate::config::BffConfig;
 use crate::upstream::Upstream;
@@ -37,6 +40,14 @@ impl<U: Upstream> BffState<U> {
             cache_task,
             auto_login_token: auto_login_token.map(Arc::new),
         }
+    }
+
+    /// Resolve the auth token: use auto_login_token if set, otherwise extract from cookie.
+    pub fn resolve_token(&self, jar: &CookieJar) -> Option<String> {
+        if let Some(token) = &self.auto_login_token {
+            return Some(token.as_ref().clone());
+        }
+        jar.get(COOKIE_NAME).map(|c| c.value().to_string())
     }
 
     fn start_cache(
