@@ -657,10 +657,7 @@ fn start_server_in_process() -> Result<()> {
                 // Redirect stdin to /dev/null so the background server doesn't
                 // consume terminal input meant for the user's shell.
                 unsafe {
-                    let dev_null = libc::open(
-                        c"/dev/null".as_ptr(),
-                        libc::O_RDONLY,
-                    );
+                    let dev_null = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
                     if dev_null >= 0 {
                         libc::dup2(dev_null, libc::STDIN_FILENO);
                         libc::close(dev_null);
