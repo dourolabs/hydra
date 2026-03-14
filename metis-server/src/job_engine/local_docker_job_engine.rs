@@ -265,6 +265,7 @@ impl JobEngine for LocalDockerJobEngine {
 
         let host_config = HostConfig {
             memory,
+            extra_hosts: Some(vec!["host.docker.internal:host-gateway".to_string()]),
             ..Default::default()
         };
 
