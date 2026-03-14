@@ -530,20 +530,20 @@ export class MetisApiClient {
   // Secrets
   // ---------------------------------------------------------------------------
 
-  /** GET /v1/users/me/secrets */
-  listSecrets(): Promise<ListSecretsResponse> {
-    return this.get("/v1/users/me/secrets");
+  /** GET /v1/users/:username/secrets */
+  listSecrets(username: string): Promise<ListSecretsResponse> {
+    return this.get(`/v1/users/${encodeURIComponent(username)}/secrets`);
   }
 
-  /** PUT /v1/users/me/secrets/:name */
-  setSecret(name: string, value: string): Promise<void> {
+  /** PUT /v1/users/:username/secrets/:name */
+  setSecret(username: string, name: string, value: string): Promise<void> {
     const body: SetSecretRequest = { value };
-    return this.put(`/v1/users/me/secrets/${encodeURIComponent(name)}`, body);
+    return this.put(`/v1/users/${encodeURIComponent(username)}/secrets/${encodeURIComponent(name)}`, body);
   }
 
-  /** DELETE /v1/users/me/secrets/:name */
-  deleteSecret(name: string): Promise<void> {
-    return this.del(`/v1/users/me/secrets/${encodeURIComponent(name)}`);
+  /** DELETE /v1/users/:username/secrets/:name */
+  deleteSecret(username: string, name: string): Promise<void> {
+    return this.del(`/v1/users/${encodeURIComponent(username)}/secrets/${encodeURIComponent(name)}`);
   }
 
   // ---------------------------------------------------------------------------
