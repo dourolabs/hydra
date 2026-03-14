@@ -34,6 +34,7 @@ pub fn router(assets: &FrontendAssets) -> Option<Router> {
 
 /// Router that serves assets from a filesystem directory with SPA fallback.
 fn directory_router(dir: std::path::PathBuf) -> Router {
+    let dir_for_root = dir.clone();
     Router::new()
         .route(
             "/*path",
@@ -44,10 +45,8 @@ fn directory_router(dir: std::path::PathBuf) -> Router {
         )
         .route(
             "/",
-            get(move || {
-                // We need our own clone for this closure.
-                // Since we moved dir into the previous closure, we use a different approach.
-                async { StatusCode::NOT_FOUND.into_response() }
+            get(move || async move {
+                serve_directory_file(&dir_for_root, "index.html").into_response()
             }),
         )
 }

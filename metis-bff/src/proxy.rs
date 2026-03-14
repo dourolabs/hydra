@@ -85,7 +85,7 @@ async fn v1_pass_through_root<U: Upstream>(
 /// `Bearer <token>` (cookie-to-Bearer translation for `/api/v1/*`).
 /// If `None`, the original Authorization header is passed through
 /// (transparent mirror for `/v1/*`).
-pub async fn forward_to_upstream<U: Upstream>(
+pub(crate) async fn forward_to_upstream<U: Upstream>(
     bff: &BffState<U>,
     target_path: &str,
     override_token: Option<String>,
