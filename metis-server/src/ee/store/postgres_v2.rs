@@ -122,15 +122,15 @@ impl PostgresStoreV2 {
     }
 
     async fn ensure_issue_exists(&self, id: &IssueId) -> Result<(), StoreError> {
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_ISSUES_V2} WHERE id = $1"
+        let exists: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM {TABLE_ISSUES_V2} WHERE id = $1 LIMIT 1)"
         ))
         .bind(id.as_ref())
         .fetch_one(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
 
-        if exists == 0 {
+        if !exists {
             Err(StoreError::IssueNotFound(id.clone()))
         } else {
             Ok(())
@@ -138,15 +138,15 @@ impl PostgresStoreV2 {
     }
 
     async fn ensure_patch_exists(&self, id: &PatchId) -> Result<(), StoreError> {
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_PATCHES_V2} WHERE id = $1"
+        let exists: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM {TABLE_PATCHES_V2} WHERE id = $1 LIMIT 1)"
         ))
         .bind(id.as_ref())
         .fetch_one(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
 
-        if exists == 0 {
+        if !exists {
             Err(StoreError::PatchNotFound(id.clone()))
         } else {
             Ok(())
@@ -154,15 +154,15 @@ impl PostgresStoreV2 {
     }
 
     async fn ensure_session_exists(&self, id: &SessionId) -> Result<(), StoreError> {
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_TASKS_V2} WHERE id = $1"
+        let exists: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM {TABLE_TASKS_V2} WHERE id = $1 LIMIT 1)"
         ))
         .bind(id.as_ref())
         .fetch_one(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
 
-        if exists == 0 {
+        if !exists {
             Err(StoreError::SessionNotFound(id.clone()))
         } else {
             Ok(())
@@ -171,15 +171,15 @@ impl PostgresStoreV2 {
 
     async fn ensure_repository_exists(&self, name: &RepoName) -> Result<(), StoreError> {
         let name_str = name.as_str();
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_REPOSITORIES_V2} WHERE id = $1"
+        let exists: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM {TABLE_REPOSITORIES_V2} WHERE id = $1 LIMIT 1)"
         ))
         .bind(name_str.as_str())
         .fetch_one(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
 
-        if exists == 0 {
+        if !exists {
             Err(StoreError::RepositoryNotFound(name.clone()))
         } else {
             Ok(())
