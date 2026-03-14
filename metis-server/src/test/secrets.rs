@@ -4,7 +4,7 @@ use crate::{
     store::{MemoryStore, Session, Status},
     test::{
         MockJobEngine, TestStateHandles, spawn_test_server_with_state, test_app_config,
-        test_client, test_client_without_auth,
+        test_client, test_client_without_auth, test_user_client,
     },
 };
 use chrono::Utc;
@@ -30,14 +30,14 @@ fn test_state_with_secrets() -> TestStateHandles {
     TestStateHandles { state, store }
 }
 
-// The test actor has creator "test-creator", so we use that as the username.
+// The test user actor has ActorId::Username("test-creator"), so we use that as the username.
 const TEST_USERNAME: &str = "test-creator";
 
 #[tokio::test]
 async fn list_secrets_empty() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
+    let client = test_user_client();
 
     let response = client
         .get(format!(
@@ -58,7 +58,7 @@ async fn list_secrets_empty() -> anyhow::Result<()> {
 async fn set_and_list_secrets() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
+    let client = test_user_client();
 
     // Set a secret
     let response = client
@@ -90,7 +90,7 @@ async fn set_and_list_secrets() -> anyhow::Result<()> {
 async fn delete_secret() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
+    let client = test_user_client();
 
     // Set then delete
     client
@@ -129,7 +129,7 @@ async fn delete_secret() -> anyhow::Result<()> {
 async fn me_resolves_to_current_user() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
+    let client = test_user_client();
 
     // Set via "me"
     let response = client
@@ -160,7 +160,7 @@ async fn me_resolves_to_current_user() -> anyhow::Result<()> {
 async fn forbidden_for_other_user() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
+    let client = test_user_client();
 
     let response = client
         .get(format!("{}/v1/users/other-user/secrets", server.base_url()))
@@ -175,7 +175,7 @@ async fn forbidden_for_other_user() -> anyhow::Result<()> {
 async fn bad_request_for_invalid_secret_name() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
+    let client = test_user_client();
 
     // Lowercase name is invalid
     let response = client
@@ -195,7 +195,7 @@ async fn bad_request_for_invalid_secret_name() -> anyhow::Result<()> {
 async fn bad_request_for_metis_prefix() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
+    let client = test_user_client();
 
     let response = client
         .put(format!(
@@ -214,7 +214,7 @@ async fn bad_request_for_metis_prefix() -> anyhow::Result<()> {
 async fn set_custom_secret_name() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
+    let client = test_user_client();
 
     // Set a custom secret (not one of the well-known names)
     let response = client
@@ -263,7 +263,7 @@ async fn unauthorized_without_auth() -> anyhow::Result<()> {
 async fn set_overwrites_existing_secret() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
+    let client = test_user_client();
 
     // Set twice
     client
@@ -295,6 +295,25 @@ async fn set_overwrites_existing_secret() -> anyhow::Result<()> {
         .await?;
     let body: ListSecretsResponse = response.json().await?;
     assert_eq!(body.secrets.len(), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_actor_forbidden_even_when_creator_matches() -> anyhow::Result<()> {
+    let handles = test_state_with_secrets();
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    // test_client() uses a session actor whose creator is "test-creator"
+    let client = test_client();
+
+    let response = client
+        .get(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     Ok(())
 }
