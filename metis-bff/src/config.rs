@@ -30,6 +30,10 @@ pub struct BffConfig {
     /// and maintains an in-memory cache of entity state.
     pub cache_enabled: bool,
 
+    /// Base URL of the upstream metis-server for the cache's SSE subscription.
+    /// Required when cache is enabled.
+    pub upstream_url: Option<String>,
+
     /// Auth token for the cache's SSE subscription to the upstream server.
     /// Required when cache is enabled in HTTP (multi-player) mode.
     pub upstream_auth_token: Option<String>,
@@ -42,6 +46,7 @@ impl Default for BffConfig {
             cookie_secure: false,
             frontend_assets: FrontendAssets::None,
             cache_enabled: false,
+            upstream_url: None,
             upstream_auth_token: None,
         }
     }
