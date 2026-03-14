@@ -26,6 +26,7 @@ pub async fn whoami(
             issue_id,
             creator: actor.creator.clone(),
         },
+        ActorId::Service(service_name) => ActorIdentity::Service { service_name },
     };
 
     info!("whoami completed");

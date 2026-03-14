@@ -115,6 +115,19 @@ impl Actor {
         (actor, auth_token)
     }
 
+    pub fn new_for_service(service_name: String, creator: Username) -> (Actor, String) {
+        let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
+        let actor_id = ActorId::Service(service_name);
+        let actor = Actor {
+            auth_token_hash,
+            auth_token_salt,
+            actor_id,
+            creator,
+        };
+        let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
+        (actor, auth_token)
+    }
+
     pub fn new_for_issue(issue_id: IssueId, creator: Username) -> (Actor, String) {
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
         let actor_id = ActorId::Issue(issue_id);
@@ -473,5 +486,19 @@ mod tests {
                 actor_id: ActorId::Username(CommonUsername::from("alice")),
             }
         );
+    }
+
+    #[test]
+    fn new_for_service_creates_service_actor() {
+        let (actor, auth_token) =
+            Actor::new_for_service("bff".to_string(), Username::from("admin"));
+
+        assert!(!auth_token.is_empty());
+        assert_eq!(actor.actor_id, ActorId::Service("bff".to_string()));
+        assert_eq!(actor.name(), "svc-bff");
+        assert_eq!(actor.creator, Username::from("admin"));
+
+        let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
+        assert!(actor.verify_auth_token(&parsed));
     }
 }

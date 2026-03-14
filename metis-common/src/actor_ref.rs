@@ -12,6 +12,7 @@ pub enum ActorId {
     Username(Username),
     Session(SessionId),
     Issue(IssueId),
+    Service(String),
 }
 
 impl fmt::Display for ActorId {
@@ -20,6 +21,7 @@ impl fmt::Display for ActorId {
             ActorId::Username(username) => write!(f, "u-{username}"),
             ActorId::Session(session_id) => write!(f, "w-{session_id}"),
             ActorId::Issue(issue_id) => write!(f, "a-{issue_id}"),
+            ActorId::Service(name) => write!(f, "svc-{name}"),
         }
     }
 }
@@ -52,6 +54,7 @@ impl ActorRef {
                 ActorId::Username(username) => username.to_string(),
                 ActorId::Session(session_id) => session_id.to_string(),
                 ActorId::Issue(issue_id) => issue_id.to_string(),
+                ActorId::Service(name) => format!("svc-{name}"),
             },
             ActorRef::System {
                 worker_name,
@@ -62,6 +65,7 @@ impl ActorRef {
                         ActorId::Username(username) => username.to_string(),
                         ActorId::Session(session_id) => session_id.to_string(),
                         ActorId::Issue(issue_id) => issue_id.to_string(),
+                        ActorId::Service(name) => format!("svc-{name}"),
                     };
                     format!("{worker_name} (on behalf of {behalf_name})")
                 } else {
@@ -125,6 +129,13 @@ impl FromStr for ActorId {
             return Ok(ActorId::Session(session_id));
         }
 
+        if let Some(service_name) = trimmed.strip_prefix("svc-") {
+            if service_name.is_empty() {
+                return Err("service name must not be empty".to_string());
+            }
+            return Ok(ActorId::Service(service_name.to_string()));
+        }
+
         Ok(ActorId::Username(Username::from(trimmed)))
     }
 }
@@ -138,6 +149,7 @@ impl TryFrom<ActorIdentity> for ActorId {
             ActorIdentity::User { username } => Ok(ActorId::Username(username)),
             ActorIdentity::Session { session_id, .. } => Ok(ActorId::Session(session_id)),
             ActorIdentity::Issue { issue_id, .. } => Ok(ActorId::Issue(issue_id)),
+            ActorIdentity::Service { service_name } => Ok(ActorId::Service(service_name)),
             _ => Err("unsupported actor identity type".to_string()),
         }
     }
@@ -169,6 +181,13 @@ pub fn parse_actor_name(name: &str) -> Option<ActorId> {
         }
         let task_id = SessionId::from_str(task_id).ok()?;
         return Some(ActorId::Session(task_id));
+    }
+
+    if let Some(service_name) = name.strip_prefix("svc-") {
+        if service_name.is_empty() {
+            return None;
+        }
+        return Some(ActorId::Service(service_name.to_string()));
     }
 
     None
@@ -410,5 +429,61 @@ mod tests {
         };
         let actor_id = ActorId::try_from(identity).unwrap();
         assert_eq!(actor_id, ActorId::Issue(issue_id));
+    }
+
+    #[test]
+    fn actor_id_display_service() {
+        let actor_id = ActorId::Service("bff".to_string());
+        assert_eq!(actor_id.to_string(), "svc-bff");
+    }
+
+    #[test]
+    fn parse_actor_name_service() {
+        let result = parse_actor_name("svc-bff");
+        assert_eq!(result, Some(ActorId::Service("bff".to_string())));
+    }
+
+    #[test]
+    fn parse_actor_name_empty_service() {
+        assert_eq!(parse_actor_name("svc-"), None);
+    }
+
+    #[test]
+    fn actor_id_from_str_service() {
+        let actor: ActorId = "svc-bff".parse().unwrap();
+        match actor {
+            ActorId::Service(name) => assert_eq!(name, "bff"),
+            other => panic!("expected ActorId::Service, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn actor_id_from_str_service_empty_fails() {
+        assert!("svc-".parse::<ActorId>().is_err());
+    }
+
+    #[test]
+    fn try_from_actor_identity_service() {
+        let identity = ActorIdentity::Service {
+            service_name: "bff".to_string(),
+        };
+        let actor_id = ActorId::try_from(identity).unwrap();
+        assert_eq!(actor_id, ActorId::Service("bff".to_string()));
+    }
+
+    #[test]
+    fn actor_id_service_serialization_round_trip() {
+        let actor_id = ActorId::Service("bff".to_string());
+        let json = serde_json::to_string(&actor_id).unwrap();
+        let deserialized: ActorId = serde_json::from_str(&json).unwrap();
+        assert_eq!(actor_id, deserialized);
+    }
+
+    #[test]
+    fn actor_ref_display_name_service() {
+        let actor_ref = ActorRef::Authenticated {
+            actor_id: ActorId::Service("bff".to_string()),
+        };
+        assert_eq!(actor_ref.display_name(), "svc-bff");
     }
 }
