@@ -1615,7 +1615,6 @@ fn build_patches_predicates_pg(query: &SearchPatchesQuery) -> (Vec<String>, Vec<
              OR LOWER(description) LIKE ${idx_desc} \
              OR LOWER(status) LIKE ${idx_status} \
              OR LOWER(service_repo_name) LIKE ${idx_repo} \
-             OR LOWER(diff) LIKE ${idx_diff} \
              OR LOWER(COALESCE(branch_name,'')) LIKE ${idx_branch} \
              OR LOWER(github->>'owner') LIKE ${idx_gh_owner} \
              OR LOWER(github->>'repo') LIKE ${idx_gh_repo} \
@@ -1627,16 +1626,15 @@ fn build_patches_predicates_pg(query: &SearchPatchesQuery) -> (Vec<String>, Vec<
             idx_desc = idx_start + 2,
             idx_status = idx_start + 3,
             idx_repo = idx_start + 4,
-            idx_diff = idx_start + 5,
-            idx_branch = idx_start + 6,
-            idx_gh_owner = idx_start + 7,
-            idx_gh_repo = idx_start + 8,
-            idx_gh_number = idx_start + 9,
-            idx_gh_head = idx_start + 10,
-            idx_gh_base = idx_start + 11,
+            idx_branch = idx_start + 5,
+            idx_gh_owner = idx_start + 6,
+            idx_gh_repo = idx_start + 7,
+            idx_gh_number = idx_start + 8,
+            idx_gh_head = idx_start + 9,
+            idx_gh_base = idx_start + 10,
         ));
         let pattern = format!("%{term}%");
-        for _ in 0..12 {
+        for _ in 0..11 {
             bindings.push(pattern.clone());
         }
     }
@@ -2244,7 +2242,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // then apply filters. This ensures we filter on the current state
         // of each patch, not historical versions.
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at, \
+            "SELECT DISTINCT ON (id) id, version_number, title, description, '' AS diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at, \
              MIN(created_at) OVER (PARTITION BY id) AS creation_time \
              FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
         );
@@ -2298,7 +2296,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, status, is_automatic_backup, branch_name, service_repo_name, github, title, description, diff, deleted \
+            "SELECT DISTINCT ON (id) id, status, is_automatic_backup, branch_name, service_repo_name, github, title, description, deleted \
              FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
         );
         let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
