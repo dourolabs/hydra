@@ -13,5 +13,7 @@ export function useUsername(): string | null {
     case "session":
     case "issue":
       return actor.creator;
+    case "service":
+      return actor.service_name;
   }
 }

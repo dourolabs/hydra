@@ -171,7 +171,7 @@ export const ItemRow = React.memo(function ItemRow({ item, sessions, childStatus
   const assignee = item.kind === "issue" ? item.data.issue.assignee : undefined;
 
   // Highlight open issues assigned to the current user
-  const currentUsername = user?.actor.type === "user" ? user.actor.username : user?.actor.creator;
+  const currentUsername = user?.actor.type === "user" ? user.actor.username : user?.actor.type === "service" ? user.actor.service_name : user?.actor.creator;
   const isAssignedToMe =
     item.kind === "issue" && !item.isTerminal && !!assignee && assignee === currentUsername;
 

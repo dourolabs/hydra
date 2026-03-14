@@ -17,6 +17,9 @@ pub enum ActorIdentity {
         issue_id: IssueId,
         creator: Username,
     },
+    Service {
+        service_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +50,9 @@ impl From<ActorIdentity> for api::whoami::ActorIdentity {
                 issue_id,
                 creator: creator.into(),
             },
+            ActorIdentity::Service { service_name } => {
+                api::whoami::ActorIdentity::Service { service_name }
+            }
         }
     }
 }

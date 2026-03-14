@@ -21,6 +21,9 @@ pub enum ActorIdentity {
         issue_id: IssueId,
         creator: Username,
     },
+    Service {
+        service_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

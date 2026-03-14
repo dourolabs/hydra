@@ -3,4 +3,4 @@ import type { IssueId } from "./IssueId";
 import type { SessionId } from "./SessionId";
 import type { Username } from "./Username";
 
-export type ActorId = { "Username": Username } | { "Session": SessionId } | { "Issue": IssueId };
+export type ActorId = { "Username": Username } | { "Session": SessionId } | { "Issue": IssueId } | { "Service": string };
