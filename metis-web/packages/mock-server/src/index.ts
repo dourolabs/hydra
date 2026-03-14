@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { Store, StoreError } from "./store.js";
 import { authMiddleware } from "./auth.js";
-import { createAuthRoutes } from "./routes/auth.js";
+import { createAuthRoutes, createBffAuthRoutes } from "./routes/auth.js";
 import { createIssueRoutes } from "./routes/issues.js";
 import { createSessionRoutes } from "./routes/sessions.js";
 import { createPatchRoutes } from "./routes/patches.js";
@@ -39,6 +39,9 @@ app.use("*", async (c, next) => {
 
 // Health endpoint (no auth required)
 app.get("/health", (c) => c.json({ status: "ok" }));
+
+// BFF-style auth routes (cookie-based) for e2e tests
+app.route("/auth", createBffAuthRoutes());
 
 // Login endpoint does not require auth
 app.route("", createAuthRoutes());
