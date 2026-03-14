@@ -133,6 +133,11 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
         setup_local_auth(&app_config, store.as_ref(), &secret_manager).await?;
     }
 
+    // If a BFF auth token is configured, create (or update) the svc-bff service actor.
+    if let Some(token) = &app_config.bff_auth_token {
+        setup_service_auth(store.as_ref(), "bff", token).await?;
+    }
+
     // Create job engine based on configured backend
     let job_engine: Arc<dyn crate::job_engine::JobEngine> = match &app_config.job_engine {
         JobEngineConfig::Docker => {
@@ -536,6 +541,54 @@ pub async fn setup_local_auth(
     }
 
     info!("local auth configured");
+    Ok(())
+}
+
+/// Create or update a service actor for the given service name and token.
+///
+/// This is idempotent: if the actor already exists with the same token hash,
+/// nothing changes. If the actor exists but the token has changed, the actor
+/// is replaced with an updated token hash.
+pub async fn setup_service_auth(
+    store: &dyn Store,
+    service_name: &str,
+    raw_token: &str,
+) -> anyhow::Result<()> {
+    let actor_name = format!("svc-{service_name}");
+    let creator = Username::from("system");
+
+    let system_actor = ActorRef::System {
+        worker_name: "service-auth-setup".into(),
+        on_behalf_of: None,
+    };
+
+    match store.get_actor(&actor_name).await {
+        Ok(existing) => {
+            if existing.item.token_hash_matches(raw_token) {
+                info!(actor = %actor_name, "service actor already exists with matching token");
+            } else {
+                // Token changed — replace the actor with a new hash.
+                let (actor, _) = Actor::new_for_service_with_token(
+                    service_name.to_string(),
+                    raw_token,
+                    creator,
+                );
+                store.update_actor(actor, &system_actor).await?;
+                info!(actor = %actor_name, "service actor token updated");
+            }
+        }
+        Err(StoreError::ActorNotFound(_)) => {
+            let (actor, _) = Actor::new_for_service_with_token(
+                service_name.to_string(),
+                raw_token,
+                creator,
+            );
+            store.add_actor(actor, &system_actor).await?;
+            info!(actor = %actor_name, "service actor created");
+        }
+        Err(err) => return Err(err.into()),
+    }
+
     Ok(())
 }
 

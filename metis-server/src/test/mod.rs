@@ -10,6 +10,7 @@ mod issues;
 mod labels;
 mod library_api;
 mod local_auth;
+mod service_auth;
 mod login;
 pub(crate) mod merge_queues;
 mod messages;

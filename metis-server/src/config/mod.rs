@@ -216,6 +216,8 @@ struct RawAppConfig {
     pub build_cache: BuildCacheSection,
     #[serde(default)]
     pub policies: Option<PolicyConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bff_auth_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -234,6 +236,10 @@ pub struct AppConfig {
     /// policies are enabled with default parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policies: Option<PolicyConfig>,
+    /// Optional auth token for the BFF service actor. When set, a `svc-bff`
+    /// actor is created on startup so the BFF can authenticate its requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bff_auth_token: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for AppConfig {
@@ -252,6 +258,7 @@ impl<'de> Deserialize<'de> for AppConfig {
             background: raw.background,
             build_cache: raw.build_cache,
             policies: raw.policies,
+            bff_auth_token: raw.bff_auth_token,
         })
     }
 }

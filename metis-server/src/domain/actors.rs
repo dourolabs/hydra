@@ -128,6 +128,33 @@ impl Actor {
         (actor, auth_token)
     }
 
+    /// Create a service actor with a caller-supplied token (e.g. from config).
+    ///
+    /// Unlike [`Self::new_for_service`], this does not generate a random token.
+    /// The returned `String` is the full `svc-<name>:<token>` auth token.
+    pub fn new_for_service_with_token(
+        service_name: String,
+        raw_token: &str,
+        creator: Username,
+    ) -> (Actor, String) {
+        let auth_token_hash = Self::hash_auth_token(raw_token);
+        let auth_token_salt = Uuid::new_v4().to_string();
+        let actor_id = ActorId::Service(service_name);
+        let actor = Actor {
+            auth_token_hash,
+            auth_token_salt,
+            actor_id,
+            creator,
+        };
+        let auth_token = Self::format_auth_token(&actor, raw_token);
+        (actor, auth_token)
+    }
+
+    /// Check whether the given raw token matches this actor's stored hash.
+    pub fn token_hash_matches(&self, raw_token: &str) -> bool {
+        self.auth_token_hash == Self::hash_auth_token(raw_token)
+    }
+
     pub fn new_for_issue(issue_id: IssueId, creator: Username) -> (Actor, String) {
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
         let actor_id = ActorId::Issue(issue_id);

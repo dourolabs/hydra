@@ -93,6 +93,7 @@ pub fn test_app_config() -> AppConfig {
         },
         build_cache: BuildCacheSection::default(),
         policies: None,
+        bff_auth_token: None,
     }
 }
 

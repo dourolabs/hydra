@@ -506,6 +506,7 @@ fn render_server_config(
         background: BackgroundSection::default(),
         build_cache: BuildCacheSection::default(),
         policies: None,
+        bff_auth_token: None,
     };
 
     let yaml = serde_yaml_ng::to_string(&config).expect("failed to serialize server init config");
