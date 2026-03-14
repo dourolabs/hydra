@@ -442,47 +442,6 @@ fn generate_encryption_key() -> String {
     base64::engine::general_purpose::STANDARD.encode(key)
 }
 
-/// Lightweight struct that serializes to the same flat YAML layout that
-/// `AppConfig` (in `metis-server`) expects. Kept local to avoid adding
-/// `Serialize` to the server config crate. The round-trip test verifies
-/// that the generated YAML deserializes back into `AppConfig`.
-#[derive(serde::Serialize)]
-struct ServerInitConfig {
-    metis: InitMetisSection,
-    auth_mode: String,
-    github_token: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    username: Option<String>,
-    auth_token_file: String,
-    storage_backend: String,
-    sqlite_path: String,
-    job_engine: String,
-    job: InitJobSection,
-}
-
-#[derive(serde::Serialize)]
-struct InitMetisSection {
-    server_hostname: String,
-    #[serde(rename = "METIS_SECRET_ENCRYPTION_KEY")]
-    secret_encryption_key: String,
-    #[serde(rename = "OPENAI_API_KEY", skip_serializing_if = "Option::is_none")]
-    openai_api_key: Option<String>,
-    #[serde(rename = "ANTHROPIC_API_KEY", skip_serializing_if = "Option::is_none")]
-    anthropic_api_key: Option<String>,
-    #[serde(
-        rename = "CLAUDE_CODE_OAUTH_TOKEN",
-        skip_serializing_if = "Option::is_none"
-    )]
-    claude_code_oauth_token: Option<String>,
-}
-
-#[derive(serde::Serialize)]
-struct InitJobSection {
-    default_image: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    default_model: Option<String>,
-}
-
 #[allow(clippy::too_many_arguments)]
 fn render_server_config(
     encryption_key: &str,
@@ -494,25 +453,46 @@ fn render_server_config(
     api_keys: &ApiKeys,
     username: Option<&str>,
 ) -> String {
-    let config = ServerInitConfig {
-        metis: InitMetisSection {
+    use metis_server::config::{
+        AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, JobEngineConfig, JobSection,
+        MetisSection, StorageConfig,
+    };
+
+    let job_engine_config = match job_engine {
+        "local" => JobEngineConfig::Local,
+        _ => JobEngineConfig::Docker,
+    };
+
+    let config = AppConfig {
+        metis: MetisSection {
+            namespace: "default".to_string(),
             server_hostname: "127.0.0.1:8080".to_string(),
             secret_encryption_key: encryption_key.to_string(),
+            allowed_orgs: Vec::new(),
             openai_api_key: api_keys.openai_api_key.clone(),
             anthropic_api_key: api_keys.anthropic_api_key.clone(),
             claude_code_oauth_token: api_keys.claude_code_oauth_token.clone(),
         },
-        auth_mode: "local".to_string(),
-        github_token: github_pat.to_string(),
-        username: username.map(str::to_string),
-        auth_token_file: auth_token_path.display().to_string(),
-        storage_backend: "sqlite".to_string(),
-        sqlite_path: db_path.display().to_string(),
-        job_engine: job_engine.to_string(),
-        job: InitJobSection {
+        job: JobSection {
             default_image: "metis-worker:latest".to_string(),
             default_model: default_model.map(str::to_string),
+            cpu_limit: "500m".to_string(),
+            memory_limit: "1Gi".to_string(),
+            cpu_request: "500m".to_string(),
+            memory_request: "1Gi".to_string(),
         },
+        storage: StorageConfig::Sqlite {
+            sqlite_path: db_path.display().to_string(),
+        },
+        job_engine: job_engine_config,
+        auth: AuthConfig::Local {
+            github_token: github_pat.to_string(),
+            username: username.map(str::to_string),
+            auth_token_file: Some(auth_token_path.to_path_buf()),
+        },
+        background: BackgroundSection::default(),
+        build_cache: BuildCacheSection::default(),
+        policies: None,
     };
 
     let yaml = serde_yaml_ng::to_string(&config).expect("failed to serialize server init config");
@@ -644,7 +624,7 @@ fn start_server_in_process() -> Result<()> {
                 // consume terminal input meant for the user's shell.
                 unsafe {
                     let dev_null = libc::open(
-                        b"/dev/null\0".as_ptr() as *const libc::c_char,
+                        c"/dev/null".as_ptr(),
                         libc::O_RDONLY,
                     );
                     if dev_null >= 0 {

@@ -1,8 +1,8 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// A single policy entry in the config, consisting of a name and optional
 /// parameters (as raw YAML values for the policy constructor to interpret).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum PolicyEntry {
     /// Just the policy name with no params.
@@ -33,7 +33,7 @@ impl PolicyEntry {
 }
 
 /// Policy configuration for a single scope (global or per-repo).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct PolicyList {
     pub restrictions: Vec<PolicyEntry>,
@@ -42,7 +42,7 @@ pub struct PolicyList {
 
 /// Top-level policy configuration, deserializable from the `policies`
 /// section of the server YAML config.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct PolicyConfig {
     #[serde(flatten)]
