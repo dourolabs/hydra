@@ -80,6 +80,24 @@ impl LocalJobEngine {
             env.insert(ENV_METIS_SERVER_URL.to_string(), server_url.to_string());
         }
 
+        // Ensure the metis CLI is on PATH for child processes. In single-player
+        // mode the server binary IS the CLI binary, so prepending its directory
+        // guarantees agents can find `metis` regardless of the user's shell setup.
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                let exe_dir_str = exe_dir.to_string_lossy();
+                let existing_path = env
+                    .get("PATH")
+                    .cloned()
+                    .or_else(|| std::env::var("PATH").ok())
+                    .unwrap_or_default();
+                env.insert(
+                    "PATH".to_string(),
+                    format!("{}:{}", exe_dir_str, existing_path),
+                );
+            }
+        }
+
         env
     }
 
@@ -530,6 +548,49 @@ mod tests {
         let env = engine.build_env_vars(&metis_id, "tok", &HashMap::new());
 
         assert!(!env.contains_key(ENV_METIS_SERVER_URL));
+    }
+
+    #[test]
+    fn build_env_vars_prepends_exe_dir_to_path() {
+        let engine = make_engine();
+        let metis_id = SessionId::new();
+        let env = engine.build_env_vars(&metis_id, "tok", &HashMap::new());
+
+        let path = env.get("PATH").expect("PATH should be set");
+        let exe_dir = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            path.starts_with(&exe_dir),
+            "PATH should start with the exe directory, got: {path}"
+        );
+    }
+
+    #[test]
+    fn build_env_vars_uses_extra_env_path_as_base() {
+        let engine = make_engine();
+        let metis_id = SessionId::new();
+        let extra = HashMap::from([("PATH".to_string(), "/custom/bin:/other/bin".to_string())]);
+        let env = engine.build_env_vars(&metis_id, "tok", &extra);
+
+        let path = env.get("PATH").expect("PATH should be set");
+        let exe_dir = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            path.starts_with(&exe_dir),
+            "PATH should start with exe directory"
+        );
+        assert!(
+            path.contains("/custom/bin:/other/bin"),
+            "PATH should contain the extra_env PATH value"
+        );
     }
 
     #[tokio::test]
