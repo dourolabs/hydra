@@ -245,9 +245,9 @@ pub trait MetisClientInterface: Send + Sync {
     async fn get_github_token(&self) -> Result<String>;
     async fn whoami(&self) -> Result<WhoAmIResponse>;
     async fn get_user_info(&self, username: &str) -> Result<UserSummary>;
-    async fn list_user_secrets(&self) -> Result<ListSecretsResponse>;
-    async fn set_user_secret(&self, name: &str, value: &str) -> Result<()>;
-    async fn delete_user_secret(&self, name: &str) -> Result<()>;
+    async fn list_user_secrets(&self, username: &str) -> Result<ListSecretsResponse>;
+    async fn set_user_secret(&self, username: &str, name: &str, value: &str) -> Result<()>;
+    async fn delete_user_secret(&self, username: &str, name: &str) -> Result<()>;
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue>;
     async fn enqueue_merge_patch(
         &self,
@@ -1309,8 +1309,9 @@ impl MetisClient {
             .context("failed to decode user info response")
     }
 
-    pub async fn list_user_secrets(&self) -> Result<ListSecretsResponse> {
-        let url = self.endpoint("/v1/users/me/secrets")?;
+    pub async fn list_user_secrets(&self, username: &str) -> Result<ListSecretsResponse> {
+        let path = format!("/v1/users/{username}/secrets");
+        let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.get(url))
             .send()
@@ -1325,8 +1326,8 @@ impl MetisClient {
             .context("failed to decode list secrets response")
     }
 
-    pub async fn set_user_secret(&self, name: &str, value: &str) -> Result<()> {
-        let path = format!("/v1/users/me/secrets/{name}");
+    pub async fn set_user_secret(&self, username: &str, name: &str, value: &str) -> Result<()> {
+        let path = format!("/v1/users/{username}/secrets/{name}");
         let url = self.endpoint(&path)?;
         let body = SetSecretRequest {
             value: value.to_string(),
@@ -1341,8 +1342,8 @@ impl MetisClient {
         Ok(())
     }
 
-    pub async fn delete_user_secret(&self, name: &str) -> Result<()> {
-        let path = format!("/v1/users/me/secrets/{name}");
+    pub async fn delete_user_secret(&self, username: &str, name: &str) -> Result<()> {
+        let path = format!("/v1/users/{username}/secrets/{name}");
         let url = self.endpoint(&path)?;
         self.authed(self.http.delete(url))
             .send()
@@ -2169,16 +2170,16 @@ impl MetisClientInterface for MetisClient {
         MetisClient::get_user_info(self, username).await
     }
 
-    async fn list_user_secrets(&self) -> Result<ListSecretsResponse> {
-        MetisClient::list_user_secrets(self).await
+    async fn list_user_secrets(&self, username: &str) -> Result<ListSecretsResponse> {
+        MetisClient::list_user_secrets(self, username).await
     }
 
-    async fn set_user_secret(&self, name: &str, value: &str) -> Result<()> {
-        MetisClient::set_user_secret(self, name, value).await
+    async fn set_user_secret(&self, username: &str, name: &str, value: &str) -> Result<()> {
+        MetisClient::set_user_secret(self, username, name, value).await
     }
 
-    async fn delete_user_secret(&self, name: &str) -> Result<()> {
-        MetisClient::delete_user_secret(self, name).await
+    async fn delete_user_secret(&self, username: &str, name: &str) -> Result<()> {
+        MetisClient::delete_user_secret(self, username, name).await
     }
 
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
