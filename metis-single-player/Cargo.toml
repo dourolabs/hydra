@@ -8,6 +8,7 @@ vendored-openssl = [
     "metis/vendored-openssl",
     "metis-server/vendored-openssl",
 ]
+embedded-frontend = ["metis-bff/embedded-frontend"]
 
 [[bin]]
 name = "metis"
@@ -23,12 +24,11 @@ getrandom = "0.2"
 http = "1"
 libc = "0.2"
 metis = { path = "../metis" }
+metis-bff = { path = "../metis-bff", features = ["embedded-frontend"] }
 metis-common = { path = "../metis-common" }
 metis-server = { path = "../metis-server" }
-mime_guess = "2"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 rpassword = "5"
-rust-embed = "8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml_ng = "0.10"

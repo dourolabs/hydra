@@ -2917,6 +2917,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "metis-bff"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-extra",
+ "http 1.4.0",
+ "metis-server",
+ "mime_guess",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower 0.5.3",
+ "tracing",
+]
+
+[[package]]
 name = "metis-build-cache"
 version = "0.1.0"
 dependencies = [
@@ -3038,12 +3055,11 @@ dependencies = [
  "http 1.4.0",
  "libc",
  "metis",
+ "metis-bff",
  "metis-common",
  "metis-server",
- "mime_guess",
  "reqwest",
  "rpassword",
- "rust-embed",
  "serde",
  "serde_json",
  "serde_yaml_ng",

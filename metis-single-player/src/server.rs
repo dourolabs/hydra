@@ -3,7 +3,6 @@ use std::{
     io::{self, BufRead, Write},
     path::Path,
     process::Command,
-    sync::Arc,
     thread,
     time::Duration,
 };
@@ -673,12 +672,7 @@ async fn run_server_with_bff() -> Result<()> {
     // Build the internal metis-server router with state applied.
     let inner_app = metis_server::build_router(&state).with_state(state.clone());
 
-    let bff_state = crate::bff::BffState {
-        auto_login_token: Arc::new(auto_login_token),
-        inner_app,
-    };
-
-    let bff_app = crate::bff::build_bff_router(bff_state);
+    let bff_app = crate::bff::build_bff_router(inner_app, auto_login_token);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 
