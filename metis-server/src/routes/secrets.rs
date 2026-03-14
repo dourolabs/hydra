@@ -1,4 +1,3 @@
-use super::resolve_username;
 use crate::{
     app::AppState,
     domain::{actors::Actor, secrets::validate_secret_name, users::Username},
@@ -36,7 +35,7 @@ pub async fn list_secrets(
     Extension(actor): Extension<Actor>,
     Path(username): Path<String>,
 ) -> Result<Json<ListSecretsResponse>, ApiError> {
-    let username = resolve_username(&actor, &username)?;
+    let username = Username::from(username);
     authorize(&actor, &username)?;
 
     info!(username = %username, "list_secrets invoked");
@@ -61,7 +60,7 @@ pub async fn set_secret(
     Path((username, name)): Path<(String, String)>,
     Json(payload): Json<SetSecretRequest>,
 ) -> Result<Json<()>, ApiError> {
-    let username = resolve_username(&actor, &username)?;
+    let username = Username::from(username);
     authorize(&actor, &username)?;
 
     if let Err(msg) = validate_secret_name(&name) {
@@ -99,7 +98,7 @@ pub async fn delete_secret(
     Extension(actor): Extension<Actor>,
     Path((username, name)): Path<(String, String)>,
 ) -> Result<Json<()>, ApiError> {
-    let username = resolve_username(&actor, &username)?;
+    let username = Username::from(username);
     authorize(&actor, &username)?;
 
     if let Err(msg) = validate_secret_name(&name) {

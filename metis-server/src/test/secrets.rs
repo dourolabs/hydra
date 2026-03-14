@@ -126,32 +126,20 @@ async fn delete_secret() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn me_resolves_to_current_user() -> anyhow::Result<()> {
+async fn me_returns_forbidden() -> anyhow::Result<()> {
     let handles = test_state_with_secrets();
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_user_client();
 
-    // Set via "me"
-    let response = client
-        .put(format!(
-            "{}/v1/users/me/secrets/ANTHROPIC_API_KEY",
-            server.base_url()
-        ))
-        .json(&json!({ "value": "sk-ant-test" }))
-        .send()
-        .await?;
-    assert_eq!(response.status(), StatusCode::OK);
-
-    // List via explicit username
+    // "me" is no longer resolved — should be treated as a different user and return 403
     let response = client
         .get(format!(
-            "{}/v1/users/{TEST_USERNAME}/secrets",
+            "{}/v1/users/me/secrets",
             server.base_url()
         ))
         .send()
         .await?;
-    let body: ListSecretsResponse = response.json().await?;
-    assert_eq!(body.secrets, vec!["ANTHROPIC_API_KEY"]);
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     Ok(())
 }
