@@ -568,21 +568,15 @@ pub async fn setup_service_auth(
                 info!(actor = %actor_name, "service actor already exists with matching token");
             } else {
                 // Token changed — replace the actor with a new hash.
-                let (actor, _) = Actor::new_for_service_with_token(
-                    service_name.to_string(),
-                    raw_token,
-                    creator,
-                );
+                let (actor, _) =
+                    Actor::new_for_service_with_token(service_name.to_string(), raw_token, creator);
                 store.update_actor(actor, &system_actor).await?;
                 info!(actor = %actor_name, "service actor token updated");
             }
         }
         Err(StoreError::ActorNotFound(_)) => {
-            let (actor, _) = Actor::new_for_service_with_token(
-                service_name.to_string(),
-                raw_token,
-                creator,
-            );
+            let (actor, _) =
+                Actor::new_for_service_with_token(service_name.to_string(), raw_token, creator);
             store.add_actor(actor, &system_actor).await?;
             info!(actor = %actor_name, "service actor created");
         }

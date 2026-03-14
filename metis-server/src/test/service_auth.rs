@@ -69,7 +69,10 @@ async fn setup_service_auth_no_op_when_token_none() -> anyhow::Result<()> {
     let store = Arc::new(MemoryStore::new());
 
     let result = store.as_ref().get_actor("svc-bff").await;
-    assert!(result.is_err(), "svc-bff should not exist when not configured");
+    assert!(
+        result.is_err(),
+        "svc-bff should not exist when not configured"
+    );
 
     Ok(())
 }
