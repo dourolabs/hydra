@@ -644,7 +644,7 @@ fn start_server_in_process() -> Result<()> {
                 // consume terminal input meant for the user's shell.
                 unsafe {
                     let dev_null = libc::open(
-                        b"/dev/null\0".as_ptr() as *const libc::c_char,
+                        c"/dev/null".as_ptr(),
                         libc::O_RDONLY,
                     );
                     if dev_null >= 0 {
