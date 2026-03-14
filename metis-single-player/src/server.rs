@@ -487,7 +487,7 @@ fn render_server_config(
             claude_code_oauth_token: api_keys.claude_code_oauth_token.clone(),
         },
         job: JobSection {
-            default_image: "metis-worker:latest".to_string(),
+            default_image: "ubuntu:24.04".to_string(),
             default_model: default_model.map(str::to_string),
             cpu_limit: "500m".to_string(),
             memory_limit: "1Gi".to_string(),
@@ -940,7 +940,7 @@ mod tests {
             app_config.auth.auth_token_file(),
             Some(Path::new("/tmp/auth-token"))
         );
-        assert_eq!(app_config.job.default_image, "metis-worker:latest");
+        assert_eq!(app_config.job.default_image, "ubuntu:24.04");
         assert!(app_config.job.default_model.is_none());
         assert!(app_config.metis.openai_api_key.is_none());
         assert!(app_config.metis.anthropic_api_key.is_none());
