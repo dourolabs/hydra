@@ -1612,7 +1612,6 @@ fn build_patches_predicates_pg(query: &SearchPatchesQuery) -> (Vec<String>, Vec<
              OR LOWER(description) LIKE ${idx_desc} \
              OR LOWER(status) LIKE ${idx_status} \
              OR LOWER(service_repo_name) LIKE ${idx_repo} \
-             OR LOWER(diff) LIKE ${idx_diff} \
              OR LOWER(COALESCE(branch_name,'')) LIKE ${idx_branch} \
              OR LOWER(github->>'owner') LIKE ${idx_gh_owner} \
              OR LOWER(github->>'repo') LIKE ${idx_gh_repo} \
@@ -1624,16 +1623,15 @@ fn build_patches_predicates_pg(query: &SearchPatchesQuery) -> (Vec<String>, Vec<
             idx_desc = idx_start + 2,
             idx_status = idx_start + 3,
             idx_repo = idx_start + 4,
-            idx_diff = idx_start + 5,
-            idx_branch = idx_start + 6,
-            idx_gh_owner = idx_start + 7,
-            idx_gh_repo = idx_start + 8,
-            idx_gh_number = idx_start + 9,
-            idx_gh_head = idx_start + 10,
-            idx_gh_base = idx_start + 11,
+            idx_branch = idx_start + 5,
+            idx_gh_owner = idx_start + 6,
+            idx_gh_repo = idx_start + 7,
+            idx_gh_number = idx_start + 8,
+            idx_gh_head = idx_start + 9,
+            idx_gh_base = idx_start + 10,
         ));
         let pattern = format!("%{term}%");
-        for _ in 0..12 {
+        for _ in 0..11 {
             bindings.push(pattern.clone());
         }
     }
@@ -2231,7 +2229,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         let mut sql = format!(
-            "SELECT p.id, p.version_number, p.title, p.description, p.diff, p.status, p.is_automatic_backup, p.created_by, p.reviews, p.service_repo_name, p.github, p.deleted, p.branch_name, p.commit_range, p.creator, p.base_branch, p.actor, p.created_at, p.updated_at, \
+            "SELECT p.id, p.version_number, p.title, p.description, '' AS diff, p.status, p.is_automatic_backup, p.created_by, p.reviews, p.service_repo_name, p.github, p.deleted, p.branch_name, p.commit_range, p.creator, p.base_branch, p.actor, p.created_at, p.updated_at, \
              (SELECT MIN(p2.created_at) FROM {TABLE_PATCHES_V2} p2 WHERE p2.id = p.id) AS creation_time \
              FROM {TABLE_PATCHES_V2} p"
         );
