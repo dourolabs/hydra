@@ -120,9 +120,17 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
         }
     };
 
+    // Initialize SecretManager from config (mandatory) — needed before
+    // setup_local_auth so we can encrypt the GitHub PAT.
+    let secret_manager = Arc::new(
+        SecretManager::from_base64(&app_config.metis.secret_encryption_key)
+            .context("invalid metis.METIS_SECRET_ENCRYPTION_KEY")?,
+    );
+    info!("secret encryption enabled");
+
     // In local auth mode, create a default user actor.
     if app_config.auth.is_local() {
-        setup_local_auth(&app_config, store.as_ref()).await?;
+        setup_local_auth(&app_config, store.as_ref(), &secret_manager).await?;
     }
 
     // Create job engine based on configured backend
@@ -180,13 +188,6 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             engine
         }
     };
-
-    // Initialize SecretManager from config (mandatory)
-    let secret_manager = Arc::new(
-        SecretManager::from_base64(&app_config.metis.secret_encryption_key)
-            .context("invalid metis.METIS_SECRET_ENCRYPTION_KEY")?,
-    );
-    info!("secret encryption enabled");
 
     let state = AppState::new(
         Arc::new(app_config),
@@ -446,7 +447,11 @@ pub async fn run() -> anyhow::Result<()> {
 ///
 /// When `auth_token_file` is set in the config, the generated auth token is
 /// written to that path so the CLI can pick it up.
-pub async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::Result<()> {
+pub async fn setup_local_auth(
+    config: &AppConfig,
+    store: &dyn Store,
+    secret_manager: &SecretManager,
+) -> anyhow::Result<()> {
     let username = Username::from(
         config
             .auth
@@ -456,57 +461,73 @@ pub async fn setup_local_auth(config: &AppConfig, store: &dyn Store) -> anyhow::
 
     let actor_name = format!("u-{username}");
 
-    // If the actor already exists in the store, the token file is already
-    // valid from the initial setup — nothing to do.
-    match store.get_actor(&actor_name).await {
-        Ok(_) => {
-            info!("local auth actor already exists in store, skipping setup");
-            return Ok(());
-        }
-        Err(StoreError::ActorNotFound(_)) => {
-            // First run — create actor below.
-        }
-        Err(err) => return Err(err.into()),
-    }
-
-    let (actor, auth_token) = Actor::new_for_user(username.clone());
-
     let system_actor = ActorRef::System {
         worker_name: "local-auth-setup".into(),
         on_behalf_of: None,
     };
 
-    store.add_actor(actor.clone(), &system_actor).await?;
+    // Create the actor and user if they don't already exist.
+    match store.get_actor(&actor_name).await {
+        Ok(_) => {
+            info!("local auth actor already exists in store, skipping actor creation");
+        }
+        Err(StoreError::ActorNotFound(_)) => {
+            let (actor, auth_token) = Actor::new_for_user(username.clone());
+            store.add_actor(actor.clone(), &system_actor).await?;
 
-    let user = User::new(
-        username, None, // no GitHub user ID for PAT-based local mode
-        false,
-    );
-    match store.add_user(user.clone(), &system_actor).await {
-        Ok(()) => {}
-        Err(StoreError::UserAlreadyExists(_)) => {}
+            let user = User::new(
+                username.clone(),
+                None, // no GitHub user ID for PAT-based local mode
+                false,
+            );
+            match store.add_user(user.clone(), &system_actor).await {
+                Ok(()) => {}
+                Err(StoreError::UserAlreadyExists(_)) => {}
+                Err(err) => return Err(err.into()),
+            }
+
+            // Write the auth token to a file if auth_token_file is configured.
+            if let Some(path) = config.auth.auth_token_file() {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).with_context(|| {
+                        format!(
+                            "failed to create directory for auth token at {}",
+                            parent.display()
+                        )
+                    })?;
+                }
+                std::fs::write(path, &auth_token)
+                    .with_context(|| format!("failed to write auth token to {}", path.display()))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                        .with_context(|| {
+                            format!("failed to set permissions on {}", path.display())
+                        })?;
+                }
+                info!("auth token written to {}", path.display());
+            }
+        }
         Err(err) => return Err(err.into()),
     }
 
-    // Write the auth token to a file if auth_token_file is configured.
-    if let Some(path) = config.auth.auth_token_file() {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create directory for auth token at {}",
-                    parent.display()
-                )
-            })?;
-        }
-        std::fs::write(path, &auth_token)
-            .with_context(|| format!("failed to write auth token to {}", path.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-                .with_context(|| format!("failed to set permissions on {}", path.display()))?;
-        }
-        info!("auth token written to {}", path.display());
+    // Always store the GitHub PAT from config into the encrypted secret store.
+    // This ensures downstream code (get_github_token_for_user) can find it,
+    // and handles token updates between server restarts.
+    if let Some(github_token) = config.auth.github_token() {
+        let encrypted = secret_manager
+            .encrypt(github_token)
+            .context("failed to encrypt GitHub token")?;
+        store
+            .set_user_secret(
+                &username,
+                crate::domain::secrets::SECRET_GITHUB_TOKEN,
+                &encrypted,
+            )
+            .await
+            .context("failed to store GitHub token in secret store")?;
+        info!("GitHub PAT stored in user_secrets for {username}");
     }
 
     info!("local auth configured");
