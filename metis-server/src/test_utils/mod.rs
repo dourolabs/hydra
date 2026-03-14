@@ -229,6 +229,39 @@ pub fn test_client_without_auth() -> Client {
     Client::new()
 }
 
+fn test_user_auth() -> (Actor, String) {
+    static TEST_USER_AUTH: OnceLock<(Actor, String)> = OnceLock::new();
+    TEST_USER_AUTH
+        .get_or_init(|| {
+            Actor::new_for_user(crate::domain::users::Username::from("test-creator"))
+        })
+        .clone()
+}
+
+pub fn test_user_actor() -> Actor {
+    let (actor, _) = test_user_auth();
+    actor
+}
+
+pub fn test_user_auth_token() -> String {
+    let (_, token) = test_user_auth();
+    token
+}
+
+pub fn test_user_client() -> Client {
+    let mut headers = header::HeaderMap::new();
+    let auth_value = format!("Bearer {}", test_user_auth_token());
+    headers.insert(
+        header::AUTHORIZATION,
+        header::HeaderValue::from_str(&auth_value).expect("valid test auth header"),
+    );
+
+    Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("failed to build test user client")
+}
+
 pub async fn spawn_test_server() -> anyhow::Result<TestServer> {
     let handles = test_state_handles();
     spawn_test_server_with_state(handles.state, handles.store).await
@@ -258,6 +291,12 @@ async fn seed_test_actor(store: &dyn Store) -> anyhow::Result<()> {
         Ok(_) => Ok(()),
         Err(StoreError::ActorAlreadyExists(_)) => Ok(()),
         Err(err) => Err(anyhow::anyhow!("failed to seed test actor: {err}")),
+    }?;
+    let (user_actor, _) = test_user_auth();
+    match store.add_actor(user_actor, &ActorRef::test()).await {
+        Ok(_) => Ok(()),
+        Err(StoreError::ActorAlreadyExists(_)) => Ok(()),
+        Err(err) => Err(anyhow::anyhow!("failed to seed test user actor: {err}")),
     }
 }
 
