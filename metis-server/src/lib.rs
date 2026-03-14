@@ -44,7 +44,7 @@ use metis_common::constants::ENV_METIS_CONFIG;
 use octocrab::Octocrab;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
-use tracing::info;
+use tracing::{info, warn};
 
 /// Build an `AppState` from an `AppConfig`.
 ///
@@ -132,7 +132,8 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             let server_url = if hostname.is_empty() {
                 "http://host.docker.internal:8080".to_string()
             } else {
-                format!("http://{hostname}")
+                let rewritten = rewrite_localhost_for_docker(hostname);
+                format!("http://{rewritten}")
             };
             match LocalDockerJobEngine::new(server_url).await {
                 Ok(engine) => {
@@ -528,6 +529,31 @@ pub fn config_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("config.yaml"))
 }
 
+/// Rewrite `127.0.0.1` or `localhost` to `host.docker.internal` so that
+/// containers can reach the server running on the host machine.
+fn rewrite_localhost_for_docker(hostname: &str) -> String {
+    if let Some((host, port)) = hostname.rsplit_once(':') {
+        if host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" {
+            warn!(
+                original = hostname,
+                rewritten = format!("host.docker.internal:{port}"),
+                "rewriting localhost to host.docker.internal for Docker container access"
+            );
+            return format!("host.docker.internal:{port}");
+        }
+    }
+    // Handle the case where there's no port
+    if hostname.eq_ignore_ascii_case("localhost") || hostname == "127.0.0.1" {
+        warn!(
+            original = hostname,
+            rewritten = "host.docker.internal",
+            "rewriting localhost to host.docker.internal for Docker container access"
+        );
+        return "host.docker.internal".to_string();
+    }
+    hostname.to_string()
+}
+
 fn build_github_app_client(config: &GithubAppSection) -> anyhow::Result<Option<Octocrab>> {
     let key = EncodingKey::from_rsa_pem(config.private_key().as_bytes())
         .context("invalid GitHub App private key")?;
@@ -536,4 +562,65 @@ fn build_github_app_client(config: &GithubAppSection) -> anyhow::Result<Option<O
         .build()
         .map(Some)
         .context("building GitHub App client")
+}
+
+#[cfg(test)]
+mod rewrite_localhost_tests {
+    use super::rewrite_localhost_for_docker;
+
+    #[test]
+    fn rewrites_127_0_0_1_with_port() {
+        assert_eq!(
+            rewrite_localhost_for_docker("127.0.0.1:8080"),
+            "host.docker.internal:8080"
+        );
+    }
+
+    #[test]
+    fn rewrites_localhost_with_port() {
+        assert_eq!(
+            rewrite_localhost_for_docker("localhost:8080"),
+            "host.docker.internal:8080"
+        );
+    }
+
+    #[test]
+    fn rewrites_localhost_uppercase_with_port() {
+        assert_eq!(
+            rewrite_localhost_for_docker("Localhost:9090"),
+            "host.docker.internal:9090"
+        );
+    }
+
+    #[test]
+    fn rewrites_127_0_0_1_without_port() {
+        assert_eq!(
+            rewrite_localhost_for_docker("127.0.0.1"),
+            "host.docker.internal"
+        );
+    }
+
+    #[test]
+    fn rewrites_localhost_without_port() {
+        assert_eq!(
+            rewrite_localhost_for_docker("localhost"),
+            "host.docker.internal"
+        );
+    }
+
+    #[test]
+    fn preserves_real_hostname() {
+        assert_eq!(
+            rewrite_localhost_for_docker("my-server.example.com:8080"),
+            "my-server.example.com:8080"
+        );
+    }
+
+    #[test]
+    fn preserves_host_docker_internal() {
+        assert_eq!(
+            rewrite_localhost_for_docker("host.docker.internal:8080"),
+            "host.docker.internal:8080"
+        );
+    }
 }
