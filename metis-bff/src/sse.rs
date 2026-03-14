@@ -13,22 +13,26 @@ use crate::upstream::Upstream;
 
 /// SSE relay handler for `/api/v1/events`.
 ///
-/// Extracts the auth cookie, translates it to a Bearer token,
-/// forwards to the upstream `/v1/events` endpoint, and streams
-/// the SSE response back with proper headers.
+/// Extracts the auth token (from auto_login_token or cookie), translates it
+/// to a Bearer token, forwards to the upstream `/v1/events` endpoint, and
+/// streams the SSE response back with proper headers.
 pub async fn sse_relay<U: Upstream>(
     State(bff): State<BffState<U>>,
     jar: CookieJar,
     request: Request<Body>,
 ) -> impl IntoResponse {
-    let token = match jar.get(COOKIE_NAME) {
-        Some(cookie) => cookie.value().to_string(),
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                axum::Json(serde_json::json!({ "error": "not authenticated" })),
-            )
-                .into_response();
+    let token = if let Some(token) = &bff.auto_login_token {
+        token.as_ref().clone()
+    } else {
+        match jar.get(COOKIE_NAME) {
+            Some(cookie) => cookie.value().to_string(),
+            None => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(serde_json::json!({ "error": "not authenticated" })),
+                )
+                    .into_response();
+            }
         }
     };
 
