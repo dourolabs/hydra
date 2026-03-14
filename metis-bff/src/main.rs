@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use metis_bff::{BffConfig, BffState, FrontendAssets, HttpUpstream};
+use metis_bff::{BffConfig, BffState, CacheConfig, FrontendAssets, HttpUpstream};
 use tracing::info;
 
 fn env_or(name: &str, default: &str) -> String {
@@ -40,13 +40,20 @@ async fn main() {
 
     let upstream = HttpUpstream::new(upstream_url.clone());
 
+    let cache = if cache_enabled {
+        Some(CacheConfig {
+            upstream_url: upstream_url.clone(),
+            upstream_auth_token,
+        })
+    } else {
+        None
+    };
+
     let config = BffConfig {
         auth_login_enabled: true,
         cookie_secure,
         frontend_assets,
-        cache_enabled,
-        upstream_url: Some(upstream_url.clone()),
-        upstream_auth_token,
+        cache,
     };
 
     info!(upstream_url = %upstream_url, port = port, cache_enabled = cache_enabled, "starting metis-bff-server");

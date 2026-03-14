@@ -19,13 +19,12 @@ pub struct BffState<U: Upstream> {
 impl<U: Upstream> BffState<U> {
     pub fn new(upstream: U, config: BffConfig) -> Self {
         let upstream = Arc::new(upstream);
-        let (cache, cache_task) = if config.cache_enabled {
-            match Self::start_cache(&config) {
+        let (cache, cache_task) = match &config.cache {
+            Some(cache_config) => match Self::start_cache(cache_config) {
                 Some((c, t)) => (Some(c), Some(Arc::new(t))),
                 None => (None, None),
-            }
-        } else {
-            (None, None)
+            },
+            None => (None, None),
         };
 
         Self {
@@ -36,9 +35,11 @@ impl<U: Upstream> BffState<U> {
         }
     }
 
-    fn start_cache(config: &BffConfig) -> Option<(Arc<EntityCache>, JoinHandle<()>)> {
-        let upstream_url = config.upstream_url.as_deref()?;
-        let auth_token = config.upstream_auth_token.as_deref().unwrap_or("");
+    fn start_cache(
+        cache_config: &crate::config::CacheConfig,
+    ) -> Option<(Arc<EntityCache>, JoinHandle<()>)> {
+        let upstream_url = &cache_config.upstream_url;
+        let auth_token = cache_config.upstream_auth_token.as_deref().unwrap_or("");
 
         let client = match MetisClient::new(upstream_url, auth_token) {
             Ok(c) => c,
