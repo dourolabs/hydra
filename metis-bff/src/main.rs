@@ -32,15 +32,24 @@ async fn main() {
         .parse()
         .expect("PORT must be a valid port number");
 
+    let cache_enabled = env_or("CACHE_ENABLED", "false")
+        .parse::<bool>()
+        .expect("CACHE_ENABLED must be true or false");
+
+    let upstream_auth_token = std::env::var("UPSTREAM_AUTH_TOKEN").ok();
+
     let upstream = HttpUpstream::new(upstream_url.clone());
 
     let config = BffConfig {
         auth_login_enabled: true,
         cookie_secure,
         frontend_assets,
+        cache_enabled,
+        upstream_url: Some(upstream_url.clone()),
+        upstream_auth_token,
     };
 
-    info!(upstream_url = %upstream_url, port = port, "starting metis-bff-server");
+    info!(upstream_url = %upstream_url, port = port, cache_enabled = cache_enabled, "starting metis-bff-server");
 
     let state = BffState::new(upstream, config);
     let router = metis_bff::build_bff_router(state);
