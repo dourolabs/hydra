@@ -969,20 +969,23 @@ mod tests {
             None,
             &ApiKeys::default(),
             None,
-            None,
+            Some("/custom/log/dir"),
         );
 
         assert!(config.contains("job_engine: local"));
         assert!(config.contains("server_hostname: 127.0.0.1:8080"));
+        assert!(config.contains("/custom/log/dir"));
 
         use metis_server::config::AppConfig;
         let app_config: AppConfig = serde_yaml_ng::from_str(&config)
             .expect("generated config should deserialize into AppConfig");
 
-        assert!(matches!(
-            app_config.job_engine,
-            metis_server::config::JobEngineConfig::Local { .. }
-        ));
+        match &app_config.job_engine {
+            metis_server::config::JobEngineConfig::Local { log_dir } => {
+                assert_eq!(*log_dir, Some("/custom/log/dir".to_string()));
+            }
+            other => panic!("expected JobEngineConfig::Local, got {other:?}"),
+        }
         assert_eq!(app_config.metis.server_hostname, "127.0.0.1:8080");
     }
 
