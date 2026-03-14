@@ -19,7 +19,7 @@ pub const COOKIE_NAME: &str = "metis_token";
 pub fn router<U: Upstream>() -> Router<BffState<U>> {
     Router::new()
         .route("/login", post(auth_login::<U>))
-        .route("/logout", post(auth_logout))
+        .route("/logout", post(auth_logout::<U>))
         .route("/me", get(auth_me::<U>))
 }
 
@@ -33,8 +33,10 @@ async fn auth_login<U: Upstream>(
     jar: CookieJar,
     axum::Json(body): axum::Json<LoginRequest>,
 ) -> impl IntoResponse {
-    if !bff.config.auth_login_enabled {
-        return StatusCode::NOT_FOUND.into_response();
+    // When auto_login_token is set, login is a no-op that returns success
+    // (the BFF already injects auth on all proxied requests).
+    if bff.auto_login_token.is_some() {
+        return axum::Json(serde_json::json!({ "ok": true })).into_response();
     }
 
     let token = match body.token {
@@ -90,20 +92,33 @@ async fn auth_login<U: Upstream>(
     (jar, axum::Json(user)).into_response()
 }
 
-async fn auth_logout(jar: CookieJar) -> impl IntoResponse {
+async fn auth_logout<U: Upstream>(
+    State(bff): State<BffState<U>>,
+    jar: CookieJar,
+) -> impl IntoResponse {
+    // When auto_login_token is set, logout is a no-op (no session to clear).
+    if bff.auto_login_token.is_some() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
     let jar = jar.remove(Cookie::build(COOKIE_NAME).path("/"));
-    (jar, axum::Json(serde_json::json!({ "ok": true })))
+    (jar, axum::Json(serde_json::json!({ "ok": true }))).into_response()
 }
 
 async fn auth_me<U: Upstream>(State(bff): State<BffState<U>>, jar: CookieJar) -> impl IntoResponse {
-    let token = match jar.get(COOKIE_NAME) {
-        Some(cookie) => cookie.value().to_string(),
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                axum::Json(serde_json::json!({ "error": "not authenticated" })),
-            )
-                .into_response();
+    // Resolve token: use auto_login_token if set, otherwise extract from cookie.
+    let token = if let Some(token) = &bff.auto_login_token {
+        token.as_ref().clone()
+    } else {
+        match jar.get(COOKIE_NAME) {
+            Some(cookie) => cookie.value().to_string(),
+            None => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(serde_json::json!({ "error": "not authenticated" })),
+                )
+                    .into_response();
+            }
         }
     };
 

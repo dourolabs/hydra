@@ -14,10 +14,13 @@ pub struct BffState<U: Upstream> {
     pub config: Arc<BffConfig>,
     pub cache: Option<Arc<EntityCache>>,
     cache_task: Option<Arc<JoinHandle<()>>>,
+    /// When set, the BFF injects this token as Bearer auth on all proxied
+    /// requests instead of extracting from cookies (single-player mode).
+    pub auto_login_token: Option<Arc<String>>,
 }
 
 impl<U: Upstream> BffState<U> {
-    pub fn new(upstream: U, config: BffConfig) -> Self {
+    pub fn new(upstream: U, config: BffConfig, auto_login_token: Option<String>) -> Self {
         let upstream = Arc::new(upstream);
         let (cache, cache_task) = match &config.cache {
             Some(cache_config) => match Self::start_cache(cache_config) {
@@ -32,6 +35,7 @@ impl<U: Upstream> BffState<U> {
             config: Arc::new(config),
             cache,
             cache_task,
+            auto_login_token: auto_login_token.map(Arc::new),
         }
     }
 
@@ -63,6 +67,7 @@ impl<U: Upstream> Clone for BffState<U> {
             config: Arc::clone(&self.config),
             cache: self.cache.clone(),
             cache_task: self.cache_task.clone(),
+            auto_login_token: self.auto_login_token.clone(),
         }
     }
 }

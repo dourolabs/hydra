@@ -50,7 +50,6 @@ async fn main() {
     };
 
     let config = BffConfig {
-        auth_login_enabled: true,
         cookie_secure,
         frontend_assets,
         cache,
@@ -58,7 +57,7 @@ async fn main() {
 
     info!(upstream_url = %upstream_url, port = port, cache_enabled = cache_enabled, "starting metis-bff-server");
 
-    let state = BffState::new(upstream, config);
+    let state = BffState::new(upstream, config, None);
     let router = metis_bff::build_bff_router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
