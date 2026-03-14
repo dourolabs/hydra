@@ -207,7 +207,7 @@ impl PostgresStoreV2 {
         id: &str,
     ) -> Result<Option<VersionNumber>, StoreError> {
         let query = format!(
-            "SELECT version_number FROM {table} WHERE id = $1 ORDER BY version_number DESC LIMIT 1"
+            "SELECT version_number FROM {table} WHERE id = $1 ORDER BY is_latest DESC, version_number DESC LIMIT 1"
         );
         let version = sqlx::query_scalar::<_, i64>(&query)
             .bind(id)
@@ -1148,13 +1148,10 @@ impl PostgresStoreV2 {
         &self,
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
-        // Build query with filtering on latest version of each user
-        let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
-             FROM {TABLE_USERS_V2}
-             ORDER BY id, version_number DESC"
+        let mut sql = format!(
+            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
+             FROM {TABLE_USERS_V2} WHERE is_latest = true"
         );
-        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let mut predicates = Vec::new();
         let mut bindings: Vec<String> = Vec::new();
 
@@ -1182,7 +1179,7 @@ impl PostgresStoreV2 {
         }
 
         if !predicates.is_empty() {
-            sql.push_str(" WHERE ");
+            sql.push_str(" AND ");
             sql.push_str(&predicates.join(" AND "));
         }
 
@@ -1812,7 +1809,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             "SELECT id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE id = $1
-             ORDER BY version_number DESC
+             ORDER BY is_latest DESC, version_number DESC
              LIMIT 1"
         );
         let row = sqlx::query_as::<_, RepositoryRow>(&query)
@@ -1847,9 +1844,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         let include_deleted = query.include_deleted.unwrap_or(false);
         let sql = format!(
-            "SELECT DISTINCT ON (id) id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, patch_workflow, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
-             ORDER BY id, version_number DESC"
+             WHERE is_latest = true
+             ORDER BY id"
         );
         let rows = sqlx::query_as::<_, RepositoryRow>(&sql)
             .fetch_all(&self.pool)
@@ -1903,7 +1901,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = $1
-             ORDER BY version_number DESC
+             ORDER BY is_latest DESC, version_number DESC
              LIMIT 1"
         );
         let row = sqlx::query_as::<_, IssueRow>(&query)
@@ -1997,11 +1995,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        // Use a correlated subquery to filter to the latest version of each
-        // issue instead of DISTINCT ON, which materializes the full table.
-        // With an index on (created_at DESC, id DESC), Postgres can scan in
-        // sort order and short-circuit at the LIMIT without computing latest
-        // versions for all issues.
+        // Filter to the latest version of each issue using the is_latest
+        // column maintained by a BEFORE INSERT trigger, avoiding correlated
+        // subqueries or DISTINCT ON.
         let mut sql = format!(
             "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
              i.progress, i.status, i.assignee, i.job_settings, i.todo_list, i.deleted, i.actor, \
@@ -2010,9 +2006,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_ISSUES_V2} i"
         );
         let (mut predicates, mut bindings) = build_issues_predicates_pg(query);
-        predicates.push(format!(
-            "i.version_number = (SELECT MAX(i3.version_number) FROM {TABLE_ISSUES_V2} i3 WHERE i3.id = i.id)"
-        ));
+        predicates.push("i.is_latest = true".to_string());
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2062,13 +2056,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
-        // Use correlated subquery instead of DISTINCT ON to avoid
-        // materializing all latest versions before counting.
         let mut sql = format!("SELECT COUNT(*) FROM {TABLE_ISSUES_V2} i");
         let (mut predicates, bindings) = build_issues_predicates_pg(query);
-        predicates.push(format!(
-            "i.version_number = (SELECT MAX(i2.version_number) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id)"
-        ));
+        predicates.push("i.is_latest = true".to_string());
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2163,7 +2153,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              (SELECT MIN(created_at) FROM {TABLE_PATCHES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
-             ORDER BY version_number DESC
+             ORDER BY is_latest DESC, version_number DESC
              LIMIT 1"
         );
         let row = sqlx::query_as::<_, PatchRow>(&query)
@@ -2240,20 +2230,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
-        // Use a correlated subquery to filter to the latest version of each
-        // patch instead of DISTINCT ON, which materializes the full table.
-        // With an index on (created_at DESC, id DESC), Postgres can scan in
-        // sort order and short-circuit at the LIMIT without computing latest
-        // versions for all patches.
         let mut sql = format!(
             "SELECT p.id, p.version_number, p.title, p.description, p.diff, p.status, p.is_automatic_backup, p.created_by, p.reviews, p.service_repo_name, p.github, p.deleted, p.branch_name, p.commit_range, p.creator, p.base_branch, p.actor, p.created_at, p.updated_at, \
              (SELECT MIN(p2.created_at) FROM {TABLE_PATCHES_V2} p2 WHERE p2.id = p.id) AS creation_time \
              FROM {TABLE_PATCHES_V2} p"
         );
         let (mut predicates, mut bindings) = build_patches_predicates_pg(query);
-        predicates.push(format!(
-            "p.version_number = (SELECT MAX(p3.version_number) FROM {TABLE_PATCHES_V2} p3 WHERE p3.id = p.id)"
-        ));
+        predicates.push("p.is_latest = true".to_string());
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2301,13 +2284,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
-        // Use correlated subquery instead of DISTINCT ON to avoid
-        // materializing all latest versions before counting.
         let mut sql = format!("SELECT COUNT(*) FROM {TABLE_PATCHES_V2} p");
         let (mut predicates, bindings) = build_patches_predicates_pg(query);
-        predicates.push(format!(
-            "p.version_number = (SELECT MAX(p2.version_number) FROM {TABLE_PATCHES_V2} p2 WHERE p2.id = p.id)"
-        ));
+        predicates.push("p.is_latest = true".to_string());
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2362,7 +2341,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = $1
-             ORDER BY version_number DESC
+             ORDER BY is_latest DESC, version_number DESC
              LIMIT 1"
         );
         let row = sqlx::query_as::<_, DocumentRow>(&query)
@@ -2442,20 +2421,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        // Use a correlated subquery to filter to the latest version of each
-        // document instead of DISTINCT ON, which materializes the full table.
-        // With an index on (created_at DESC, id DESC), Postgres can scan in
-        // sort order and short-circuit at the LIMIT without computing latest
-        // versions for all documents.
         let mut sql = format!(
             "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.created_by, d.deleted, d.actor, d.created_at, d.updated_at, \
              (SELECT MIN(d2.created_at) FROM {TABLE_DOCUMENTS_V2} d2 WHERE d2.id = d.id) AS creation_time \
              FROM {TABLE_DOCUMENTS_V2} d"
         );
         let (mut predicates, mut bindings) = build_documents_predicates_pg(query);
-        predicates.push(format!(
-            "d.version_number = (SELECT MAX(d3.version_number) FROM {TABLE_DOCUMENTS_V2} d3 WHERE d3.id = d.id)"
-        ));
+        predicates.push("d.is_latest = true".to_string());
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2503,13 +2475,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
-        // Use correlated subquery instead of DISTINCT ON to avoid
-        // materializing all latest versions before counting.
         let mut sql = format!("SELECT COUNT(*) FROM {TABLE_DOCUMENTS_V2} d");
         let (mut predicates, bindings) = build_documents_predicates_pg(query);
-        predicates.push(format!(
-            "d.version_number = (SELECT MAX(d2.version_number) FROM {TABLE_DOCUMENTS_V2} d2 WHERE d2.id = d.id)"
-        ));
+        predicates.push("d.is_latest = true".to_string());
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2556,7 +2524,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
-             ORDER BY version_number DESC
+             ORDER BY is_latest DESC, version_number DESC
              LIMIT 1"
         );
         let row = sqlx::query_as::<_, TaskRow>(&query)
@@ -2630,19 +2598,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchSessionsQuery,
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
-        // Use a correlated subquery to filter to the latest version of each
-        // task instead of DISTINCT ON, which materializes the full table.
-        // With an index on (created_at DESC, id DESC), Postgres can scan in
-        // sort order and short-circuit at the LIMIT without computing latest
-        // versions for all tasks.
         let mut sql = format!(
             "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.creation_time, t.start_time, t.end_time \
              FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_pg(query);
-        predicates.push(format!(
-            "t.version_number = (SELECT MAX(t2.version_number) FROM {TABLE_TASKS_V2} t2 WHERE t2.id = t.id)"
-        ));
+        predicates.push("t.is_latest = true".to_string());
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2692,13 +2653,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     async fn count_sessions(&self, query: &SearchSessionsQuery) -> Result<u64, StoreError> {
-        // Use correlated subquery instead of DISTINCT ON to avoid
-        // materializing all latest versions before counting.
         let mut sql = format!("SELECT COUNT(*) FROM {TABLE_TASKS_V2} t");
         let (mut predicates, bindings) = build_tasks_predicates_pg(query);
-        predicates.push(format!(
-            "t.version_number = (SELECT MAX(t2.version_number) FROM {TABLE_TASKS_V2} t2 WHERE t2.id = t.id)"
-        ));
+        predicates.push("t.is_latest = true".to_string());
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2789,7 +2746,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
              WHERE id = $1
-             ORDER BY version_number DESC
+             ORDER BY is_latest DESC, version_number DESC
              LIMIT 1"
         );
         let row = sqlx::query_as::<_, ActorRow>(&query)
@@ -2817,9 +2774,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         let query = format!(
-            "SELECT DISTINCT ON (id) id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, created_at, updated_at
+            "SELECT id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
-             ORDER BY id, version_number DESC"
+             WHERE is_latest = true
+             ORDER BY id"
         );
         let rows = sqlx::query_as::<_, ActorRow>(&query)
             .fetch_all(&self.pool)
@@ -2864,7 +2822,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
-             ORDER BY version_number DESC
+             ORDER BY is_latest DESC, version_number DESC
              LIMIT 1"
         );
         let row = sqlx::query_as::<_, UserRow>(&query)
@@ -2910,7 +2868,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              (SELECT MIN(created_at) FROM {TABLE_MESSAGES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_MESSAGES_V2}
              WHERE id = $1
-             ORDER BY version_number DESC
+             ORDER BY is_latest DESC, version_number DESC
              LIMIT 1"
         );
         let row = sqlx::query_as::<_, MessageRow>(&query)
@@ -2945,9 +2903,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         // Build the base subquery that gets the latest version of each message
         let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, sender, recipient, body, deleted, is_read, actor, created_at, updated_at, \
-             MIN(created_at) OVER (PARTITION BY id) AS creation_time \
-             FROM {TABLE_MESSAGES_V2} ORDER BY id, version_number DESC"
+            "SELECT m.id, m.version_number, m.sender, m.recipient, m.body, m.deleted, m.is_read, m.actor, m.created_at, m.updated_at, \
+             (SELECT MIN(m2.created_at) FROM {TABLE_MESSAGES_V2} m2 WHERE m2.id = m.id) AS creation_time \
+             FROM {TABLE_MESSAGES_V2} m WHERE m.is_latest = true"
         );
 
         let mut conditions = Vec::new();
@@ -3840,7 +3798,7 @@ impl Store for PostgresStoreV2 {
             "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
-             ORDER BY version_number DESC
+             ORDER BY is_latest DESC, version_number DESC
              LIMIT 1"
         );
         let existing = sqlx::query_as::<_, UserRow>(&query)
@@ -3916,7 +3874,7 @@ impl Store for PostgresStoreV2 {
             "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
-             ORDER BY version_number DESC
+             ORDER BY is_latest DESC, version_number DESC
              LIMIT 1"
         );
         let row = sqlx::query_as::<_, UserRow>(&query)
