@@ -106,19 +106,14 @@ async fn auth_logout<U: Upstream>(
 }
 
 async fn auth_me<U: Upstream>(State(bff): State<BffState<U>>, jar: CookieJar) -> impl IntoResponse {
-    // Resolve token: use auto_login_token if set, otherwise extract from cookie.
-    let token = if let Some(token) = &bff.auto_login_token {
-        token.as_ref().clone()
-    } else {
-        match jar.get(COOKIE_NAME) {
-            Some(cookie) => cookie.value().to_string(),
-            None => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    axum::Json(serde_json::json!({ "error": "not authenticated" })),
-                )
-                    .into_response();
-            }
+    let token = match bff.resolve_token(&jar) {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({ "error": "not authenticated" })),
+            )
+                .into_response();
         }
     };
 

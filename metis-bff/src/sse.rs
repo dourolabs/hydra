@@ -7,7 +7,6 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use http::Request;
 
-use crate::auth::COOKIE_NAME;
 use crate::state::BffState;
 use crate::upstream::Upstream;
 
@@ -21,18 +20,14 @@ pub async fn sse_relay<U: Upstream>(
     jar: CookieJar,
     request: Request<Body>,
 ) -> impl IntoResponse {
-    let token = if let Some(token) = &bff.auto_login_token {
-        token.as_ref().clone()
-    } else {
-        match jar.get(COOKIE_NAME) {
-            Some(cookie) => cookie.value().to_string(),
-            None => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    axum::Json(serde_json::json!({ "error": "not authenticated" })),
-                )
-                    .into_response();
-            }
+    let token = match bff.resolve_token(&jar) {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({ "error": "not authenticated" })),
+            )
+                .into_response();
         }
     };
 
