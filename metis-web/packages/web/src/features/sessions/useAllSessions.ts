@@ -10,7 +10,7 @@ import { apiClient } from "../../api/client";
 export function useAllSessions() {
   return useQuery({
     queryKey: ["allSessions"],
-    queryFn: () => apiClient.listSessions({ status: "created,pending,running" }),
+    queryFn: () => apiClient.listSessions({}),
     select: (data): Map<string, SessionSummaryRecord[]> => {
       const map = new Map<string, SessionSummaryRecord[]>();
       for (const session of data.sessions) {
