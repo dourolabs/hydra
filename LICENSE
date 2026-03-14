@@ -1,6 +1,12 @@
-MIT License
-
 Copyright (c) 2026 Douro Labs
+
+Portions of this software are licensed as follows:
+
+* All content that resides under the "metis-server/src/ee/" directory of this repository, if that directory exists, is licensed under the license defined in "metis-server/src/ee/LICENSE".
+* All content that resides under the "metis-build-cache/" directory of this repository, if that directory exists, is licensed under the license defined in "metis-build-cache/LICENSE".
+* All content that resides under the "metis-s3/" directory of this repository, if that directory exists, is licensed under the license defined in "metis-s3/LICENSE".
+* All third party components incorporated into the Metis Software are licensed under the original license provided by the owner of the applicable component.
+* Content outside of the above mentioned directories or restrictions above is available under the "MIT Expat" license as defined below.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
