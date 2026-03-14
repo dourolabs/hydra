@@ -6,20 +6,21 @@ import { useToast } from "../toast/useToast";
 import styles from "./SecretsSection.module.css";
 
 interface SecretRowProps {
+  username: string;
   name: string;
   label: string;
   description?: string;
   configured: boolean;
 }
 
-export function SecretRow({ name, label, description, configured }: SecretRowProps) {
+export function SecretRow({ username, name, label, description, configured }: SecretRowProps) {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
 
   const setMutation = useMutation({
-    mutationFn: (secretValue: string) => apiClient.setSecret(name, secretValue),
+    mutationFn: (secretValue: string) => apiClient.setSecret(username, name, secretValue),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["secrets"] });
       addToast(`${name} saved`, "success");
@@ -35,7 +36,7 @@ export function SecretRow({ name, label, description, configured }: SecretRowPro
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => apiClient.deleteSecret(name),
+    mutationFn: () => apiClient.deleteSecret(username, name),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["secrets"] });
       addToast(`${name} deleted`, "success");

@@ -1,4 +1,5 @@
 import { Panel, Spinner } from "@metis/ui";
+import { useUsername } from "../auth/useUsername";
 import { useSecrets } from "./useSecrets";
 import { SecretRow } from "./SecretRow";
 import { AddSecretForm } from "./AddSecretForm";
@@ -12,7 +13,8 @@ const KNOWN_SECRETS = [
 ];
 
 export function SecretsSection() {
-  const { data, isLoading, error } = useSecrets();
+  const username = useUsername();
+  const { data, isLoading, error } = useSecrets(username);
   const configuredSecrets = data?.secrets ?? [];
   const knownSecretNames = new Set(KNOWN_SECRETS.map((s) => s.name));
   const customSecrets = configuredSecrets.filter((n) => !knownSecretNames.has(n));
@@ -41,6 +43,7 @@ export function SecretsSection() {
             {KNOWN_SECRETS.map((secret) => (
               <SecretRow
                 key={secret.name}
+                username={username!}
                 name={secret.name}
                 label={secret.label}
                 description={secret.description}
@@ -50,13 +53,14 @@ export function SecretsSection() {
             {customSecrets.map((name) => (
               <SecretRow
                 key={name}
+                username={username!}
                 name={name}
                 label="Custom secret"
                 configured={true}
               />
             ))}
           </div>
-          <AddSecretForm existingNames={configuredSecrets} />
+          <AddSecretForm username={username!} existingNames={configuredSecrets} />
         </Panel>
       )}
     </div>

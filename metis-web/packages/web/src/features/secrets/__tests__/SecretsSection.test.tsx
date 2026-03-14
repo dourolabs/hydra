@@ -8,6 +8,10 @@ let mockSecrets: string[] = ["OPENAI_API_KEY"];
 let mockIsLoading = false;
 let mockError: Error | null = null;
 
+vi.mock("../../auth/useUsername", () => ({
+  useUsername: () => "test-user",
+}));
+
 vi.mock("../../secrets/useSecrets", () => ({
   useSecrets: () => ({
     data: mockError ? undefined : { secrets: mockSecrets },

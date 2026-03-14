@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../api/client";
 
-export function useSecrets() {
+export function useSecrets(username: string | null) {
   return useQuery({
-    queryKey: ["secrets"],
-    queryFn: () => apiClient.listSecrets(),
+    queryKey: ["secrets", username],
+    queryFn: () => apiClient.listSecrets(username!),
+    enabled: username !== null,
   });
 }

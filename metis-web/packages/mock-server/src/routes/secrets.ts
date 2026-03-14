@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import type { ListSecretsResponse, SetSecretRequest } from "@metis/api";
-import { DEV_USERNAME } from "../auth.js";
 
 const SECRET_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
 
@@ -26,10 +25,6 @@ function getSecrets(username: string): Set<string> {
   return secrets;
 }
 
-function resolveUsername(raw: string): string {
-  return raw === "me" ? DEV_USERNAME : raw;
-}
-
 export function resetSecrets(): void {
   userSecrets.clear();
 }
@@ -39,7 +34,7 @@ export function createSecretRoutes(): Hono {
 
   // GET /v1/users/:username/secrets
   app.get("/v1/users/:username/secrets", (c) => {
-    const username = resolveUsername(c.req.param("username"));
+    const username = c.req.param("username");
     const secrets = getSecrets(username);
     const resp: ListSecretsResponse = { secrets: Array.from(secrets) };
     return c.json(resp);
@@ -47,7 +42,7 @@ export function createSecretRoutes(): Hono {
 
   // PUT /v1/users/:username/secrets/:name
   app.put("/v1/users/:username/secrets/:name", async (c) => {
-    const username = resolveUsername(c.req.param("username"));
+    const username = c.req.param("username");
     const name = c.req.param("name");
 
     const validationError = validateSecretName(name);
@@ -66,7 +61,7 @@ export function createSecretRoutes(): Hono {
 
   // DELETE /v1/users/:username/secrets/:name
   app.delete("/v1/users/:username/secrets/:name", (c) => {
-    const username = resolveUsername(c.req.param("username"));
+    const username = c.req.param("username");
     const name = c.req.param("name");
 
     const validationError = validateSecretName(name);

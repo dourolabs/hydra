@@ -18,10 +18,11 @@ function validateSecretName(name: string): string | null {
 }
 
 interface AddSecretFormProps {
+  username: string;
   existingNames: string[];
 }
 
-export function AddSecretForm({ existingNames }: AddSecretFormProps) {
+export function AddSecretForm({ username, existingNames }: AddSecretFormProps) {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
@@ -31,7 +32,7 @@ export function AddSecretForm({ existingNames }: AddSecretFormProps) {
 
   const setMutation = useMutation({
     mutationFn: ({ secretName, secretValue }: { secretName: string; secretValue: string }) =>
-      apiClient.setSecret(secretName, secretValue),
+      apiClient.setSecret(username, secretName, secretValue),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["secrets"] });
       addToast(`${variables.secretName} saved`, "success");
