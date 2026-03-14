@@ -11,6 +11,17 @@ pub enum FrontendAssets {
     None,
 }
 
+/// Configuration for the upstream entity cache.
+/// Presence of this config means the cache is enabled.
+#[derive(Debug, Clone)]
+pub struct CacheConfig {
+    /// Base URL of the upstream metis-server for the cache's SSE subscription.
+    pub upstream_url: String,
+
+    /// Auth token for the cache's SSE subscription to the upstream server.
+    pub upstream_auth_token: Option<String>,
+}
+
 /// Configuration for the BFF layer.
 #[derive(Debug, Clone)]
 pub struct BffConfig {
@@ -25,18 +36,11 @@ pub struct BffConfig {
     /// Frontend asset serving mode.
     pub frontend_assets: FrontendAssets,
 
-    /// Whether the in-memory entity cache is enabled.
-    /// When enabled, a background task subscribes to the upstream SSE stream
+    /// In-memory entity cache configuration.
+    /// When `Some`, a background task subscribes to the upstream SSE stream
     /// and maintains an in-memory cache of entity state.
-    pub cache_enabled: bool,
-
-    /// Base URL of the upstream metis-server for the cache's SSE subscription.
-    /// Required when cache is enabled.
-    pub upstream_url: Option<String>,
-
-    /// Auth token for the cache's SSE subscription to the upstream server.
-    /// Required when cache is enabled in HTTP (multi-player) mode.
-    pub upstream_auth_token: Option<String>,
+    /// When `None`, the cache is disabled.
+    pub cache: Option<CacheConfig>,
 }
 
 impl Default for BffConfig {
@@ -45,9 +49,7 @@ impl Default for BffConfig {
             auth_login_enabled: true,
             cookie_secure: false,
             frontend_assets: FrontendAssets::None,
-            cache_enabled: false,
-            upstream_url: None,
-            upstream_auth_token: None,
+            cache: None,
         }
     }
 }
