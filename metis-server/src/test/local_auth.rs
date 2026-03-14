@@ -1,11 +1,19 @@
 use crate::{
     config::AuthConfig,
-    domain::{actors::AuthToken, users::Username},
+    domain::{
+        actors::AuthToken,
+        secrets::{SECRET_GITHUB_TOKEN, SecretManager},
+        users::Username,
+    },
     setup_local_auth,
     store::{MemoryStore, ReadOnlyStore},
     test_utils::test_app_config,
 };
 use std::sync::Arc;
+
+fn test_secret_manager() -> SecretManager {
+    SecretManager::new([42u8; 32])
+}
 
 #[tokio::test]
 async fn setup_local_auth_creates_actor() -> anyhow::Result<()> {
@@ -17,7 +25,8 @@ async fn setup_local_auth_creates_actor() -> anyhow::Result<()> {
     };
 
     let store = Arc::new(MemoryStore::new());
-    setup_local_auth(&config, store.as_ref()).await?;
+    let sm = test_secret_manager();
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     // Actor should exist in the store.
     let actor = store.as_ref().get_actor("u-local").await?;
@@ -36,10 +45,11 @@ async fn setup_local_auth_is_idempotent() -> anyhow::Result<()> {
     };
 
     let store = Arc::new(MemoryStore::new());
+    let sm = test_secret_manager();
 
     // Run twice — second call should not fail.
-    setup_local_auth(&config, store.as_ref()).await?;
-    setup_local_auth(&config, store.as_ref()).await?;
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     // The actor in the store should still exist.
     let actor = store.as_ref().get_actor("u-local").await?;
@@ -58,12 +68,21 @@ async fn setup_local_auth_stores_github_pat() -> anyhow::Result<()> {
     };
 
     let store = Arc::new(MemoryStore::new());
-    setup_local_auth(&config, store.as_ref()).await?;
+    let sm = test_secret_manager();
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     // User should exist.
     let username = Username::from("local");
     let user = store.as_ref().get_user(&username, false).await?;
     assert_eq!(user.item.username, username);
+
+    // The GitHub token should be stored encrypted and decryptable.
+    let encrypted = store
+        .get_user_secret(&username, SECRET_GITHUB_TOKEN)
+        .await?
+        .expect("GITHUB_TOKEN secret should exist");
+    let decrypted = sm.decrypt(&encrypted)?;
+    assert_eq!(decrypted, "ghp_test_pat_token_123");
 
     Ok(())
 }
@@ -78,7 +97,8 @@ async fn setup_local_auth_uses_custom_username() -> anyhow::Result<()> {
     };
 
     let store = Arc::new(MemoryStore::new());
-    setup_local_auth(&config, store.as_ref()).await?;
+    let sm = test_secret_manager();
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     // Actor should exist under the custom username.
     let actor = store.as_ref().get_actor("u-alice").await?;
@@ -105,7 +125,8 @@ async fn setup_local_auth_writes_token_file() -> anyhow::Result<()> {
     };
 
     let store = Arc::new(MemoryStore::new());
-    setup_local_auth(&config, store.as_ref()).await?;
+    let sm = test_secret_manager();
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     // Token file should exist and be non-empty.
     let token_contents = std::fs::read_to_string(&token_path)?;
@@ -143,14 +164,15 @@ async fn setup_local_auth_preserves_token_across_restart() -> anyhow::Result<()>
 
     // First call: creates actor and writes token file.
     let store = Arc::new(MemoryStore::new());
-    setup_local_auth(&config, store.as_ref()).await?;
+    let sm = test_secret_manager();
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     let token_after_first = std::fs::read_to_string(&token_path)?;
     assert!(!token_after_first.is_empty());
 
-    // Second call with the SAME store: actor exists, so setup is skipped
-    // and the token file remains unchanged.
-    setup_local_auth(&config, store.as_ref()).await?;
+    // Second call with the SAME store: actor exists, so actor creation is
+    // skipped and the token file remains unchanged.
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     let token_after_second = std::fs::read_to_string(&token_path)?;
     assert_eq!(
@@ -165,6 +187,44 @@ async fn setup_local_auth_preserves_token_across_restart() -> anyhow::Result<()>
         actor.item.verify_auth_token(&parsed),
         "actor should verify the persisted token after restart"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn setup_local_auth_updates_github_pat_on_config_change() -> anyhow::Result<()> {
+    let store = Arc::new(MemoryStore::new());
+    let sm = test_secret_manager();
+    let username = Username::from("local");
+
+    // First call with original token.
+    let mut config = test_app_config();
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_original_token".to_string(),
+        username: None,
+        auth_token_file: None,
+    };
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+
+    let encrypted = store
+        .get_user_secret(&username, SECRET_GITHUB_TOKEN)
+        .await?
+        .expect("GITHUB_TOKEN should exist");
+    assert_eq!(sm.decrypt(&encrypted)?, "ghp_original_token");
+
+    // Second call with updated token (simulates config change between restarts).
+    config.auth = AuthConfig::Local {
+        github_token: "ghp_updated_token".to_string(),
+        username: None,
+        auth_token_file: None,
+    };
+    setup_local_auth(&config, store.as_ref(), &sm).await?;
+
+    let encrypted = store
+        .get_user_secret(&username, SECRET_GITHUB_TOKEN)
+        .await?
+        .expect("GITHUB_TOKEN should exist after update");
+    assert_eq!(sm.decrypt(&encrypted)?, "ghp_updated_token");
 
     Ok(())
 }
