@@ -8,18 +8,26 @@ use axum::{
     Extension, Json,
     extract::{Path, State},
 };
-use metis_common::api::v1::{
-    ApiError,
-    secrets::{ListSecretsResponse, SetSecretRequest},
+use metis_common::{
+    ActorId,
+    api::v1::{
+        ApiError,
+        secrets::{ListSecretsResponse, SetSecretRequest},
+    },
 };
 use tracing::info;
 
 /// Return 403 if the authenticated actor is not the requested user.
+///
+/// Only `ActorId::Username` actors are permitted; session and issue actors
+/// are rejected even when their `creator` field matches the target.
 fn authorize(actor: &Actor, target: &Username) -> Result<(), ApiError> {
-    if actor.creator.as_str() != target.as_str() {
-        return Err(ApiError::forbidden("you can only access your own secrets"));
+    if let ActorId::Username(ref username) = actor.actor_id {
+        if username.as_str() == target.as_str() {
+            return Ok(());
+        }
     }
-    Ok(())
+    Err(ApiError::forbidden("you can only access your own secrets"))
 }
 
 /// GET /v1/users/:username/secrets
