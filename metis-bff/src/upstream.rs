@@ -53,3 +53,74 @@ impl Upstream for InProcessUpstream {
         })
     }
 }
+
+/// HTTP upstream that forwards requests to a remote metis-server via reqwest.
+/// Used by the standalone `metis-bff-server` binary in multi-player deployments.
+#[derive(Clone)]
+pub struct HttpUpstream {
+    client: reqwest::Client,
+    base_url: String,
+}
+
+impl HttpUpstream {
+    pub fn new(base_url: String) -> Self {
+        let client = reqwest::Client::builder()
+            // Disable default gzip decompression so SSE streams pass through raw.
+            .no_proxy()
+            .build()
+            .expect("failed to build reqwest client");
+        Self { client, base_url }
+    }
+}
+
+impl Upstream for HttpUpstream {
+    fn forward(
+        &self,
+        request: Request<Body>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response, UpstreamError>> + Send>> {
+        let client = self.client.clone();
+        let base_url = self.base_url.clone();
+
+        Box::pin(async move {
+            let (parts, body) = request.into_parts();
+
+            let url = format!(
+                "{}{}",
+                base_url.trim_end_matches('/'),
+                parts.uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/")
+            );
+
+            let body_bytes = axum::body::to_bytes(body, 64 * 1024 * 1024)
+                .await
+                .map_err(|e| UpstreamError(format!("failed to read request body: {e}")))?;
+
+            let mut req_builder = client.request(parts.method, &url);
+
+            for (name, value) in &parts.headers {
+                req_builder = req_builder.header(name, value);
+            }
+
+            let reqwest_resp = req_builder
+                .body(body_bytes)
+                .send()
+                .await
+                .map_err(|e| UpstreamError(format!("upstream request failed: {e}")))?;
+
+            let status = reqwest_resp.status();
+            let headers = reqwest_resp.headers().clone();
+
+            // Stream the response body to support SSE without buffering.
+            let byte_stream = reqwest_resp.bytes_stream();
+            let body = Body::from_stream(byte_stream);
+
+            let mut response = Response::builder().status(status);
+            for (name, value) in &headers {
+                response = response.header(name, value);
+            }
+
+            response
+                .body(body)
+                .map_err(|e| UpstreamError(format!("failed to build response: {e}")))
+        })
+    }
+}
