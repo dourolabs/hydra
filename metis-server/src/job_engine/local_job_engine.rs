@@ -91,10 +91,7 @@ impl LocalJobEngine {
                     .cloned()
                     .or_else(|| std::env::var("PATH").ok())
                     .unwrap_or_default();
-                env.insert(
-                    "PATH".to_string(),
-                    format!("{exe_dir_str}:{existing_path}"),
-                );
+                env.insert("PATH".to_string(), format!("{exe_dir_str}:{existing_path}"));
             }
         }
 
