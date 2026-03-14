@@ -12,4 +12,4 @@ pub use cache::EntityCache;
 pub use config::{BffConfig, FrontendAssets};
 pub use router::build_bff_router;
 pub use state::BffState;
-pub use upstream::{InProcessUpstream, Upstream};
+pub use upstream::{HttpUpstream, InProcessUpstream, Upstream};

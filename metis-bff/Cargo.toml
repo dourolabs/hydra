@@ -6,6 +6,10 @@ edition = "2021"
 [features]
 embedded-frontend = ["rust-embed"]
 
+[[bin]]
+name = "metis-bff-server"
+path = "src/main.rs"
+
 [dependencies]
 axum = "0.7"
 axum-extra = { version = "0.9", features = ["cookie"] }
@@ -15,12 +19,14 @@ http = "1"
 metis = { path = "../metis" }
 metis-common = { path = "../metis-common" }
 mime_guess = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 rust-embed = { version = "8", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.38", features = ["macros", "time"] }
 tower = "0.5"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 [dev-dependencies]
 metis-server = { path = "../metis-server", features = ["test-utils"] }
