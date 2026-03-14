@@ -2196,7 +2196,7 @@ mod tests {
         sessions::{BundleSpec, ListSessionsResponse, Session},
         task_status::Status,
         users::Username,
-        PatchId, RepoName, SessionId,
+        PatchId, RepoName,
     };
     use reqwest::Client as HttpClient;
     use std::collections::HashMap;
