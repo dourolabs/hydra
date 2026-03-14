@@ -540,11 +540,13 @@ fn cmd_start() -> Result<()> {
 
     if is_server_running()? {
         println!("Server is already running.");
+        print_running_status();
         return Ok(());
     }
 
     start_server_in_process()?;
     println!("Server started.");
+    print_running_status();
     Ok(())
 }
 
@@ -737,18 +739,23 @@ fn cmd_status() -> Result<()> {
 
     if is_server_running()? {
         println!("Server is running.");
-        if let Some(pid) = read_pid() {
-            println!("  PID: {pid}");
-        }
-        println!("  URL: {LOCAL_SERVER_URL}");
-        println!("  Config: {}", expand_path(SERVER_CONFIG_PATH).display());
-        println!("  Logs: {}", expand_path(LOG_FILE_PATH).display());
+        print_running_status();
     } else {
         println!("Server is stopped.");
         println!("  Run `metis server start` to start it.");
     }
 
     Ok(())
+}
+
+/// Print the status details (PID, URL, config path, logs path) for a running server.
+fn print_running_status() {
+    if let Some(pid) = read_pid() {
+        println!("  PID: {pid}");
+    }
+    println!("  URL: {LOCAL_SERVER_URL}");
+    println!("  Config: {}", expand_path(SERVER_CONFIG_PATH).display());
+    println!("  Logs: {}", expand_path(LOG_FILE_PATH).display());
 }
 
 fn is_server_running() -> Result<bool> {
