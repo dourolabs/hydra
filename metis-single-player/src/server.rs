@@ -76,8 +76,11 @@ fn cmd_init() -> Result<()> {
         );
     }
 
-    // Prompt for GitHub PAT.
-    let github_pat = prompt_github_pat()?;
+    // Prompt for username.
+    let username = prompt_username()?;
+
+    // Prompt for job engine choice.
+    let job_engine = prompt_job_engine()?;
 
     // Prompt for model choice (Codex vs Claude).
     let (provider, default_model) = prompt_model_choice()?;
@@ -85,8 +88,8 @@ fn cmd_init() -> Result<()> {
     // Prompt for the appropriate API key(s).
     let api_keys = prompt_api_key(provider)?;
 
-    // Prompt for job engine choice.
-    let job_engine = prompt_job_engine()?;
+    // Prompt for GitHub PAT.
+    let github_pat = prompt_github_pat()?;
 
     // Generate a random 32-byte encryption key (base64-encoded).
     let encryption_key = generate_encryption_key();
@@ -109,6 +112,7 @@ fn cmd_init() -> Result<()> {
         &job_engine,
         Some(&default_model),
         &api_keys,
+        username.as_deref(),
     );
     fs::write(&config_path, &config_content)
         .with_context(|| format!("failed to write config to {}", config_path.display()))?;
@@ -307,6 +311,34 @@ fn prompt_github_pat() -> Result<String> {
     Ok(token)
 }
 
+/// Prompt the user for their desired username.
+/// Returns `None` when the user accepts the default ("local").
+fn prompt_username() -> Result<Option<String>> {
+    eprint!("Enter your username [local]: ");
+    io::stderr().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    if input.is_empty() || input == "local" {
+        return Ok(None);
+    }
+
+    ensure!(
+        !input.contains(char::is_whitespace),
+        "Username must not contain whitespace"
+    );
+    ensure!(
+        input
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_'),
+        "Username must contain only alphanumeric characters, hyphens, or underscores"
+    );
+
+    Ok(Some(input.to_string()))
+}
+
 /// Which AI provider the user selected during init.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ModelProvider {
@@ -419,6 +451,8 @@ struct ServerInitConfig {
     metis: InitMetisSection,
     auth_mode: String,
     github_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    username: Option<String>,
     auth_token_file: String,
     storage_backend: String,
     sqlite_path: String,
@@ -449,6 +483,7 @@ struct InitJobSection {
     default_model: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_server_config(
     encryption_key: &str,
     github_pat: &str,
@@ -457,6 +492,7 @@ fn render_server_config(
     job_engine: &str,
     default_model: Option<&str>,
     api_keys: &ApiKeys,
+    username: Option<&str>,
 ) -> String {
     let config = ServerInitConfig {
         metis: InitMetisSection {
@@ -468,6 +504,7 @@ fn render_server_config(
         },
         auth_mode: "local".to_string(),
         github_token: github_pat.to_string(),
+        username: username.map(str::to_string),
         auth_token_file: auth_token_path.display().to_string(),
         storage_backend: "sqlite".to_string(),
         sqlite_path: db_path.display().to_string(),
@@ -863,6 +900,7 @@ mod tests {
             "docker",
             None,
             &ApiKeys::default(),
+            None,
         );
 
         // Verify the generated YAML contains all expected fields.
@@ -876,6 +914,8 @@ mod tests {
         assert!(config.contains("default_image:"));
         assert!(config.contains("# Metis server configuration"));
         assert!(config.contains("server_hostname: 127.0.0.1:8080"));
+        // Username should not appear when None.
+        assert!(!config.contains("username:"));
 
         // Round-trip: deserialize the generated YAML back into AppConfig.
         use metis_server::config::AppConfig;
@@ -917,6 +957,7 @@ mod tests {
             "local",
             None,
             &ApiKeys::default(),
+            None,
         );
 
         assert!(config.contains("job_engine: local"));
@@ -951,6 +992,7 @@ mod tests {
             "docker",
             Some("gpt-4o"),
             &keys,
+            None,
         );
 
         assert!(config.contains("default_model: gpt-4o"));
@@ -990,6 +1032,7 @@ mod tests {
             "docker",
             Some("opus"),
             &keys,
+            None,
         );
 
         assert!(config.contains("default_model: opus"));
@@ -1028,6 +1071,7 @@ mod tests {
             "docker",
             Some("opus"),
             &keys,
+            None,
         );
 
         assert!(config.contains("default_model: opus"));
@@ -1046,6 +1090,31 @@ mod tests {
         );
         assert!(app_config.metis.openai_api_key.is_none());
         assert!(app_config.metis.anthropic_api_key.is_none());
+    }
+
+    #[test]
+    fn render_server_config_with_custom_username() {
+        use base64::Engine;
+        let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
+
+        let config = render_server_config(
+            &encryption_key,
+            "ghp_test123",
+            Path::new("/tmp/test.db"),
+            Path::new("/tmp/auth-token"),
+            "docker",
+            None,
+            &ApiKeys::default(),
+            Some("alice"),
+        );
+
+        assert!(config.contains("username: alice"));
+
+        use metis_server::config::AppConfig;
+        let app_config: AppConfig = serde_yaml_ng::from_str(&config)
+            .expect("generated config should deserialize into AppConfig");
+
+        assert_eq!(app_config.auth.local_username(), Some("alice"));
     }
 
     #[test]
