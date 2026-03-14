@@ -31,6 +31,7 @@ pub fn build_bff_router(inner_app: Router, auto_login_token: String) -> Router {
         cookie_secure: false,
         frontend_assets: FrontendAssets::Embedded,
         cache_enabled: false,
+        upstream_url: None,
         upstream_auth_token: None,
     };
     let bff_state = BffState::new(upstream, config);
