@@ -164,18 +164,12 @@ export function useSSE(): SSEConnectionState {
       } else if (entity_type === "session" || eventType.startsWith("session_")) {
         const record = entity as unknown as SessionSummaryRecord;
         const spawnedFrom = record.session?.spawned_from;
-        const isTerminal = record.session?.status === "complete" || record.session?.status === "failed" || record.session?.status === "unknown";
 
         // SSE now sends summary records; invalidate the detail cache instead of direct-setting.
         queryClient.invalidateQueries({ queryKey: ["session", entity_id] });
 
-        // allSessions only contains active (non-terminal) sessions. Remove sessions that
-        // transition to a terminal status; upsert otherwise.
-        if (isTerminal) {
-          removeFromList(queryClient, ["allSessions"], sessionList, wrapSessions, sessionRecordId, entity_id);
-        } else {
-          upsertInList(queryClient, ["allSessions"], sessionList, wrapSessions, sessionRecordId, entity_id, record);
-        }
+        // Always upsert into allSessions regardless of status.
+        upsertInList(queryClient, ["allSessions"], sessionList, wrapSessions, sessionRecordId, entity_id, record);
 
         if (spawnedFrom) {
           upsertInList(queryClient, ["sessions", spawnedFrom], sessionList, wrapSessions, sessionRecordId, entity_id, record);
