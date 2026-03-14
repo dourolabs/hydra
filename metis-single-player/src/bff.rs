@@ -8,7 +8,6 @@ use metis_bff::{BffConfig, BffState, FrontendAssets, InProcessUpstream};
 pub fn build_bff_router(inner_app: Router, auto_login_token: String) -> Router {
     let upstream = InProcessUpstream::new(inner_app);
     let config = BffConfig {
-        auth_login_enabled: false,
         cookie_secure: false,
         frontend_assets: FrontendAssets::Embedded,
     };

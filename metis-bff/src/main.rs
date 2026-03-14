@@ -35,7 +35,6 @@ async fn main() {
     let upstream = HttpUpstream::new(upstream_url.clone());
 
     let config = BffConfig {
-        auth_login_enabled: true,
         cookie_secure,
         frontend_assets,
     };

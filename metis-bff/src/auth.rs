@@ -33,13 +33,10 @@ async fn auth_login<U: Upstream>(
     jar: CookieJar,
     axum::Json(body): axum::Json<LoginRequest>,
 ) -> impl IntoResponse {
-    // When auto_login_token is set, login is a no-op that returns success.
+    // When auto_login_token is set, login is a no-op that returns success
+    // (the BFF already injects auth on all proxied requests).
     if bff.auto_login_token.is_some() {
         return axum::Json(serde_json::json!({ "ok": true })).into_response();
-    }
-
-    if !bff.config.auth_login_enabled {
-        return StatusCode::NOT_FOUND.into_response();
     }
 
     let token = match body.token {
