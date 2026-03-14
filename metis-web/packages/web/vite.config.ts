@@ -13,9 +13,12 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      "/auth": "http://localhost:4000",
-      "/api": "http://localhost:4000",
-      "/health": "http://localhost:4000",
+      "/auth": "http://localhost:8080",
+      "/api": {
+        target: "http://localhost:8080",
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
+      "/health": "http://localhost:8080",
     },
   },
 });
