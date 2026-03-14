@@ -1,6 +1,7 @@
 use crate::client::MetisClientInterface;
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
+use metis_common::api::v1::users::Username;
 use metis_common::whoami::ActorIdentity;
 use std::io::{self, Write};
 
@@ -95,10 +96,11 @@ async fn show_user_info(client: &dyn MetisClientInterface, username: Option<Stri
 }
 
 async fn run_secrets(client: &dyn MetisClientInterface, command: SecretsCommand) -> Result<()> {
+    let username = resolve_username(client).await?;
     match command {
         SecretsCommand::List => {
             let response = client
-                .list_user_secrets()
+                .list_user_secrets(username.as_ref())
                 .await
                 .context("failed to list secrets")?;
             if response.secrets.is_empty() {
@@ -116,20 +118,34 @@ async fn run_secrets(client: &dyn MetisClientInterface, command: SecretsCommand)
                     .context("failed to read secret value")?,
             };
             client
-                .set_user_secret(&name, &value)
+                .set_user_secret(username.as_ref(), &name, &value)
                 .await
                 .with_context(|| format!("failed to set secret '{name}'"))?;
             println!("Secret '{name}' set successfully.");
         }
         SecretsCommand::Delete { name } => {
             client
-                .delete_user_secret(&name)
+                .delete_user_secret(username.as_ref(), &name)
                 .await
                 .with_context(|| format!("failed to delete secret '{name}'"))?;
             println!("Secret '{name}' deleted.");
         }
     }
     Ok(())
+}
+
+async fn resolve_username(client: &dyn MetisClientInterface) -> Result<Username> {
+    let response = client
+        .whoami()
+        .await
+        .context("failed to resolve authenticated actor")?;
+    match response.actor {
+        ActorIdentity::User { username } => Ok(username),
+        ActorIdentity::Session { creator, .. } | ActorIdentity::Issue { creator, .. } => {
+            Ok(creator)
+        }
+        other => bail!("unexpected actor identity: {other:?}"),
+    }
 }
 
 #[cfg(test)]
@@ -243,9 +259,20 @@ mod tests {
         );
     }
 
+    fn mock_whoami(server: &MockServer) {
+        let whoami_response = WhoAmIResponse::new(ActorIdentity::User {
+            username: Username::from("testuser"),
+        });
+        server.mock(move |when, then| {
+            when.method(GET).path("/v1/whoami");
+            then.status(200).json_body_obj(&whoami_response);
+        });
+    }
+
     #[tokio::test]
     async fn secrets_list_displays_names() -> Result<()> {
         let server = MockServer::start();
+        mock_whoami(&server);
         let response = ListSecretsResponse {
             secrets: vec![
                 "OPENAI_API_KEY".to_string(),
@@ -254,7 +281,7 @@ mod tests {
         };
 
         let mock = server.mock(move |when, then| {
-            when.method(GET).path("/v1/users/me/secrets");
+            when.method(GET).path("/v1/users/testuser/secrets");
             then.status(200).json_body_obj(&response);
         });
 
@@ -268,10 +295,11 @@ mod tests {
     #[tokio::test]
     async fn secrets_set_sends_put() -> Result<()> {
         let server = MockServer::start();
+        mock_whoami(&server);
 
         let mock = server.mock(move |when, then| {
             when.method(PUT)
-                .path("/v1/users/me/secrets/OPENAI_API_KEY")
+                .path("/v1/users/testuser/secrets/OPENAI_API_KEY")
                 .json_body(json!({ "value": "sk-test123" }));
             then.status(200).json_body(json!(null));
         });
@@ -293,10 +321,11 @@ mod tests {
     #[tokio::test]
     async fn secrets_delete_sends_delete() -> Result<()> {
         let server = MockServer::start();
+        mock_whoami(&server);
 
         let mock = server.mock(move |when, then| {
             when.method(DELETE)
-                .path("/v1/users/me/secrets/OPENAI_API_KEY");
+                .path("/v1/users/testuser/secrets/OPENAI_API_KEY");
             then.status(200).json_body(json!(null));
         });
 
