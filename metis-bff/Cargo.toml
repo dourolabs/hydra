@@ -9,7 +9,11 @@ embedded-frontend = ["rust-embed"]
 [dependencies]
 axum = "0.7"
 axum-extra = { version = "0.9", features = ["cookie"] }
+chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6.1"
 http = "1"
+http-body-util = "0.1"
+metis-common = { path = "../metis-common" }
 mime_guess = "2"
 rust-embed = { version = "8", optional = true }
 serde = { version = "1.0", features = ["derive"] }
