@@ -133,10 +133,7 @@ async fn me_returns_forbidden() -> anyhow::Result<()> {
 
     // "me" is no longer resolved — should be treated as a different user and return 403
     let response = client
-        .get(format!(
-            "{}/v1/users/me/secrets",
-            server.base_url()
-        ))
+        .get(format!("{}/v1/users/me/secrets", server.base_url()))
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);

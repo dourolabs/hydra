@@ -232,9 +232,7 @@ pub fn test_client_without_auth() -> Client {
 fn test_user_auth() -> (Actor, String) {
     static TEST_USER_AUTH: OnceLock<(Actor, String)> = OnceLock::new();
     TEST_USER_AUTH
-        .get_or_init(|| {
-            Actor::new_for_user(crate::domain::users::Username::from("test-creator"))
-        })
+        .get_or_init(|| Actor::new_for_user(crate::domain::users::Username::from("test-creator")))
         .clone()
 }
 
