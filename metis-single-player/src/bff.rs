@@ -13,7 +13,7 @@ pub fn build_bff_router(inner_app: Router, auto_login_token: String) -> Router {
         frontend_assets: FrontendAssets::Embedded,
         cache: None,
     };
-    let bff_state = BffState::new(upstream, config).with_auto_login_token(auto_login_token);
+    let bff_state = BffState::new(upstream, config, Some(auto_login_token));
     metis_bff::build_bff_router(bff_state)
 }
 

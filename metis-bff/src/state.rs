@@ -20,7 +20,7 @@ pub struct BffState<U: Upstream> {
 }
 
 impl<U: Upstream> BffState<U> {
-    pub fn new(upstream: U, config: BffConfig) -> Self {
+    pub fn new(upstream: U, config: BffConfig, auto_login_token: Option<String>) -> Self {
         let upstream = Arc::new(upstream);
         let (cache, cache_task) = match &config.cache {
             Some(cache_config) => match Self::start_cache(cache_config) {
@@ -35,13 +35,8 @@ impl<U: Upstream> BffState<U> {
             config: Arc::new(config),
             cache,
             cache_task,
-            auto_login_token: None,
+            auto_login_token: auto_login_token.map(Arc::new),
         }
-    }
-
-    pub fn with_auto_login_token(mut self, token: String) -> Self {
-        self.auto_login_token = Some(Arc::new(token));
-        self
     }
 
     fn start_cache(
