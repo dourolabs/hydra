@@ -27,14 +27,22 @@ pub fn v1_router<U: Upstream>() -> Router<BffState<U>> {
         .route("/", any(v1_pass_through_root::<U>))
 }
 
+/// Resolve the auth token: use auto_login_token if set, otherwise extract from cookie.
+fn resolve_token<U: Upstream>(bff: &BffState<U>, jar: &CookieJar) -> Option<String> {
+    if let Some(token) = &bff.auto_login_token {
+        return Some(token.as_ref().clone());
+    }
+    jar.get(COOKIE_NAME).map(|c| c.value().to_string())
+}
+
 async fn api_proxy<U: Upstream>(
     State(bff): State<BffState<U>>,
     jar: CookieJar,
     axum::extract::Path(path): axum::extract::Path<String>,
     request: Request<Body>,
 ) -> impl IntoResponse {
-    let token = match jar.get(COOKIE_NAME) {
-        Some(cookie) => cookie.value().to_string(),
+    let token = match resolve_token(&bff, &jar) {
+        Some(t) => t,
         None => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -51,8 +59,8 @@ async fn api_proxy_root<U: Upstream>(
     jar: CookieJar,
     request: Request<Body>,
 ) -> impl IntoResponse {
-    let token = match jar.get(COOKIE_NAME) {
-        Some(cookie) => cookie.value().to_string(),
+    let token = match resolve_token(&bff, &jar) {
+        Some(t) => t,
         None => {
             return (
                 StatusCode::UNAUTHORIZED,
