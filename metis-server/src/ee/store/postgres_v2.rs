@@ -2240,16 +2240,20 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
-        // Use a subquery to get the latest version of each patch first,
-        // then apply filters. This ensures we filter on the current state
-        // of each patch, not historical versions.
-        let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at, \
-             MIN(created_at) OVER (PARTITION BY id) AS creation_time \
-             FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
+        // Use a correlated subquery to filter to the latest version of each
+        // patch instead of DISTINCT ON, which materializes the full table.
+        // With an index on (created_at DESC, id DESC), Postgres can scan in
+        // sort order and short-circuit at the LIMIT without computing latest
+        // versions for all patches.
+        let mut sql = format!(
+            "SELECT p.id, p.version_number, p.title, p.description, p.diff, p.status, p.is_automatic_backup, p.created_by, p.reviews, p.service_repo_name, p.github, p.deleted, p.branch_name, p.commit_range, p.creator, p.base_branch, p.actor, p.created_at, p.updated_at, \
+             (SELECT MIN(p2.created_at) FROM {TABLE_PATCHES_V2} p2 WHERE p2.id = p.id) AS creation_time \
+             FROM {TABLE_PATCHES_V2} p"
         );
-        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) = build_patches_predicates_pg(query);
+        predicates.push(format!(
+            "p.version_number = (SELECT MAX(p3.version_number) FROM {TABLE_PATCHES_V2} p3 WHERE p3.id = p.id)"
+        ));
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2297,12 +2301,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     async fn count_patches(&self, query: &SearchPatchesQuery) -> Result<u64, StoreError> {
-        let subquery = format!(
-            "SELECT DISTINCT ON (id) id, status, is_automatic_backup, branch_name, service_repo_name, github, title, description, diff, deleted \
-             FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
-        );
-        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let (predicates, bindings) = build_patches_predicates_pg(query);
+        // Use correlated subquery instead of DISTINCT ON to avoid
+        // materializing all latest versions before counting.
+        let mut sql = format!("SELECT COUNT(*) FROM {TABLE_PATCHES_V2} p");
+        let (mut predicates, bindings) = build_patches_predicates_pg(query);
+        predicates.push(format!(
+            "p.version_number = (SELECT MAX(p2.version_number) FROM {TABLE_PATCHES_V2} p2 WHERE p2.id = p.id)"
+        ));
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2437,16 +2442,20 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        // Use a subquery to get the latest version of each document first,
-        // then apply filters. This ensures we filter on the current state
-        // of each document, not historical versions.
-        let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, body_markdown, path, created_by, deleted, actor, created_at, updated_at, \
-             MIN(created_at) OVER (PARTITION BY id) AS creation_time \
-             FROM {TABLE_DOCUMENTS_V2} ORDER BY id, version_number DESC"
+        // Use a correlated subquery to filter to the latest version of each
+        // document instead of DISTINCT ON, which materializes the full table.
+        // With an index on (created_at DESC, id DESC), Postgres can scan in
+        // sort order and short-circuit at the LIMIT without computing latest
+        // versions for all documents.
+        let mut sql = format!(
+            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.created_by, d.deleted, d.actor, d.created_at, d.updated_at, \
+             (SELECT MIN(d2.created_at) FROM {TABLE_DOCUMENTS_V2} d2 WHERE d2.id = d.id) AS creation_time \
+             FROM {TABLE_DOCUMENTS_V2} d"
         );
-        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) = build_documents_predicates_pg(query);
+        predicates.push(format!(
+            "d.version_number = (SELECT MAX(d3.version_number) FROM {TABLE_DOCUMENTS_V2} d3 WHERE d3.id = d.id)"
+        ));
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2494,12 +2503,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
-        let subquery = format!(
-            "SELECT DISTINCT ON (id) id, title, body_markdown, path, created_by, deleted \
-             FROM {TABLE_DOCUMENTS_V2} ORDER BY id, version_number DESC"
-        );
-        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let (predicates, bindings) = build_documents_predicates_pg(query);
+        // Use correlated subquery instead of DISTINCT ON to avoid
+        // materializing all latest versions before counting.
+        let mut sql = format!("SELECT COUNT(*) FROM {TABLE_DOCUMENTS_V2} d");
+        let (mut predicates, bindings) = build_documents_predicates_pg(query);
+        predicates.push(format!(
+            "d.version_number = (SELECT MAX(d2.version_number) FROM {TABLE_DOCUMENTS_V2} d2 WHERE d2.id = d.id)"
+        ));
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
@@ -2620,15 +2630,19 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchSessionsQuery,
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
-        // Use a subquery to get the latest version of each task first,
-        // then apply filters. This ensures we filter on the current state
-        // of each task, not historical versions.
-        let subquery = format!(
-            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time \
-             FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
+        // Use a correlated subquery to filter to the latest version of each
+        // task instead of DISTINCT ON, which materializes the full table.
+        // With an index on (created_at DESC, id DESC), Postgres can scan in
+        // sort order and short-circuit at the LIMIT without computing latest
+        // versions for all tasks.
+        let mut sql = format!(
+            "SELECT t.id, t.version_number, t.prompt, t.context, t.spawned_from, t.image, t.model, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.creation_time, t.start_time, t.end_time \
+             FROM {TABLE_TASKS_V2} t"
         );
-        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) = build_tasks_predicates_pg(query);
+        predicates.push(format!(
+            "t.version_number = (SELECT MAX(t2.version_number) FROM {TABLE_TASKS_V2} t2 WHERE t2.id = t.id)"
+        ));
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2678,12 +2692,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     async fn count_sessions(&self, query: &SearchSessionsQuery) -> Result<u64, StoreError> {
-        let subquery = format!(
-            "SELECT DISTINCT ON (id) id, prompt, spawned_from, status, deleted \
-             FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
-        );
-        let mut sql = format!("SELECT COUNT(*) FROM ({subquery}) AS latest");
-        let (predicates, bindings) = build_tasks_predicates_pg(query);
+        // Use correlated subquery instead of DISTINCT ON to avoid
+        // materializing all latest versions before counting.
+        let mut sql = format!("SELECT COUNT(*) FROM {TABLE_TASKS_V2} t");
+        let (mut predicates, bindings) = build_tasks_predicates_pg(query);
+        predicates.push(format!(
+            "t.version_number = (SELECT MAX(t2.version_number) FROM {TABLE_TASKS_V2} t2 WHERE t2.id = t.id)"
+        ));
 
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
