@@ -165,7 +165,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 "Kubernetes job engine requires the 'kubernetes' Cargo feature. Rebuild with --features kubernetes"
             );
         }
-        JobEngineConfig::Local => {
+        JobEngineConfig::Local { log_dir } => {
             let local_hostname = app_config.metis.server_hostname.trim();
             if local_hostname.is_empty() {
                 anyhow::bail!(
@@ -174,8 +174,12 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 );
             }
             let local_server_url = format!("http://{local_hostname}");
-            info!("using local process job engine");
-            let engine = Arc::new(LocalJobEngine::new(local_server_url, None));
+            let log_dir_path = log_dir
+                .as_ref()
+                .map(crate::config::expand_path)
+                .unwrap_or_else(|| std::env::temp_dir().join("metis-local-jobs"));
+            info!(?log_dir_path, "using local process job engine");
+            let engine = Arc::new(LocalJobEngine::new(local_server_url, log_dir_path, None));
             engine.start_reaper();
             engine
         }

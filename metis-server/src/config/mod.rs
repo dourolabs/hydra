@@ -73,7 +73,10 @@ pub enum JobEngineConfig {
     Kubernetes { kubernetes: KubernetesSection },
     /// Local process-based job execution (runs worker-run as host subprocess).
     #[serde(rename = "local")]
-    Local,
+    Local {
+        #[serde(default)]
+        log_dir: Option<String>,
+    },
 }
 
 impl Default for JobEngineConfig {
@@ -87,7 +90,7 @@ impl fmt::Display for JobEngineConfig {
         match self {
             Self::Docker => write!(f, "docker"),
             Self::Kubernetes { .. } => write!(f, "kubernetes"),
-            Self::Local => write!(f, "local"),
+            Self::Local { .. } => write!(f, "local"),
         }
     }
 }

@@ -22,6 +22,7 @@ const AUTH_TOKEN_PATH: &str = "~/.metis/server/auth-token";
 const PID_FILE_PATH: &str = "~/.metis/server/metis-server.pid";
 const LOG_DIR: &str = "~/.metis/server/logs";
 const LOG_FILE_PATH: &str = "~/.metis/server/logs/metis-server.log";
+const JOB_LOG_DIR: &str = "~/.metis/server/job-logs";
 const SERVER_DB_PATH: &str = "~/.metis/server/metis.db";
 
 const LOCAL_SERVER_URL: &str = "http://127.0.0.1:8080";
@@ -96,14 +97,22 @@ fn cmd_init() -> Result<()> {
 
     // Create directory structure.
     let log_dir = expand_path(LOG_DIR);
+    let job_log_dir = expand_path(JOB_LOG_DIR);
     fs::create_dir_all(&server_dir)
         .with_context(|| format!("failed to create {}", server_dir.display()))?;
     fs::create_dir_all(&log_dir)
         .with_context(|| format!("failed to create {}", log_dir.display()))?;
+    fs::create_dir_all(&job_log_dir)
+        .with_context(|| format!("failed to create {}", job_log_dir.display()))?;
 
     // Write server config.
     let db_path = expand_path(SERVER_DB_PATH);
     let auth_token_path_expanded = expand_path(AUTH_TOKEN_PATH);
+    let job_log_dir_str = if job_engine == "local" {
+        Some(job_log_dir.display().to_string())
+    } else {
+        None
+    };
     let config_content = render_server_config(
         &encryption_key,
         &github_pat,
@@ -113,6 +122,7 @@ fn cmd_init() -> Result<()> {
         Some(&default_model),
         &api_keys,
         username.as_deref(),
+        job_log_dir_str.as_deref(),
     );
     fs::write(&config_path, &config_content)
         .with_context(|| format!("failed to write config to {}", config_path.display()))?;
@@ -457,6 +467,8 @@ struct ServerInitConfig {
     storage_backend: String,
     sqlite_path: String,
     job_engine: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    log_dir: Option<String>,
     job: InitJobSection,
 }
 
@@ -493,6 +505,7 @@ fn render_server_config(
     default_model: Option<&str>,
     api_keys: &ApiKeys,
     username: Option<&str>,
+    job_log_dir: Option<&str>,
 ) -> String {
     let config = ServerInitConfig {
         metis: InitMetisSection {
@@ -509,6 +522,7 @@ fn render_server_config(
         storage_backend: "sqlite".to_string(),
         sqlite_path: db_path.display().to_string(),
         job_engine: job_engine.to_string(),
+        log_dir: job_log_dir.map(str::to_string),
         job: InitJobSection {
             default_image: "metis-worker:latest".to_string(),
             default_model: default_model.map(str::to_string),
@@ -908,6 +922,7 @@ mod tests {
             None,
             &ApiKeys::default(),
             None,
+            None,
         );
 
         // Verify the generated YAML contains all expected fields.
@@ -965,6 +980,7 @@ mod tests {
             None,
             &ApiKeys::default(),
             None,
+            None,
         );
 
         assert!(config.contains("job_engine: local"));
@@ -976,7 +992,7 @@ mod tests {
 
         assert!(matches!(
             app_config.job_engine,
-            metis_server::config::JobEngineConfig::Local
+            metis_server::config::JobEngineConfig::Local { .. }
         ));
         assert_eq!(app_config.metis.server_hostname, "127.0.0.1:8080");
     }
@@ -999,6 +1015,7 @@ mod tests {
             "docker",
             Some("gpt-4o"),
             &keys,
+            None,
             None,
         );
 
@@ -1040,6 +1057,7 @@ mod tests {
             Some("opus"),
             &keys,
             None,
+            None,
         );
 
         assert!(config.contains("default_model: opus"));
@@ -1079,6 +1097,7 @@ mod tests {
             Some("opus"),
             &keys,
             None,
+            None,
         );
 
         assert!(config.contains("default_model: opus"));
@@ -1113,6 +1132,7 @@ mod tests {
             None,
             &ApiKeys::default(),
             Some("alice"),
+            None,
         );
 
         assert!(config.contains("username: alice"));

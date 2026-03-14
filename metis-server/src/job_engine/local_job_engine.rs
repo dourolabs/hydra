@@ -53,9 +53,9 @@ pub struct LocalJobEngine {
 impl LocalJobEngine {
     pub fn new(
         server_url: String,
+        log_dir: std::path::PathBuf,
         spawn_command: Option<(std::path::PathBuf, Vec<String>)>,
     ) -> Self {
-        let log_dir = std::env::temp_dir().join("metis-local-jobs");
         let _ = std::fs::create_dir_all(&log_dir);
         Self {
             server_url,
@@ -471,7 +471,11 @@ mod tests {
     use super::*;
 
     fn make_engine() -> LocalJobEngine {
-        LocalJobEngine::new("http://localhost:8080".to_string(), None)
+        LocalJobEngine::new(
+            "http://localhost:8080".to_string(),
+            std::env::temp_dir().join("metis-local-jobs-test"),
+            None,
+        )
     }
 
     fn insert_process(
@@ -517,7 +521,11 @@ mod tests {
 
     #[test]
     fn build_env_vars_omits_empty_server_url() {
-        let engine = LocalJobEngine::new("".to_string(), None);
+        let engine = LocalJobEngine::new(
+            "".to_string(),
+            std::env::temp_dir().join("metis-local-jobs-test"),
+            None,
+        );
         let metis_id = SessionId::new();
         let env = engine.build_env_vars(&metis_id, "tok", &HashMap::new());
 
@@ -728,6 +736,7 @@ mod tests {
     fn make_failing_engine() -> LocalJobEngine {
         LocalJobEngine::new(
             "http://localhost:0".to_string(),
+            std::env::temp_dir().join("metis-local-jobs-test"),
             Some((std::path::PathBuf::from("/bin/false"), vec![])),
         )
     }
@@ -735,6 +744,7 @@ mod tests {
     fn make_succeeding_engine() -> LocalJobEngine {
         LocalJobEngine::new(
             "http://localhost:0".to_string(),
+            std::env::temp_dir().join("metis-local-jobs-test"),
             Some((std::path::PathBuf::from("/bin/true"), vec![])),
         )
     }
@@ -742,6 +752,7 @@ mod tests {
     fn make_echo_engine() -> LocalJobEngine {
         LocalJobEngine::new(
             "http://localhost:0".to_string(),
+            std::env::temp_dir().join("metis-local-jobs-test"),
             Some((
                 std::path::PathBuf::from("/bin/sh"),
                 vec![
@@ -1175,6 +1186,7 @@ mod tests {
     async fn integration_create_job_passes_env_vars() {
         let engine = LocalJobEngine::new(
             "http://test-server:8080".to_string(),
+            std::env::temp_dir().join("metis-local-jobs-test"),
             Some((std::path::PathBuf::from("/bin/true"), vec![])),
         );
         let metis_id = SessionId::new();
