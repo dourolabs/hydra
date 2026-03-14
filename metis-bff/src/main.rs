@@ -12,13 +12,12 @@ fn env_or(name: &str, default: &str) -> String {
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
-    let upstream_url = std::env::var("UPSTREAM_URL")
-        .expect("UPSTREAM_URL environment variable is required");
+    let upstream_url =
+        std::env::var("UPSTREAM_URL").expect("UPSTREAM_URL environment variable is required");
 
     let cookie_secure = env_or("COOKIE_SECURE", "true")
         .parse::<bool>()
@@ -52,7 +51,5 @@ async fn main() {
         .expect("failed to bind listener");
 
     info!("listening on {addr}");
-    axum::serve(listener, router)
-        .await
-        .expect("server error");
+    axum::serve(listener, router).await.expect("server error");
 }

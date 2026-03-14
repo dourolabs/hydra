@@ -65,7 +65,6 @@ pub struct HttpUpstream {
 impl HttpUpstream {
     pub fn new(base_url: String) -> Self {
         let client = reqwest::Client::builder()
-            // Disable default gzip decompression so SSE streams pass through raw.
             .no_proxy()
             .build()
             .expect("failed to build reqwest client");
@@ -87,7 +86,11 @@ impl Upstream for HttpUpstream {
             let url = format!(
                 "{}{}",
                 base_url.trim_end_matches('/'),
-                parts.uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/")
+                parts
+                    .uri
+                    .path_and_query()
+                    .map(|pq| pq.as_str())
+                    .unwrap_or("/")
             );
 
             let body_bytes = axum::body::to_bytes(body, 64 * 1024 * 1024)
