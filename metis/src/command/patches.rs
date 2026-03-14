@@ -1,5 +1,6 @@
 use std::{io::Write, path::Path, path::PathBuf};
 
+use super::utils::resolve_username;
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::{Args, Subcommand};
@@ -14,8 +15,6 @@ use metis_common::{
     repositories::SearchRepositoriesQuery,
     review_utils::{find_last_commit_range_change_timestamp, has_approved_non_dismissed_review},
     sessions::BundleSpec,
-    users::Username,
-    whoami::ActorIdentity,
     PatchId, RelativeVersionNumber, RepoName, SessionId, Versioned,
 };
 use serde::Serialize;
@@ -974,7 +973,7 @@ pub async fn create_patch_artifact_from_repo(
         bail!("Patch diff must not be empty.");
     }
 
-    let creator = resolve_creator_username(client).await?;
+    let creator = resolve_username(client).await?;
 
     // Resolve branch name, base branch, and commit range SHAs.
     let branch_name = current_branch(repo_root)?;
@@ -1015,20 +1014,6 @@ pub async fn create_patch_artifact_from_repo(
         .context("failed to create patch")?;
 
     Ok(response)
-}
-
-async fn resolve_creator_username(client: &dyn MetisClientInterface) -> Result<Username> {
-    let response = client
-        .whoami()
-        .await
-        .context("failed to resolve authenticated actor")?;
-    match response.actor {
-        ActorIdentity::User { username } => Ok(username),
-        ActorIdentity::Session { creator, .. } | ActorIdentity::Issue { creator, .. } => {
-            Ok(creator)
-        }
-        other => bail!("unexpected actor identity: {other:?}"),
-    }
 }
 
 fn git_repository_root() -> Result<PathBuf> {

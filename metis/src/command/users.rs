@@ -1,7 +1,7 @@
+use super::utils::resolve_username;
 use crate::client::MetisClientInterface;
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
-use metis_common::api::v1::users::Username;
 use metis_common::whoami::ActorIdentity;
 use std::io::{self, Write};
 
@@ -132,20 +132,6 @@ async fn run_secrets(client: &dyn MetisClientInterface, command: SecretsCommand)
         }
     }
     Ok(())
-}
-
-async fn resolve_username(client: &dyn MetisClientInterface) -> Result<Username> {
-    let response = client
-        .whoami()
-        .await
-        .context("failed to resolve authenticated actor")?;
-    match response.actor {
-        ActorIdentity::User { username } => Ok(username),
-        ActorIdentity::Session { creator, .. } | ActorIdentity::Issue { creator, .. } => {
-            Ok(creator)
-        }
-        other => bail!("unexpected actor identity: {other:?}"),
-    }
 }
 
 #[cfg(test)]
