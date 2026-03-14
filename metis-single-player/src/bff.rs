@@ -3,79 +3,51 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::State,
-    http::{header, Request, StatusCode},
+    http::{header, Request},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
-    routing::{get, post},
+    response::Response,
     Router,
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar};
-use serde::Deserialize;
-use tower::ServiceExt;
-use tracing::info;
+use axum_extra::extract::cookie::CookieJar;
+use metis_bff::{
+    auth::build_auth_cookie, auth::COOKIE_NAME, BffConfig, BffState, FrontendAssets,
+    InProcessUpstream,
+};
 
-const COOKIE_NAME: &str = "metis_token";
-
-/// Shared state for the BFF layer.
+/// Auto-login token for single-player mode.
 #[derive(Clone)]
-pub struct BffState {
-    /// The auth token loaded from the auth_token_file at startup.
-    /// Used for auto-login: every frontend request gets this cookie set.
-    pub auto_login_token: Arc<String>,
-
-    /// The inner metis-server Axum app (with state applied), used for
-    /// routing `/api/v1/*` requests directly to the server handlers.
-    pub inner_app: Router,
+pub struct AutoLoginState {
+    pub token: Arc<String>,
 }
 
-/// Build the complete BFF + server + frontend router.
+/// Build the complete BFF + server + frontend router for single-player mode.
 ///
-/// The returned router:
-/// - Serves `/auth/*` (login, logout, me) with cookie-based auth
-/// - Serves `/api/v1/*` by injecting the cookie token as a Bearer header
-///   and routing to the internal metis-server handlers
-/// - Serves the embedded frontend at `/` with SPA fallback
-/// - Auto-login middleware sets the `metis_token` cookie on every response
-pub fn build_bff_router(bff_state: BffState) -> Router {
-    let auth_routes = Router::new()
-        .route("/login", post(auth_login))
-        .route("/logout", post(auth_logout))
-        .route("/me", get(auth_me))
-        .with_state(bff_state.clone());
+/// This wraps the `metis-bff` library router with the auto-login middleware
+/// that is specific to single-player mode.
+pub fn build_bff_router(inner_app: Router, auto_login_token: String) -> Router {
+    let upstream = InProcessUpstream::new(inner_app);
+    let config = BffConfig {
+        auth_login_enabled: true,
+        cookie_secure: false,
+        frontend_assets: FrontendAssets::Embedded,
+    };
+    let bff_state = BffState::new(upstream, config);
+    let bff_router = metis_bff::build_bff_router(bff_state);
 
-    let api_routes = Router::new()
-        .route("/*path", axum::routing::any(api_proxy))
-        .route("/", axum::routing::any(api_proxy_root))
-        .with_state(bff_state.clone());
+    let auto_login = AutoLoginState {
+        token: Arc::new(auto_login_token),
+    };
 
-    // /v1/* routes: transparent pass-through to the inner server.
-    let v1_routes = Router::new()
-        .route("/*path", axum::routing::any(v1_pass_through))
-        .route("/", axum::routing::any(v1_pass_through_root))
-        .with_state(bff_state.clone());
-
-    let frontend = crate::frontend::router();
-
-    Router::new()
-        .nest("/auth", auth_routes)
-        .nest("/api/v1", api_routes)
-        .nest("/v1", v1_routes)
-        .route("/health", get(health_proxy).with_state(bff_state.clone()))
-        .fallback_service(frontend)
-        .layer(middleware::from_fn_with_state(
-            bff_state,
-            auto_login_middleware,
-        ))
+    bff_router.layer(middleware::from_fn_with_state(
+        auto_login,
+        auto_login_middleware,
+    ))
 }
-
-// ---------------------------------------------------------------------------
-// Auto-login middleware
-// ---------------------------------------------------------------------------
 
 /// Middleware that ensures the `metis_token` cookie is always set.
 /// For single-player mode, the user is always logged in.
 async fn auto_login_middleware(
-    State(bff): State<BffState>,
+    State(auto_login): State<AutoLoginState>,
     jar: CookieJar,
     request: Request<Body>,
     next: Next,
@@ -88,280 +60,13 @@ async fn auto_login_middleware(
     }
 
     // Set the auto-login cookie on the response.
-    let cookie = build_auth_cookie(bff.auto_login_token.as_str());
+    let cookie = build_auth_cookie(auto_login.token.as_str(), false);
     let (mut parts, body) = response.into_parts();
     if let Ok(value) = cookie.to_string().parse() {
         parts.headers.append(header::SET_COOKIE, value);
     }
     Response::from_parts(parts, body)
 }
-
-// ---------------------------------------------------------------------------
-// Auth routes
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct LoginRequest {
-    token: Option<String>,
-}
-
-async fn auth_login(
-    State(bff): State<BffState>,
-    jar: CookieJar,
-    axum::Json(body): axum::Json<LoginRequest>,
-) -> impl IntoResponse {
-    let token = match body.token {
-        Some(t) if !t.is_empty() => t,
-        _ => {
-            return (
-                StatusCode::BAD_REQUEST,
-                axum::Json(serde_json::json!({ "error": "token is required" })),
-            )
-                .into_response();
-        }
-    };
-
-    // Validate the token by calling the internal whoami endpoint.
-    let whoami_req = Request::builder()
-        .uri("/v1/whoami")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-        .body(Body::empty())
-        .unwrap();
-
-    let response = bff.inner_app.clone().oneshot(whoami_req).await;
-    let response = match response {
-        Ok(r) => r,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({ "error": "internal error" })),
-            )
-                .into_response();
-        }
-    };
-
-    if !response.status().is_success() {
-        info!("login failed: invalid token");
-        return (
-            StatusCode::UNAUTHORIZED,
-            axum::Json(serde_json::json!({ "error": "invalid token" })),
-        )
-            .into_response();
-    }
-
-    // Read the whoami response body to return user info.
-    let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
-        .await
-        .unwrap_or_default();
-    let user: serde_json::Value =
-        serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
-
-    // Set the auth cookie.
-    let cookie = build_auth_cookie(&token);
-    let jar = jar.add(cookie);
-
-    info!("login success");
-    (jar, axum::Json(user)).into_response()
-}
-
-async fn auth_logout(jar: CookieJar) -> impl IntoResponse {
-    let jar = jar.remove(Cookie::build(COOKIE_NAME).path("/"));
-    (jar, axum::Json(serde_json::json!({ "ok": true })))
-}
-
-async fn auth_me(State(bff): State<BffState>, jar: CookieJar) -> impl IntoResponse {
-    let token = match jar.get(COOKIE_NAME) {
-        Some(cookie) => cookie.value().to_string(),
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                axum::Json(serde_json::json!({ "error": "not authenticated" })),
-            )
-                .into_response();
-        }
-    };
-
-    let whoami_req = Request::builder()
-        .uri("/v1/whoami")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-        .body(Body::empty())
-        .unwrap();
-
-    let response = bff.inner_app.clone().oneshot(whoami_req).await;
-    let response = match response {
-        Ok(r) => r,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({ "error": "internal error" })),
-            )
-                .into_response();
-        }
-    };
-
-    if !response.status().is_success() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            axum::Json(serde_json::json!({ "error": "token expired or invalid" })),
-        )
-            .into_response();
-    }
-
-    let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
-        .await
-        .unwrap_or_default();
-    let user: serde_json::Value =
-        serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
-
-    axum::Json(user).into_response()
-}
-
-// ---------------------------------------------------------------------------
-// Health check proxy
-// ---------------------------------------------------------------------------
-
-async fn health_proxy(State(bff): State<BffState>, request: Request<Body>) -> Response {
-    forward_to_internal(bff, "/health", None, request).await
-}
-
-// ---------------------------------------------------------------------------
-// /v1/* pass-through: transparent mirror of the inner server routes.
-// ---------------------------------------------------------------------------
-
-async fn v1_pass_through(
-    State(bff): State<BffState>,
-    axum::extract::Path(path): axum::extract::Path<String>,
-    request: Request<Body>,
-) -> Response {
-    forward_to_internal(bff, &format!("/v1/{path}"), None, request).await
-}
-
-async fn v1_pass_through_root(State(bff): State<BffState>, request: Request<Body>) -> Response {
-    forward_to_internal(bff, "/v1", None, request).await
-}
-
-// ---------------------------------------------------------------------------
-// API proxy: /api/v1/* -> internal /v1/* (cookie-to-Bearer translation)
-// ---------------------------------------------------------------------------
-
-async fn api_proxy(
-    State(bff): State<BffState>,
-    jar: CookieJar,
-    axum::extract::Path(path): axum::extract::Path<String>,
-    request: Request<Body>,
-) -> impl IntoResponse {
-    let token = match jar.get(COOKIE_NAME) {
-        Some(cookie) => cookie.value().to_string(),
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                axum::Json(serde_json::json!({ "error": "not authenticated" })),
-            )
-                .into_response();
-        }
-    };
-    forward_to_internal(bff, &format!("/v1/{path}"), Some(token), request).await
-}
-
-async fn api_proxy_root(
-    State(bff): State<BffState>,
-    jar: CookieJar,
-    request: Request<Body>,
-) -> impl IntoResponse {
-    let token = match jar.get(COOKIE_NAME) {
-        Some(cookie) => cookie.value().to_string(),
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                axum::Json(serde_json::json!({ "error": "not authenticated" })),
-            )
-                .into_response();
-        }
-    };
-    forward_to_internal(bff, "/v1", Some(token), request).await
-}
-
-// ---------------------------------------------------------------------------
-// Shared request-forwarding helper
-// ---------------------------------------------------------------------------
-
-/// Forward a request to the inner server at `target_path`.
-///
-/// If `override_token` is `Some`, the Authorization header is set to
-/// `Bearer <token>` (used by `/api/v1/*` cookie-to-Bearer translation).
-/// If `None`, the original Authorization header (if any) is passed through
-/// as-is (used by `/v1/*` transparent mirror).
-async fn forward_to_internal(
-    bff: BffState,
-    target_path: &str,
-    override_token: Option<String>,
-    original: Request<Body>,
-) -> Response {
-    let uri = if let Some(query) = original.uri().query() {
-        format!("{target_path}?{query}")
-    } else {
-        target_path.to_string()
-    };
-
-    let method = original.method().clone();
-    let mut builder = Request::builder().method(method).uri(&uri);
-
-    // Set the Authorization header: either override with token or pass through.
-    if let Some(token) = override_token {
-        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
-    }
-
-    for (name, value) in original.headers() {
-        if name == header::HOST || name == header::COOKIE {
-            continue;
-        }
-        // Skip Authorization if we're overriding it.
-        if name == header::AUTHORIZATION
-            && builder
-                .headers_ref()
-                .is_some_and(|h| h.contains_key(header::AUTHORIZATION))
-        {
-            continue;
-        }
-        builder = builder.header(name, value);
-    }
-
-    let internal_req = match builder.body(original.into_body()) {
-        Ok(req) => req,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({ "error": "failed to build request" })),
-            )
-                .into_response();
-        }
-    };
-
-    match bff.inner_app.clone().oneshot(internal_req).await {
-        Ok(response) => response,
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(serde_json::json!({ "error": "internal error" })),
-        )
-            .into_response(),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn build_auth_cookie(token: &str) -> Cookie<'static> {
-    Cookie::build((COOKIE_NAME, token.to_string()))
-        .http_only(true)
-        .same_site(axum_extra::extract::cookie::SameSite::Strict)
-        .path("/")
-        .build()
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -370,18 +75,15 @@ mod tests {
     use http::Request;
     use tower::ServiceExt;
 
-    fn test_bff_state() -> BffState {
+    fn test_bff_app() -> Router {
         let handles = metis_server::test_utils::test_state_handles();
         let inner_app = metis_server::build_router(&handles.state).with_state(handles.state);
-        BffState {
-            auto_login_token: Arc::new("test-token".to_string()),
-            inner_app,
-        }
+        build_bff_router(inner_app, "test-token".to_string())
     }
 
     #[tokio::test]
     async fn auth_login_requires_token() {
-        let app = build_bff_router(test_bff_state());
+        let app = test_bff_app();
 
         let req = Request::builder()
             .method("POST")
@@ -391,12 +93,12 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
     async fn auth_login_rejects_invalid_token() {
-        let app = build_bff_router(test_bff_state());
+        let app = test_bff_app();
 
         let req = Request::builder()
             .method("POST")
@@ -406,7 +108,7 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), http::StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -414,19 +116,14 @@ mod tests {
         let handles = metis_server::test_utils::test_state_handles();
         let store = handles.store.clone();
 
-        // Seed the test actor so the token validates.
         let actor = metis_server::test_utils::test_actor();
         let system_ref = metis_server::domain::actors::ActorRef::test();
         let _ = store.add_actor(actor, &system_ref).await;
 
         let inner_app = metis_server::build_router(&handles.state).with_state(handles.state);
-        let bff_state = BffState {
-            auto_login_token: Arc::new("unused".to_string()),
-            inner_app,
-        };
-        let app = build_bff_router(bff_state);
-
         let token = metis_server::test_utils::test_auth_token();
+        let app = build_bff_router(inner_app, "unused".to_string());
+
         let body = serde_json::json!({ "token": token });
         let req = Request::builder()
             .method("POST")
@@ -436,9 +133,8 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), http::StatusCode::OK);
 
-        // Check that the Set-Cookie header is present.
         let set_cookie = response
             .headers()
             .get(header::SET_COOKIE)
@@ -450,7 +146,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_logout_clears_cookie() {
-        let app = build_bff_router(test_bff_state());
+        let app = test_bff_app();
 
         let req = Request::builder()
             .method("POST")
@@ -459,7 +155,7 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), http::StatusCode::OK);
 
         let set_cookie = response
             .headers()
@@ -471,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_me_without_cookie_returns_401() {
-        let app = build_bff_router(test_bff_state());
+        let app = test_bff_app();
 
         let req = Request::builder()
             .method("GET")
@@ -480,7 +176,7 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), http::StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -494,11 +190,7 @@ mod tests {
 
         let inner_app = metis_server::build_router(&handles.state).with_state(handles.state);
         let token = metis_server::test_utils::test_auth_token();
-        let bff_state = BffState {
-            auto_login_token: Arc::new(token.clone()),
-            inner_app,
-        };
-        let app = build_bff_router(bff_state);
+        let app = build_bff_router(inner_app, token.clone());
 
         let req = Request::builder()
             .method("GET")
@@ -508,20 +200,15 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), http::StatusCode::OK);
     }
 
     #[tokio::test]
     async fn auto_login_sets_cookie_on_first_request() {
         let handles = metis_server::test_utils::test_state_handles();
         let inner_app = metis_server::build_router(&handles.state).with_state(handles.state);
-        let bff_state = BffState {
-            auto_login_token: Arc::new("auto-token-123".to_string()),
-            inner_app,
-        };
-        let app = build_bff_router(bff_state);
+        let app = build_bff_router(inner_app, "auto-token-123".to_string());
 
-        // Request the root (frontend) without any cookie.
         let req = Request::builder()
             .method("GET")
             .uri("/")
@@ -530,8 +217,6 @@ mod tests {
 
         let response = app.oneshot(req).await.unwrap();
 
-        // The auto-login middleware must set the cookie on every response
-        // when no cookie is present in the request.
         let set_cookie = response
             .headers()
             .get(header::SET_COOKIE)
@@ -554,13 +239,8 @@ mod tests {
 
         let inner_app = metis_server::build_router(&handles.state).with_state(handles.state);
         let token = metis_server::test_utils::test_auth_token();
-        let bff_state = BffState {
-            auto_login_token: Arc::new(token.clone()),
-            inner_app,
-        };
-        let app = build_bff_router(bff_state);
+        let app = build_bff_router(inner_app, token.clone());
 
-        // Call /api/v1/whoami which should route to /v1/whoami internally.
         let req = Request::builder()
             .method("GET")
             .uri("/api/v1/whoami")
@@ -569,7 +249,7 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), http::StatusCode::OK);
 
         let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
             .await
@@ -580,7 +260,7 @@ mod tests {
 
     #[tokio::test]
     async fn api_proxy_without_cookie_returns_401() {
-        let app = build_bff_router(test_bff_state());
+        let app = test_bff_app();
 
         let req = Request::builder()
             .method("GET")
@@ -589,7 +269,7 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), http::StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -603,11 +283,7 @@ mod tests {
 
         let inner_app = metis_server::build_router(&handles.state).with_state(handles.state);
         let token = metis_server::test_utils::test_auth_token();
-        let bff_state = BffState {
-            auto_login_token: Arc::new("unused".to_string()),
-            inner_app,
-        };
-        let app = build_bff_router(bff_state);
+        let app = build_bff_router(inner_app, "unused".to_string());
 
         let req = Request::builder()
             .method("GET")
@@ -617,7 +293,7 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), http::StatusCode::OK);
 
         let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 64)
             .await
@@ -628,7 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn v1_without_bearer_returns_401() {
-        let app = build_bff_router(test_bff_state());
+        let app = test_bff_app();
 
         let req = Request::builder()
             .method("GET")
@@ -637,14 +313,12 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        // Without auth, the request is forwarded to the inner server which
-        // returns 401 Unauthorized.
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), http::StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
     async fn v1_bearer_invalid_token_returns_401() {
-        let app = build_bff_router(test_bff_state());
+        let app = test_bff_app();
 
         let req = Request::builder()
             .method("GET")
@@ -654,12 +328,12 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), http::StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
     async fn health_returns_ok_json() {
-        let app = build_bff_router(test_bff_state());
+        let app = test_bff_app();
 
         let req = Request::builder()
             .method("GET")
@@ -668,7 +342,7 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), http::StatusCode::OK);
 
         let content_type = response
             .headers()
@@ -691,9 +365,6 @@ mod tests {
 
     #[tokio::test]
     async fn auto_login_end_to_end() {
-        // Simulate the full auto-login flow:
-        // 1. GET / (no cookie) -> middleware sets Set-Cookie
-        // 2. GET /auth/me (with cookie from step 1) -> returns user info
         let handles = metis_server::test_utils::test_state_handles();
         let store = handles.store.clone();
 
@@ -704,13 +375,9 @@ mod tests {
         let inner_app =
             metis_server::build_router(&handles.state).with_state(handles.state.clone());
         let token = metis_server::test_utils::test_auth_token();
-        let bff_state = BffState {
-            auto_login_token: Arc::new(token.clone()),
-            inner_app,
-        };
 
         // Step 1: Request GET / without any cookie.
-        let app = build_bff_router(bff_state.clone());
+        let app = build_bff_router(inner_app.clone(), token.clone());
         let req = Request::builder()
             .method("GET")
             .uri("/")
@@ -719,7 +386,6 @@ mod tests {
 
         let response = app.oneshot(req).await.unwrap();
 
-        // The middleware must set the auto-login cookie.
         let set_cookie = response
             .headers()
             .get(header::SET_COOKIE)
@@ -730,14 +396,13 @@ mod tests {
             "expected metis_token cookie, got {set_cookie_str}"
         );
 
-        // Extract the cookie name=value for the next request (browser behavior).
         let cookie_header = set_cookie_str
             .split(';')
             .next()
             .expect("cookie should have a value part");
 
         // Step 2: Request GET /auth/me with the cookie from step 1.
-        let app = build_bff_router(bff_state);
+        let app = build_bff_router(inner_app, token);
         let req = Request::builder()
             .method("GET")
             .uri("/auth/me")
@@ -748,7 +413,7 @@ mod tests {
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(
             response.status(),
-            StatusCode::OK,
+            http::StatusCode::OK,
             "GET /auth/me with auto-login cookie should return 200 OK"
         );
 
@@ -774,13 +439,9 @@ mod tests {
         let inner_app =
             metis_server::build_router(&handles.state).with_state(handles.state.clone());
         let token = metis_server::test_utils::test_auth_token();
-        let bff_state = BffState {
-            auto_login_token: Arc::new(token.clone()),
-            inner_app,
-        };
 
         // Step 1: Login and get the cookie.
-        let app = build_bff_router(bff_state.clone());
+        let app = build_bff_router(inner_app.clone(), token.clone());
         let body = serde_json::json!({ "token": token });
         let req = Request::builder()
             .method("POST")
@@ -790,7 +451,7 @@ mod tests {
             .unwrap();
 
         let login_resp = app.oneshot(req).await.unwrap();
-        assert_eq!(login_resp.status(), StatusCode::OK);
+        assert_eq!(login_resp.status(), http::StatusCode::OK);
 
         let set_cookie = login_resp
             .headers()
@@ -801,7 +462,7 @@ mod tests {
             .to_string();
 
         // Step 2: Use the cookie for an API call.
-        let app = build_bff_router(bff_state);
+        let app = build_bff_router(inner_app, token);
         let req = Request::builder()
             .method("GET")
             .uri("/api/v1/whoami")
@@ -810,6 +471,6 @@ mod tests {
             .unwrap();
 
         let api_resp = app.oneshot(req).await.unwrap();
-        assert_eq!(api_resp.status(), StatusCode::OK);
+        assert_eq!(api_resp.status(), http::StatusCode::OK);
     }
 }
