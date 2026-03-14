@@ -5,9 +5,12 @@ use crate::{
             render_issue_records, render_issue_summary_records, CommandContext,
             ResolvedOutputFormat,
         },
-        utils::changelog::{
-            summarize_activity_log, write_activity_log_pretty, write_changelog_pretty,
-            ActivityLogEntrySummary,
+        utils::{
+            changelog::{
+                summarize_activity_log, write_activity_log_pretty, write_changelog_pretty,
+                ActivityLogEntrySummary,
+            },
+            resolve_username,
         },
     },
 };
@@ -28,7 +31,6 @@ use metis_common::{
     patches::{PatchVersionRecord, Review},
     sessions::{SearchSessionsQuery, Session, SessionSummaryRecord},
     users::Username,
-    whoami::ActorIdentity,
     ActivityLogEntry, ActivityObjectKind, LabelId, MetisId, PatchId, RelativeVersionNumber,
     RepoName, SessionId, Versioned,
 };
@@ -418,7 +420,7 @@ pub async fn run(
             secrets,
             labels,
         } => {
-            let creator = resolve_creator_username(client).await?;
+            let creator = resolve_username(client).await?;
             create_issue(
                 client,
                 r#type,
@@ -1530,20 +1532,6 @@ async fn update_issue(
     Ok(result)
 }
 
-async fn resolve_creator_username(client: &dyn MetisClientInterface) -> Result<Username> {
-    let response = client
-        .whoami()
-        .await
-        .context("failed to resolve authenticated actor")?;
-    match response.actor {
-        ActorIdentity::User { username } => Ok(username),
-        ActorIdentity::Session { creator, .. } | ActorIdentity::Issue { creator, .. } => {
-            Ok(creator)
-        }
-        other => bail!("unexpected actor identity: {other:?}"),
-    }
-}
-
 async fn manage_todo_list(
     client: &dyn MetisClientInterface,
     issue_id: IssueId,
@@ -2208,7 +2196,6 @@ mod tests {
         sessions::{BundleSpec, ListSessionsResponse, Session},
         task_status::Status,
         users::Username,
-        whoami::{ActorIdentity, WhoAmIResponse},
         PatchId, RepoName, SessionId,
     };
     use reqwest::Client as HttpClient;
@@ -3354,45 +3341,6 @@ mod tests {
     #[test]
     fn parse_issue_graph_filter_rejects_invalid_shapes() {
         assert!(parse_issue_graph_filter("i-abcd:child-of:i-efgh").is_err());
-    }
-
-    #[tokio::test]
-    async fn resolve_creator_username_uses_whoami_user() {
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let whoami_response = WhoAmIResponse::new(ActorIdentity::User {
-            username: Username::from("creator-a"),
-        });
-        let whoami_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/whoami");
-            then.status(200).json_body_obj(&whoami_response);
-        });
-
-        let username = resolve_creator_username(&client).await.unwrap();
-
-        assert_eq!(username, Username::from("creator-a"));
-        whoami_mock.assert();
-        assert_eq!(whoami_mock.hits(), 1);
-    }
-
-    #[tokio::test]
-    async fn resolve_creator_username_uses_whoami_creator_for_task() {
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let whoami_response = WhoAmIResponse::new(ActorIdentity::Session {
-            session_id: SessionId::from_str("s-abcd").unwrap(),
-            creator: Username::from("whoami-creator"),
-        });
-        let whoami_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/whoami");
-            then.status(200).json_body_obj(&whoami_response);
-        });
-
-        let username = resolve_creator_username(&client).await.unwrap();
-
-        assert_eq!(username, Username::from("whoami-creator"));
-        whoami_mock.assert();
-        assert_eq!(whoami_mock.hits(), 1);
     }
 
     #[tokio::test]
