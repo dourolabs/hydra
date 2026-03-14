@@ -3,7 +3,7 @@ use crate::{
         actors::ActorRef,
         users::{User, Username},
     },
-    test::{spawn_test_server_with_state, test_actor, test_client, test_state_handles},
+    test::{spawn_test_server_with_state, test_client, test_state_handles},
 };
 use metis_common::api::v1::users::UserSummary;
 use reqwest::StatusCode;
@@ -79,14 +79,8 @@ async fn get_user_does_not_expose_tokens() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn get_user_me_resolves_to_authenticated_user() -> anyhow::Result<()> {
+async fn get_user_me_returns_404() -> anyhow::Result<()> {
     let handles = test_state_handles();
-    let actor = test_actor();
-    let username = actor.creator.clone();
-
-    let user = User::new(username.clone(), Some(77777), false);
-    handles.store.add_user(user, &ActorRef::test()).await?;
-
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
 
@@ -95,11 +89,7 @@ async fn get_user_me_resolves_to_authenticated_user() -> anyhow::Result<()> {
         .send()
         .await?;
 
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body: UserSummary = response.json().await?;
-    assert_eq!(body.username.as_str(), username.as_str());
-    assert_eq!(body.github_user_id, Some(77777));
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     Ok(())
 }

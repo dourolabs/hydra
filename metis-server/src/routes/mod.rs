@@ -1,4 +1,3 @@
-use crate::domain::{actors::Actor, users::Username};
 use metis_common::{RelativeVersionNumber, VersionNumber, api::v1::ApiError};
 
 pub mod agents;
@@ -19,16 +18,6 @@ pub mod sessions;
 pub mod users;
 pub mod version;
 pub mod whoami;
-
-/// Resolve the `:username` path parameter: "me" maps to the authenticated
-/// user's username; any other value is returned as-is.
-pub(crate) fn resolve_username(actor: &Actor, raw: &str) -> Result<Username, ApiError> {
-    if raw == "me" {
-        Ok(actor.creator.clone())
-    } else {
-        Ok(Username::from(raw.to_string()))
-    }
-}
 
 /// Resolve a version number that may be negative (offset from latest) into an
 /// absolute positive version number.
