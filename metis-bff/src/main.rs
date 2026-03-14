@@ -50,7 +50,6 @@ async fn main() {
     };
 
     let config = BffConfig {
-        auth_login_enabled: true,
         cookie_secure,
         frontend_assets,
         cache,
