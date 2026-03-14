@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn merge_env_vars_combines_task_and_system_values() {
-        let job_id: SessionId = "t-abcd".parse().unwrap();
+        let job_id: SessionId = "s-abcd".parse().unwrap();
         let mut task_env = HashMap::from([
             ("CUSTOM".to_string(), "1".to_string()),
             ("OPENAI_API_KEY".to_string(), "openai-key".to_string()),
@@ -855,7 +855,7 @@ mod tests {
 
     #[test]
     fn merge_env_vars_skips_empty_server_hostname() {
-        let job_id: SessionId = "t-abcd".parse().unwrap();
+        let job_id: SessionId = "s-abcd".parse().unwrap();
         let merged = merge_env_vars(&job_id, &HashMap::new(), "   ", "auth-token");
 
         let merged_map: HashMap<_, _> = merged
@@ -883,7 +883,7 @@ mod tests {
 
     #[test]
     fn to_metis_job_from_pod_uses_pod_metadata() {
-        let job_id: SessionId = "t-abcd".parse().unwrap();
+        let job_id: SessionId = "s-abcd".parse().unwrap();
         let creation = Time(Utc::now());
         let start = Time(Utc::now());
         let finished = Time(Utc::now());
@@ -925,7 +925,7 @@ mod tests {
 
     #[test]
     fn pod_failure_message_prefers_terminated_message() {
-        let job_id: SessionId = "t-abcd".parse().unwrap();
+        let job_id: SessionId = "s-abcd".parse().unwrap();
         let pod = Pod {
             metadata: ObjectMeta {
                 name: Some("pod-name".into()),

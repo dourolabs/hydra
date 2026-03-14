@@ -9,7 +9,6 @@ const ISSUE_PREFIX: &str = "i-";
 const MESSAGE_PREFIX: &str = "m-";
 const PATCH_PREFIX: &str = "p-";
 const SESSION_PREFIX: &str = "s-";
-const LEGACY_SESSION_PREFIX: &str = "t-";
 const DOCUMENT_PREFIX: &str = "d-";
 const LABEL_PREFIX: &str = "l-";
 const NOTIFICATION_PREFIX: &str = "nf-";
@@ -135,7 +134,7 @@ impl MetisId {
             PatchId::validate_str(value)
         } else if value.starts_with(DOCUMENT_PREFIX) {
             DocumentId::validate_str(value)
-        } else if value.starts_with(SESSION_PREFIX) || value.starts_with(LEGACY_SESSION_PREFIX) {
+        } else if value.starts_with(SESSION_PREFIX) {
             SessionId::validate_str(value)
         } else {
             Err(MetisIdError::InvalidPrefix(value.to_string()))
@@ -304,7 +303,6 @@ impl SessionId {
 
     fn validate_str(value: &str) -> Result<(), MetisIdError> {
         validate_with_prefix(value, SESSION_PREFIX)
-            .or_else(|_| validate_with_prefix(value, LEGACY_SESSION_PREFIX))
     }
 }
 

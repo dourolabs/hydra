@@ -586,27 +586,27 @@ mod tests {
 
     #[test]
     fn container_name_uses_metis_id() {
-        let id: SessionId = "t-abcd".parse().unwrap();
+        let id: SessionId = "s-abcd".parse().unwrap();
         assert_eq!(
             LocalDockerJobEngine::container_name(&id),
-            "metis-worker-t-abcd"
+            "metis-worker-s-abcd"
         );
     }
 
     #[test]
     fn extract_session_id_from_names_with_slash_prefix() {
-        let names = vec!["/metis-worker-t-abcdef".to_string()];
+        let names = vec!["/metis-worker-s-abcdef".to_string()];
         let result = extract_session_id_from_names(Some(&names));
         assert!(result.is_some());
-        assert_eq!(result.unwrap().to_string(), "t-abcdef");
+        assert_eq!(result.unwrap().to_string(), "s-abcdef");
     }
 
     #[test]
     fn extract_session_id_from_names_without_slash() {
-        let names = vec!["metis-worker-t-xyzabc".to_string()];
+        let names = vec!["metis-worker-s-xyzabc".to_string()];
         let result = extract_session_id_from_names(Some(&names));
         assert!(result.is_some());
-        assert_eq!(result.unwrap().to_string(), "t-xyzabc");
+        assert_eq!(result.unwrap().to_string(), "s-xyzabc");
     }
 
     #[test]

@@ -3380,7 +3380,7 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let whoami_response = WhoAmIResponse::new(ActorIdentity::Session {
-            session_id: SessionId::from_str("t-abcd").unwrap(),
+            session_id: SessionId::from_str("s-abcd").unwrap(),
             creator: Username::from("whoami-creator"),
         });
         let whoami_mock = server.mock(|when, then| {
@@ -4222,7 +4222,7 @@ mod tests {
     fn describe_issue_pretty_printer_includes_history() {
         let main_issue_id = issue_id("i-main");
         let main_patch_id = patch_id("p-main");
-        let main_job_id = task_id("t-main");
+        let main_job_id = task_id("s-main");
 
         let base_issue = Issue::new(
             IssueType::Task,
@@ -4362,7 +4362,7 @@ mod tests {
         assert!(rendered.contains("History:"));
         assert!(rendered.contains("2024-01-01T12:00:00Z Issue i-main v1 created"));
         assert!(rendered.contains("2024-01-02T09:00:00Z Patch p-main v1 created"));
-        assert!(rendered.contains("2024-01-02T12:00:00Z Session t-main v1 created"));
+        assert!(rendered.contains("2024-01-02T12:00:00Z Session s-main v1 created"));
         assert!(rendered.contains("Status: open -> in-progress"));
     }
 

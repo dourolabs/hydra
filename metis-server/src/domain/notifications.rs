@@ -829,7 +829,7 @@ mod tests {
             new: task,
             actor: test_actor(),
         });
-        let session_id: metis_common::SessionId = "t-abcdef".parse().unwrap();
+        let session_id: metis_common::SessionId = "s-abcdef".parse().unwrap();
         let event = ServerEvent::SessionCreated {
             seq: 1,
             session_id,
@@ -838,7 +838,7 @@ mod tests {
             payload,
         };
 
-        assert_eq!(generate_summary(&event), "Session t-abcdef was created");
+        assert_eq!(generate_summary(&event), "Session s-abcdef was created");
     }
 
     #[test]

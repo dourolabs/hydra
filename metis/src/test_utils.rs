@@ -5,7 +5,7 @@ pub mod ids {
     use std::str::FromStr;
 
     pub fn task_id(label: &str) -> SessionId {
-        parse_or_build(label, "t-")
+        parse_or_build(label, "s-")
     }
 
     pub fn issue_id(label: &str) -> IssueId {

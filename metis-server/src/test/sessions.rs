@@ -561,7 +561,7 @@ async fn session_version_endpoints_return_404s() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
-    let missing_id = task_id("t-missing");
+    let missing_id = task_id("s-missing");
     let response = client
         .get(format!(
             "{}/v1/sessions/{}/versions",
@@ -677,7 +677,7 @@ async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Res
 async fn get_session_returns_not_found_for_missing_session() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
-    let missing_id = task_id("t-missing");
+    let missing_id = task_id("s-missing");
     let response = client
         .get(format!("{}/v1/sessions/{missing_id}", server.base_url()))
         .send()
@@ -713,7 +713,7 @@ async fn get_session_logs_rejects_empty_session_id() -> anyhow::Result<()> {
 #[tokio::test]
 async fn get_session_logs_returns_bad_request_when_multiple_sessions_found() -> anyhow::Result<()> {
     let engine = Arc::new(MockJobEngine::new());
-    let job_id = task_id("t-jobaa");
+    let job_id = task_id("s-jobaa");
     engine.insert_job(&job_id, JobStatus::Running).await;
     engine.insert_job(&job_id, JobStatus::Failed).await;
     let handles = test_state_with_engine_handles(engine);
@@ -738,7 +738,7 @@ async fn get_session_logs_returns_bad_request_when_multiple_sessions_found() -> 
 async fn get_session_logs_returns_not_found_for_missing_session() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
-    let missing_id = task_id("t-missing");
+    let missing_id = task_id("s-missing");
     let response = client
         .get(format!(
             "{}/v1/sessions/{missing_id}/logs",
@@ -759,7 +759,7 @@ async fn get_session_logs_returns_not_found_for_missing_session() -> anyhow::Res
 #[tokio::test]
 async fn get_session_logs_streams_when_watching_running_session() -> anyhow::Result<()> {
     let engine = Arc::new(MockJobEngine::new());
-    let job_id = task_id("t-stream");
+    let job_id = task_id("s-stream");
     engine.insert_job(&job_id, JobStatus::Running).await;
     engine
         .set_logs(
@@ -809,7 +809,7 @@ async fn kill_session_rejects_empty_session_id() -> anyhow::Result<()> {
 async fn kill_session_returns_not_found_for_unknown_session() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
-    let missing_id = task_id("t-missing");
+    let missing_id = task_id("s-missing");
     let response = client
         .delete(format!("{}/v1/sessions/{missing_id}", server.base_url()))
         .send()
@@ -827,7 +827,7 @@ async fn kill_session_returns_not_found_for_unknown_session() -> anyhow::Result<
 #[tokio::test]
 async fn kill_session_handles_multiple_matches_conflict() -> anyhow::Result<()> {
     let engine = Arc::new(MockJobEngine::new());
-    let job_id = task_id("t-dupe");
+    let job_id = task_id("s-dupe");
     engine.insert_job(&job_id, JobStatus::Running).await;
     engine.insert_job(&job_id, JobStatus::Running).await;
     let handles = test_state_with_engine_handles(engine);
@@ -871,7 +871,7 @@ async fn set_session_status_rejects_empty_session_id() -> anyhow::Result<()> {
 async fn set_session_status_returns_not_found_for_missing_session() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
-    let missing_id = task_id("t-missing");
+    let missing_id = task_id("s-missing");
     let response = client
         .post(format!(
             "{}/v1/sessions/{missing_id}/status",
@@ -1040,7 +1040,7 @@ async fn get_session_context_rejects_empty_session_id() -> anyhow::Result<()> {
 async fn get_session_context_returns_not_found_for_unknown_session() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
-    let missing_id = task_id("t-missing");
+    let missing_id = task_id("s-missing");
     let response = client
         .get(format!(
             "{}/v1/sessions/{missing_id}/context",
