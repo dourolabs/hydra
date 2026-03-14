@@ -24,11 +24,7 @@ mod tests {
     use super::*;
     use crate::client::MetisClient;
     use httpmock::prelude::*;
-    use metis_common::{
-        users::Username,
-        whoami::WhoAmIResponse,
-        SessionId,
-    };
+    use metis_common::{users::Username, whoami::WhoAmIResponse, SessionId};
     use reqwest::Client as HttpClient;
     use std::str::FromStr;
 
