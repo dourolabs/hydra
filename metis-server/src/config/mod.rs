@@ -7,7 +7,7 @@ pub use crate::ee::config::build_kube_client;
 use anyhow::{Context, Result, ensure};
 use metis_common::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 use octocrab::models::AppId;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     fmt, fs,
     path::{Path, PathBuf},
@@ -21,7 +21,7 @@ use crate::policy::config::PolicyConfig;
 /// Uses `#[serde(tag = "storage_backend")]` so the discriminator lives in the
 /// same mapping as the variant fields (flat YAML layout). A custom
 /// `Deserialize` impl on `AppConfig` applies the default when the tag is absent.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(tag = "storage_backend")]
 pub enum StorageConfig {
     /// SQLite file-based storage (default for single-player mode).
@@ -62,7 +62,7 @@ impl fmt::Display for StorageConfig {
 /// Uses `#[serde(tag = "job_engine")]` so the discriminator lives in the
 /// same mapping as the variant fields (flat YAML layout). A custom
 /// `Deserialize` impl on `AppConfig` applies the default when the tag is absent.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(tag = "job_engine")]
 pub enum JobEngineConfig {
     /// Local Docker-based job execution (default for single-player mode).
@@ -94,7 +94,7 @@ impl fmt::Display for JobEngineConfig {
 
 /// Authentication configuration for the server, modeled as a tagged enum so
 /// the type system enforces which fields are required for each mode.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(tag = "auth_mode")]
 pub enum AuthConfig {
     /// Local single-player mode: a default user actor is auto-created on
@@ -106,12 +106,12 @@ pub enum AuthConfig {
         github_token: String,
         /// Optional username for the local actor. Defaults to `"local"` when
         /// omitted, producing actor name `u-local`.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         username: Option<String>,
         /// Optional file path where the auto-generated auth token should be
         /// written on startup (mode 600). Used by `metis server init` so the
         /// CLI can pick up the token.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         auth_token_file: Option<PathBuf>,
     },
     /// GitHub OAuth mode: users authenticate via the GitHub device flow.
@@ -215,17 +215,21 @@ struct RawAppConfig {
     pub policies: Option<PolicyConfig>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AppConfig {
     pub metis: MetisSection,
     pub job: JobSection,
+    #[serde(flatten)]
     pub storage: StorageConfig,
+    #[serde(flatten)]
     pub job_engine: JobEngineConfig,
+    #[serde(flatten)]
     pub auth: AuthConfig,
     pub background: BackgroundSection,
     pub build_cache: BuildCacheSection,
     /// Optional policy engine configuration. When absent, all built-in
     /// policies are enabled with default parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub policies: Option<PolicyConfig>,
 }
 
@@ -305,7 +309,7 @@ impl AppConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct MetisSection {
     #[serde(default = "default_namespace")]
     pub namespace: String,
@@ -315,11 +319,23 @@ pub struct MetisSection {
     pub secret_encryption_key: String,
     #[serde(default)]
     pub allowed_orgs: Vec<String>,
-    #[serde(default, rename = "OPENAI_API_KEY")]
+    #[serde(
+        default,
+        rename = "OPENAI_API_KEY",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub openai_api_key: Option<String>,
-    #[serde(default, rename = "ANTHROPIC_API_KEY")]
+    #[serde(
+        default,
+        rename = "ANTHROPIC_API_KEY",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub anthropic_api_key: Option<String>,
-    #[serde(default, rename = "CLAUDE_CODE_OAUTH_TOKEN")]
+    #[serde(
+        default,
+        rename = "CLAUDE_CODE_OAUTH_TOKEN",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub claude_code_oauth_token: Option<String>,
 }
 
@@ -365,9 +381,9 @@ impl Default for MetisSection {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone, Default, Serialize)]
 pub struct BuildCacheSection {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage: Option<BuildCacheStorageConfig>,
     #[serde(default)]
     pub include: Vec<String>,
@@ -377,7 +393,7 @@ pub struct BuildCacheSection {
     pub home_include: Vec<String>,
     #[serde(default)]
     pub home_exclude: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_entries_per_repo: Option<usize>,
 }
 
@@ -453,11 +469,11 @@ impl BuildCacheSection {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct JobSection {
     #[serde(default)]
     pub default_image: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
     #[serde(default = "default_cpu_limit")]
     pub cpu_limit: String,
@@ -469,7 +485,7 @@ pub struct JobSection {
     pub memory_request: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct DatabaseSection {
     #[serde(default)]
     pub url: Option<String>,
@@ -509,7 +525,7 @@ impl Default for DatabaseSection {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct KubernetesSection {
     #[serde(default)]
     pub in_cluster: bool,
@@ -538,7 +554,7 @@ impl Default for KubernetesSection {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct GithubAppSection {
     pub app_id: u64,
     pub client_id: String,
@@ -604,7 +620,7 @@ impl GithubAppSection {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone, Default, Serialize)]
 pub struct BackgroundSection {
     #[serde(default)]
     pub github_poller: GithubPollerConfig,
@@ -618,7 +634,7 @@ impl BackgroundSection {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct GithubPollerConfig {
     #[serde(default = "default_github_poll_interval_secs")]
     pub interval_secs: u64,
@@ -632,7 +648,7 @@ impl Default for GithubPollerConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct SchedulerSection {
     #[serde(default = "default_process_pending_scheduler")]
     pub process_pending_sessions: WorkerSchedulerConfig,
@@ -658,7 +674,7 @@ impl Default for SchedulerSection {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct WorkerSchedulerConfig {
     #[serde(default = "default_scheduler_interval_secs")]
     pub interval_secs: u64,
