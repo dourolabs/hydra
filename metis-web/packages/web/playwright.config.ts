@@ -37,6 +37,13 @@ export default defineConfig({
     },
     {
       command:
+        "METIS_SERVER_URL=http://localhost:8080 COOKIE_SECURE=false pnpm --filter @metis/web dev:server",
+      port: 4000,
+      reuseExistingServer: true,
+      cwd: "../..",
+    },
+    {
+      command:
         "pnpm --filter @metis/api build && pnpm --filter @metis/ui build && pnpm --filter @metis/web dev",
       port: 3000,
       reuseExistingServer: true,
