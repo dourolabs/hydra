@@ -5,7 +5,7 @@ use crate::{
     users::Username,
 };
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -443,36 +443,7 @@ impl SessionVersionRecord {
     }
 }
 
-fn serialize_statuses<S>(statuses: &[Status], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let s = statuses
-        .iter()
-        .map(|status| {
-            let v = serde_json::to_value(status).expect("Status serializes to JSON");
-            v.as_str().expect("Status serializes to string").to_string()
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    serializer.serialize_str(&s)
-}
-
-fn deserialize_statuses<'de, D>(deserializer: D) -> Result<Vec<Status>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s.is_empty() {
-        return Ok(Vec::new());
-    }
-    s.split(',')
-        .map(|part| {
-            let trimmed = part.trim();
-            serde_json::from_value(Value::String(trimmed.to_string())).map_err(de::Error::custom)
-        })
-        .collect()
-}
+use super::serde_helpers::{deserialize_comma_separated_json, serialize_comma_separated_json};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -490,8 +461,8 @@ pub struct SearchSessionsQuery {
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
-        serialize_with = "serialize_statuses",
-        deserialize_with = "deserialize_statuses"
+        serialize_with = "serialize_comma_separated_json",
+        deserialize_with = "deserialize_comma_separated_json"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub status: Vec<Status>,

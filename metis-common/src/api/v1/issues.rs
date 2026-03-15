@@ -638,58 +638,7 @@ impl UpsertIssueResponse {
     }
 }
 
-fn serialize_label_ids<S>(ids: &[LabelId], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let s = ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    serializer.serialize_str(&s)
-}
-
-fn deserialize_label_ids<'de, D>(deserializer: D) -> Result<Vec<LabelId>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s.is_empty() {
-        return Ok(Vec::new());
-    }
-    s.split(',')
-        .map(|part| part.trim().parse().map_err(de::Error::custom))
-        .collect()
-}
-
-fn serialize_graph_filters<S>(
-    filters: &[IssueGraphFilter],
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let s = filters
-        .iter()
-        .map(|f| f.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    serializer.serialize_str(&s)
-}
-
-fn deserialize_graph_filters<'de, D>(deserializer: D) -> Result<Vec<IssueGraphFilter>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s.is_empty() {
-        return Ok(Vec::new());
-    }
-    s.split(',')
-        .map(|part| part.parse().map_err(de::Error::custom))
-        .collect()
-}
+use super::serde_helpers::{deserialize_comma_separated, serialize_comma_separated};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -707,8 +656,8 @@ pub struct SearchIssuesQuery {
     #[serde(
         default,
         rename = "graph",
-        serialize_with = "serialize_graph_filters",
-        deserialize_with = "deserialize_graph_filters"
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub graph_filters: Vec<IssueGraphFilter>,
@@ -718,8 +667,8 @@ pub struct SearchIssuesQuery {
     #[serde(
         default,
         rename = "labels",
-        serialize_with = "serialize_label_ids",
-        deserialize_with = "deserialize_label_ids"
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub label_ids: Vec<LabelId>,

@@ -14,6 +14,7 @@ pub mod patches;
 pub mod relations;
 pub mod repositories;
 pub mod secrets;
+pub mod serde_helpers;
 pub mod session_status;
 pub mod sessions;
 pub mod task_status;
