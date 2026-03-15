@@ -24,12 +24,13 @@ test.describe("Dashboard Child Session Indicator @dashboard:child-session-indica
     await expect(statusBoxes.first()).toBeVisible();
 
     // Verify at least one status box has the active/pulsing class
-    // (the child i-seed00002 has a running session, so its box should be statusBoxActive)
+    // (children with running sessions should show statusBoxActive)
     const activeBox = row.locator("span[class*='statusBoxActive']");
-    await expect(activeBox).toHaveCount(1);
+    const activeCount = await activeBox.count();
+    expect(activeCount).toBeGreaterThanOrEqual(1);
 
-    // Verify the active box has a pulse animation
-    const animationName = await activeBox.evaluate(
+    // Verify the first active box has a pulse animation
+    const animationName = await activeBox.first().evaluate(
       (el) => getComputedStyle(el).animationName,
     );
     expect(animationName).not.toBe("none");

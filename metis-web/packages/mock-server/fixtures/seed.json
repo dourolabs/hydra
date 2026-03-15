@@ -3,10 +3,10 @@
     "i-seed00001": {
       "type": "feature",
       "title": "Platform v2.0 Migration",
-      "description": "Platform v2.0 Migration\n\nMigrate the entire platform to v2.0 architecture. This is a large initiative covering authentication, database, and API changes.\n\n## Goals\n- Modernize authentication with OAuth2\n- Migrate database schema for new entity model\n- Implement API rate limiting\n- Update deployment pipeline\n\n## Timeline\nTargeting completion by end of Q2.",
+      "description": "Platform v2.0 Migration\n\nMigrate the entire platform to v2.0 architecture. This is a large initiative covering authentication, database, API changes, and real-time collaboration.\n\n## Goals\n- Modernize authentication with OAuth2\n- Migrate database schema for new entity model\n- Implement API rate limiting\n- Build real-time collaboration engine\n- Deploy GraphQL federation gateway\n\n## Timeline\nTargeting completion by end of Q2.",
       "creator": "alice",
-      "progress": "Phase 1 (auth) is underway. Database migration planning complete.",
-      "status": "open",
+      "progress": "5 of 8 subtasks complete. Auth and DB migrations done. 3 agents actively working on remaining items.",
+      "status": "in-progress",
       "assignee": "alice",
       "dependencies": [],
       "patches": [],
@@ -14,6 +14,8 @@
         { "description": "Finalize OAuth2 provider selection", "is_done": true },
         { "description": "Complete database migration plan", "is_done": true },
         { "description": "Implement rate limiting middleware", "is_done": false },
+        { "description": "Build real-time collaboration engine", "is_done": false },
+        { "description": "Deploy GraphQL gateway", "is_done": false },
         { "description": "Update deployment scripts", "is_done": false }
       ]
     },
@@ -24,7 +26,7 @@
       "creator": "alice",
       "progress": "Provider selected (Keycloak). Authorization code flow implemented. Token refresh in progress.",
       "status": "in-progress",
-      "assignee": "bob",
+      "assignee": "swe",
       "session_settings": {
         "repo_name": "acme/web-app"
       },
@@ -44,16 +46,22 @@
       "type": "task",
       "title": "Implement OAuth2 token refresh logic",
       "description": "Implement OAuth2 token refresh logic\n\nAdd automatic token refresh when access tokens expire. Must handle concurrent requests gracefully and queue refresh operations.",
-      "creator": "bob",
-      "progress": "",
-      "status": "open",
-      "assignee": "bob",
+      "creator": "swe",
+      "progress": "Agent implementing concurrent request queuing and token refresh flow.",
+      "status": "in-progress",
+      "assignee": "swe",
+      "session_settings": {
+        "repo_name": "acme/web-app"
+      },
       "dependencies": [
-        { "type": "child-of", "issue_id": "i-seed00002" },
-        { "type": "blocked-on", "issue_id": "i-seed00002" }
+        { "type": "child-of", "issue_id": "i-seed00002" }
       ],
       "patches": [],
-      "todo_list": []
+      "todo_list": [
+        { "description": "Implement token refresh endpoint", "is_done": true },
+        { "description": "Add request queuing during refresh", "is_done": false },
+        { "description": "Handle concurrent refresh race condition", "is_done": false }
+      ]
     },
     "i-seed00004": {
       "type": "task",
@@ -62,7 +70,7 @@
       "creator": "alice",
       "progress": "Scope definitions finalized. Implementation merged.",
       "status": "closed",
-      "assignee": "alice",
+      "assignee": "swe",
       "dependencies": [
         { "type": "child-of", "issue_id": "i-seed00002" }
       ],
@@ -80,7 +88,7 @@
       "creator": "alice",
       "progress": "Migration scripts written and tested. Deployed to staging successfully.",
       "status": "closed",
-      "assignee": null,
+      "assignee": "swe",
       "dependencies": [
         { "type": "child-of", "issue_id": "i-seed00001" }
       ],
@@ -92,9 +100,12 @@
       "title": "Implement API rate limiting",
       "description": "Implement API rate limiting\n\nAdd rate limiting middleware to protect API endpoints from abuse. Use a sliding window algorithm with Redis backing.",
       "creator": "alice",
-      "progress": "Initial implementation had memory leak in Redis connection pool. Investigation ongoing.",
-      "status": "failed",
-      "assignee": "bob",
+      "progress": "Initial implementation had memory leak in Redis connection pool. Agent investigating and fixing.",
+      "status": "in-progress",
+      "assignee": "swe",
+      "session_settings": {
+        "repo_name": "acme/web-app"
+      },
       "dependencies": [
         { "type": "child-of", "issue_id": "i-seed00001" }
       ],
@@ -141,7 +152,10 @@
       "creator": "alice",
       "progress": "Profiling complete. Main bottleneck is the unindexed LIKE query on description field. Adding GIN index.",
       "status": "in-progress",
-      "assignee": "alice",
+      "assignee": "swe",
+      "session_settings": {
+        "repo_name": "acme/web-app"
+      },
       "dependencies": [],
       "patches": [],
       "todo_list": [
@@ -166,10 +180,10 @@
       "type": "review-request",
       "title": "Review: OAuth2 provider integration patch",
       "description": "Review: OAuth2 provider integration patch\n\nPlease review the OAuth2 provider integration patch (p-seed00001). Focus areas:\n- Security of token handling\n- Error handling edge cases\n- Test coverage",
-      "creator": "bob",
-      "progress": "",
-      "status": "open",
-      "assignee": "alice",
+      "creator": "swe",
+      "progress": "Agent reviewing patch. Checking security of token handling and error edge cases.",
+      "status": "in-progress",
+      "assignee": "reviewer",
       "dependencies": [],
       "patches": ["p-seed00001"],
       "todo_list": []
@@ -181,12 +195,145 @@
       "creator": "alice",
       "progress": "",
       "status": "in-progress",
-      "assignee": "bob",
+      "assignee": "swe",
       "dependencies": [
         { "type": "blocked-on", "issue_id": "i-seed00006" }
       ],
       "patches": ["p-seed00003"],
       "todo_list": []
+    },
+    "i-seed00013": {
+      "type": "task",
+      "title": "Build WebSocket connection manager for real-time collab",
+      "description": "Build WebSocket connection manager for real-time collab\n\nImplement the core WebSocket infrastructure: ConnectionManager class that handles connect/disconnect/reconnect, heartbeat, and message routing.",
+      "creator": "alice",
+      "progress": "Agent implementing ConnectionManager with JWT auth and exponential backoff reconnection.",
+      "status": "in-progress",
+      "assignee": "swe",
+      "session_settings": {
+        "repo_name": "acme/web-app"
+      },
+      "dependencies": [
+        { "type": "child-of", "issue_id": "i-seed00001" }
+      ],
+      "patches": [],
+      "todo_list": [
+        { "description": "Implement ConnectionManager class", "is_done": true },
+        { "description": "Add JWT authentication on connect", "is_done": true },
+        { "description": "Handle reconnection with exponential backoff", "is_done": false },
+        { "description": "Write unit tests", "is_done": false }
+      ]
+    },
+    "i-seed00014": {
+      "type": "task",
+      "title": "Integrate Yjs CRDT library for concurrent editing",
+      "description": "Integrate Yjs CRDT library for concurrent editing\n\nIntegrate the Yjs CRDT library to enable conflict-free concurrent editing of shared documents. Set up Y-WebSocket provider and persistence layer.",
+      "creator": "alice",
+      "progress": "Yjs integration complete. Y-WebSocket provider connected. Persistence adapter merged.",
+      "status": "closed",
+      "assignee": "swe",
+      "session_settings": {
+        "repo_name": "acme/web-app"
+      },
+      "dependencies": [
+        { "type": "child-of", "issue_id": "i-seed00001" }
+      ],
+      "patches": ["p-seed00005"],
+      "todo_list": [
+        { "description": "Set up Yjs document model", "is_done": true },
+        { "description": "Implement Y-WebSocket provider", "is_done": true },
+        { "description": "Add PostgreSQL persistence adapter", "is_done": true }
+      ]
+    },
+    "i-seed00015": {
+      "type": "bug",
+      "title": "Fix race condition in session cleanup worker",
+      "description": "Fix race condition in session cleanup worker\n\nThe background worker that cleans up expired sessions has a TOCTOU race condition. Two workers can pick up the same expired session.",
+      "creator": "alice",
+      "progress": "Agent analyzing the race condition and implementing distributed lock with Redis SETNX.",
+      "status": "in-progress",
+      "assignee": "swe",
+      "session_settings": {
+        "repo_name": "acme/web-app"
+      },
+      "dependencies": [],
+      "patches": [],
+      "todo_list": [
+        { "description": "Reproduce the race condition in tests", "is_done": true },
+        { "description": "Implement distributed lock with Redis SETNX", "is_done": false },
+        { "description": "Add cleanup worker metrics", "is_done": false }
+      ]
+    },
+    "i-seed00016": {
+      "type": "bug",
+      "title": "Fix memory leak in SSE event broadcaster",
+      "description": "Fix memory leak in SSE event broadcaster\n\nThe SSE broadcaster accumulates event listeners for disconnected clients. The cleanup callback isn't firing on aborted connections.",
+      "creator": "alice",
+      "progress": "Root cause found: AbortSignal listener not registered. Fix implemented and patch submitted.",
+      "status": "in-progress",
+      "assignee": "swe",
+      "session_settings": {
+        "repo_name": "acme/web-app"
+      },
+      "dependencies": [],
+      "patches": ["p-seed00006"],
+      "todo_list": [
+        { "description": "Profile memory usage under load", "is_done": true },
+        { "description": "Identify root cause of listener accumulation", "is_done": true },
+        { "description": "Register AbortSignal cleanup handler", "is_done": true },
+        { "description": "Add connection count metrics endpoint", "is_done": true }
+      ]
+    },
+    "i-seed00017": {
+      "type": "task",
+      "title": "Deploy GraphQL federation gateway",
+      "description": "Deploy GraphQL federation gateway\n\nSet up Apollo Federation v2 gateway with subgraphs for users, issues, sessions, and patches. Incremental migration from REST.",
+      "creator": "alice",
+      "progress": "Gateway deployed. Users and Issues subgraphs live. Sessions subgraph in progress.",
+      "status": "in-progress",
+      "assignee": "swe",
+      "session_settings": {
+        "repo_name": "acme/api-gateway"
+      },
+      "dependencies": [
+        { "type": "child-of", "issue_id": "i-seed00001" }
+      ],
+      "patches": ["p-seed00004"],
+      "todo_list": [
+        { "description": "Deploy Apollo Gateway", "is_done": true },
+        { "description": "Implement Users subgraph", "is_done": true },
+        { "description": "Implement Issues subgraph", "is_done": true },
+        { "description": "Implement Sessions subgraph", "is_done": false },
+        { "description": "Implement Patches subgraph", "is_done": false }
+      ]
+    },
+    "i-seed00018": {
+      "type": "task",
+      "title": "Review: SSE memory leak fix",
+      "description": "Review: SSE memory leak fix\n\nReview the fix for the SSE broadcaster memory leak. Verify the AbortSignal cleanup approach and check the new metrics endpoint.",
+      "creator": "swe",
+      "progress": "Agent reviewing patch p-seed00006. Checking cleanup logic.",
+      "status": "in-progress",
+      "assignee": "reviewer",
+      "dependencies": [],
+      "patches": ["p-seed00006"],
+      "todo_list": []
+    },
+    "i-seed00019": {
+      "type": "feature",
+      "title": "Add webhook delivery system",
+      "description": "Add webhook delivery system\n\nImplement a webhook delivery system so external integrations can receive real-time notifications about events.",
+      "creator": "alice",
+      "progress": "",
+      "status": "open",
+      "assignee": null,
+      "dependencies": [],
+      "patches": [],
+      "todo_list": [
+        { "description": "Design webhook registration API", "is_done": false },
+        { "description": "Implement delivery worker with retries", "is_done": false },
+        { "description": "Add HMAC signature verification", "is_done": false }
+      ]
     }
   },
   "sessions": {
@@ -198,64 +345,142 @@
         "rev": "main"
       },
       "spawned_from": "i-seed00005",
-      "creator": "alice",
+      "creator": "swe",
       "status": "complete",
-      "creation_time": "2026-02-25T10:00:00.000Z",
-      "start_time": "2026-02-25T10:01:00.000Z",
-      "end_time": "2026-02-25T10:15:00.000Z"
+      "creation_time": "2026-03-14T09:00:00.000Z",
+      "start_time": "2026-03-14T09:01:00.000Z",
+      "end_time": "2026-03-14T09:45:00.000Z"
     },
     "t-seed00002": {
-      "prompt": "Execute the full test suite for the authentication module including unit tests, integration tests, and end-to-end OAuth2 flow tests.",
+      "prompt": "Implement OAuth2 token refresh logic with concurrent request queuing and automatic retry.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
-        "rev": "feature/oauth2"
+        "rev": "feature/oauth2-token-refresh"
       },
       "spawned_from": "i-seed00002",
-      "creator": "bob",
+      "creator": "swe",
       "status": "running",
-      "creation_time": "2026-02-26T14:00:00.000Z",
-      "start_time": "2026-02-26T14:02:00.000Z"
+      "creation_time": "2026-03-15T10:30:00.000Z",
+      "start_time": "2026-03-15T10:31:00.000Z"
     },
     "t-seed00003": {
-      "prompt": "Deploy the staging environment with the latest changes from the main branch.",
+      "prompt": "Implement the WebSocket ConnectionManager class with JWT auth, heartbeat, and reconnection logic.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
-        "rev": "main"
+        "rev": "feature/ws-connection-manager"
       },
-      "creator": "dev-user",
-      "status": "pending",
-      "creation_time": "2026-02-27T08:00:00.000Z"
+      "spawned_from": "i-seed00013",
+      "creator": "swe",
+      "status": "running",
+      "creation_time": "2026-03-15T11:00:00.000Z",
+      "start_time": "2026-03-15T11:02:00.000Z"
     },
     "t-seed00004": {
-      "prompt": "Build and push Docker image for the API server with tag v2.0.0-rc1.",
-      "context": {
-        "type": "git_repository",
-        "url": "https://github.com/acme/api-server.git",
-        "rev": "v2.0.0-rc1"
-      },
-      "creator": "alice",
-      "status": "failed",
-      "error": {
-        "job_engine_error": {
-          "reason": "Docker build failed: OOM killed during npm install step"
-        }
-      },
-      "creation_time": "2026-02-26T09:00:00.000Z",
-      "start_time": "2026-02-26T09:01:00.000Z",
-      "end_time": "2026-02-26T09:12:00.000Z"
-    },
-    "t-seed00005": {
-      "prompt": "Lint and format check on the web-app repository before release.",
+      "prompt": "Fix the Redis connection pool memory leak in the rate limiting middleware. Investigate and implement proper connection cleanup.",
       "context": {
         "type": "service_repository",
         "name": "acme/web-app",
-        "rev": "main"
+        "rev": "fix/rate-limiter-pool-leak"
       },
-      "creator": "bob",
-      "status": "created",
-      "creation_time": "2026-02-27T09:00:00.000Z"
+      "spawned_from": "i-seed00006",
+      "creator": "swe",
+      "status": "running",
+      "creation_time": "2026-03-15T12:00:00.000Z",
+      "start_time": "2026-03-15T12:01:00.000Z"
+    },
+    "t-seed00005": {
+      "prompt": "Fix the TOCTOU race condition in session cleanup worker by implementing a distributed lock using Redis SETNX.",
+      "context": {
+        "type": "service_repository",
+        "name": "acme/web-app",
+        "rev": "fix/session-cleanup-race"
+      },
+      "spawned_from": "i-seed00015",
+      "creator": "swe",
+      "status": "running",
+      "creation_time": "2026-03-15T12:30:00.000Z",
+      "start_time": "2026-03-15T12:31:00.000Z"
+    },
+    "t-seed00006": {
+      "prompt": "Deploy Apollo Federation v2 gateway with Sessions subgraph. Implement session resolvers and dataloader integration.",
+      "context": {
+        "type": "service_repository",
+        "name": "acme/api-gateway",
+        "rev": "feature/sessions-subgraph"
+      },
+      "spawned_from": "i-seed00017",
+      "creator": "swe",
+      "status": "running",
+      "creation_time": "2026-03-15T10:15:00.000Z",
+      "start_time": "2026-03-15T10:16:00.000Z"
+    },
+    "t-seed00007": {
+      "prompt": "Review the OAuth2 provider integration patch for security, token handling, and error edge cases.",
+      "context": {
+        "type": "service_repository",
+        "name": "acme/web-app",
+        "rev": "feature/oauth2-provider"
+      },
+      "spawned_from": "i-seed00011",
+      "creator": "reviewer",
+      "status": "running",
+      "creation_time": "2026-03-15T13:00:00.000Z",
+      "start_time": "2026-03-15T13:01:00.000Z"
+    },
+    "t-seed00008": {
+      "prompt": "Review the SSE broadcaster memory leak fix. Verify AbortSignal cleanup approach and check new metrics endpoint.",
+      "context": {
+        "type": "service_repository",
+        "name": "acme/web-app",
+        "rev": "fix/sse-memory-leak"
+      },
+      "spawned_from": "i-seed00018",
+      "creator": "reviewer",
+      "status": "running",
+      "creation_time": "2026-03-15T13:10:00.000Z",
+      "start_time": "2026-03-15T13:11:00.000Z"
+    },
+    "t-seed00009": {
+      "prompt": "Add GIN index on description column and benchmark search query performance improvement.",
+      "context": {
+        "type": "service_repository",
+        "name": "acme/web-app",
+        "rev": "perf/search-index"
+      },
+      "spawned_from": "i-seed00009",
+      "creator": "swe",
+      "status": "running",
+      "creation_time": "2026-03-15T09:00:00.000Z",
+      "start_time": "2026-03-15T09:01:00.000Z"
+    },
+    "t-seed00010": {
+      "prompt": "Integrate Yjs CRDT library with Y-WebSocket provider and PostgreSQL persistence adapter.",
+      "context": {
+        "type": "service_repository",
+        "name": "acme/web-app",
+        "rev": "feature/crdt-sync"
+      },
+      "spawned_from": "i-seed00014",
+      "creator": "swe",
+      "status": "complete",
+      "creation_time": "2026-03-14T16:00:00.000Z",
+      "start_time": "2026-03-14T16:01:00.000Z",
+      "end_time": "2026-03-14T17:10:00.000Z"
+    },
+    "t-seed00011": {
+      "prompt": "Implement OAuth2 token refresh with concurrent request queuing. First attempt - investigating approach.",
+      "context": {
+        "type": "service_repository",
+        "name": "acme/web-app",
+        "rev": "feature/oauth2-token-refresh"
+      },
+      "spawned_from": "i-seed00003",
+      "creator": "swe",
+      "status": "running",
+      "creation_time": "2026-03-15T11:30:00.000Z",
+      "start_time": "2026-03-15T11:31:00.000Z"
     }
   },
   "patches": {
@@ -265,13 +490,13 @@
       "diff": "diff --git a/src/auth/oauth2.ts b/src/auth/oauth2.ts\nnew file mode 100644\nindex 0000000..abc1234\n--- /dev/null\n+++ b/src/auth/oauth2.ts\n@@ -0,0 +1,45 @@\n+import { Issuer } from 'openid-client';\n+\n+export async function createOAuth2Client() {\n+  const issuer = await Issuer.discover(process.env.OAUTH2_ISSUER_URL!);\n+  return new issuer.Client({\n+    client_id: process.env.OAUTH2_CLIENT_ID!,\n+    response_types: ['code'],\n+    token_endpoint_auth_method: 'none',\n+  });\n+}\n",
       "status": "Open",
       "is_automatic_backup": false,
-      "creator": "bob",
+      "creator": "swe",
       "reviews": [
         {
           "contents": "Looks good overall. A few questions:\n1. Should we add token caching to reduce calls to the OIDC provider?\n2. The error handling in the callback route could be more specific.\n3. Consider adding a health check endpoint that verifies OIDC provider connectivity.",
           "is_approved": false,
-          "author": "alice",
-          "submitted_at": "2026-02-26T16:30:00.000Z"
+          "author": "reviewer",
+          "submitted_at": "2026-03-14T16:30:00.000Z"
         }
       ],
       "service_repo_name": "acme/web-app",
@@ -295,13 +520,13 @@
       "diff": "diff --git a/src/middleware/scopes.ts b/src/middleware/scopes.ts\nnew file mode 100644\nindex 0000000..def5678\n--- /dev/null\n+++ b/src/middleware/scopes.ts\n@@ -0,0 +1,20 @@\n+export function requireScopes(...scopes: string[]) {\n+  return (req, res, next) => {\n+    const tokenScopes = req.user?.scopes ?? [];\n+    const hasAll = scopes.every(s => tokenScopes.includes(s));\n+    if (!hasAll) return res.status(403).json({ error: 'Insufficient scope' });\n+    next();\n+  };\n+}\n",
       "status": "Merged",
       "is_automatic_backup": false,
-      "creator": "alice",
+      "creator": "swe",
       "reviews": [
         {
           "contents": "LGTM! Clean implementation. The scope hierarchy is well thought out.",
           "is_approved": true,
-          "author": "bob",
-          "submitted_at": "2026-02-24T11:00:00.000Z"
+          "author": "reviewer",
+          "submitted_at": "2026-03-13T11:00:00.000Z"
         }
       ],
       "service_repo_name": "acme/web-app",
@@ -325,13 +550,13 @@
       "diff": "diff --git a/src/middleware/rate-limit.ts b/src/middleware/rate-limit.ts\nnew file mode 100644\nindex 0000000..789abcd\n--- /dev/null\n+++ b/src/middleware/rate-limit.ts\n@@ -0,0 +1,30 @@\n+import Redis from 'ioredis';\n+\n+export function rateLimiter(redis: Redis, opts: RateLimitOptions) {\n+  return async (req, res, next) => {\n+    const key = `ratelimit:${req.ip}:${req.path}`;\n+    const count = await redis.incr(key);\n+    if (count === 1) await redis.expire(key, opts.windowSec);\n+    if (count > opts.maxRequests) {\n+      return res.status(429).json({ error: 'Too many requests' });\n+    }\n+    next();\n+  };\n+}\n",
       "status": "ChangesRequested",
       "is_automatic_backup": false,
-      "creator": "bob",
+      "creator": "swe",
       "reviews": [
         {
           "contents": "The sliding window implementation has a race condition between INCR and EXPIRE. Use a Lua script or MULTI/EXEC to make it atomic. Also, the Redis connection pool isn't being closed on shutdown which causes the memory leak reported in i-seed00006.",
           "is_approved": false,
-          "author": "alice",
-          "submitted_at": "2026-02-25T15:00:00.000Z"
+          "author": "reviewer",
+          "submitted_at": "2026-03-14T15:00:00.000Z"
         }
       ],
       "service_repo_name": "acme/web-app",
@@ -355,26 +580,86 @@
       "base_branch": "main"
     },
     "p-seed00004": {
-      "title": "Update API documentation for v2.0",
-      "description": "Comprehensive update to the API documentation reflecting all v2.0 changes including new OAuth2 endpoints, updated request/response schemas, and rate limiting headers.",
-      "diff": "diff --git a/docs/api.md b/docs/api.md\nindex aaa0000..bbb1111 100644\n--- a/docs/api.md\n+++ b/docs/api.md\n@@ -1,5 +1,10 @@\n # API Reference\n \n+## Authentication\n+All API requests require a Bearer token obtained via OAuth2.\n+\n+## Rate Limiting\n+Responses include `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers.\n",
-      "status": "Closed",
+      "title": "Deploy Apollo Federation gateway with Users and Issues subgraphs",
+      "description": "Sets up the GraphQL federation gateway and implements the first two subgraphs.\n\nKey changes:\n- Apollo Federation v2 gateway configuration\n- Users subgraph: profile queries, team membership, auth integration\n- Issues subgraph: CRUD operations, dependency graph resolution\n- Dataloader integration for N+1 prevention",
+      "diff": "diff --git a/src/gateway/config.ts b/src/gateway/config.ts\nnew file mode 100644\nindex 0000000..111aaa\n--- /dev/null\n+++ b/src/gateway/config.ts\n@@ -0,0 +1,15 @@\n+import { ApolloGateway } from '@apollo/gateway';\n+\n+export const gateway = new ApolloGateway({\n+  supergraphSdl: new IntrospectAndCompose({\n+    subgraphs: [\n+      { name: 'users', url: process.env.USERS_SUBGRAPH_URL },\n+      { name: 'issues', url: process.env.ISSUES_SUBGRAPH_URL },\n+    ],\n+  }),\n+});\n",
+      "status": "Merged",
       "is_automatic_backup": false,
-      "creator": "dev-user",
+      "creator": "swe",
+      "reviews": [
+        {
+          "contents": "The federation setup looks correct. Good use of @key directives and entity references. The dataloader pattern is well-implemented.",
+          "is_approved": true,
+          "author": "reviewer",
+          "submitted_at": "2026-03-13T12:00:00.000Z"
+        }
+      ],
+      "service_repo_name": "acme/api-gateway",
+      "github": {
+        "owner": "acme",
+        "repo": "api-gateway",
+        "number": 89,
+        "head_ref": "feature/graphql-gateway",
+        "base_ref": "main",
+        "url": "https://github.com/acme/api-gateway/pull/89",
+        "ci": {
+          "state": "Success"
+        }
+      },
+      "branch_name": "feature/graphql-gateway",
+      "base_branch": "main"
+    },
+    "p-seed00005": {
+      "title": "Integrate Yjs CRDT with PostgreSQL persistence",
+      "description": "Adds conflict-free concurrent editing using Yjs with a PostgreSQL persistence adapter.",
+      "diff": "diff --git a/src/crdt/YjsProvider.ts b/src/crdt/YjsProvider.ts\nnew file mode 100644\nindex 0000000..def5678\n--- /dev/null\n+++ b/src/crdt/YjsProvider.ts\n@@ -0,0 +1,20 @@\n+import * as Y from 'yjs';\n+import { WebsocketProvider } from 'y-websocket';\n+\n+export class YjsDocumentProvider {\n+  private doc: Y.Doc;\n+  private provider: WebsocketProvider;\n+\n+  constructor(roomName: string, wsUrl: string) {\n+    this.doc = new Y.Doc();\n+    this.provider = new WebsocketProvider(wsUrl, roomName, this.doc);\n+  }\n+}\n",
+      "status": "Merged",
+      "is_automatic_backup": false,
+      "creator": "swe",
+      "reviews": [
+        {
+          "contents": "Clean integration. The persistence adapter handles edge cases well. Approved.",
+          "is_approved": true,
+          "author": "reviewer",
+          "submitted_at": "2026-03-14T18:30:00.000Z"
+        }
+      ],
+      "service_repo_name": "acme/web-app",
+      "github": {
+        "owner": "acme",
+        "repo": "web-app",
+        "number": 150,
+        "head_ref": "feature/crdt-sync",
+        "base_ref": "main",
+        "url": "https://github.com/acme/web-app/pull/150",
+        "ci": {
+          "state": "Success"
+        }
+      },
+      "branch_name": "feature/crdt-sync",
+      "base_branch": "main"
+    },
+    "p-seed00006": {
+      "title": "Fix SSE broadcaster memory leak on client disconnect",
+      "description": "Fixes unbounded memory growth in the SSE event broadcaster caused by accumulated listeners from disconnected clients.\n\nRoot cause: cleanup callback not registered on request AbortSignal.",
+      "diff": "diff --git a/src/sse/broadcaster.ts b/src/sse/broadcaster.ts\nindex aaa0000..bbb1111 100644\n--- a/src/sse/broadcaster.ts\n+++ b/src/sse/broadcaster.ts\n@@ -15,6 +15,10 @@\n   subscribe(req: Request, listener: EventListener): void {\n     this.listeners.add(listener);\n+    req.signal.addEventListener('abort', () => {\n+      this.listeners.delete(listener);\n+      this.connectionCount--;\n+    });\n     this.connectionCount++;\n   }\n",
+      "status": "Open",
+      "is_automatic_backup": false,
+      "creator": "swe",
       "reviews": [],
       "service_repo_name": "acme/web-app",
       "github": {
         "owner": "acme",
         "repo": "web-app",
-        "number": 140,
-        "head_ref": "docs/api-v2",
+        "number": 153,
+        "head_ref": "fix/sse-memory-leak",
         "base_ref": "main",
-        "url": "https://github.com/acme/web-app/pull/140",
+        "url": "https://github.com/acme/web-app/pull/153",
         "ci": {
           "state": "Success"
         }
       },
-      "branch_name": "docs/api-v2",
+      "branch_name": "fix/sse-memory-leak",
       "base_branch": "main"
     }
   },
@@ -393,6 +678,16 @@
       "title": "Developer Onboarding Guide",
       "body_markdown": "# Developer Onboarding Guide\n\n## Getting Started\n\n### Prerequisites\n- Node.js 20+\n- Docker and Docker Compose\n- Access to the GitHub organization\n\n### Setup\n1. Clone the repository: `git clone https://github.com/acme/web-app.git`\n2. Install dependencies: `pnpm install`\n3. Copy config: `cp .env.example .env`\n4. Start services: `docker compose up -d`\n5. Run migrations: `pnpm migrate`\n6. Start dev server: `pnpm dev`\n\n### Project Structure\n```\nsrc/\n  auth/       - Authentication modules\n  middleware/ - Express middleware\n  routes/     - API route handlers\n  models/     - Database models\n  utils/      - Shared utilities\n```\n\n## Common Tasks\n- **Run tests**: `pnpm test`\n- **Lint**: `pnpm lint`\n- **Build**: `pnpm build`",
       "path": "/docs/onboarding"
+    },
+    "d-seed00004": {
+      "title": "ADR-002: Real-time Collaboration Architecture",
+      "body_markdown": "# ADR-002: Real-time Collaboration Architecture\n\n## Status\nAccepted\n\n## Context\nWe need to support real-time collaboration features including presence tracking, concurrent editing, and live activity feeds.\n\n## Decision\nEvent-driven architecture using:\n1. **WebSocket Gateway** for client connections and message routing\n2. **Redis Streams** for inter-service event passing\n3. **Yjs CRDTs** for conflict-free concurrent document editing\n4. **PostgreSQL** for persistence\n\n### Key decisions:\n- CRDTs over OT (simpler, no central coordination)\n- Redis Streams over Kafka (lower overhead for our scale)\n- Single multiplexed WebSocket connection per client\n\n## Consequences\n- All services must publish events to Redis Streams\n- WebSocket connections are stateful, complicating horizontal scaling\n- Need Redis Cluster for high availability",
+      "path": "/research/adr-002-realtime-collab"
+    },
+    "d-seed00005": {
+      "title": "GraphQL Federation Migration Plan",
+      "body_markdown": "# GraphQL Federation Migration Plan\n\n## Phases\n\n### Phase 1: Gateway + Core Subgraphs (Complete)\n- Apollo Gateway deployed\n- Users subgraph live\n- Issues subgraph live\n\n### Phase 2: Extended Subgraphs (In Progress)\n- Sessions subgraph (agent actively working)\n- Patches subgraph (blocked on Sessions)\n\n### Phase 3: Cleanup\n- Remove REST endpoints\n- Update all client code\n- Deprecate REST API docs",
+      "path": "/research/graphql-federation-plan"
     }
   },
   "repositories": {
@@ -402,19 +697,25 @@
       "default_image": "node:20-slim",
       "patch_workflow": {
         "review_requests": [
-          { "assignee": "alice" },
-          { "assignee": "bob" }
+          { "assignee": "reviewer" }
         ],
         "merge_request": {
           "assignee": "alice"
         }
       }
     },
-    "acme/api-server": {
-      "remote_url": "https://github.com/acme/api-server.git",
+    "acme/api-gateway": {
+      "remote_url": "https://github.com/acme/api-gateway.git",
       "default_branch": "main",
       "default_image": "node:20-slim",
-      "patch_workflow": null
+      "patch_workflow": {
+        "review_requests": [
+          { "assignee": "reviewer" }
+        ],
+        "merge_request": {
+          "assignee": "alice"
+        }
+      }
     }
   },
   "agents": {
@@ -423,7 +724,7 @@
       "prompt": "You are a software engineering agent. You help implement features, fix bugs, and improve code quality.",
       "prompt_path": "/agents/swe/prompt.md",
       "max_tries": 3,
-      "max_simultaneous": 2,
+      "max_simultaneous": 5,
       "is_assignment_agent": true
     },
     "reviewer": {
@@ -439,7 +740,7 @@
       "prompt": "You are a DevOps agent. You manage deployments, infrastructure, and CI/CD pipelines.",
       "prompt_path": "/agents/ops/prompt.md",
       "max_tries": 2,
-      "max_simultaneous": 1,
+      "max_simultaneous": 3,
       "is_assignment_agent": false
     }
   },
@@ -456,6 +757,18 @@
       "name": "infra",
       "color": "#2ecc71"
     },
+    "l-seed00004": {
+      "name": "realtime",
+      "color": "#8b5cf6"
+    },
+    "l-seed00005": {
+      "name": "graphql",
+      "color": "#e535ab"
+    },
+    "l-seed00006": {
+      "name": "bug",
+      "color": "#ef4444"
+    },
     "l-inbox": {
       "name": "inbox",
       "color": "#6b7280",
@@ -471,8 +784,14 @@
     { "label_id": "l-seed00002", "object_id": "i-seed00004" },
     { "label_id": "l-seed00003", "object_id": "i-seed00006" },
     { "label_id": "l-seed00001", "object_id": "i-seed00008" },
+    { "label_id": "l-seed00004", "object_id": "i-seed00013" },
+    { "label_id": "l-seed00004", "object_id": "i-seed00014" },
+    { "label_id": "l-seed00005", "object_id": "i-seed00017" },
+    { "label_id": "l-seed00006", "object_id": "i-seed00015" },
+    { "label_id": "l-seed00006", "object_id": "i-seed00016" },
     { "label_id": "l-inbox", "object_id": "i-seed00007" },
     { "label_id": "l-inbox", "object_id": "i-seed00008" },
-    { "label_id": "l-inbox", "object_id": "i-seed00010" }
+    { "label_id": "l-inbox", "object_id": "i-seed00010" },
+    { "label_id": "l-inbox", "object_id": "i-seed00019" }
   ]
 }
