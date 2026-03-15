@@ -1,187 +1,123 @@
 # Metis
 
-Metis is an experimental AI-orchestrator: a Rust CLI drives an Axum-based
-control plane that schedules autonomous jobs onto Kubernetes worker pods.
-The CLI (`metis`) is how humans interact with the system (spawning work,
-tailing logs, submitting issues and patches), while `metis-server` stores job state,
-coordinates background agents, and talks to Kubernetes to launch workers.
+Metis is an agent dashboard that lets you manage lots of Claude Code instances working in parallel. Instead of operating at the level of code, you operate at the level of tasks -- what needs to be done? You assign work through an issue tracker, and agents on your team take care of the implementation details. You survey their progress, review their work, and offer course corrections as needed.
 
-> Looking for coding conventions or release expectations? See `AGENTS.md`.
+![Metis Dashboard](docs/images/readme-dashboard.png)
 
-## Repository layout
+## Getting Started
 
-| Path | Description |
+Metis ships a single-player mode that bundles the CLI, server, and web dashboard into one binary (`metis-single-player`). This is the easiest way to get started.
+
+### 1. Clone and build
+
+```bash
+git clone https://github.com/dourolabs/metis.git
+cd metis
+cargo build -p metis-single-player --features embedded-frontend
+```
+
+Add the binary to your path:
+
+```bash
+cp target/debug/metis ~/.local/bin/metis
+# or
+export PATH="$PATH:$(realpath ./target/debug/)"
+```
+
+### 2. Initialize the server
+
+```bash
+metis server init
+```
+
+This walks you through an interactive setup: choosing a username, job engine (Docker or local), AI model (Claude or Codex), API keys, and a GitHub PAT. When it finishes, the server is running and the CLI is configured to talk to it.
+
+### 3. Add a git repository
+
+Register a repository so agents can work on it:
+
+```bash
+metis repos create your-org/your-repo https://github.com/your-org/your-repo.git
+```
+
+### 4. Create your first issue
+
+```bash
+metis issues create --assignee swe --repo-name your-org/your-repo "Fix the bug in ..."
+```
+
+This assigns the issue to `swe`, a software engineering agent. You can watch progress in the dashboard at http://127.0.0.1:8080, or from the CLI:
+
+```bash
+metis issues list
+metis issues describe <issue-id>
+```
+
+Once the agent finishes, it submits a patch and creates a review issue assigned to you. The patch is also pushed to GitHub as a PR.
+
+### 5. Try a more complex task
+
+Metis also has a `pm` (product manager) agent that can break down larger features into subtasks:
+
+```bash
+metis issues create --assignee pm --repo-name your-org/your-repo "Build feature XYZ"
+```
+
+### Managing the server
+
+```bash
+metis server status        # check if the server is running
+metis server logs --follow  # tail server logs
+metis server stop           # stop the server
+metis server start          # start the server again
+```
+
+## Core Concepts
+
+### Issues
+
+All work in Metis is represented by issues. Issues are the fundamental unit of work, assigned to either agents or users. Agents have full access to the issue tracker, so they can create subtasks, request reviews, and coordinate with other agents autonomously.
+
+Issues have four statuses: `Open`, `InProgress`, `Closed`, and `Dropped`. They form a graph with two types of relationships: `blocked-on` (issue X cannot start until Y is closed) and `child-of` (issue X is a subtask of Y). The system uses this graph to determine which issues are ready to work on, and automatically spawns agents for ready issues.
+
+When an agent starts working on an issue, it sets the status to `InProgress`. When done, it sets it to `Closed`. If the agent's session ends while the issue is still `InProgress` (e.g., waiting for a code review), another agent can pick it up later with the full git state preserved.
+
+### Document Store
+
+The document store is a shared space for markdown artifacts -- design docs, runbooks, playbooks, and other reference material. Agents and users can read and write documents using the CLI:
+
+```bash
+metis documents list
+metis documents get <path>
+metis documents put <path> --file <file>
+```
+
+### Agents
+
+Metis comes with three default agents, created automatically during `metis server init`:
+
+- **`swe`** -- Software engineering agent. Implements code changes, submits patches, and responds to review feedback.
+- **`pm`** -- Product manager agent. Breaks down complex features into smaller subtasks and assigns them.
+- **`reviewer`** -- Code review agent. Reviews patches and provides feedback.
+
+Agents are configured on the server and can be customized via the API. Each agent has a system prompt, a concurrency limit, and a max-retries setting.
+
+### Git Repositories and Branch Management
+
+Repositories are registered with Metis so agents know where to work. Each issue and task gets tracking branches pushed to the remote:
+
+- `metis/<issue-id>/base` -- where work on the issue started
+- `metis/<issue-id>/head` -- the current head of work for the issue
+
+This allows sequential agents working on the same issue to pick up where the previous one left off. You can check out any of these branches to inspect the state of work at any point.
+
+## Code Overview
+
+| Crate | Description |
 | --- | --- |
-| `metis` | End-user CLI with subcommands such as `spawn`, `jobs`, `logs`, `patches`, `issues`, `chat`, and the TUI `dashboard`. |
-| `metis-server` | Axum HTTP API plus background agents and Kubernetes `Job` engine. Responsible for job orchestration, persistence, and webhooks. |
-| `metis-common` | Shared models (`MetisId`, job/log/issue/patch types, env var constants) used by both crates. |
-| `images/` | Dockerfiles for the server and worker images. |
-| `scripts/` | Helper scripts (cluster bootstrap, Docker builds, worker entrypoint). |
-| `config.toml.sample` / `config.yaml.sample` files | Copy to `config.toml` or `config.yaml` (per crate) to override defaults. |
-
-## Prerequisites
-
-- Rust toolchain (1.77+ recommended) and Cargo.
-- Kubernetes cluster credentials (`kubectl` configured + the `kube` Rust client can talk to it).
-- Docker (for building worker/server images) and, for local clusters, [`kind`](https://kind.sigs.k8s.io/).
-- An `OPENAI_API_KEY` (export it or set it inside the server config).
-- A GitHub token associated with the issue creator, with permissions Actions, Contents, Issues, Pull Requests, and Workflows (all Read & Write), Commit Statuses (Read).
-
-## Building & quick verification
-
-```bash
-cargo check --workspace
-cargo build --workspace --all-targets
-cargo test --workspace
-```
-
-**Note** Postgres-backed store tests are ignored by default to avoid introducing a required database dependency.
-To exercise them, run a Postgres instance locally (`./scripts/dev-postgres.sh`) and set `DATABASE_URL`, then include
-ignored tests:
-
-```bash
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/metis cargo test --workspace --all-targets -- --include-ignored
-```
-
-## Configuration
-
-### CLI (`metis`)
-
-1. Optional: copy the sample if you want file-based overrides:
-   `cp metis/config.toml.sample metis/config.toml`.
-2. Point the CLI at your `metis-server` instance by setting `[server].url`,
-   exporting `METIS_SERVER_URL`, or passing `--server-url`. The default points
-   to `http://localhost:8080`.
-3. Optional: run `metis --help` to see every subcommand or inspect
-   `metis/src/main.rs`.
-
-The CLI reads `--config <file>` if passed, otherwise `~/metis/config.toml`. No
-config file is required when you pass `--server-url` or `METIS_SERVER_URL`.
-
-#### Natural language chat
-
-`metis chat` opens an interactive Codex session that already knows how to call the
-`metis` CLI and starts in the current workspace. Codex will greet you and wait for
-your first instruction. For a single-turn question, pass `--prompt`:
-
-```bash
-metis chat --prompt "What jobs are running right now?"
-```
-
-Both modes launch Codex in the current workspace, inject a description of the
-available subcommands, and set `METIS_SERVER_URL` so every CLI call targets the
-same server as the parent process. Pass `--model <name>` to override the Codex
-model or `--full-auto` to forward Codex's `--full-auto` flag and let it run
-commands without manual approvals.
-
-### Server (`metis-server`)
-
-1. `cp metis-server/config.yaml.sample metis-server/config.yaml`.
-2. Fill in:
-   - `[metis]` namespace, worker image, and server hostname.
-   - `OPENAI_API_KEY` (or export the `OPENAI_API_KEY` env var at runtime).
-   - Repository metadata in `[service.repositories.<name>]` so that
-     background queues know what to check out.
-   - `[[background.agent_queues]]` entries if you want autonomous queues
-     that automatically create jobs based on prompts.
-   - `[background.scheduler.<worker>]` blocks to adjust polling/backoff
-     intervals for background workers (see `config.yaml.sample` for defaults).
-   - `[kubernetes]` connection info (`in_cluster`, `config_path`, etc.).
-3. Launch with `METIS_CONFIG=metis-server/config.yaml cargo run -p metis-server`.
-
-## Local Development
-
-### Postgres for local development
-
-Use the helper script to run a local Postgres container with persistent data in a Docker volume:
-
-```bash
-./scripts/dev-postgres.sh start
-./scripts/dev-postgres.sh status   # shows container status and connection string
-```
-
-By default the container listens on `localhost:5432` with database/user/password `metis`. Point `metis-server/config.yaml` at it (e.g., `url = "postgres://metis:metis@localhost:5432/metis"`).
-
-### GitHub App for local development
-
-Create a GitHub App for local development if you want Metis to read/write repository data via the GitHub API:
-
-1. Create a new GitHub App in your GitHub settings and generate a private key for it.
-2. Set the app permissions to the minimum required for Metis:
-   - Actions: Read & Write
-   - Checks: Read & Write
-   - Commit statuses: Read-only
-   - Contents: Read & Write
-   - Pull requests: Read & Write
-3. Install the GitHub App on the Metis repository you want to operate against.
-4. Use the app credentials in your local config or environment variables per `metis-server/config.yaml.sample`.
-
-### Running metis-server in a kind cluster
-
-For local development with a kind (Kubernetes in Docker) cluster:
-
-#### Prerequisites
-
-- Docker installed and the daemon running
-- `kind` and `kubectl` binaries installed and available in PATH
-- An `OPENAI_API_KEY` environment variable (export it before running the setup scripts)
-- Optional: a GitHub token associated with the issue creator if you need GitHub repository access.
-
-#### Setup
-
-1. **Create a kind cluster**:
-   ```bash
-   kind create cluster --name local-dev
-   ```
-
-   To delete the cluster later:
-   ```bash
-   kind delete cluster --name local-dev
-   ```
-
-2. **Build Docker images and load them into the kind cluster**:
-   ```bash
-   ./scripts/docker-build.sh
-   ```
-
-   This builds both `metis-server` and `metis-worker` images and loads them into the `local-dev` cluster. You can override the image names or cluster name via environment variables (`WORKER_IMAGE`, `SERVER_IMAGE`, `KIND_CLUSTER_NAME`).
-
-3. **Start the server in the cluster**:
-   ```bash
-   ./scripts/service.sh start
-   ```
-
-   Starting the server will also deploy a Postgres pod/service inside the cluster and wire `database.url` in the server ConfigMap to it. Override defaults via `POSTGRES_*` or `SERVER_DATABASE_URL` if needed. Provide any required GitHub token through the user account associated with the issue creator.
-
-   This script creates the `metis` namespace, RBAC resources, ConfigMap, and Deployment for the server.
-
-4. **Get the server URL**:
-   ```bash
-   ./scripts/service.sh status
-   ```
-
-   This prints the server endpoint URL that you can use with the CLI (e.g., `http://127.0.0.1:3XXXX`).
-
-5. **Configure the CLI to use the server**:
-   Update `metis/config.toml`, set `METIS_SERVER_URL`, or pass `--server-url` to the CLI with the URL from `./scripts/service.sh status`.
-
-#### Common workflows
-
-- **Redeploy after code changes**: Rebuild images and restart the server:
-  ```bash
-  ./scripts/docker-build.sh && ./scripts/service.sh restart
-  ```
-
-- **Stop the server** (without deleting resources):
-  ```bash
-  ./scripts/service.sh stop
-  ```
-
-- **Destroy all resources**:
-  ```bash
-  ./scripts/service.sh destroy
-  ```
-  You probably also want to delete the kind cluster afterward:
-  ```bash
-  kind delete cluster --name local-dev
-  ```
+| `metis` | CLI with subcommands for issues, patches, repos, documents, and more. |
+| `metis-server` | Axum HTTP API, background workers, and job engine (Docker or local). Handles persistence, scheduling, and GitHub integration. |
+| `metis-common` | Shared models and types used across all crates. |
+| `metis-bff` | Backend-for-frontend layer: auth routes, API proxy, and embedded frontend serving. |
+| `metis-single-player` | All-in-one binary bundling CLI + server + BFF for local single-player use. |
+| `metis-web` | React 19 frontend with a dark terminal-inspired UI. A pnpm monorepo containing a typed API client (`@metis/api`), component library (`@metis/ui`), and the SPA + Hono BFF server (`@metis/web`). |

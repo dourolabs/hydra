@@ -36,7 +36,7 @@ Before finishing any task, you **must** run and fix all issues from these comman
 Please use proper capitalization and sentences. Keep pull request descriptions short and to the point: provide motivation / context for the change, explain what changed, and explain how it was tested.
 Please explicitly call out anything that may be confusing or design questions where you made an explicit
 choice with tradeoffs, and what the alternatives were. Attach screenshots or CLI snippets for UX changes and highlight configuration, migration, or security impacts.
-- **Do not commit screenshots or other images to the git repository.** Instead, upload them to the metis document store under the `screenshots/` directory.
+- **Do not commit screenshots or other images to the git repository**, except for images used in repository documentation (e.g., README screenshots). Documentation images should be placed in `docs/images/`. For all other screenshots, upload them to the metis document store under the `screenshots/` directory.
 
 ## Architectural Design Principles
 - The store owns ID generation; callers must not set or control entity IDs.
