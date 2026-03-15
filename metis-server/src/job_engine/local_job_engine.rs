@@ -93,7 +93,7 @@ impl LocalJobEngine {
                     .unwrap_or_default();
                 env.insert(
                     "PATH".to_string(),
-                    format!("{}:{}", exe_dir_str, existing_path),
+                    format!("{exe_dir_str}:{existing_path}"),
                 );
             }
         }

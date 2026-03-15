@@ -21,6 +21,41 @@ use tracing::{error, info, warn};
 use super::{JobEngine, JobEngineError, JobStatus, MetisJob, SessionId};
 use crate::domain::actors::Actor;
 
+/// Shell script that bootstraps the metis CLI inside a container.
+///
+/// - Skips download if `metis` is already on PATH.
+/// - Downloads the correct version from GitHub releases using curl (fallback to wget).
+/// - Installs to `/usr/local/bin/metis` if writable, otherwise `/tmp/metis`.
+/// - Adds the install directory to PATH if needed.
+const BOOTSTRAP_SCRIPT: &str = r#"
+if command -v metis >/dev/null 2>&1; then
+  echo "metis CLI already available, skipping download"
+else
+  METIS_URL="https://github.com/dourolabs/metis-releases/releases/download/v${METIS_CLI_VERSION}/metis-x86_64-unknown-linux-gnu"
+  if [ -w /usr/local/bin ]; then
+    INSTALL_DIR=/usr/local/bin
+  else
+    INSTALL_DIR=/tmp
+  fi
+  INSTALL_PATH="${INSTALL_DIR}/metis"
+  echo "Downloading metis CLI v${METIS_CLI_VERSION} to ${INSTALL_PATH}..."
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "${INSTALL_PATH}" "${METIS_URL}"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "${INSTALL_PATH}" "${METIS_URL}"
+  else
+    echo "ERROR: neither curl nor wget found; cannot download metis CLI" >&2
+    exit 1
+  fi
+  chmod +x "${INSTALL_PATH}"
+  case ":${PATH}:" in
+    *":${INSTALL_DIR}:"*) ;;
+    *) export PATH="${INSTALL_DIR}:${PATH}" ;;
+  esac
+  echo "metis CLI installed successfully"
+fi
+"#;
+
 /// Metadata tracked in-memory for each container managed by this engine.
 struct ContainerInfo {
     container_id: String,
@@ -124,6 +159,11 @@ impl LocalDockerJobEngine {
         let mut env: HashMap<String, String> = extra_env.clone();
         env.insert(ENV_METIS_ID.to_string(), metis_id.to_string());
         env.insert(ENV_METIS_TOKEN.to_string(), auth_token.to_string());
+
+        env.insert(
+            "METIS_CLI_VERSION".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        );
 
         let server_url = self.server_url.trim();
         if !server_url.is_empty() {
@@ -273,12 +313,12 @@ impl JobEngine for LocalDockerJobEngine {
             image: Some(image.to_string()),
             env: Some(env),
             cmd: Some(vec![
-                "metis".to_string(),
-                "sessions".to_string(),
-                "worker-run".to_string(),
-                metis_id.to_string(),
-                ".".to_string(),
-                "--tempdir".to_string(),
+                "sh".to_string(),
+                "-c".to_string(),
+                format!(
+                    "{} && metis sessions worker-run {} . --tempdir",
+                    BOOTSTRAP_SCRIPT, metis_id
+                ),
             ]),
             host_config: Some(host_config),
             labels: Some(HashMap::from([(
