@@ -1438,6 +1438,15 @@ impl ReadOnlyStore for MemoryStore {
         refs.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(refs)
     }
+
+    async fn is_secret_internal(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<bool, StoreError> {
+        let key = (username.clone(), secret_name.to_string());
+        Ok(self.user_secrets.get(&key).map_or(false, |v| v.value().1))
+    }
 }
 
 #[async_trait]

@@ -1587,6 +1587,14 @@ impl ReadOnlyStore for StoreWithEvents {
     ) -> Result<Vec<SecretRef>, StoreError> {
         self.inner.list_user_secret_names(username).await
     }
+
+    async fn is_secret_internal(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<bool, StoreError> {
+        self.inner.is_secret_internal(username, secret_name).await
+    }
 }
 
 #[cfg(test)]

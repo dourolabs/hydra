@@ -3558,6 +3558,23 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .map(|(name, internal)| SecretRef { name, internal })
             .collect())
     }
+
+    async fn is_secret_internal(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<bool, StoreError> {
+        let sql = format!(
+            "SELECT internal FROM {TABLE_USER_SECRETS} WHERE username = $1 AND secret_name = $2"
+        );
+        let row = sqlx::query_scalar::<_, bool>(&sql)
+            .bind(username.as_str())
+            .bind(secret_name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(row.unwrap_or(false))
+    }
 }
 
 #[async_trait]

@@ -3504,6 +3504,23 @@ impl ReadOnlyStore for SqliteStore {
             .map(|(name, internal)| SecretRef { name, internal })
             .collect())
     }
+
+    async fn is_secret_internal(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<bool, StoreError> {
+        let sql = format!(
+            "SELECT internal FROM {TABLE_USER_SECRETS} WHERE username = ?1 AND secret_name = ?2"
+        );
+        let row = sqlx::query_scalar::<_, bool>(&sql)
+            .bind(username.as_str())
+            .bind(secret_name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        Ok(row.unwrap_or(false))
+    }
 }
 
 #[async_trait]
@@ -7057,6 +7074,55 @@ mod tests {
         let bob_refs = store.list_user_secret_names(&bob).await.unwrap();
         let bob_names: Vec<&str> = bob_refs.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(bob_names, vec!["key_b"]);
+    }
+
+    #[tokio::test]
+    async fn is_secret_internal_returns_true_for_internal() {
+        let store = create_test_store().await;
+        let username = Username::from("alice".to_string());
+
+        store
+            .set_user_secret(&username, "INTERNAL_KEY", b"val", true)
+            .await
+            .unwrap();
+
+        assert!(
+            store
+                .is_secret_internal(&username, "INTERNAL_KEY")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn is_secret_internal_returns_false_for_non_internal() {
+        let store = create_test_store().await;
+        let username = Username::from("alice".to_string());
+
+        store
+            .set_user_secret(&username, "USER_KEY", b"val", false)
+            .await
+            .unwrap();
+
+        assert!(
+            !store
+                .is_secret_internal(&username, "USER_KEY")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn is_secret_internal_returns_false_for_nonexistent() {
+        let store = create_test_store().await;
+        let username = Username::from("alice".to_string());
+
+        assert!(
+            !store
+                .is_secret_internal(&username, "MISSING")
+                .await
+                .unwrap()
+        );
     }
 
     // ---- Count tests ----
