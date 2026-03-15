@@ -522,4 +522,52 @@ describe("countNeedsAttentionBadge", () => {
     ];
     expect(countNeedsAttentionBadge(issues, assignedToAlice)).toBe(2);
   });
+
+  // ---------------------------------------------------------------------------
+  // Badge counting with active session IDs (simulates useActiveSessionIssueIds flow)
+  // ---------------------------------------------------------------------------
+
+  it("excludes issues with active sessions from badge count across all issues", () => {
+    // Simulate 5 issues total, 2 of which have active sessions
+    const issues = [
+      makeIssueRecord({ issue_id: "i-1", status: "open", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-2", status: "open", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-3", status: "in-progress", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-4", status: "open", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-5", status: "closed", assignee: "alice" }),
+    ];
+
+    // Build isActiveMap from a set of active issue IDs (as useActiveSessionIssueIds returns)
+    const activeIssueIds = new Set(["i-1", "i-3"]);
+    const badgeIsActiveMap = new Map<string, boolean>();
+    for (const id of activeIssueIds) {
+      badgeIsActiveMap.set(id, true);
+    }
+
+    // i-1 excluded (active), i-2 counted, i-3 excluded (active), i-4 counted, i-5 excluded (terminal)
+    expect(countNeedsAttentionBadge(issues, assignedToAlice, badgeIsActiveMap)).toBe(2);
+  });
+
+  it("badge count is correct when no issues have active sessions", () => {
+    const issues = [
+      makeIssueRecord({ issue_id: "i-1", status: "open", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-2", status: "open", assignee: "alice" }),
+    ];
+    const badgeIsActiveMap = new Map<string, boolean>();
+    expect(countNeedsAttentionBadge(issues, assignedToAlice, badgeIsActiveMap)).toBe(2);
+  });
+
+  it("badge count is zero when all non-terminal issues have active sessions", () => {
+    const issues = [
+      makeIssueRecord({ issue_id: "i-1", status: "open", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-2", status: "in-progress", assignee: "alice" }),
+      makeIssueRecord({ issue_id: "i-3", status: "closed", assignee: "alice" }),
+    ];
+    const activeIssueIds = new Set(["i-1", "i-2"]);
+    const badgeIsActiveMap = new Map<string, boolean>();
+    for (const id of activeIssueIds) {
+      badgeIsActiveMap.set(id, true);
+    }
+    expect(countNeedsAttentionBadge(issues, assignedToAlice, badgeIsActiveMap)).toBe(0);
+  });
 });
