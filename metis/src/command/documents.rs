@@ -428,8 +428,8 @@ async fn maybe_link_document(
         None => return,
     };
     let request = CreateRelationRequest {
-        source_id: issue_id.to_string(),
-        target_id: document_id.to_string(),
+        source_id: issue_id.clone().into(),
+        target_id: document_id.clone().into(),
         rel_type: "has-document".to_string(),
     };
     if let Err(e) = client.create_relation(&request).await {
