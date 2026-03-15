@@ -1824,9 +1824,9 @@ impl MetisClient {
         Ok(())
     }
 
-    /// Call `POST /v1/relations/` to create a relation.
+    /// Call `POST /v1/relations` to create a relation.
     pub async fn create_relation(&self, request: &CreateRelationRequest) -> Result<()> {
-        let url = self.endpoint("/v1/relations/")?;
+        let url = self.endpoint("/v1/relations")?;
         self.authed(self.http.post(url))
             .json(request)
             .send()
@@ -1837,18 +1837,18 @@ impl MetisClient {
         Ok(())
     }
 
-    /// Call `GET /v1/relations/` to list relations.
+    /// Call `GET /v1/relations` to list relations matching the given filters.
     pub async fn list_relations(
         &self,
-        query: &ListRelationsRequest,
+        request: &ListRelationsRequest,
     ) -> Result<ListRelationsResponse> {
-        let url = self.endpoint("/v1/relations/")?;
+        let url = self.endpoint("/v1/relations")?;
         let response = self
             .authed(self.http.get(url))
-            .query(query)
+            .query(request)
             .send()
             .await
-            .context("failed to fetch relations")?
+            .context("failed to fetch relations list")?
             .error_for_status_with_body("metis-server returned an error while listing relations")
             .await?;
 
