@@ -124,6 +124,7 @@ export function useSSE(): SSEConnectionState {
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         queryClient.invalidateQueries({ queryKey: ["issues"] });
         queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
+        queryClient.invalidateQueries({ queryKey: ["relations"] });
       } else if (entity_type === "session" || eventType.startsWith("session_")) {
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["allSessions"] });
@@ -163,6 +164,7 @@ export function useSSE(): SSEConnectionState {
           upsertInList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id, record);
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
         }
+        queryClient.invalidateQueries({ queryKey: ["relations"] });
       } else if (entity_type === "session" || eventType.startsWith("session_")) {
         const record = entity as unknown as SessionSummaryRecord;
         const spawnedFrom = record.session?.spawned_from;
