@@ -317,7 +317,7 @@ impl JobEngine for LocalDockerJobEngine {
                 "-c".to_string(),
                 format!(
                     "{} && metis sessions worker-run {} . --tempdir",
-                    BOOTSTRAP_SCRIPT, metis_id
+                    BOOTSTRAP_SCRIPT.trim(), metis_id
                 ),
             ]),
             host_config: Some(host_config),
