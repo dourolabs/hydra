@@ -3,7 +3,7 @@
 /**
  * Data payload for the connected event sent on initial SSE connection.
  */
-export type ConnectedEventData = {
+export type ConnectedEventData = { 
 /**
  * The current event sequence number for reconnection support.
  */
