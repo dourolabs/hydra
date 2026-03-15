@@ -92,6 +92,13 @@ fn cmd_init() -> Result<()> {
     // Prompt for GitHub PAT.
     let github_pat = prompt_github_pat()?;
 
+    // If the user chose Docker, build the worker image (or fall back).
+    let worker_image_available = if job_engine == "docker" {
+        build_worker_image()
+    } else {
+        false
+    };
+
     // Generate a random 32-byte encryption key (base64-encoded).
     let encryption_key = generate_encryption_key();
 
@@ -113,6 +120,14 @@ fn cmd_init() -> Result<()> {
     } else {
         None
     };
+    let default_image = if worker_image_available {
+        METIS_WORKER_IMAGE
+    } else {
+        if job_engine == "docker" {
+            eprintln!("Falling back to '{FALLBACK_IMAGE}' as the default worker image.");
+        }
+        FALLBACK_IMAGE
+    };
     let config_content = render_server_config(
         &encryption_key,
         &github_pat,
@@ -123,6 +138,7 @@ fn cmd_init() -> Result<()> {
         &api_keys,
         username.as_deref(),
         job_log_dir_str.as_deref(),
+        default_image,
     );
     fs::write(&config_path, &config_content)
         .with_context(|| format!("failed to write config to {}", config_path.display()))?;
@@ -245,6 +261,104 @@ fn upload_default_playbooks(auth_token: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+const METIS_WORKER_IMAGE: &str = "metis-worker:latest";
+const FALLBACK_IMAGE: &str = "ubuntu:24.04";
+
+/// Check whether the `metis-worker:latest` Docker image already exists locally.
+fn docker_image_exists(image: &str) -> bool {
+    Command::new("docker")
+        .args(["image", "inspect", image])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Attempt to find the repository root by looking for the Dockerfile relative
+/// to `CARGO_MANIFEST_DIR` (set at compile time). Returns `None` if the
+/// expected layout is not found.
+fn find_repo_root() -> Option<std::path::PathBuf> {
+    // CARGO_MANIFEST_DIR points to metis-single-player/ at compile time.
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.parent()?;
+    let dockerfile = repo_root.join("images/metis-worker.Dockerfile");
+    if dockerfile.exists() {
+        Some(repo_root.to_path_buf())
+    } else {
+        None
+    }
+}
+
+/// Build the `metis-worker:latest` Docker image. Returns `true` on success.
+///
+/// If the image already exists locally the build is skipped and `true` is
+/// returned immediately. On build failure the function prints a warning and
+/// returns `false` so the caller can fall back to a generic base image.
+fn build_worker_image() -> bool {
+    // Skip if already present.
+    if docker_image_exists(METIS_WORKER_IMAGE) {
+        eprintln!("Docker image '{METIS_WORKER_IMAGE}' already exists, skipping build.");
+        return true;
+    }
+
+    let repo_root = match find_repo_root() {
+        Some(root) => root,
+        None => {
+            eprintln!(
+                "Warning: could not locate the repository root to build {METIS_WORKER_IMAGE}."
+            );
+            eprintln!(
+                "You can build it manually with: \
+                 docker build -t {METIS_WORKER_IMAGE} -f images/metis-worker.Dockerfile ."
+            );
+            return false;
+        }
+    };
+
+    eprintln!();
+    eprintln!("Building Docker image '{METIS_WORKER_IMAGE}' (this may take several minutes)...");
+
+    let status = Command::new("docker")
+        .args([
+            "build",
+            "-t",
+            METIS_WORKER_IMAGE,
+            "-f",
+            "images/metis-worker.Dockerfile",
+            ".",
+        ])
+        .current_dir(&repo_root)
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            eprintln!("Successfully built '{METIS_WORKER_IMAGE}'.");
+            true
+        }
+        Ok(_) => {
+            eprintln!();
+            eprintln!("Warning: Docker build for '{METIS_WORKER_IMAGE}' failed.");
+            eprintln!(
+                "You can retry manually with: \
+                 cd {} && docker build -t {METIS_WORKER_IMAGE} -f images/metis-worker.Dockerfile .",
+                repo_root.display()
+            );
+            false
+        }
+        Err(e) => {
+            eprintln!();
+            eprintln!("Warning: failed to run docker build: {e}");
+            eprintln!(
+                "You can retry manually with: \
+                 cd {} && docker build -t {METIS_WORKER_IMAGE} -f images/metis-worker.Dockerfile .",
+                repo_root.display()
+            );
+            false
+        }
+    }
 }
 
 /// Check whether Docker is available by running `docker info`.
@@ -463,6 +577,7 @@ fn render_server_config(
     api_keys: &ApiKeys,
     username: Option<&str>,
     job_log_dir: Option<&str>,
+    default_image: &str,
 ) -> String {
     use metis_server::config::{
         AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, JobEngineConfig, JobSection,
@@ -487,7 +602,7 @@ fn render_server_config(
             claude_code_oauth_token: api_keys.claude_code_oauth_token.clone(),
         },
         job: JobSection {
-            default_image: "ubuntu:24.04".to_string(),
+            default_image: default_image.to_string(),
             default_model: default_model.map(str::to_string),
             cpu_limit: "500m".to_string(),
             memory_limit: "1Gi".to_string(),
@@ -912,6 +1027,7 @@ mod tests {
             &ApiKeys::default(),
             None,
             None,
+            METIS_WORKER_IMAGE,
         );
 
         // Verify the generated YAML contains all expected fields.
@@ -940,7 +1056,7 @@ mod tests {
             app_config.auth.auth_token_file(),
             Some(Path::new("/tmp/auth-token"))
         );
-        assert_eq!(app_config.job.default_image, "ubuntu:24.04");
+        assert_eq!(app_config.job.default_image, METIS_WORKER_IMAGE);
         assert!(app_config.job.default_model.is_none());
         assert!(app_config.metis.openai_api_key.is_none());
         assert!(app_config.metis.anthropic_api_key.is_none());
@@ -970,6 +1086,7 @@ mod tests {
             &ApiKeys::default(),
             None,
             Some("/custom/log/dir"),
+            FALLBACK_IMAGE,
         );
 
         assert!(config.contains("job_engine: local"));
@@ -1009,6 +1126,7 @@ mod tests {
             &keys,
             None,
             None,
+            METIS_WORKER_IMAGE,
         );
 
         assert!(config.contains("default_model: gpt-4o"));
@@ -1050,6 +1168,7 @@ mod tests {
             &keys,
             None,
             None,
+            METIS_WORKER_IMAGE,
         );
 
         assert!(config.contains("default_model: opus"));
@@ -1090,6 +1209,7 @@ mod tests {
             &keys,
             None,
             None,
+            METIS_WORKER_IMAGE,
         );
 
         assert!(config.contains("default_model: opus"));
@@ -1125,6 +1245,7 @@ mod tests {
             &ApiKeys::default(),
             Some("alice"),
             None,
+            METIS_WORKER_IMAGE,
         );
 
         assert!(config.contains("username: alice"));
@@ -1134,6 +1255,31 @@ mod tests {
             .expect("generated config should deserialize into AppConfig");
 
         assert_eq!(app_config.auth.local_username(), Some("alice"));
+    }
+
+    #[test]
+    fn render_server_config_with_fallback_image() {
+        use base64::Engine;
+        let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
+
+        let config = render_server_config(
+            &encryption_key,
+            "ghp_test123",
+            Path::new("/tmp/test.db"),
+            Path::new("/tmp/auth-token"),
+            "docker",
+            None,
+            &ApiKeys::default(),
+            None,
+            None,
+            FALLBACK_IMAGE,
+        );
+
+        use metis_server::config::AppConfig;
+        let app_config: AppConfig = serde_yaml_ng::from_str(&config)
+            .expect("generated config should deserialize into AppConfig");
+
+        assert_eq!(app_config.job.default_image, FALLBACK_IMAGE);
     }
 
     #[test]
