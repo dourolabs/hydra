@@ -40,7 +40,7 @@ pub async fn list_secrets(
 
     info!(username = %username, "list_secrets invoked");
 
-    let names = state
+    let refs = state
         .store
         .list_user_secret_names(&username)
         .await
@@ -49,6 +49,7 @@ pub async fn list_secrets(
             ApiError::internal(format!("failed to list secrets: {err}"))
         })?;
 
+    let names: Vec<String> = refs.into_iter().map(|r| r.name).collect();
     info!(username = %username, count = names.len(), "list_secrets completed");
     Ok(Json(ListSecretsResponse { secrets: names }))
 }
@@ -81,7 +82,7 @@ pub async fn set_secret(
 
     state
         .store
-        .set_user_secret(&username, &name, &encrypted)
+        .set_user_secret(&username, &name, &encrypted, false)
         .await
         .map_err(|err| {
             tracing::error!(error = %err, "failed to set secret");

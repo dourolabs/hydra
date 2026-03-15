@@ -3,6 +3,13 @@ use aes_gcm::{
     aead::{Aead, OsRng, rand_core::RngCore},
 };
 
+/// A reference to a secret, including its name and whether it is system-internal.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SecretRef {
+    pub name: String,
+    pub internal: bool,
+}
+
 /// Well-known secret names used for auto-injection logic.
 pub const SECRET_OPENAI_API_KEY: &str = "OPENAI_API_KEY";
 pub const SECRET_ANTHROPIC_API_KEY: &str = "ANTHROPIC_API_KEY";

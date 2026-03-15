@@ -273,7 +273,7 @@ pub(crate) async fn store_github_token_secrets(
             Ok(encrypted) => {
                 if let Err(err) = state
                     .store
-                    .set_user_secret(username, secret_name, &encrypted)
+                    .set_user_secret(username, secret_name, &encrypted, true)
                     .await
                 {
                     warn!(

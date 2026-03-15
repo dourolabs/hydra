@@ -21,7 +21,7 @@ async fn worker_receives_user_secret_from_api() -> Result<()> {
     let username = Username::from("default");
     harness
         .store()
-        .set_user_secret(&username, "CLAUDE_CODE_OAUTH_TOKEN", &encrypted)
+        .set_user_secret(&username, "CLAUDE_CODE_OAUTH_TOKEN", &encrypted, false)
         .await?;
 
     let user = harness.default_user();

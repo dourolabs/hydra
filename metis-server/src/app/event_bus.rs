@@ -7,6 +7,7 @@ use crate::domain::{
     messages::Message,
     notifications::Notification,
     patches::Patch,
+    secrets::SecretRef,
     users::{User, Username},
 };
 use crate::store::{ReadOnlyStore, RelationshipType, Session, Store, StoreError, TaskStatusLog};
@@ -1200,9 +1201,10 @@ impl StoreWithEvents {
         username: &Username,
         secret_name: &str,
         encrypted_value: &[u8],
+        internal: bool,
     ) -> Result<(), StoreError> {
         self.inner
-            .set_user_secret(username, secret_name, encrypted_value)
+            .set_user_secret(username, secret_name, encrypted_value, internal)
             .await
     }
 
@@ -1579,7 +1581,10 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.get_user_secret(username, secret_name).await
     }
 
-    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError> {
+    async fn list_user_secret_names(
+        &self,
+        username: &Username,
+    ) -> Result<Vec<SecretRef>, StoreError> {
         self.inner.list_user_secret_names(username).await
     }
 }

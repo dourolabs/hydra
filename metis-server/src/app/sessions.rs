@@ -273,7 +273,8 @@ impl AppState {
             "found user secrets"
         );
 
-        for secret_name in &user_secret_names {
+        for secret_ref in &user_secret_names {
+            let secret_name = &secret_ref.name;
             // Always inject well-known AI model keys; only inject other secrets
             // if they appear in the task's secrets filter.
             let is_ai_key = AI_MODEL_KEYS.contains(&secret_name.as_str());

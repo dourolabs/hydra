@@ -7,6 +7,7 @@ use crate::domain::{
     messages::Message,
     notifications::Notification,
     patches::Patch,
+    secrets::SecretRef,
     task_status::Event,
     users::{User, Username},
 };
@@ -614,8 +615,11 @@ pub trait ReadOnlyStore: Send + Sync {
         secret_name: &str,
     ) -> Result<Option<Vec<u8>>, StoreError>;
 
-    /// Lists the secret names configured for a user (not the values).
-    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError>;
+    /// Lists the secrets configured for a user (not the values).
+    async fn list_user_secret_names(
+        &self,
+        username: &Username,
+    ) -> Result<Vec<SecretRef>, StoreError>;
 }
 
 /// Trait for storing issues, patches, and sessions along with their statuses.
@@ -950,6 +954,7 @@ pub trait Store: ReadOnlyStore {
         username: &Username,
         secret_name: &str,
         encrypted_value: &[u8],
+        internal: bool,
     ) -> Result<(), StoreError>;
 
     /// Deletes a user secret. No-ops if the secret does not exist.

@@ -529,6 +529,7 @@ pub async fn setup_local_auth(
                 &username,
                 crate::domain::secrets::SECRET_GITHUB_TOKEN,
                 &encrypted,
+                true,
             )
             .await
             .context("failed to store GitHub token in secret store")?;
