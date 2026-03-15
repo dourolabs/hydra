@@ -1171,12 +1171,12 @@ mod tests {
                 title: "Release notes".to_string(),
                 path: Some("docs/release.md".to_string()),
                 created_by: Some(created_by),
+                issue_id: None,
                 body: DocumentBodyInput {
                     body: None,
                     body_file: Some(file.path().to_path_buf()),
                     body_stdin: false,
                 },
-                issue_id: None,
             },
         )
         .await
@@ -1216,12 +1216,12 @@ mod tests {
                 title: Some("Updated".to_string()),
                 path: None,
                 clear_path: true,
+                issue_id: None,
                 body: DocumentBodyInput {
                     body: Some("new body".to_string()),
                     body_file: None,
                     body_stdin: false,
                 },
-                issue_id: None,
             },
         )
         .await
@@ -1254,8 +1254,8 @@ mod tests {
                 title: None,
                 path: None,
                 clear_path: false,
-                body: DocumentBodyInput::default(),
                 issue_id: None,
+                body: DocumentBodyInput::default(),
             },
         )
         .await
