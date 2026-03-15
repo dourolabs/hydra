@@ -1,6 +1,5 @@
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
-import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 
 export interface ChildStatus {
   id: string;
@@ -19,23 +18,6 @@ export interface IssueProgress {
   hasActive: boolean;
   needsAttentionCount: number;
   children: ChildStatus[];
-}
-
-/**
- * Count issues needing attention for a badge.
- * An issue needs attention when it has a non-terminal status and matches the filter.
- */
-export function countNeedsAttentionBadge(
-  issues: IssueSummaryRecord[],
-  filter: (issue: IssueSummaryRecord) => boolean,
-  isActiveMap?: Map<string, boolean>,
-): number {
-  return issues.filter((issue) => {
-    const status = issue.issue.status;
-    if (TERMINAL_STATUSES.has(status)) return false;
-    if (isActiveMap?.get(issue.issue_id)) return false;
-    return filter(issue);
-  }).length;
 }
 
 export function computeIssueProgress(
