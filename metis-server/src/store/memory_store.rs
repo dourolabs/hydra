@@ -181,6 +181,7 @@ impl MemoryStore {
         query: &'a SearchIssuesQuery,
     ) -> impl Iterator<Item = (IssueId, Versioned<Issue>)> + 'a {
         let include_deleted = query.include_deleted.unwrap_or(false);
+        let ids_filter = &query.ids;
         let issue_type_filter: Option<IssueType> = query.issue_type.map(Into::into);
         let status_filter: Option<IssueStatus> = query.status.map(Into::into);
         let search_term = query
@@ -193,6 +194,11 @@ impl MemoryStore {
             .as_ref()
             .map(|value| value.trim())
             .filter(|value| !value.is_empty());
+        let creator_filter = query
+            .creator
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
 
         self.issues.iter().filter_map(move |entry| {
             let latest = Self::latest_versioned(entry.value())?;
@@ -200,6 +206,26 @@ impl MemoryStore {
                 return None;
             }
             let issue_id = entry.key();
+
+            // When `ids` is provided, filter by ID only (skip other content filters).
+            if !ids_filter.is_empty() {
+                if !ids_filter.contains(issue_id) {
+                    return None;
+                }
+                return Some((issue_id.clone(), latest));
+            }
+
+            if let Some(expected_creator) = creator_filter {
+                if !latest
+                    .item
+                    .creator
+                    .as_ref()
+                    .eq_ignore_ascii_case(expected_creator)
+                {
+                    return None;
+                }
+            }
+
             if !issue_matches(
                 issue_type_filter,
                 status_filter,
@@ -341,6 +367,13 @@ impl MemoryStore {
             if let Some(expected_issue) = query.spawned_from.as_ref() {
                 if latest.item.spawned_from.as_ref() != Some(expected_issue) {
                     return None;
+                }
+            }
+
+            if !query.spawned_from_ids.is_empty() {
+                match latest.item.spawned_from.as_ref() {
+                    Some(spawned) if query.spawned_from_ids.contains(spawned) => {}
+                    _ => return None,
                 }
             }
 
@@ -5087,6 +5120,116 @@ mod tests {
             tasks,
             HashSet::from([task_a1_id, task_a2_id, task_b1_id, task_orphan_id])
         );
+    }
+
+    #[tokio::test]
+    async fn list_tasks_filters_by_spawned_from_ids() {
+        let store = MemoryStore::new();
+
+        let (issue_a, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (issue_b, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (issue_c, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_a = spawn_task();
+        task_a.spawned_from = Some(issue_a.clone());
+        let (task_a_id, _) = store
+            .add_session(task_a, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_b = spawn_task();
+        task_b.spawned_from = Some(issue_b.clone());
+        let (task_b_id, _) = store
+            .add_session(task_b, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut task_c = spawn_task();
+        task_c.spawned_from = Some(issue_c.clone());
+        store
+            .add_session(task_c, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Filter by spawned_from_ids should return matching tasks
+        let mut query = SearchSessionsQuery::default();
+        query.spawned_from_ids = vec![issue_a.clone(), issue_b.clone()];
+        let tasks: HashSet<_> = store
+            .list_sessions(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(tasks, HashSet::from([task_a_id, task_b_id]));
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_ids() {
+        let store = MemoryStore::new();
+
+        let (id_a, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (id_b, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (_id_c, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Batch-fetch by ids
+        let mut query = SearchIssuesQuery::default();
+        query.ids = vec![id_a.clone(), id_b.clone()];
+        let issues: HashSet<_> = store
+            .list_issues(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(issues, HashSet::from([id_a, id_b]));
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_creator() {
+        let store = MemoryStore::new();
+
+        let mut issue_alice = sample_issue(vec![]);
+        issue_alice.creator = Username::from("alice");
+        let (alice_id, _) = store
+            .add_issue(issue_alice, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut issue_bob = sample_issue(vec![]);
+        issue_bob.creator = Username::from("bob");
+        store.add_issue(issue_bob, &ActorRef::test()).await.unwrap();
+
+        // Filter by creator
+        let mut query = SearchIssuesQuery::default();
+        query.creator = Some("alice".to_string());
+        let issues: Vec<_> = store
+            .list_issues(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0], alice_id);
     }
 
     #[tokio::test]

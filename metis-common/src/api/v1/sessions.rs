@@ -443,6 +443,31 @@ impl SessionVersionRecord {
     }
 }
 
+fn serialize_issue_ids<S>(ids: &[IssueId], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let s = ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    serializer.serialize_str(&s)
+}
+
+fn deserialize_issue_ids<'de, D>(deserializer: D) -> Result<Vec<IssueId>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    s.split(',')
+        .map(|part| part.trim().parse().map_err(de::Error::custom))
+        .collect()
+}
+
 fn serialize_statuses<S>(statuses: &[Status], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -483,6 +508,15 @@ pub struct SearchSessionsQuery {
     pub q: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
+    /// Filter sessions spawned from any of these issue IDs (comma-separated, max 100).
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_issue_ids",
+        deserialize_with = "deserialize_issue_ids"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub spawned_from_ids: Vec<IssueId>,
     #[serde(default)]
     pub include_deleted: Option<bool>,
     /// Filter sessions by status (comma-separated in query string). When multiple
@@ -530,6 +564,7 @@ impl SearchSessionsQuery {
         Self {
             q,
             spawned_from,
+            spawned_from_ids: Vec::new(),
             include_deleted,
             status,
             limit: None,
@@ -567,6 +602,7 @@ mod tests {
         let query = SearchSessionsQuery {
             q: Some("test query".to_string()),
             spawned_from: Some(issue_id.clone()),
+            spawned_from_ids: vec![],
             include_deleted: None,
             status: vec![],
             limit: None,
@@ -620,6 +656,35 @@ mod tests {
             query.status,
             vec![Status::Created, Status::Pending, Status::Running]
         );
+    }
+
+    #[test]
+    fn search_sessions_query_serializes_spawned_from_ids() {
+        let id1 = IssueId::new();
+        let id2 = IssueId::new();
+        let query = SearchSessionsQuery::new(None, None, None, vec![]);
+        let query = SearchSessionsQuery {
+            spawned_from_ids: vec![id1.clone(), id2.clone()],
+            ..query
+        };
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let expected = format!("{id1},{id2}");
+        assert_eq!(
+            params.get("spawned_from_ids").map(String::as_str),
+            Some(expected.as_str())
+        );
+    }
+
+    #[test]
+    fn search_sessions_query_deserializes_spawned_from_ids() {
+        let query: SearchSessionsQuery =
+            serde_urlencoded::from_str("spawned_from_ids=i-abcd%2Ci-efgh").unwrap();
+        assert_eq!(query.spawned_from_ids.len(), 2);
+        assert_eq!(query.spawned_from_ids[0].as_ref(), "i-abcd");
+        assert_eq!(query.spawned_from_ids[1].as_ref(), "i-efgh");
     }
 
     #[test]
