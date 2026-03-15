@@ -83,6 +83,7 @@ pub enum RelationshipType {
     ChildOf,
     BlockedOn,
     HasPatch,
+    HasDocument,
 }
 
 impl RelationshipType {
@@ -91,6 +92,7 @@ impl RelationshipType {
             RelationshipType::ChildOf => "child-of",
             RelationshipType::BlockedOn => "blocked-on",
             RelationshipType::HasPatch => "has-patch",
+            RelationshipType::HasDocument => "has-document",
         }
     }
 }
@@ -110,6 +112,7 @@ impl FromStr for RelationshipType {
             "child-of" | "childof" | "child_of" => Ok(RelationshipType::ChildOf),
             "blocked-on" | "blockedon" | "blocked_on" => Ok(RelationshipType::BlockedOn),
             "has-patch" | "haspatch" | "has_patch" => Ok(RelationshipType::HasPatch),
+            "has-document" | "hasdocument" | "has_document" => Ok(RelationshipType::HasDocument),
             other => Err(format!("unsupported relationship type '{other}'")),
         }
     }
@@ -576,6 +579,30 @@ pub trait ReadOnlyStore: Send + Sync {
         source_id: Option<&MetisId>,
         target_id: Option<&MetisId>,
         rel_type: Option<RelationshipType>,
+    ) -> Result<Vec<ObjectRelationship>, StoreError>;
+
+    /// Returns object relationships matching multiple source and/or target IDs.
+    ///
+    /// All provided filters are ANDed together. Pass `None` for any parameter
+    /// to skip that filter.
+    async fn get_relationships_batch(
+        &self,
+        source_ids: Option<&[MetisId]>,
+        target_ids: Option<&[MetisId]>,
+        rel_type: Option<RelationshipType>,
+    ) -> Result<Vec<ObjectRelationship>, StoreError>;
+
+    /// Returns object relationships reachable by transitively following edges
+    /// of the given relationship type.
+    ///
+    /// Starting from `source_id` (forward) or `target_id` (backward), follows
+    /// only edges of `rel_type`. At least one of `source_id` or `target_id`
+    /// must be provided.
+    async fn get_relationships_transitive(
+        &self,
+        source_id: Option<&MetisId>,
+        target_id: Option<&MetisId>,
+        rel_type: RelationshipType,
     ) -> Result<Vec<ObjectRelationship>, StoreError>;
 
     // ---- User secrets (read-only) ----
