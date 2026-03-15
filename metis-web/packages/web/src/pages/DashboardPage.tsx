@@ -13,6 +13,7 @@ import {
 } from "../features/dashboard/useTransitiveWorkItems";
 import { countNeedsAttentionBadge } from "../features/dashboard/computeIssueProgress";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
+import { useActiveSessionIssueIds } from "../features/dashboard/useActiveSessionIssueIds";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
@@ -72,6 +73,17 @@ export function DashboardPage() {
     isLoading: treeLoading,
   } = usePageIssueTrees(issues ?? [], username);
 
+  // Fetch active session status for ALL issues (not just the current page)
+  // so badge counts are correct regardless of which view is selected.
+  const { activeIssueIds } = useActiveSessionIssueIds(issues ?? []);
+  const badgeIsActiveMap = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const id of activeIssueIds) {
+      map.set(id, true);
+    }
+    return map;
+  }, [activeIssueIds]);
+
   const inboxCount = useMemo(() => {
     if (!issues || !inboxLabel) return 0;
     return countNeedsAttentionBadge(
@@ -79,14 +91,14 @@ export function DashboardPage() {
       (issue) =>
         (issue.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) ?? false) &&
         issue.issue.assignee === username,
-      isActiveMap,
+      badgeIsActiveMap,
     );
-  }, [issues, username, inboxLabel, isActiveMap]);
+  }, [issues, username, inboxLabel, badgeIsActiveMap]);
 
   const myIssuesCount = useMemo(() => {
     if (!issues || !username) return 0;
-    return countNeedsAttentionBadge(issues, (issue) => issue.issue.assignee === username, isActiveMap);
-  }, [issues, username, isActiveMap]);
+    return countNeedsAttentionBadge(issues, (issue) => issue.issue.assignee === username, badgeIsActiveMap);
+  }, [issues, username, badgeIsActiveMap]);
 
   const workItems = useMemo(() => {
     // Helper: given matching issue IDs, collect all their transitive descendants
