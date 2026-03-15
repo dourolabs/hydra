@@ -66,3 +66,87 @@ pub async fn run(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::MetisClient;
+    use crate::command::output::ResolvedOutputFormat;
+    use httpmock::prelude::*;
+    use metis_common::api::v1::relations::{ListRelationsResponse, RelationResponse};
+    use reqwest::Client as HttpClient;
+
+    const TEST_METIS_TOKEN: &str = "test-metis-token";
+
+    #[tokio::test]
+    async fn test_list_relations_dispatches_and_renders() {
+        let server = MockServer::start();
+        let api_response = ListRelationsResponse {
+            relations: vec![
+                RelationResponse {
+                    source_id: "i-aaaaaa".parse().unwrap(),
+                    target_id: "i-bbbbbb".parse().unwrap(),
+                    rel_type: "child-of".to_string(),
+                },
+                RelationResponse {
+                    source_id: "i-cccccc".parse().unwrap(),
+                    target_id: "p-dddddd".parse().unwrap(),
+                    rel_type: "has-patch".to_string(),
+                },
+            ],
+        };
+
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/relations/")
+                .query_param("source_id", "i-aaaaaa")
+                .query_param("rel_type", "child-of");
+            then.status(200).json_body_obj(&api_response);
+        });
+
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())
+                .unwrap();
+        let context = CommandContext {
+            output_format: ResolvedOutputFormat::Jsonl,
+        };
+        let command = RelationsCommand::List {
+            source: Some("i-aaaaaa".parse().unwrap()),
+            target: None,
+            object: None,
+            rel_type: Some("child-of".to_string()),
+            transitive: false,
+        };
+
+        run(&client, command, &context).await.unwrap();
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_list_relations_with_no_filters() {
+        let server = MockServer::start();
+        let api_response = ListRelationsResponse { relations: vec![] };
+
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/relations/");
+            then.status(200).json_body_obj(&api_response);
+        });
+
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())
+                .unwrap();
+        let context = CommandContext {
+            output_format: ResolvedOutputFormat::Pretty,
+        };
+        let command = RelationsCommand::List {
+            source: None,
+            target: None,
+            object: None,
+            rel_type: None,
+            transitive: false,
+        };
+
+        run(&client, command, &context).await.unwrap();
+        mock.assert();
+    }
+}
