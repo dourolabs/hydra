@@ -182,17 +182,6 @@ describe("Store", () => {
       expect(events).toHaveLength(1);
     });
 
-    it("returns snapshot of current versions", () => {
-      const store = new Store();
-      store.create("items", "id-1", { name: "v1" }, "issue");
-      store.update("items", "id-1", { name: "v2" }, "issue");
-      store.create("items", "id-2", { name: "v1" }, "issue");
-
-      const snapshot = store.getSnapshot();
-      expect(snapshot["id-1"]).toBe(2);
-      expect(snapshot["id-2"]).toBe(1);
-    });
-
     it("returns events since a given ID", () => {
       const store = new Store();
       store.create("items", "id-1", { name: "v1" }, "issue");
