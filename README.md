@@ -2,8 +2,7 @@
 
 Metis is an agent dashboard that lets you manage lots of Claude Code instances working in parallel. Instead of operating at the level of code, you operate at the level of tasks -- what needs to be done? You assign work through an issue tracker, and agents on your team take care of the implementation details. You survey their progress, review their work, and offer course corrections as needed.
 
-<!-- Screenshot served from the Metis document store (screenshots/readme-dashboard.png) -->
-![Metis Dashboard](https://raw.githubusercontent.com/dourolabs/metis/main/docs/images/readme-dashboard.png)
+![Metis Dashboard](docs/images/readme-dashboard.png)
 
 ## Getting Started
 
