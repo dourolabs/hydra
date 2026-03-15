@@ -2,7 +2,6 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
 import { useIssues } from "../features/issues/useIssues";
-import { useAllSessions } from "../features/sessions/useAllSessions";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/IssueFilterSidebar";
@@ -12,7 +11,8 @@ import {
   buildChildrenMap,
   findTransitiveChildren,
 } from "../features/dashboard/useTransitiveWorkItems";
-import { computeIsActiveMap, countNeedsAttentionBadge, type ChildStatus } from "../features/dashboard/computeIssueProgress";
+import { countNeedsAttentionBadge } from "../features/dashboard/computeIssueProgress";
+import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
@@ -37,7 +37,6 @@ export function DashboardPage() {
   }, []);
 
   const { data: issues, isLoading } = useIssues(searchQuery || undefined);
-  const { data: sessionsByIssue } = useAllSessions();
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
@@ -65,10 +64,13 @@ export function DashboardPage() {
   const { items: allWorkItems, isLoading: workItemsLoading } =
     useTransitiveWorkItems(hookRootId, issues ?? []);
 
-  const isActiveMap = useMemo(() => {
-    if (!issues || !sessionsByIssue) return new Map<string, boolean>();
-    return computeIsActiveMap(issues, sessionsByIssue);
-  }, [issues, sessionsByIssue]);
+  // Per-issue tree construction via relationships API
+  const {
+    isActiveMap,
+    childStatusMap,
+    sessionsByIssue,
+    isLoading: treeLoading,
+  } = usePageIssueTrees(issues ?? [], username);
 
   const inboxCount = useMemo(() => {
     if (!issues || !inboxLabel) return 0;
@@ -85,39 +87,6 @@ export function DashboardPage() {
     if (!issues || !username) return 0;
     return countNeedsAttentionBadge(issues, (issue) => issue.issue.assignee === username, isActiveMap);
   }, [issues, username, isActiveMap]);
-
-  const childStatusMap = useMemo(() => {
-    const map = new Map<string, ChildStatus[]>();
-    if (!issues) return map;
-    const childrenByParent = new Map<string, string[]>();
-    for (const issue of issues) {
-      for (const dep of issue.issue.dependencies) {
-        if (dep.type === "child-of") {
-          const siblings = childrenByParent.get(dep.issue_id) ?? [];
-          siblings.push(issue.issue_id);
-          childrenByParent.set(dep.issue_id, siblings);
-        }
-      }
-    }
-    const issueById = new Map(issues.map((i) => [i.issue_id, i]));
-    for (const [parentId, childIds] of childrenByParent) {
-      const statuses: ChildStatus[] = [];
-      for (const childId of childIds) {
-        const child = issueById.get(childId);
-        if (!child) continue;
-        statuses.push({
-          id: childId,
-          status: child.issue.status,
-          hasActiveTask: isActiveMap.get(childId) ?? false,
-          assignedToUser: !!(username && child.issue.assignee === username),
-        });
-      }
-      if (statuses.length > 0) {
-        map.set(parentId, statuses);
-      }
-    }
-    return map;
-  }, [issues, isActiveMap, username]);
 
   const workItems = useMemo(() => {
     // Helper: given matching issue IDs, collect all their transitive descendants
@@ -235,10 +204,11 @@ export function DashboardPage() {
         />
         <HeterogeneousItemList
           items={workItems}
-          sessionsByIssue={sessionsByIssue ?? new Map()}
+          sessionsByIssue={sessionsByIssue}
           childStatusMap={childStatusMap}
           isActiveMap={isActiveMap}
           isLoading={workItemsLoading}
+          treeLoading={treeLoading}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={handleToggleSidebar}
           onToggleDrawer={handleToggleDrawer}

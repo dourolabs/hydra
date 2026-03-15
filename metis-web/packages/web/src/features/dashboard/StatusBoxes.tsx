@@ -23,6 +23,16 @@ function sortKey(child: ChildStatus): number {
   return 5; // open
 }
 
+export function StatusBoxesLoading() {
+  return (
+    <span className={styles.statusBoxes}>
+      <span className={`${styles.statusBox} ${styles.statusBoxLoading}`} />
+      <span className={`${styles.statusBox} ${styles.statusBoxLoading}`} />
+      <span className={`${styles.statusBox} ${styles.statusBoxLoading}`} />
+    </span>
+  );
+}
+
 export function StatusBoxes({ children }: { children: ChildStatus[] }) {
   if (children.length === 0) return null;
 

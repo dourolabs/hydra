@@ -5,7 +5,7 @@ import { Avatar, Badge, useKeyboardClick } from "@metis/ui";
 import type { SessionSummaryRecord, LabelSummary } from "@metis/api";
 import type { ChildStatus } from "./computeIssueProgress";
 import type { WorkItem } from "./useTransitiveWorkItems";
-import { StatusBoxes } from "./StatusBoxes";
+import { StatusBoxes, StatusBoxesLoading } from "./StatusBoxes";
 import { useAuth } from "../auth/useAuth";
 import { apiClient } from "../../api/client";
 import { normalizeIssueStatus, normalizePatchStatus } from "../../utils/statusMapping";
@@ -71,11 +71,12 @@ interface ItemRowProps {
   sessions?: SessionSummaryRecord[];
   childStatuses?: ChildStatus[];
   isActive?: boolean;
+  treeLoading?: boolean;
   filterRootId?: string | null;
   inboxLabelId?: string;
 }
 
-export const ItemRow = React.memo(function ItemRow({ item, sessions, childStatuses, isActive, filterRootId, inboxLabelId }: ItemRowProps) {
+export const ItemRow = React.memo(function ItemRow({ item, sessions, childStatuses, isActive, treeLoading, filterRootId, inboxLabelId }: ItemRowProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -294,9 +295,11 @@ export const ItemRow = React.memo(function ItemRow({ item, sessions, childStatus
         <span className={durationClass}>
           {durationText}
         </span>
-        {childStatuses && childStatuses.length > 0 && (
+        {treeLoading && item.kind === "issue" ? (
+          <StatusBoxesLoading />
+        ) : childStatuses && childStatuses.length > 0 ? (
           <StatusBoxes children={childStatuses} />
-        )}
+        ) : null}
       </span>
     </>
   );

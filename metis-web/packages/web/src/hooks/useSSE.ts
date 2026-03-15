@@ -127,6 +127,8 @@ export function useSSE(): SSEConnectionState {
       } else if (entity_type === "session" || eventType.startsWith("session_")) {
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["allSessions"] });
+        // Invalidate batch session queries used by usePageIssueTrees
+        queryClient.invalidateQueries({ queryKey: ["sessions", "batch"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         queryClient.invalidateQueries({ queryKey: ["patches"] });
         queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
@@ -176,6 +178,8 @@ export function useSSE(): SSEConnectionState {
         } else {
           queryClient.invalidateQueries({ queryKey: ["sessions"] });
         }
+        // Invalidate batch session queries used by usePageIssueTrees
+        queryClient.invalidateQueries({ queryKey: ["sessions", "batch"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         if (eventType === "patch_deleted") {
           queryClient.removeQueries({ queryKey: ["patch", entity_id] });

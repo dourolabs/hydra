@@ -18,6 +18,7 @@ import { createAgentRoutes } from "./routes/agents.js";
 import { createMergeQueueRoutes } from "./routes/merge-queues.js";
 import { createEventRoutes } from "./routes/events.js";
 import { createLabelRoutes } from "./routes/labels.js";
+import { createRelationRoutes } from "./routes/relations.js";
 import { createSecretRoutes, resetSecrets } from "./routes/secrets.js";
 import { loadSeedData } from "./seed.js";
 
@@ -81,6 +82,7 @@ app.route("", createRepositoryRoutes(store));
 app.route("", createAgentRoutes(store));
 app.route("", createLabelRoutes(store));
 app.route("", createMergeQueueRoutes());
+app.route("", createRelationRoutes(store));
 app.route("", createEventRoutes(store));
 app.route("", createSecretRoutes());
 
