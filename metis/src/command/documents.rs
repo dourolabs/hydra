@@ -19,7 +19,7 @@ use metis_common::{
         SearchDocumentsQuery, UpsertDocumentRequest,
     },
     versioning::VersionNumber,
-    DocumentId, RelativeVersionNumber, SessionId, Versioned,
+    DocumentId, IssueId, RelativeVersionNumber, SessionId, Versioned,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -108,6 +108,10 @@ pub struct CreateDocumentArgs {
     #[arg(long = "created-by", value_name = "TASK_ID", env = ENV_METIS_ID)]
     pub created_by: Option<SessionId>,
 
+    /// Associate the document with an existing issue id.
+    #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_METIS_ISSUE_ID)]
+    pub issue_id: Option<IssueId>,
+
     #[command(flatten)]
     pub body: DocumentBodyInput,
 }
@@ -129,6 +133,10 @@ pub struct UpdateDocumentArgs {
     /// Remove the existing path value.
     #[arg(long = "clear-path")]
     pub clear_path: bool,
+
+    /// Associate the document with an existing issue id.
+    #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_METIS_ISSUE_ID)]
+    pub issue_id: Option<IssueId>,
 
     #[command(flatten)]
     pub body: DocumentBodyInput,
@@ -162,6 +170,10 @@ pub struct PushArgs {
     /// Only push documents whose path starts with this prefix.
     #[arg(long = "path-prefix", value_name = "PREFIX")]
     pub path_prefix: Option<String>,
+
+    /// Associate pushed documents with an existing issue id.
+    #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_METIS_ISSUE_ID)]
+    pub issue_id: Option<IssueId>,
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -199,14 +211,16 @@ pub async fn run(
             write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Create(args) => {
+            let issue_id = args.issue_id.clone();
             let document = create_document(client, args).await?;
-            maybe_link_document(client, &document.document_id).await;
+            maybe_link_document(client, issue_id.as_ref(), &document.document_id).await;
             write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Update(args) => {
+            let issue_id = args.issue_id.clone();
             let doc_id = args.id.clone();
             let document = update_document(client, args).await?;
-            maybe_link_document(client, &doc_id).await;
+            maybe_link_document(client, issue_id.as_ref(), &doc_id).await;
             write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Delete { id_or_path } => {
@@ -401,16 +415,20 @@ async fn list_documents(
     Ok(response.documents)
 }
 
-/// If `$METIS_ISSUE_ID` is set, create a `has-document` relation linking the
+/// If an issue ID is provided, create a `has-document` relation linking the
 /// issue to the given document. Failures are logged as warnings but never
 /// propagate — the document operation already succeeded.
-async fn maybe_link_document(client: &dyn MetisClientInterface, document_id: &DocumentId) {
-    let issue_id = match std::env::var(ENV_METIS_ISSUE_ID) {
-        Ok(v) if !v.is_empty() => v,
-        _ => return,
+async fn maybe_link_document(
+    client: &dyn MetisClientInterface,
+    issue_id: Option<&IssueId>,
+    document_id: &DocumentId,
+) {
+    let issue_id = match issue_id {
+        Some(id) => id,
+        None => return,
     };
     let request = CreateRelationRequest {
-        source_id: issue_id.clone(),
+        source_id: issue_id.to_string(),
         target_id: document_id.to_string(),
         rel_type: "has-document".to_string(),
     };
@@ -904,7 +922,7 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
                     },
                 );
                 let doc_id = &entry.document_id;
-                maybe_link_document(client, doc_id).await;
+                maybe_link_document(client, args.issue_id.as_ref(), doc_id).await;
                 println!("Updated: {relative_path} ({doc_id})");
             }
             updated_count += 1;
@@ -941,7 +959,7 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
                     },
                 );
                 let doc_id = &response.document_id;
-                maybe_link_document(client, doc_id).await;
+                maybe_link_document(client, args.issue_id.as_ref(), doc_id).await;
                 println!("Created: {relative_path} ({doc_id}, title: \"{title}\")");
             }
             created_count += 1;
@@ -1890,6 +1908,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
+                issue_id: None,
             },
         )
         .await
@@ -1971,6 +1990,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
+                issue_id: None,
             },
         )
         .await
@@ -2046,6 +2066,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
+                issue_id: None,
             },
         )
         .await
@@ -2098,6 +2119,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
+                issue_id: None,
             },
         )
         .await
@@ -2187,6 +2209,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: true,
                 path_prefix: None,
+                issue_id: None,
             },
         )
         .await
@@ -2273,6 +2296,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
+                issue_id: None,
             },
         )
         .await
@@ -2348,6 +2372,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
+                issue_id: None,
             },
         )
         .await
@@ -2593,6 +2618,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: None,
+                issue_id: None,
             },
         )
         .await
@@ -2644,6 +2670,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: true,
                 path_prefix: None,
+                issue_id: None,
             },
         )
         .await

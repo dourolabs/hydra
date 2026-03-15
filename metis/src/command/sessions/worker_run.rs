@@ -229,6 +229,9 @@ pub async fn run(
                 directory: Some(documents_path.clone()),
                 dry_run: false,
                 path_prefix: None,
+                issue_id: execution_env
+                    .get(ENV_METIS_ISSUE_ID)
+                    .and_then(|v| v.parse().ok()),
             },
         )
         .await
