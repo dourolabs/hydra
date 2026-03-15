@@ -2,43 +2,6 @@ import type { IssueSummaryRecord, SessionSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
 
-export function computeIsActiveMap(
-  issues: IssueSummaryRecord[],
-  sessionsByIssue: Map<string, SessionSummaryRecord[]>,
-): Map<string, boolean> {
-  const childrenMap = new Map<string, string[]>();
-  for (const issue of issues) {
-    for (const dep of issue.issue.dependencies) {
-      if (dep.type === "child-of") {
-        const siblings = childrenMap.get(dep.issue_id) ?? [];
-        siblings.push(issue.issue_id);
-        childrenMap.set(dep.issue_id, siblings);
-      }
-    }
-  }
-
-  const cache = new Map<string, boolean>();
-
-  function isActive(issueId: string): boolean {
-    const cached = cache.get(issueId);
-    if (cached !== undefined) return cached;
-    const jobs = sessionsByIssue.get(issueId) ?? [];
-    if (jobs.some((j) => j.session.status === "running" || j.session.status === "pending")) {
-      cache.set(issueId, true);
-      return true;
-    }
-    const children = childrenMap.get(issueId) ?? [];
-    const result = children.some((childId) => isActive(childId));
-    cache.set(issueId, result);
-    return result;
-  }
-
-  for (const issue of issues) {
-    isActive(issue.issue_id);
-  }
-  return cache;
-}
-
 export interface ChildStatus {
   id: string;
   status: string;

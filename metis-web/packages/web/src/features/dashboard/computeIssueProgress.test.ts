@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@metis/api";
 import type { IssueTreeNode } from "../issues/useIssues";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
-import { computeIssueProgress, computeIsActiveMap, countNeedsAttentionBadge } from "./computeIssueProgress";
+import { computeIssueProgress, countNeedsAttentionBadge } from "./computeIssueProgress";
 
 // ---------------------------------------------------------------------------
 // Test data helpers
@@ -387,69 +387,6 @@ describe("computeIssueProgress", () => {
     const sessionsByIssue = new Map([["gc1", [makeJob({ status: "complete" })]]]);
     const result = computeIssueProgress([root], sessionsByIssue);
     expect(result[0].children[0].hasActiveTask).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// computeIsActiveMap tests
-// ---------------------------------------------------------------------------
-
-describe("computeIsActiveMap", () => {
-  it("returns empty map for empty input", () => {
-    const result = computeIsActiveMap([], new Map());
-    expect(result.size).toBe(0);
-  });
-
-  it("marks issue as active when it has a running job", () => {
-    const issues = [makeIssueRecord({ issue_id: "i-1" })];
-    const sessionsByIssue = new Map([["i-1", [makeJob({ status: "running" })]]]);
-    const result = computeIsActiveMap(issues, sessionsByIssue);
-    expect(result.get("i-1")).toBe(true);
-  });
-
-  it("marks parent as active when child has running job", () => {
-    const parent = makeIssueRecord({ issue_id: "parent" });
-    const child = {
-      ...makeIssueRecord({ issue_id: "child" }),
-      issue: {
-        ...makeIssueRecord({ issue_id: "child" }).issue,
-        dependencies: [{ type: "child-of" as const, issue_id: "parent" }],
-      },
-    } as typeof parent;
-    const sessionsByIssue = new Map([["child", [makeJob({ status: "running" })]]]);
-    const result = computeIsActiveMap([parent, child], sessionsByIssue);
-    expect(result.get("parent")).toBe(true);
-    expect(result.get("child")).toBe(true);
-  });
-
-  it("marks grandparent as active when grandchild has running job", () => {
-    const gp = makeIssueRecord({ issue_id: "gp" });
-    const p = {
-      ...makeIssueRecord({ issue_id: "p" }),
-      issue: {
-        ...makeIssueRecord({ issue_id: "p" }).issue,
-        dependencies: [{ type: "child-of" as const, issue_id: "gp" }],
-      },
-    } as typeof gp;
-    const c = {
-      ...makeIssueRecord({ issue_id: "c" }),
-      issue: {
-        ...makeIssueRecord({ issue_id: "c" }).issue,
-        dependencies: [{ type: "child-of" as const, issue_id: "p" }],
-      },
-    } as typeof gp;
-    const sessionsByIssue = new Map([["c", [makeJob({ status: "pending" })]]]);
-    const result = computeIsActiveMap([gp, p, c], sessionsByIssue);
-    expect(result.get("gp")).toBe(true);
-    expect(result.get("p")).toBe(true);
-    expect(result.get("c")).toBe(true);
-  });
-
-  it("marks issue as inactive when all jobs are complete", () => {
-    const issues = [makeIssueRecord({ issue_id: "i-1" })];
-    const sessionsByIssue = new Map([["i-1", [makeJob({ status: "complete" })]]]);
-    const result = computeIsActiveMap(issues, sessionsByIssue);
-    expect(result.get("i-1")).toBe(false);
   });
 });
 
