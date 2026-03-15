@@ -333,7 +333,7 @@ async fn resolve_secrets_user_secret_takes_priority() {
     let encrypted = secret_manager.encrypt("user-openai-key").unwrap();
     handles
         .store
-        .set_user_secret(&username, "OPENAI_API_KEY", &encrypted)
+        .set_user_secret(&username, "OPENAI_API_KEY", &encrypted, false)
         .await
         .unwrap();
 
@@ -383,7 +383,7 @@ async fn resolve_secrets_decryption_failure_falls_back_to_config() {
     let bad_encrypted = wrong_key_manager.encrypt("wrong-key-secret").unwrap();
     handles
         .store
-        .set_user_secret(&username, "OPENAI_API_KEY", &bad_encrypted)
+        .set_user_secret(&username, "OPENAI_API_KEY", &bad_encrypted, false)
         .await
         .unwrap();
 
@@ -433,14 +433,14 @@ async fn resolve_secrets_injects_listed_user_secrets() {
     let encrypted1 = secret_manager.encrypt("my-custom-value").unwrap();
     handles
         .store
-        .set_user_secret(&username, "MY_CUSTOM_SECRET", &encrypted1)
+        .set_user_secret(&username, "MY_CUSTOM_SECRET", &encrypted1, false)
         .await
         .unwrap();
 
     let encrypted2 = secret_manager.encrypt("another-value").unwrap();
     handles
         .store
-        .set_user_secret(&username, "ANOTHER_SECRET", &encrypted2)
+        .set_user_secret(&username, "ANOTHER_SECRET", &encrypted2, false)
         .await
         .unwrap();
 
@@ -473,14 +473,14 @@ async fn resolve_secrets_custom_secrets_not_injected_when_filter_is_none() {
     let encrypted_ai = secret_manager.encrypt("user-openai").unwrap();
     handles
         .store
-        .set_user_secret(&username, "OPENAI_API_KEY", &encrypted_ai)
+        .set_user_secret(&username, "OPENAI_API_KEY", &encrypted_ai, false)
         .await
         .unwrap();
 
     let encrypted_custom = secret_manager.encrypt("custom-val").unwrap();
     handles
         .store
-        .set_user_secret(&username, "MY_CUSTOM_SECRET", &encrypted_custom)
+        .set_user_secret(&username, "MY_CUSTOM_SECRET", &encrypted_custom, false)
         .await
         .unwrap();
 
@@ -505,7 +505,7 @@ async fn resolve_secrets_custom_secrets_injected_when_listed() {
     let encrypted = secret_manager.encrypt("custom-val").unwrap();
     handles
         .store
-        .set_user_secret(&username, "MY_CUSTOM_SECRET", &encrypted)
+        .set_user_secret(&username, "MY_CUSTOM_SECRET", &encrypted, false)
         .await
         .unwrap();
 
@@ -529,21 +529,21 @@ async fn resolve_secrets_ai_keys_always_injected_regardless_of_filter() {
     let enc1 = secret_manager.encrypt("user-openai").unwrap();
     handles
         .store
-        .set_user_secret(&username, "OPENAI_API_KEY", &enc1)
+        .set_user_secret(&username, "OPENAI_API_KEY", &enc1, false)
         .await
         .unwrap();
 
     let enc2 = secret_manager.encrypt("user-anthropic").unwrap();
     handles
         .store
-        .set_user_secret(&username, "ANTHROPIC_API_KEY", &enc2)
+        .set_user_secret(&username, "ANTHROPIC_API_KEY", &enc2, false)
         .await
         .unwrap();
 
     let enc3 = secret_manager.encrypt("user-claude-oauth").unwrap();
     handles
         .store
-        .set_user_secret(&username, "CLAUDE_CODE_OAUTH_TOKEN", &enc3)
+        .set_user_secret(&username, "CLAUDE_CODE_OAUTH_TOKEN", &enc3, false)
         .await
         .unwrap();
 
@@ -574,21 +574,21 @@ async fn resolve_secrets_mixed_filter_only_listed_custom_secrets_appear() {
     let enc_ai = secret_manager.encrypt("user-openai").unwrap();
     handles
         .store
-        .set_user_secret(&username, "OPENAI_API_KEY", &enc_ai)
+        .set_user_secret(&username, "OPENAI_API_KEY", &enc_ai, false)
         .await
         .unwrap();
 
     let enc1 = secret_manager.encrypt("allowed-val").unwrap();
     handles
         .store
-        .set_user_secret(&username, "ALLOWED_SECRET", &enc1)
+        .set_user_secret(&username, "ALLOWED_SECRET", &enc1, false)
         .await
         .unwrap();
 
     let enc2 = secret_manager.encrypt("blocked-val").unwrap();
     handles
         .store
-        .set_user_secret(&username, "BLOCKED_SECRET", &enc2)
+        .set_user_secret(&username, "BLOCKED_SECRET", &enc2, false)
         .await
         .unwrap();
 
@@ -643,13 +643,13 @@ async fn resolve_secrets_gh_token_injected_when_in_filter_and_user_has_github_to
     let encrypted = secret_manager.encrypt("gho_test_github_token").unwrap();
     handles
         .store
-        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted)
+        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted, true)
         .await
         .unwrap();
     let encrypted_refresh = secret_manager.encrypt("ghr_test_refresh_token").unwrap();
     handles
         .store
-        .set_user_secret(&username, "GITHUB_REFRESH_TOKEN", &encrypted_refresh)
+        .set_user_secret(&username, "GITHUB_REFRESH_TOKEN", &encrypted_refresh, true)
         .await
         .unwrap();
 
@@ -678,13 +678,13 @@ async fn resolve_secrets_gh_token_not_injected_when_not_in_filter() {
     let encrypted = secret_manager.encrypt("gho_test_github_token").unwrap();
     handles
         .store
-        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted)
+        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted, true)
         .await
         .unwrap();
     let encrypted_refresh = secret_manager.encrypt("ghr_test_refresh_token").unwrap();
     handles
         .store
-        .set_user_secret(&username, "GITHUB_REFRESH_TOKEN", &encrypted_refresh)
+        .set_user_secret(&username, "GITHUB_REFRESH_TOKEN", &encrypted_refresh, true)
         .await
         .unwrap();
 
@@ -731,13 +731,13 @@ async fn resolve_secrets_user_set_gh_token_takes_priority_over_auto_injection() 
     let encrypted_github = secret_manager.encrypt("gho_auto_token").unwrap();
     handles
         .store
-        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted_github)
+        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted_github, true)
         .await
         .unwrap();
     let encrypted_refresh = secret_manager.encrypt("ghr_test_refresh_token").unwrap();
     handles
         .store
-        .set_user_secret(&username, "GITHUB_REFRESH_TOKEN", &encrypted_refresh)
+        .set_user_secret(&username, "GITHUB_REFRESH_TOKEN", &encrypted_refresh, true)
         .await
         .unwrap();
 
@@ -745,7 +745,7 @@ async fn resolve_secrets_user_set_gh_token_takes_priority_over_auto_injection() 
     let encrypted_gh = secret_manager.encrypt("gho_user_set_token").unwrap();
     handles
         .store
-        .set_user_secret(&username, "GH_TOKEN", &encrypted_gh)
+        .set_user_secret(&username, "GH_TOKEN", &encrypted_gh, false)
         .await
         .unwrap();
 
@@ -776,7 +776,7 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
     let encrypted = secret_manager.encrypt("user-oauth-token-value").unwrap();
     handles
         .store
-        .set_user_secret(&creator, "CLAUDE_CODE_OAUTH_TOKEN", &encrypted)
+        .set_user_secret(&creator, "CLAUDE_CODE_OAUTH_TOKEN", &encrypted, false)
         .await
         .unwrap();
 

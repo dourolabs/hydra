@@ -8,6 +8,7 @@ use crate::{
         messages::Message,
         notifications::Notification,
         patches::Patch,
+        secrets::SecretRef,
         users::{User, Username},
     },
     store::{ReadOnlyStore, Session, Store, StoreError, TaskStatusLog},
@@ -311,7 +312,7 @@ impl ReadOnlyStore for FailingStore {
     async fn list_user_secret_names(
         &self,
         _username: &Username,
-    ) -> Result<Vec<String>, StoreError> {
+    ) -> Result<Vec<SecretRef>, StoreError> {
         fail()
     }
 }
@@ -568,6 +569,7 @@ impl Store for FailingStore {
         _username: &Username,
         _secret_name: &str,
         _encrypted_value: &[u8],
+        _internal: bool,
     ) -> Result<(), StoreError> {
         fail()
     }

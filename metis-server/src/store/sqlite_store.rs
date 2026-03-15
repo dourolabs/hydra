@@ -10,6 +10,7 @@ use crate::domain::{
     messages::Message,
     notifications::Notification,
     patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
+    secrets::SecretRef,
     users::{User, Username},
 };
 use crate::store::issue_graph::IssueGraphContext;
@@ -3370,16 +3371,19 @@ impl ReadOnlyStore for SqliteStore {
         Ok(row)
     }
 
-    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError> {
+    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<SecretRef>, StoreError> {
         let sql = format!(
-            "SELECT secret_name FROM {TABLE_USER_SECRETS} WHERE username = ?1 ORDER BY secret_name"
+            "SELECT secret_name, internal FROM {TABLE_USER_SECRETS} WHERE username = ?1 ORDER BY secret_name"
         );
-        let rows = sqlx::query_scalar::<_, String>(&sql)
+        let rows = sqlx::query_as::<_, (String, bool)>(&sql)
             .bind(username.as_str())
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
-        Ok(rows)
+        Ok(rows
+            .into_iter()
+            .map(|(name, internal)| SecretRef { name, internal })
+            .collect())
     }
 }
 
@@ -4152,18 +4156,20 @@ impl Store for SqliteStore {
         username: &Username,
         secret_name: &str,
         encrypted_value: &[u8],
+        internal: bool,
     ) -> Result<(), StoreError> {
         let now = Utc::now().to_rfc3339();
         let sql = format!(
-            "INSERT INTO {TABLE_USER_SECRETS} (username, secret_name, encrypted_value, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?4) \
+            "INSERT INTO {TABLE_USER_SECRETS} (username, secret_name, encrypted_value, internal, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5) \
              ON CONFLICT (username, secret_name) \
-             DO UPDATE SET encrypted_value = ?3, updated_at = ?4"
+             DO UPDATE SET encrypted_value = ?3, internal = ?4, updated_at = ?5"
         );
         sqlx::query(&sql)
             .bind(username.as_str())
             .bind(secret_name)
             .bind(encrypted_value)
+            .bind(internal)
             .bind(&now)
             .execute(&self.pool)
             .await
@@ -6821,7 +6827,7 @@ mod tests {
         let secret = b"supersecret";
 
         store
-            .set_user_secret(&username, "api_key", secret)
+            .set_user_secret(&username, "api_key", secret, false)
             .await
             .unwrap();
 
@@ -6847,11 +6853,11 @@ mod tests {
         let username = Username::from("alice".to_string());
 
         store
-            .set_user_secret(&username, "api_key", b"first")
+            .set_user_secret(&username, "api_key", b"first", false)
             .await
             .unwrap();
         store
-            .set_user_secret(&username, "api_key", b"second")
+            .set_user_secret(&username, "api_key", b"second", false)
             .await
             .unwrap();
 
@@ -6865,16 +6871,18 @@ mod tests {
         let username = Username::from("alice".to_string());
 
         store
-            .set_user_secret(&username, "zebra", b"z")
+            .set_user_secret(&username, "zebra", b"z", false)
             .await
             .unwrap();
         store
-            .set_user_secret(&username, "alpha", b"a")
+            .set_user_secret(&username, "alpha", b"a", false)
             .await
             .unwrap();
 
-        let names = store.list_user_secret_names(&username).await.unwrap();
+        let refs = store.list_user_secret_names(&username).await.unwrap();
+        let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "zebra"]);
+        assert!(refs.iter().all(|r| !r.internal));
     }
 
     #[tokio::test]
@@ -6883,7 +6891,7 @@ mod tests {
         let username = Username::from("alice".to_string());
 
         store
-            .set_user_secret(&username, "api_key", b"secret")
+            .set_user_secret(&username, "api_key", b"secret", false)
             .await
             .unwrap();
 
@@ -6914,13 +6922,15 @@ mod tests {
         let alice = Username::from("alice".to_string());
         let bob = Username::from("bob".to_string());
 
-        store.set_user_secret(&alice, "key_a", b"a").await.unwrap();
-        store.set_user_secret(&bob, "key_b", b"b").await.unwrap();
+        store.set_user_secret(&alice, "key_a", b"a", false).await.unwrap();
+        store.set_user_secret(&bob, "key_b", b"b", false).await.unwrap();
 
-        let alice_names = store.list_user_secret_names(&alice).await.unwrap();
+        let alice_refs = store.list_user_secret_names(&alice).await.unwrap();
+        let alice_names: Vec<&str> = alice_refs.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(alice_names, vec!["key_a"]);
 
-        let bob_names = store.list_user_secret_names(&bob).await.unwrap();
+        let bob_refs = store.list_user_secret_names(&bob).await.unwrap();
+        let bob_names: Vec<&str> = bob_refs.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(bob_names, vec!["key_b"]);
     }
 

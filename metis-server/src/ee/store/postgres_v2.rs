@@ -17,6 +17,7 @@ use crate::{
         messages::Message,
         notifications::Notification,
         patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
+        secrets::SecretRef,
         sessions::{BundleSpec, Session},
         task_status::{Status, TaskError},
         users::{User, Username},
@@ -3429,16 +3430,19 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(row)
     }
 
-    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError> {
+    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<SecretRef>, StoreError> {
         let sql = format!(
-            "SELECT secret_name FROM {TABLE_USER_SECRETS} WHERE username = $1 ORDER BY secret_name"
+            "SELECT secret_name, internal FROM {TABLE_USER_SECRETS} WHERE username = $1 ORDER BY secret_name"
         );
-        let rows = sqlx::query_scalar::<_, String>(&sql)
+        let rows = sqlx::query_as::<_, (String, bool)>(&sql)
             .bind(username.as_str())
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
-        Ok(rows)
+        Ok(rows
+            .into_iter()
+            .map(|(name, internal)| SecretRef { name, internal })
+            .collect())
     }
 }
 
@@ -4321,18 +4325,20 @@ impl Store for PostgresStoreV2 {
         username: &Username,
         secret_name: &str,
         encrypted_value: &[u8],
+        internal: bool,
     ) -> Result<(), StoreError> {
         let sql = format!(
-            "INSERT INTO {TABLE_USER_SECRETS} (username, secret_name, encrypted_value, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $4) \
+            "INSERT INTO {TABLE_USER_SECRETS} (username, secret_name, encrypted_value, internal, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $5) \
              ON CONFLICT (username, secret_name) \
-             DO UPDATE SET encrypted_value = $3, updated_at = $4"
+             DO UPDATE SET encrypted_value = $3, internal = $4, updated_at = $5"
         );
         let now = chrono::Utc::now();
         sqlx::query(&sql)
             .bind(username.as_str())
             .bind(secret_name)
             .bind(encrypted_value)
+            .bind(internal)
             .bind(now)
             .execute(&self.pool)
             .await
@@ -6633,17 +6639,17 @@ mod tests {
 
         // SET — store secrets for alice
         store
-            .set_user_secret(&alice, "api-key", b"encrypted-alice-key")
+            .set_user_secret(&alice, "api-key", b"encrypted-alice-key", false)
             .await
             .unwrap();
         store
-            .set_user_secret(&alice, "db-password", b"encrypted-alice-db")
+            .set_user_secret(&alice, "db-password", b"encrypted-alice-db", false)
             .await
             .unwrap();
 
         // SET — store a secret for bob
         store
-            .set_user_secret(&bob, "api-key", b"encrypted-bob-key")
+            .set_user_secret(&bob, "api-key", b"encrypted-bob-key", false)
             .await
             .unwrap();
 
@@ -6680,16 +6686,19 @@ mod tests {
         );
 
         // LIST — verify alice's secret names
-        let names = store.list_user_secret_names(&alice).await.unwrap();
+        let refs = store.list_user_secret_names(&alice).await.unwrap();
+        let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, vec!["api-key", "db-password"]);
+        assert!(refs.iter().all(|r| !r.internal));
 
         // LIST — verify bob's secret names
-        let names = store.list_user_secret_names(&bob).await.unwrap();
+        let refs = store.list_user_secret_names(&bob).await.unwrap();
+        let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, vec!["api-key"]);
 
         // UPSERT — overwrite alice's api-key
         store
-            .set_user_secret(&alice, "api-key", b"encrypted-alice-key-v2")
+            .set_user_secret(&alice, "api-key", b"encrypted-alice-key-v2", false)
             .await
             .unwrap();
         let value = store
@@ -6712,7 +6721,8 @@ mod tests {
         );
 
         // LIST after delete — alice should only have db-password
-        let names = store.list_user_secret_names(&alice).await.unwrap();
+        let refs = store.list_user_secret_names(&alice).await.unwrap();
+        let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, vec!["db-password"]);
 
         // Bob's secret should be unaffected

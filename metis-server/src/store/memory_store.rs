@@ -16,6 +16,7 @@ use crate::domain::{
     messages::Message,
     notifications::Notification,
     patches::Patch,
+    secrets::SecretRef,
     users::{User, Username},
 };
 use metis_common::api::v1::documents::SearchDocumentsQuery;
@@ -68,8 +69,8 @@ pub struct MemoryStore {
     object_labels: DashMap<MetisId, HashSet<LabelId>>,
     /// Maps label IDs to associated object IDs
     label_objects: DashMap<LabelId, HashSet<MetisId>>,
-    /// Maps (username, secret_name) to encrypted secret value
-    user_secrets: DashMap<(Username, String), Vec<u8>>,
+    /// Maps (username, secret_name) to (encrypted_value, internal)
+    user_secrets: DashMap<(Username, String), (Vec<u8>, bool)>,
     /// Stores object relationships as (source_id, rel_type, target_id) -> ObjectRelationship
     object_relationships:
         DashMap<(MetisId, super::RelationshipType, MetisId), super::ObjectRelationship>,
@@ -1337,18 +1338,24 @@ impl ReadOnlyStore for MemoryStore {
         secret_name: &str,
     ) -> Result<Option<Vec<u8>>, StoreError> {
         let key = (username.clone(), secret_name.to_string());
-        Ok(self.user_secrets.get(&key).map(|v| v.value().clone()))
+        Ok(self
+            .user_secrets
+            .get(&key)
+            .map(|v| v.value().0.clone()))
     }
 
-    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<String>, StoreError> {
-        let mut names: Vec<String> = self
+    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<SecretRef>, StoreError> {
+        let mut refs: Vec<SecretRef> = self
             .user_secrets
             .iter()
             .filter(|entry| &entry.key().0 == username)
-            .map(|entry| entry.key().1.clone())
+            .map(|entry| SecretRef {
+                name: entry.key().1.clone(),
+                internal: entry.value().1,
+            })
             .collect();
-        names.sort();
-        Ok(names)
+        refs.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(refs)
     }
 }
 
@@ -1948,9 +1955,11 @@ impl Store for MemoryStore {
         username: &Username,
         secret_name: &str,
         encrypted_value: &[u8],
+        internal: bool,
     ) -> Result<(), StoreError> {
         let key = (username.clone(), secret_name.to_string());
-        self.user_secrets.insert(key, encrypted_value.to_vec());
+        self.user_secrets
+            .insert(key, (encrypted_value.to_vec(), internal));
         Ok(())
     }
 
