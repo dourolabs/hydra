@@ -125,9 +125,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_relations_with_no_filters() {
         let server = MockServer::start();
-        let api_response = ListRelationsResponse {
-            relations: vec![],
-        };
+        let api_response = ListRelationsResponse { relations: vec![] };
 
         let mock = server.mock(|when, then| {
             when.method(GET).path("/v1/relations/");

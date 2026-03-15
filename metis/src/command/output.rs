@@ -1394,9 +1394,7 @@ mod tests {
     fn test_render_relations_empty_pretty() {
         use metis_common::api::v1::relations::ListRelationsResponse;
 
-        let response = ListRelationsResponse {
-            relations: vec![],
-        };
+        let response = ListRelationsResponse { relations: vec![] };
         let mut buf = Vec::new();
         render_relations(ResolvedOutputFormat::Pretty, &response, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
@@ -1407,9 +1405,7 @@ mod tests {
     fn test_render_relations_empty_jsonl() {
         use metis_common::api::v1::relations::ListRelationsResponse;
 
-        let response = ListRelationsResponse {
-            relations: vec![],
-        };
+        let response = ListRelationsResponse { relations: vec![] };
         let mut buf = Vec::new();
         render_relations(ResolvedOutputFormat::Jsonl, &response, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
