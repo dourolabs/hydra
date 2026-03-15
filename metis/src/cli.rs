@@ -101,6 +101,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: command::notifications::NotificationsCommand,
     },
+    /// Query relations between objects.
+    Relations {
+        #[command(subcommand)]
+        command: command::relations::RelationsCommand,
+    },
     /// Manage service repositories.
     Repos {
         #[command(subcommand)]
@@ -235,6 +240,9 @@ pub async fn dispatch(
         Commands::Messages { command } => command::messages::run(client, command, context).await?,
         Commands::Notifications { command } => {
             command::notifications::run(client, command, context).await?
+        }
+        Commands::Relations { command } => {
+            command::relations::run(client, command, context).await?
         }
         Commands::Repos { command } => command::repos::run(client, command, context).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
