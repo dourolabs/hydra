@@ -19,6 +19,7 @@ use metis_common::{
     api::v1::notifications::{
         ListNotificationsQuery, ListNotificationsResponse, MarkReadResponse, UnreadCountResponse,
     },
+    api::v1::relations::CreateRelationRequest,
     api::v1::secrets::{ListSecretsResponse, SetSecretRequest},
     documents::{
         DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
@@ -295,6 +296,8 @@ pub trait MetisClientInterface: Send + Sync {
     async fn add_label_association(&self, label_id: &LabelId, object_id: &MetisId) -> Result<()>;
     async fn remove_label_association(&self, label_id: &LabelId, object_id: &MetisId)
         -> Result<()>;
+
+    async fn create_relation(&self, request: &CreateRelationRequest) -> Result<()>;
 
     /// Resolve the current actor's ID from the auth context.
     async fn current_actor_id(&self) -> Result<ActorId> {
@@ -1819,6 +1822,19 @@ impl MetisClient {
         Ok(())
     }
 
+    /// Call `POST /v1/relations/` to create a relation.
+    pub async fn create_relation(&self, request: &CreateRelationRequest) -> Result<()> {
+        let url = self.endpoint("/v1/relations/")?;
+        self.authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit create relation request")?
+            .error_for_status_with_body("metis-server rejected create relation request")
+            .await?;
+        Ok(())
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -2294,6 +2310,10 @@ impl MetisClientInterface for MetisClient {
         object_id: &MetisId,
     ) -> Result<()> {
         MetisClient::remove_label_association(self, label_id, object_id).await
+    }
+
+    async fn create_relation(&self, request: &CreateRelationRequest) -> Result<()> {
+        MetisClient::create_relation(self, request).await
     }
 }
 

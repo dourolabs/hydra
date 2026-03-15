@@ -12,7 +12,8 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::{
     activity_log_for_document_versions,
-    constants::{ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ID},
+    api::v1::relations::CreateRelationRequest,
+    constants::{ENV_METIS_DOCUMENTS_DIR, ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     documents::{
         Document as DocumentPayload, DocumentSummaryRecord, DocumentVersionRecord,
         SearchDocumentsQuery, UpsertDocumentRequest,
@@ -199,10 +200,13 @@ pub async fn run(
         }
         DocumentsCommand::Create(args) => {
             let document = create_document(client, args).await?;
+            maybe_link_document(client, &document.document_id).await;
             write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Update(args) => {
+            let doc_id = args.id.clone();
             let document = update_document(client, args).await?;
+            maybe_link_document(client, &doc_id).await;
             write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Delete { id_or_path } => {
@@ -395,6 +399,26 @@ async fn list_documents(
         .await
         .context("failed to list documents")?;
     Ok(response.documents)
+}
+
+/// If `$METIS_ISSUE_ID` is set, create a `has-document` relation linking the
+/// issue to the given document. Failures are logged as warnings but never
+/// propagate — the document operation already succeeded.
+async fn maybe_link_document(client: &dyn MetisClientInterface, document_id: &DocumentId) {
+    let issue_id = match std::env::var(ENV_METIS_ISSUE_ID) {
+        Ok(v) if !v.is_empty() => v,
+        _ => return,
+    };
+    let request = CreateRelationRequest {
+        source_id: issue_id.clone(),
+        target_id: document_id.to_string(),
+        rel_type: "has-document".to_string(),
+    };
+    if let Err(e) = client.create_relation(&request).await {
+        eprintln!(
+            "Warning: failed to create has-document relation from '{issue_id}' to '{document_id}': {e}"
+        );
+    }
 }
 
 async fn create_document(
@@ -880,6 +904,7 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
                     },
                 );
                 let doc_id = &entry.document_id;
+                maybe_link_document(client, doc_id).await;
                 println!("Updated: {relative_path} ({doc_id})");
             }
             updated_count += 1;
@@ -916,6 +941,7 @@ pub async fn push_documents(client: &dyn MetisClientInterface, args: PushArgs) -
                     },
                 );
                 let doc_id = &response.document_id;
+                maybe_link_document(client, doc_id).await;
                 println!("Created: {relative_path} ({doc_id}, title: \"{title}\")");
             }
             created_count += 1;
