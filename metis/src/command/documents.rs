@@ -1176,6 +1176,7 @@ mod tests {
                     body_file: Some(file.path().to_path_buf()),
                     body_stdin: false,
                 },
+                issue_id: None,
             },
         )
         .await
@@ -1220,6 +1221,7 @@ mod tests {
                     body_file: None,
                     body_stdin: false,
                 },
+                issue_id: None,
             },
         )
         .await
@@ -1253,6 +1255,7 @@ mod tests {
                 path: None,
                 clear_path: false,
                 body: DocumentBodyInput::default(),
+                issue_id: None,
             },
         )
         .await
@@ -2498,6 +2501,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: Some("/playbooks".to_string()),
+                issue_id: None,
             },
         )
         .await
@@ -2755,6 +2759,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: Some("/playbooks".to_string()),
+                issue_id: None,
             },
         )
         .await

@@ -1328,6 +1328,95 @@ mod tests {
     }
 
     #[test]
+    fn test_render_relations_jsonl() {
+        use metis_common::api::v1::relations::{ListRelationsResponse, RelationResponse};
+
+        let response = ListRelationsResponse {
+            relations: vec![
+                RelationResponse {
+                    source_id: "i-aaaaaa".parse().unwrap(),
+                    target_id: "i-bbbbbb".parse().unwrap(),
+                    rel_type: "child-of".to_string(),
+                },
+                RelationResponse {
+                    source_id: "i-cccccc".parse().unwrap(),
+                    target_id: "p-dddddd".parse().unwrap(),
+                    rel_type: "has-patch".to_string(),
+                },
+            ],
+        };
+        let mut buf = Vec::new();
+        render_relations(ResolvedOutputFormat::Jsonl, &response, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("\"source_id\":\"i-aaaaaa\""));
+        assert!(output.contains("\"target_id\":\"i-bbbbbb\""));
+        assert!(output.contains("\"rel_type\":\"child-of\""));
+        assert!(output.contains("\"source_id\":\"i-cccccc\""));
+        assert!(output.contains("\"rel_type\":\"has-patch\""));
+        // Each relation should be on its own line
+        assert_eq!(output.lines().count(), 2);
+    }
+
+    #[test]
+    fn test_render_relations_pretty() {
+        use metis_common::api::v1::relations::{ListRelationsResponse, RelationResponse};
+
+        let response = ListRelationsResponse {
+            relations: vec![
+                RelationResponse {
+                    source_id: "i-aaaaaa".parse().unwrap(),
+                    target_id: "i-bbbbbb".parse().unwrap(),
+                    rel_type: "child-of".to_string(),
+                },
+                RelationResponse {
+                    source_id: "i-cccccc".parse().unwrap(),
+                    target_id: "p-dddddd".parse().unwrap(),
+                    rel_type: "has-patch".to_string(),
+                },
+            ],
+        };
+        let mut buf = Vec::new();
+        render_relations(ResolvedOutputFormat::Pretty, &response, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("SOURCE"));
+        assert!(output.contains("REL TYPE"));
+        assert!(output.contains("TARGET"));
+        assert!(output.contains("------"));
+        assert!(output.contains("i-aaaaaa"));
+        assert!(output.contains("child-of"));
+        assert!(output.contains("i-bbbbbb"));
+        assert!(output.contains("i-cccccc"));
+        assert!(output.contains("has-patch"));
+        assert!(output.contains("p-dddddd"));
+    }
+
+    #[test]
+    fn test_render_relations_empty_pretty() {
+        use metis_common::api::v1::relations::ListRelationsResponse;
+
+        let response = ListRelationsResponse {
+            relations: vec![],
+        };
+        let mut buf = Vec::new();
+        render_relations(ResolvedOutputFormat::Pretty, &response, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("No relations found."));
+    }
+
+    #[test]
+    fn test_render_relations_empty_jsonl() {
+        use metis_common::api::v1::relations::ListRelationsResponse;
+
+        let response = ListRelationsResponse {
+            relations: vec![],
+        };
+        let mut buf = Vec::new();
+        render_relations(ResolvedOutputFormat::Jsonl, &response, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.is_empty());
+    }
+
+    #[test]
     fn render_document_records_truncates_body_by_default() {
         let mut body_lines = Vec::new();
         for index in 0..25 {
