@@ -638,34 +638,6 @@ impl UpsertIssueResponse {
     }
 }
 
-fn serialize_graph_filters<S>(
-    filters: &[IssueGraphFilter],
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let s = filters
-        .iter()
-        .map(|f| f.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    serializer.serialize_str(&s)
-}
-
-fn deserialize_graph_filters<'de, D>(deserializer: D) -> Result<Vec<IssueGraphFilter>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s.is_empty() {
-        return Ok(Vec::new());
-    }
-    s.split(',')
-        .map(|part| part.parse().map_err(de::Error::custom))
-        .collect()
-}
-
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -695,8 +667,8 @@ pub struct SearchIssuesQuery {
     #[serde(
         default,
         rename = "graph",
-        serialize_with = "serialize_graph_filters",
-        deserialize_with = "deserialize_graph_filters"
+        serialize_with = "super::serde_helpers::serialize_graph_filters",
+        deserialize_with = "super::serde_helpers::deserialize_graph_filters"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub graph_filters: Vec<IssueGraphFilter>,

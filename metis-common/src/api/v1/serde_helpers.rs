@@ -1,3 +1,4 @@
+use crate::api::v1::issues::IssueGraphFilter;
 use crate::task_status::Status;
 use crate::{IssueId, LabelId};
 use serde::{Deserialize, Deserializer, Serializer, de};
@@ -81,5 +82,35 @@ where
             let trimmed = part.trim();
             serde_json::from_value(Value::String(trimmed.to_string())).map_err(de::Error::custom)
         })
+        .collect()
+}
+
+pub(crate) fn serialize_graph_filters<S>(
+    filters: &[IssueGraphFilter],
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let s = filters
+        .iter()
+        .map(|f| f.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    serializer.serialize_str(&s)
+}
+
+pub(crate) fn deserialize_graph_filters<'de, D>(
+    deserializer: D,
+) -> Result<Vec<IssueGraphFilter>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    s.split(',')
+        .map(|part| part.parse().map_err(de::Error::custom))
         .collect()
 }
