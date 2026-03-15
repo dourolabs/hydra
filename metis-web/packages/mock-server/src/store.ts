@@ -185,18 +185,6 @@ export class Store {
     return () => this.listeners.delete(listener);
   }
 
-  getSnapshot(): Record<string, number> {
-    const versions: Record<string, number> = {};
-    for (const [, col] of this.collections) {
-      for (const [id, versionList] of col) {
-        if (versionList.length > 0) {
-          versions[id] = versionList[versionList.length - 1].version;
-        }
-      }
-    }
-    return versions;
-  }
-
   getEventsSince(lastEventId: number): StoreEvent[] {
     return this.events.filter((e) => e.id > lastEventId);
   }
