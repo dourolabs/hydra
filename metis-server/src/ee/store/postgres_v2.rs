@@ -1515,9 +1515,17 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
         bindings.push(issue_type.as_str().to_string());
     }
 
-    if let Some(status) = query.status.as_ref() {
-        predicates.push(format!("status = ${}", bindings.len() + 1));
-        bindings.push(status.as_str().to_string());
+    if !query.status.is_empty() {
+        let placeholders: Vec<String> = query
+            .status
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("status IN ({})", placeholders.join(", ")));
+        for s in &query.status {
+            bindings.push(s.as_str().to_string());
+        }
     }
 
     if let Some(assignee) = query
@@ -5561,7 +5569,7 @@ mod tests {
         // Search for the old description - should return NO results
         let old_query = SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             None,
             Some("original_unique_description_abc123".to_string()),
             Vec::new(),
@@ -5577,7 +5585,7 @@ mod tests {
         // Search for the new description - should return the issue
         let new_query = SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             None,
             Some("changed_unique_description_xyz789".to_string()),
             Vec::new(),
@@ -7071,13 +7079,13 @@ mod tests {
         store.add_issue(closed, &actor).await.unwrap();
 
         // Count all issues
-        let query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        let query = SearchIssuesQuery::new(None, vec![], None, None, Vec::new(), None);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
 
         // Count only bugs
         let query = SearchIssuesQuery::new(
             Some(metis_common::api::v1::issues::IssueType::Bug),
-            None,
+            vec![],
             None,
             None,
             Vec::new(),
@@ -7088,7 +7096,7 @@ mod tests {
         // Count only closed
         let query = SearchIssuesQuery::new(
             None,
-            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            vec![metis_common::api::v1::issues::IssueStatus::Closed],
             None,
             None,
             Vec::new(),
@@ -7207,7 +7215,7 @@ mod tests {
         }
 
         // Count should return 5 even when limit is set
-        let mut query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        let mut query = SearchIssuesQuery::new(None, vec![], None, None, Vec::new(), None);
         query.limit = Some(2);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
     }
@@ -7237,7 +7245,7 @@ mod tests {
         store.update_issue(&ids[0], updated, &actor).await.unwrap();
 
         // list_issues should return 3 issues, each at their latest version.
-        let query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        let query = SearchIssuesQuery::new(None, vec![], None, None, Vec::new(), None);
         let results = store.list_issues(&query).await.unwrap();
         assert_eq!(results.len(), 3);
 
@@ -7249,7 +7257,7 @@ mod tests {
 
         // Paginate with limit=2 and verify we get 2 results, then use cursor
         // to get the remaining 1.
-        let mut query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        let mut query = SearchIssuesQuery::new(None, vec![], None, None, Vec::new(), None);
         query.limit = Some(2);
         let page1 = store.list_issues(&query).await.unwrap();
         // limit+1 is fetched internally but caller sees at most limit+1 rows;
@@ -7257,13 +7265,13 @@ mod tests {
         assert!(page1.len() >= 2);
 
         // count_issues should still return the total (3), not affected by versions.
-        let count_query = SearchIssuesQuery::new(None, None, None, None, Vec::new(), None);
+        let count_query = SearchIssuesQuery::new(None, vec![], None, None, Vec::new(), None);
         assert_eq!(store.count_issues(&count_query).await.unwrap(), 3);
 
         // Filter by status=InProgress should return only the updated issue.
         let query = SearchIssuesQuery::new(
             None,
-            Some(metis_common::api::v1::issues::IssueStatus::InProgress),
+            vec![metis_common::api::v1::issues::IssueStatus::InProgress],
             None,
             None,
             Vec::new(),

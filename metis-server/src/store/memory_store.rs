@@ -183,7 +183,8 @@ impl MemoryStore {
         let include_deleted = query.include_deleted.unwrap_or(false);
         let ids_filter = &query.ids;
         let issue_type_filter: Option<IssueType> = query.issue_type.map(Into::into);
-        let status_filter: Option<IssueStatus> = query.status.map(Into::into);
+        let status_filter: Vec<IssueStatus> =
+            query.status.iter().copied().map(Into::into).collect();
         let search_term = query
             .q
             .as_ref()
@@ -225,7 +226,7 @@ impl MemoryStore {
 
             if !issue_matches(
                 issue_type_filter,
-                status_filter,
+                &status_filter,
                 search_term.as_deref(),
                 assignee_filter,
                 issue_id,
@@ -2097,7 +2098,7 @@ impl Store for MemoryStore {
 /// Helper function to check if an issue matches the provided filter criteria.
 fn issue_matches(
     issue_type_filter: Option<IssueType>,
-    status_filter: Option<IssueStatus>,
+    status_filter: &[IssueStatus],
     search_term: Option<&str>,
     assignee_filter: Option<&str>,
     issue_id: &IssueId,
@@ -2109,10 +2110,8 @@ fn issue_matches(
         }
     }
 
-    if let Some(status) = status_filter {
-        if issue.status != status {
-            return false;
-        }
+    if !status_filter.is_empty() && !status_filter.contains(&issue.status) {
+        return false;
     }
 
     if let Some(expected_assignee) = assignee_filter {
@@ -4278,7 +4277,7 @@ mod tests {
         let issues = store
             .list_issues(&SearchIssuesQuery::new(
                 None,
-                None,
+                vec![],
                 None,
                 None,
                 Vec::new(),
@@ -4841,7 +4840,7 @@ mod tests {
         // Filter by task type
         let query = SearchIssuesQuery::new(
             Some(metis_common::api::v1::issues::IssueType::Task),
-            None,
+            vec![],
             None,
             None,
             Vec::new(),
@@ -4854,7 +4853,7 @@ mod tests {
         // Filter by bug type
         let query = SearchIssuesQuery::new(
             Some(metis_common::api::v1::issues::IssueType::Bug),
-            None,
+            vec![],
             None,
             None,
             Vec::new(),
@@ -4886,7 +4885,7 @@ mod tests {
         // Filter by open status
         let query = SearchIssuesQuery::new(
             None,
-            Some(metis_common::api::v1::issues::IssueStatus::Open),
+            vec![metis_common::api::v1::issues::IssueStatus::Open],
             None,
             None,
             Vec::new(),
@@ -4899,7 +4898,7 @@ mod tests {
         // Filter by closed status
         let query = SearchIssuesQuery::new(
             None,
-            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            vec![metis_common::api::v1::issues::IssueStatus::Closed],
             None,
             None,
             Vec::new(),
@@ -4931,7 +4930,7 @@ mod tests {
         // Filter by assignee
         let query = SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             Some("alice".to_string()),
             None,
             Vec::new(),
@@ -4944,7 +4943,7 @@ mod tests {
         // Case-insensitive assignee matching
         let query = SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             Some("ALICE".to_string()),
             None,
             Vec::new(),
@@ -4971,7 +4970,7 @@ mod tests {
         // Search for "login"
         let query = SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             None,
             Some("login".to_string()),
             Vec::new(),
@@ -4993,7 +4992,7 @@ mod tests {
 
         // Search by issue ID prefix
         let id_prefix = issue_id.to_string()[..4].to_string();
-        let query = SearchIssuesQuery::new(None, None, None, Some(id_prefix), Vec::new(), None);
+        let query = SearchIssuesQuery::new(None, vec![], None, Some(id_prefix), Vec::new(), None);
         let issues = store.list_issues(&query).await.unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, issue_id);
@@ -5027,7 +5026,7 @@ mod tests {
         // Filter by bug type AND alice assignee
         let query = SearchIssuesQuery::new(
             Some(metis_common::api::v1::issues::IssueType::Bug),
-            None,
+            vec![],
             Some("alice".to_string()),
             None,
             Vec::new(),
@@ -6830,7 +6829,7 @@ mod tests {
         // Count all issues
         let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             None,
             None,
             Vec::new(),
@@ -6841,7 +6840,7 @@ mod tests {
         // Count only bugs
         let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
             Some(metis_common::api::v1::issues::IssueType::Bug),
-            None,
+            vec![],
             None,
             None,
             Vec::new(),
@@ -6852,7 +6851,7 @@ mod tests {
         // Count only closed
         let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            vec![metis_common::api::v1::issues::IssueStatus::Closed],
             None,
             None,
             Vec::new(),
@@ -6986,7 +6985,7 @@ mod tests {
         // Count should return 5 even when limit is set
         let mut query = metis_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             None,
             None,
             Vec::new(),
