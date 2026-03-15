@@ -1,13 +1,14 @@
 import { useState, useMemo, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import { Panel, Spinner, Button, Modal, Input, Textarea } from "@metis/ui";
-import type { DocumentSummaryRecord } from "@metis/api";
+import type { DocumentSummaryRecord, ListDocumentsResponse } from "@metis/api";
 import { apiClient } from "../api/client";
-import { useDocuments } from "../features/documents/useDocuments";
 import { useToast } from "../features/toast/useToast";
 import { formatRelativeTime } from "../utils/time";
 import styles from "./DocumentsPage.module.css";
+
+const PAGE_SIZE = 50;
 
 interface DocumentGroup {
   prefix: string;
@@ -56,11 +57,36 @@ function getDocumentDisplayTitle(doc: DocumentSummaryRecord): string {
   return doc.document_id;
 }
 
+function usePaginatedDocuments() {
+  return useInfiniteQuery<ListDocumentsResponse, Error>({
+    queryKey: ["paginatedDocuments"],
+    queryFn: ({ pageParam }) =>
+      apiClient.listDocuments({
+        limit: PAGE_SIZE,
+        ...(pageParam ? { cursor: pageParam as string } : {}),
+      }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+  });
+}
+
 export function DocumentsPage() {
-  const { data: documents, isLoading, error } = useDocuments();
+  const {
+    data: paginatedData,
+    isLoading,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = usePaginatedDocuments();
   const [createOpen, setCreateOpen] = useState(false);
 
-  const groups = useMemo(() => (documents ? groupDocumentsByPrefix(documents) : []), [documents]);
+  const documents = useMemo(
+    () => paginatedData?.pages.flatMap((page) => page.documents) ?? [],
+    [paginatedData],
+  );
+
+  const groups = useMemo(() => groupDocumentsByPrefix(documents), [documents]);
 
   return (
     <div className={styles.page}>
@@ -80,7 +106,7 @@ export function DocumentsPage() {
         <p className={styles.error}>Failed to load documents: {(error as Error).message}</p>
       )}
 
-      {documents && groups.length === 0 && <p className={styles.empty}>No documents found.</p>}
+      {!isLoading && documents.length === 0 && <p className={styles.empty}>No documents found.</p>}
 
       {groups.map((group) => (
         <Panel
@@ -94,6 +120,19 @@ export function DocumentsPage() {
           </ul>
         </Panel>
       ))}
+
+      {hasNextPage && (
+        <div className={styles.center}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? "Loading..." : "Load more"}
+          </Button>
+        </div>
+      )}
 
       <DocumentCreateModal
         open={createOpen}
@@ -115,6 +154,7 @@ function DocumentRow({ doc }: DocumentRowProps) {
   const deleteMutation = useMutation({
     mutationFn: () => apiClient.deleteDocument(doc.document_id),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
       queryClient.invalidateQueries({ queryKey: ["documents"] });
       addToast("Document deleted", "success");
       setDeleteOpen(false);
@@ -227,6 +267,7 @@ function DocumentCreateModal({ open, onClose }: DocumentCreateModalProps) {
       }),
     onSuccess: (data) => {
       resetForm();
+      queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
       queryClient.invalidateQueries({ queryKey: ["documents"] });
       addToast(`Document ${data.document_id} created`, "success");
       onClose();
