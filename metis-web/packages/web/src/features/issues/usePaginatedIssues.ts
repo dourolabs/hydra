@@ -31,13 +31,14 @@ function buildQuery(
  * useInfiniteQuery. Query key includes all active filters so changing
  * filters automatically refetches.
  */
-export function usePaginatedIssues(filters: IssueFilters) {
+export function usePaginatedIssues(filters: IssueFilters, enabled = true) {
   return useInfiniteQuery<ListIssuesResponse, Error>({
     queryKey: ["paginatedIssues", filters],
     queryFn: ({ pageParam }) =>
       apiClient.listIssues(buildQuery(filters, pageParam as string | undefined)),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    enabled,
   });
 }
 

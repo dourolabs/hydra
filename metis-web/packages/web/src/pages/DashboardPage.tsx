@@ -98,11 +98,12 @@ export function DashboardPage() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = usePaginatedIssues(usePaginated ? serverFilters : { q: "__disabled__" });
+  } = usePaginatedIssues(serverFilters, usePaginated);
 
   // Fall back to old hook for specific issue root selections
   const { data: legacyIssues, isLoading: legacyLoading } = useIssues(
-    !usePaginated ? (searchQuery || undefined) : "__disabled__",
+    !usePaginated ? (searchQuery || undefined) : undefined,
+    !usePaginated,
   );
 
   // Flatten paginated pages into a single array
@@ -117,25 +118,39 @@ export function DashboardPage() {
 
   const { data: sessionsByIssue } = useAllSessions();
 
-  // Badge count queries (count-only, no issue data fetched)
-  const inboxCountFilters = useMemo<IssueFilters>(() => {
+  // Badge count queries (count-only, no issue data fetched).
+  // The backend status filter accepts a single status, so we issue separate
+  // queries for "open" and "in-progress" to exclude terminal statuses
+  // (closed, failed, dropped, rejected) which should not inflate badge counts.
+  const inboxOpenFilters = useMemo<IssueFilters>(() => {
     if (!inboxLabelId || !username) return {};
-    return { labels: inboxLabelId, creator: username };
+    return { labels: inboxLabelId, creator: username, status: "open" };
   }, [inboxLabelId, username]);
 
-  const myIssuesCountFilters = useMemo<IssueFilters>(() => {
+  const inboxInProgressFilters = useMemo<IssueFilters>(() => {
+    if (!inboxLabelId || !username) return {};
+    return { labels: inboxLabelId, creator: username, status: "in-progress" };
+  }, [inboxLabelId, username]);
+
+  const myIssuesOpenFilters = useMemo<IssueFilters>(() => {
     if (!username) return {};
-    return { creator: username };
+    return { creator: username, status: "open" };
   }, [username]);
 
-  const { data: inboxCount = 0 } = useIssueCount(
-    inboxCountFilters,
-    !!inboxLabelId && !!username,
-  );
-  const { data: myIssuesCount = 0 } = useIssueCount(
-    myIssuesCountFilters,
-    !!username,
-  );
+  const myIssuesInProgressFilters = useMemo<IssueFilters>(() => {
+    if (!username) return {};
+    return { creator: username, status: "in-progress" };
+  }, [username]);
+
+  const inboxEnabled = !!inboxLabelId && !!username;
+  const { data: inboxOpenCount = 0 } = useIssueCount(inboxOpenFilters, inboxEnabled);
+  const { data: inboxInProgressCount = 0 } = useIssueCount(inboxInProgressFilters, inboxEnabled);
+  const inboxCount = inboxOpenCount + inboxInProgressCount;
+
+  const myIssuesEnabled = !!username;
+  const { data: myIssuesOpenCount = 0 } = useIssueCount(myIssuesOpenFilters, myIssuesEnabled);
+  const { data: myIssuesInProgressCount = 0 } = useIssueCount(myIssuesInProgressFilters, myIssuesEnabled);
+  const myIssuesCount = myIssuesOpenCount + myIssuesInProgressCount;
 
   const assignees = useMemo(() => {
     const set = new Set<string>();
@@ -149,7 +164,7 @@ export function DashboardPage() {
   // without tree traversal since the server already filtered for us.
   // For specific issue roots ("everything" or a specific issue), use tree traversal.
   const { items: treeWorkItems, isLoading: treeLoading } =
-    useTransitiveWorkItems(isSpecialFilter ? "__skip__" : hookRootId, isSpecialFilter ? [] : issues);
+    useTransitiveWorkItems(isSpecialFilter ? null : hookRootId, isSpecialFilter ? [] : issues);
 
   const flatWorkItems = useMemo((): WorkItem[] => {
     if (!isSpecialFilter) return [];
