@@ -1037,7 +1037,7 @@ mod tests {
             .into_iter()
             .collect::<HashMap<_, _>>();
         assert!(
-            params.get("status").is_none(),
+            !params.contains_key("status"),
             "empty status vec should be omitted from serialization"
         );
     }
