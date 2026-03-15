@@ -49,7 +49,11 @@ pub async fn list_secrets(
             ApiError::internal(format!("failed to list secrets: {err}"))
         })?;
 
-    let names: Vec<String> = refs.into_iter().map(|r| r.name).collect();
+    let names: Vec<String> = refs
+        .into_iter()
+        .filter(|r| !r.internal)
+        .map(|r| r.name)
+        .collect();
     info!(username = %username, count = names.len(), "list_secrets completed");
     Ok(Json(ListSecretsResponse { secrets: names }))
 }
@@ -71,6 +75,21 @@ pub async fn set_secret(
     }
 
     info!(username = %username, secret_name = %name, "set_secret invoked");
+
+    // Reject if the secret is already stored as internal
+    let refs = state
+        .store
+        .list_user_secret_names(&username)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = %err, "failed to check secret internality");
+            ApiError::internal(format!("failed to check secret: {err}"))
+        })?;
+    if refs.iter().any(|r| r.name == name && r.internal) {
+        return Err(ApiError::forbidden(
+            "cannot modify an internal secret via the API",
+        ));
+    }
 
     let encrypted = state
         .secret_manager
@@ -109,6 +128,21 @@ pub async fn delete_secret(
     }
 
     info!(username = %username, secret_name = %name, "delete_secret invoked");
+
+    // Reject if the secret is internal
+    let refs = state
+        .store
+        .list_user_secret_names(&username)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = %err, "failed to check secret internality");
+            ApiError::internal(format!("failed to check secret: {err}"))
+        })?;
+    if refs.iter().any(|r| r.name == name && r.internal) {
+        return Err(ApiError::forbidden(
+            "cannot modify an internal secret via the API",
+        ));
+    }
 
     state
         .store
