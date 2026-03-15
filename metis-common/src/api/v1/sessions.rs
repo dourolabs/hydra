@@ -5,7 +5,7 @@ use crate::{
     users::Username,
 };
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -443,62 +443,6 @@ impl SessionVersionRecord {
     }
 }
 
-fn serialize_issue_ids<S>(ids: &[IssueId], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let s = ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    serializer.serialize_str(&s)
-}
-
-fn deserialize_issue_ids<'de, D>(deserializer: D) -> Result<Vec<IssueId>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s.is_empty() {
-        return Ok(Vec::new());
-    }
-    s.split(',')
-        .map(|part| part.trim().parse().map_err(de::Error::custom))
-        .collect()
-}
-
-fn serialize_statuses<S>(statuses: &[Status], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let s = statuses
-        .iter()
-        .map(|status| {
-            let v = serde_json::to_value(status).expect("Status serializes to JSON");
-            v.as_str().expect("Status serializes to string").to_string()
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    serializer.serialize_str(&s)
-}
-
-fn deserialize_statuses<'de, D>(deserializer: D) -> Result<Vec<Status>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s.is_empty() {
-        return Ok(Vec::new());
-    }
-    s.split(',')
-        .map(|part| {
-            let trimmed = part.trim();
-            serde_json::from_value(Value::String(trimmed.to_string())).map_err(de::Error::custom)
-        })
-        .collect()
-}
-
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -512,8 +456,8 @@ pub struct SearchSessionsQuery {
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
-        serialize_with = "serialize_issue_ids",
-        deserialize_with = "deserialize_issue_ids"
+        serialize_with = "super::serde_helpers::serialize_issue_ids",
+        deserialize_with = "super::serde_helpers::deserialize_issue_ids"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub spawned_from_ids: Vec<IssueId>,
@@ -524,8 +468,8 @@ pub struct SearchSessionsQuery {
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
-        serialize_with = "serialize_statuses",
-        deserialize_with = "deserialize_statuses"
+        serialize_with = "super::serde_helpers::serialize_statuses",
+        deserialize_with = "super::serde_helpers::deserialize_statuses"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub status: Vec<Status>,
