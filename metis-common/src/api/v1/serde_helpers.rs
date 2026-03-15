@@ -1,13 +1,17 @@
-use crate::task_status::Status;
-use serde::{Deserialize, Deserializer, Serializer, de};
-use serde_json::Value;
 use std::fmt::Display;
 use std::str::FromStr;
 
-pub(crate) fn serialize_comma_separated<T: Display, S: Serializer>(
-    items: &[T],
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
+use serde::de;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
+
+/// Serialize a `Vec<T>` as a comma-separated string, where each element uses
+/// its `Display` impl.
+pub fn serialize_comma_separated<T, S>(items: &[T], serializer: S) -> Result<S::Ok, S::Error>
+where
+    T: Display,
+    S: Serializer,
+{
     let s = items
         .iter()
         .map(|item| item.to_string())
@@ -16,7 +20,9 @@ pub(crate) fn serialize_comma_separated<T: Display, S: Serializer>(
     serializer.serialize_str(&s)
 }
 
-pub(crate) fn deserialize_comma_separated<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
+/// Deserialize a comma-separated string into a `Vec<T>`, where each element is
+/// parsed via its `FromStr` impl.
+pub fn deserialize_comma_separated<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
     T: FromStr,
     T::Err: Display,
@@ -31,23 +37,31 @@ where
         .collect()
 }
 
-pub(crate) fn serialize_statuses<S>(statuses: &[Status], serializer: S) -> Result<S::Ok, S::Error>
+/// Serialize a `Vec<T>` as a comma-separated string, where each element is
+/// serialized to JSON first (for types that serialize as a JSON string but
+/// don't implement `Display`/`FromStr`).
+pub fn serialize_comma_separated_json<T, S>(items: &[T], serializer: S) -> Result<S::Ok, S::Error>
 where
+    T: Serialize,
     S: Serializer,
 {
-    let s = statuses
+    let s = items
         .iter()
-        .map(|status| {
-            let v = serde_json::to_value(status).expect("Status serializes to JSON");
-            v.as_str().expect("Status serializes to string").to_string()
+        .map(|item| {
+            let v = serde_json::to_value(item).expect("value serializes to JSON");
+            v.as_str().expect("value serializes to string").to_string()
         })
         .collect::<Vec<_>>()
         .join(",");
     serializer.serialize_str(&s)
 }
 
-pub(crate) fn deserialize_statuses<'de, D>(deserializer: D) -> Result<Vec<Status>, D::Error>
+/// Deserialize a comma-separated string into a `Vec<T>`, where each element is
+/// deserialized from a JSON string value (for types that don't implement
+/// `FromStr`).
+pub fn deserialize_comma_separated_json<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
 where
+    T: serde::de::DeserializeOwned,
     D: Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
