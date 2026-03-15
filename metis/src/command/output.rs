@@ -1147,6 +1147,87 @@ pub fn render_mark_all_read(
     Ok(())
 }
 
+pub fn render_relations(
+    format: ResolvedOutputFormat,
+    output_mode: &crate::command::relations::RelationsOutputFormat,
+    response: &metis_common::api::v1::relations::ListRelationsResponse,
+    writer: &mut impl Write,
+) -> Result<()> {
+    use crate::command::relations::RelationsOutputFormat;
+
+    match output_mode {
+        RelationsOutputFormat::Json => {
+            for relation in &response.relations {
+                serde_json::to_writer(&mut *writer, relation)?;
+                writer.write_all(b"\n")?;
+            }
+            writer.flush()?;
+        }
+        RelationsOutputFormat::Ids => {
+            for relation in &response.relations {
+                // When using --object, both source and target are relevant;
+                // for directed queries the "other side" is more useful, but
+                // we don't know the query direction here, so emit target_id
+                // which is the most common use case (piping related IDs).
+                writeln!(writer, "{}", relation.target_id)?;
+            }
+            writer.flush()?;
+        }
+        RelationsOutputFormat::Table => match format {
+            ResolvedOutputFormat::Jsonl => {
+                for relation in &response.relations {
+                    serde_json::to_writer(&mut *writer, relation)?;
+                    writer.write_all(b"\n")?;
+                }
+                writer.flush()?;
+            }
+            ResolvedOutputFormat::Pretty => {
+                if response.relations.is_empty() {
+                    writeln!(writer, "No relations found.")?;
+                } else {
+                    // Compute column widths.
+                    let source_w = response
+                        .relations
+                        .iter()
+                        .map(|r| r.source_id.len())
+                        .max()
+                        .unwrap_or(6)
+                        .max(6);
+                    let rel_w = response
+                        .relations
+                        .iter()
+                        .map(|r| r.rel_type.len())
+                        .max()
+                        .unwrap_or(8)
+                        .max(8);
+
+                    writeln!(
+                        writer,
+                        "{:<source_w$}  {:<rel_w$}  TARGET",
+                        "SOURCE", "REL TYPE"
+                    )?;
+                    writeln!(
+                        writer,
+                        "{:<source_w$}  {:<rel_w$}  {}",
+                        "-".repeat(source_w),
+                        "-".repeat(rel_w),
+                        "-".repeat(6)
+                    )?;
+                    for relation in &response.relations {
+                        writeln!(
+                            writer,
+                            "{:<source_w$}  {:<rel_w$}  {}",
+                            relation.source_id, relation.rel_type, relation.target_id
+                        )?;
+                    }
+                }
+                writer.flush()?;
+            }
+        },
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -19,7 +19,7 @@ use metis_common::{
     api::v1::notifications::{
         ListNotificationsQuery, ListNotificationsResponse, MarkReadResponse, UnreadCountResponse,
     },
-    api::v1::relations::CreateRelationRequest,
+    api::v1::relations::{CreateRelationRequest, ListRelationsRequest, ListRelationsResponse},
     api::v1::secrets::{ListSecretsResponse, SetSecretRequest},
     documents::{
         DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
@@ -290,6 +290,8 @@ pub trait MetisClientInterface: Send + Sync {
         &self,
         before: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<MarkReadResponse>;
+
+    async fn list_relations(&self, query: &ListRelationsRequest) -> Result<ListRelationsResponse>;
 
     async fn list_labels(&self, query: &SearchLabelsQuery) -> Result<ListLabelsResponse>;
     async fn create_label(&self, request: &UpsertLabelRequest) -> Result<UpsertLabelResponse>;
@@ -1835,6 +1837,27 @@ impl MetisClient {
         Ok(())
     }
 
+    /// Call `GET /v1/relations/` to list relations.
+    pub async fn list_relations(
+        &self,
+        query: &ListRelationsRequest,
+    ) -> Result<ListRelationsResponse> {
+        let url = self.endpoint("/v1/relations/")?;
+        let response = self
+            .authed(self.http.get(url))
+            .query(query)
+            .send()
+            .await
+            .context("failed to fetch relations")?
+            .error_for_status_with_body("metis-server returned an error while listing relations")
+            .await?;
+
+        response
+            .json::<ListRelationsResponse>()
+            .await
+            .context("failed to decode list relations response")
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -2290,6 +2313,10 @@ impl MetisClientInterface for MetisClient {
         before: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<MarkReadResponse> {
         MetisClient::mark_all_notifications_read(self, before).await
+    }
+
+    async fn list_relations(&self, query: &ListRelationsRequest) -> Result<ListRelationsResponse> {
+        MetisClient::list_relations(self, query).await
     }
 
     async fn list_labels(&self, query: &SearchLabelsQuery) -> Result<ListLabelsResponse> {
