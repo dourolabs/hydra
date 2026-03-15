@@ -1,6 +1,7 @@
 use crate::domain::issues::{Issue, IssueStatus, IssueType};
 use crate::domain::users::Username;
 use crate::test_utils::{spawn_test_server, test_client};
+use metis_common::MetisId;
 use metis_common::api::v1::{
     issues::{UpsertIssueRequest, UpsertIssueResponse},
     relations::{
@@ -13,8 +14,12 @@ fn default_user() -> Username {
     Username::from("creator")
 }
 
-/// Helper: create an issue and return its ID as a string.
-async fn create_issue(client: &reqwest::Client, base: &str, title: &str) -> anyhow::Result<String> {
+/// Helper: create an issue and return its ID.
+async fn create_issue(
+    client: &reqwest::Client,
+    base: &str,
+    title: &str,
+) -> anyhow::Result<MetisId> {
     let resp: UpsertIssueResponse = client
         .post(format!("{base}/v1/issues"))
         .json(&UpsertIssueRequest::new(
@@ -39,7 +44,7 @@ async fn create_issue(client: &reqwest::Client, base: &str, title: &str) -> anyh
         .error_for_status()?
         .json()
         .await?;
-    Ok(resp.issue_id.to_string())
+    Ok(MetisId::from(resp.issue_id))
 }
 
 // ===== POST /v1/relations =====
