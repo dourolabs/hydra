@@ -16,6 +16,7 @@ mod messages;
 mod messages_e2e;
 mod notifications;
 mod patches;
+mod relations;
 mod repositories;
 mod secrets;
 mod sessions;

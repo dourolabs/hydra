@@ -11,6 +11,7 @@ pub mod messages;
 pub mod notifications;
 pub mod pagination;
 pub mod patches;
+pub mod relations;
 pub mod repositories;
 pub mod secrets;
 pub mod session_status;

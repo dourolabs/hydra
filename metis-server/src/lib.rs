@@ -297,6 +297,12 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::documents::get_document_version),
         )
         .route(
+            "/v1/relations",
+            get(routes::relations::list_relations)
+                .post(routes::relations::create_relation)
+                .delete(routes::relations::remove_relation),
+        )
+        .route(
             "/v1/labels",
             get(routes::labels::list_labels).post(routes::labels::create_label),
         )
