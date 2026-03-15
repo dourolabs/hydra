@@ -1171,6 +1171,7 @@ mod tests {
                 title: "Release notes".to_string(),
                 path: Some("docs/release.md".to_string()),
                 created_by: Some(created_by),
+                issue_id: None,
                 body: DocumentBodyInput {
                     body: None,
                     body_file: Some(file.path().to_path_buf()),
@@ -1215,6 +1216,7 @@ mod tests {
                 title: Some("Updated".to_string()),
                 path: None,
                 clear_path: true,
+                issue_id: None,
                 body: DocumentBodyInput {
                     body: Some("new body".to_string()),
                     body_file: None,
@@ -1252,6 +1254,7 @@ mod tests {
                 title: None,
                 path: None,
                 clear_path: false,
+                issue_id: None,
                 body: DocumentBodyInput::default(),
             },
         )
@@ -2498,6 +2501,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: Some("/playbooks".to_string()),
+                issue_id: None,
             },
         )
         .await
@@ -2755,6 +2759,7 @@ mod tests {
                 directory: Some(dir.path().to_path_buf()),
                 dry_run: false,
                 path_prefix: Some("/playbooks".to_string()),
+                issue_id: None,
             },
         )
         .await
