@@ -23,8 +23,8 @@ const MAX_BATCH_IDS: usize = 100;
 /// Convert a store `ObjectRelationship` to the wire `RelationResponse`.
 fn to_response(rel: &ObjectRelationship) -> RelationResponse {
     RelationResponse {
-        source_id: rel.source_id.to_string(),
-        target_id: rel.target_id.to_string(),
+        source_id: rel.source_id.clone(),
+        target_id: rel.target_id.clone(),
         rel_type: rel.rel_type.as_str().to_string(),
     }
 }
@@ -107,15 +107,11 @@ pub async fn list_relations(
 
     let relations: Vec<ObjectRelationship>;
 
-    if let Some(ref object_id_str) = query.object_id {
+    if let Some(ref object_id) = query.object_id {
         // object_id mode: query as source and as target, merge results
-        let object_id: MetisId = object_id_str
-            .parse()
-            .map_err(|e| ApiError::bad_request(format!("invalid object_id: {e}")))?;
-
         let (as_source, as_target) = tokio::try_join!(
-            store.get_relationships(Some(&object_id), None, rel_type),
-            store.get_relationships(None, Some(&object_id), rel_type),
+            store.get_relationships(Some(object_id), None, rel_type),
+            store.get_relationships(None, Some(object_id), rel_type),
         )
         .map_err(map_store_error)?;
 
@@ -157,44 +153,18 @@ pub async fn list_relations(
             .map_err(map_store_error)?;
     } else if transitive {
         // Transitive mode
-        let source_id = query
-            .source_id
-            .as_deref()
-            .map(|s| s.parse::<MetisId>())
-            .transpose()
-            .map_err(|e| ApiError::bad_request(format!("invalid source_id: {e}")))?;
-        let target_id = query
-            .target_id
-            .as_deref()
-            .map(|s| s.parse::<MetisId>())
-            .transpose()
-            .map_err(|e| ApiError::bad_request(format!("invalid target_id: {e}")))?;
-
         relations = store
             .get_relationships_transitive(
-                source_id.as_ref(),
-                target_id.as_ref(),
+                query.source_id.as_ref(),
+                query.target_id.as_ref(),
                 rel_type.expect("validated above"),
             )
             .await
             .map_err(map_store_error)?;
     } else {
         // Simple filter mode
-        let source_id = query
-            .source_id
-            .as_deref()
-            .map(|s| s.parse::<MetisId>())
-            .transpose()
-            .map_err(|e| ApiError::bad_request(format!("invalid source_id: {e}")))?;
-        let target_id = query
-            .target_id
-            .as_deref()
-            .map(|s| s.parse::<MetisId>())
-            .transpose()
-            .map_err(|e| ApiError::bad_request(format!("invalid target_id: {e}")))?;
-
         relations = store
-            .get_relationships(source_id.as_ref(), target_id.as_ref(), rel_type)
+            .get_relationships(query.source_id.as_ref(), query.target_id.as_ref(), rel_type)
             .await
             .map_err(map_store_error)?;
     }
@@ -218,25 +188,22 @@ pub async fn create_relation(
 ) -> Result<impl IntoResponse, ApiError> {
     info!(actor = %actor.name(), "create_relation invoked");
 
-    let source_id: MetisId = payload
-        .source_id
-        .parse()
-        .map_err(|e| ApiError::bad_request(format!("invalid source_id: {e}")))?;
-    let target_id: MetisId = payload
-        .target_id
-        .parse()
-        .map_err(|e| ApiError::bad_request(format!("invalid target_id: {e}")))?;
     let rel_type = parse_rel_type(&payload.rel_type)?;
 
     let was_created = state
         .store
-        .add_relationship_with_actor(&source_id, &target_id, rel_type, ActorRef::from(&actor))
+        .add_relationship_with_actor(
+            &payload.source_id,
+            &payload.target_id,
+            rel_type,
+            ActorRef::from(&actor),
+        )
         .await
         .map_err(map_store_error)?;
 
     let response_body = RelationResponse {
-        source_id: source_id.to_string(),
-        target_id: target_id.to_string(),
+        source_id: payload.source_id,
+        target_id: payload.target_id,
         rel_type: rel_type.as_str().to_string(),
     };
 
@@ -258,19 +225,16 @@ pub async fn remove_relation(
 ) -> Result<Json<RemoveRelationResponse>, ApiError> {
     info!(actor = %actor.name(), "remove_relation invoked");
 
-    let source_id: MetisId = payload
-        .source_id
-        .parse()
-        .map_err(|e| ApiError::bad_request(format!("invalid source_id: {e}")))?;
-    let target_id: MetisId = payload
-        .target_id
-        .parse()
-        .map_err(|e| ApiError::bad_request(format!("invalid target_id: {e}")))?;
     let rel_type = parse_rel_type(&payload.rel_type)?;
 
     let removed = state
         .store
-        .remove_relationship_with_actor(&source_id, &target_id, rel_type, ActorRef::from(&actor))
+        .remove_relationship_with_actor(
+            &payload.source_id,
+            &payload.target_id,
+            rel_type,
+            ActorRef::from(&actor),
+        )
         .await
         .map_err(map_store_error)?;
 
