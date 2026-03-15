@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
-pub struct ObjectRelationResponse {
+pub struct RelationResponse {
     pub source_id: String,
     pub target_id: String,
     pub rel_type: String,
@@ -41,7 +41,7 @@ pub struct ListRelationsRequest {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct ListRelationsResponse {
-    pub relations: Vec<ObjectRelationResponse>,
+    pub relations: Vec<RelationResponse>,
 }
 
 /// Request body for `POST /v1/relations/`.

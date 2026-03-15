@@ -10,8 +10,8 @@ use metis_common::{
     api::v1::{
         ApiError,
         relations::{
-            CreateRelationRequest, ListRelationsRequest, ListRelationsResponse,
-            ObjectRelationResponse, RemoveRelationRequest, RemoveRelationResponse,
+            CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RelationResponse,
+            RemoveRelationRequest, RemoveRelationResponse,
         },
     },
 };
@@ -20,9 +20,9 @@ use tracing::{error, info};
 /// Maximum number of IDs allowed in a batch query (source_ids or target_ids).
 const MAX_BATCH_IDS: usize = 100;
 
-/// Convert a store `ObjectRelationship` to the wire `ObjectRelationResponse`.
-fn to_response(rel: &ObjectRelationship) -> ObjectRelationResponse {
-    ObjectRelationResponse {
+/// Convert a store `ObjectRelationship` to the wire `RelationResponse`.
+fn to_response(rel: &ObjectRelationship) -> RelationResponse {
+    RelationResponse {
         source_id: rel.source_id.to_string(),
         target_id: rel.target_id.to_string(),
         rel_type: rel.rel_type.as_str().to_string(),
@@ -43,8 +43,7 @@ fn parse_id_list(raw: &str) -> Result<Vec<MetisId>, ApiError> {
 
 /// Parse an optional rel_type string into a RelationshipType.
 fn parse_rel_type(s: &str) -> Result<RelationshipType, ApiError> {
-    s.parse::<RelationshipType>()
-        .map_err(ApiError::bad_request)
+    s.parse::<RelationshipType>().map_err(ApiError::bad_request)
 }
 
 /// GET /v1/relations/ — query relations with filters.
@@ -235,7 +234,7 @@ pub async fn create_relation(
         .await
         .map_err(map_store_error)?;
 
-    let response_body = ObjectRelationResponse {
+    let response_body = RelationResponse {
         source_id: source_id.to_string(),
         target_id: target_id.to_string(),
         rel_type: rel_type.as_str().to_string(),
