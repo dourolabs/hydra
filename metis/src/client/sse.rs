@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::api::v1::events::{
-    EntityEventData, HeartbeatEventData, ResyncEventData, SnapshotEventData, SseEventType,
+    ConnectedEventData, EntityEventData, HeartbeatEventData, ResyncEventData, SseEventType,
 };
 use std::pin::Pin;
 
@@ -23,9 +23,10 @@ impl SseEvent {
         serde_json::from_str(&self.data).map_err(|e| anyhow!("failed to parse entity event: {e}"))
     }
 
-    /// Parse the data payload as a snapshot event.
-    pub fn as_snapshot(&self) -> Result<SnapshotEventData> {
-        serde_json::from_str(&self.data).map_err(|e| anyhow!("failed to parse snapshot event: {e}"))
+    /// Parse the data payload as a connected event.
+    pub fn as_connected(&self) -> Result<ConnectedEventData> {
+        serde_json::from_str(&self.data)
+            .map_err(|e| anyhow!("failed to parse connected event: {e}"))
     }
 
     /// Parse the data payload as a resync event.
@@ -179,14 +180,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parses_snapshot_event() {
-        let raw = b"event: snapshot\nid: 1\ndata: {\"versions\":{\"i-abc\":2}}\n\n";
+    async fn parses_connected_event() {
+        let raw = b"event: connected\nid: 1\ndata: {\"current_seq\":42}\n\n";
         let mut stream = parse_sse_event_stream(bytes_stream(raw));
 
         let event = stream.next().await.unwrap().unwrap();
-        assert_eq!(event.event_type, SseEventType::Snapshot);
-        let snapshot = event.as_snapshot().unwrap();
-        assert_eq!(snapshot.versions.get("i-abc"), Some(&2));
+        assert_eq!(event.event_type, SseEventType::Connected);
+        let connected = event.as_connected().unwrap();
+        assert_eq!(connected.current_seq, 42);
     }
 
     #[tokio::test]

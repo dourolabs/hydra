@@ -2,12 +2,12 @@ import type { SseEventType } from "./generated/SseEventType";
 import type { EntityEventData } from "./generated/EntityEventData";
 import type { HeartbeatEventData } from "./generated/HeartbeatEventData";
 import type { ResyncEventData } from "./generated/ResyncEventData";
-import type { SnapshotEventData } from "./generated/SnapshotEventData";
+import type { ConnectedEventData } from "./generated/ConnectedEventData";
 
 /** A parsed SSE event from the metis-server /v1/events stream. */
 export type MetisEvent =
   | { type: "entity"; eventType: SseEventType; data: EntityEventData; id: number }
-  | { type: "snapshot"; data: SnapshotEventData; id: number }
+  | { type: "connected"; data: ConnectedEventData; id: number }
   | { type: "resync"; data: ResyncEventData; id: number }
   | { type: "heartbeat"; data: HeartbeatEventData; id: number };
 
@@ -32,15 +32,15 @@ export interface EventSubscriptionOptions {
   lastEventId?: number;
 }
 
-const SNAPSHOT_EVENTS: ReadonlySet<string> = new Set(["snapshot"]);
+const CONNECTED_EVENTS: ReadonlySet<string> = new Set(["connected"]);
 const RESYNC_EVENTS: ReadonlySet<string> = new Set(["resync"]);
 const HEARTBEAT_EVENTS: ReadonlySet<string> = new Set(["heartbeat"]);
 
 function parseEvent(eventType: string, data: string, id: string): MetisEvent | null {
   const parsedId = id ? Number(id) : 0;
 
-  if (SNAPSHOT_EVENTS.has(eventType)) {
-    return { type: "snapshot", data: JSON.parse(data) as SnapshotEventData, id: parsedId };
+  if (CONNECTED_EVENTS.has(eventType)) {
+    return { type: "connected", data: JSON.parse(data) as ConnectedEventData, id: parsedId };
   }
   if (RESYNC_EVENTS.has(eventType)) {
     return { type: "resync", data: JSON.parse(data) as ResyncEventData, id: parsedId };
@@ -102,7 +102,7 @@ export class MetisEventSource {
       "label_deleted",
       "message_created",
       "message_updated",
-      "snapshot",
+      "connected",
       "resync",
       "heartbeat",
     ];
