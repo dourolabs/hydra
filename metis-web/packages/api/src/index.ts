@@ -1,5 +1,10 @@
 export { MetisApiClient } from "./client";
 export type { MetisApiClientOptions } from "./client";
+export type {
+  RelationResponse,
+  ListRelationsRequest,
+  ListRelationsResponse,
+} from "./client";
 
 export { ApiError } from "./errors";
 

@@ -89,6 +89,7 @@ export function createSessionRoutes(store: Store): Hono {
     const includeDeleted = c.req.query("include_deleted") === "true";
     const q = c.req.query("q");
     const spawnedFrom = c.req.query("spawned_from");
+    const spawnedFromIds = c.req.query("spawned_from_ids");
     const status = c.req.query("status");
 
     const items = store.list<Session>(COLLECTION, includeDeleted);
@@ -102,6 +103,10 @@ export function createSessionRoutes(store: Store): Hono {
     }
     if (spawnedFrom) {
       filtered = filtered.filter(({ entry }) => entry.data.spawned_from === spawnedFrom);
+    }
+    if (spawnedFromIds) {
+      const ids = new Set(spawnedFromIds.split(",").map((s) => s.trim()));
+      filtered = filtered.filter(({ entry }) => entry.data.spawned_from != null && ids.has(entry.data.spawned_from));
     }
     if (status) {
       const statuses = new Set(status.split(","));

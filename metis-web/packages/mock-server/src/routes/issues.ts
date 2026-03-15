@@ -140,14 +140,20 @@ export function createIssueRoutes(store: Store): Hono {
   // GET /v1/issues
   app.get("/v1/issues", (c) => {
     const includeDeleted = c.req.query("include_deleted") === "true";
+    const ids = c.req.query("ids");
     const issueType = c.req.query("issue_type");
     const status = c.req.query("status");
     const assignee = c.req.query("assignee");
+    const creator = c.req.query("creator");
     const q = c.req.query("q");
 
     const items = store.list<Issue>(COLLECTION, includeDeleted);
 
     let filtered = items;
+    if (ids) {
+      const idSet = new Set(ids.split(",").map((s) => s.trim()));
+      filtered = filtered.filter(({ id }) => idSet.has(id));
+    }
     if (issueType) {
       filtered = filtered.filter(({ entry }) => entry.data.type === issueType);
     }
@@ -156,6 +162,9 @@ export function createIssueRoutes(store: Store): Hono {
     }
     if (assignee) {
       filtered = filtered.filter(({ entry }) => entry.data.assignee === assignee);
+    }
+    if (creator) {
+      filtered = filtered.filter(({ entry }) => entry.data.creator === creator);
     }
     if (q) {
       const lower = q.toLowerCase();

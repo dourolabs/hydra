@@ -1,4 +1,5 @@
 import { ApiError } from "./errors";
+import type { MetisId } from "./generated/MetisId";
 import type { CreateSessionRequest } from "./generated/CreateSessionRequest";
 import type { CreateSessionResponse } from "./generated/CreateSessionResponse";
 import type { SearchSessionsQuery } from "./generated/SearchSessionsQuery";
@@ -63,6 +64,30 @@ import {
   type MetisEventHandler,
   type MetisEventErrorHandler,
 } from "./sse";
+
+// ---------------------------------------------------------------------------
+// Relations types (not yet in generated/ — defined inline)
+// ---------------------------------------------------------------------------
+
+export interface RelationResponse {
+  source_id: MetisId;
+  target_id: MetisId;
+  rel_type: string;
+}
+
+export interface ListRelationsRequest {
+  source_id?: MetisId;
+  source_ids?: string;
+  target_id?: MetisId;
+  target_ids?: string;
+  object_id?: MetisId;
+  rel_type?: string;
+  transitive?: boolean;
+}
+
+export interface ListRelationsResponse {
+  relations: RelationResponse[];
+}
 
 export interface MetisApiClientOptions {
   /** Base URL prefix for API requests. Defaults to "/api". */
@@ -553,6 +578,15 @@ export class MetisApiClient {
   /** GET /v1/version */
   getVersion(): Promise<VersionResponse> {
     return this.get("/v1/version");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Relations
+  // ---------------------------------------------------------------------------
+
+  /** GET /v1/relations */
+  listRelations(query: ListRelationsRequest): Promise<ListRelationsResponse> {
+    return this.get("/v1/relations", query as Record<string, unknown>);
   }
 
   // ---------------------------------------------------------------------------
