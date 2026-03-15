@@ -42,26 +42,9 @@ async fn events_endpoint_requires_auth() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn events_endpoint_sends_snapshot_on_first_connect() -> anyhow::Result<()> {
+async fn events_endpoint_sends_connected_on_first_connect() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
-
-    // Create an issue first so the snapshot has something to include.
-    let create_resp = client
-        .post(format!("{}/v1/issues", server.base_url()))
-        .json(&json!({
-            "issue": {
-                "type": "task",
-                "description": "test issue for snapshot",
-                "creator": "tester",
-                "progress": "",
-                "status": "open"
-            }
-        }))
-        .send()
-        .await?;
-    assert!(create_resp.status().is_success());
-    let created: UpsertIssueResponse = create_resp.json().await?;
 
     // Connect to SSE stream and read the first events.
     let mut response = client
@@ -72,14 +55,14 @@ async fn events_endpoint_sends_snapshot_on_first_connect() -> anyhow::Result<()>
 
     assert!(response.status().is_success());
 
-    // Read chunks until we get the snapshot event or timeout.
+    // Read chunks until we get the connected event or timeout.
     let mut accumulated = String::new();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
     while tokio::time::Instant::now() < deadline {
         match tokio::time::timeout(std::time::Duration::from_millis(500), response.chunk()).await {
             Ok(Ok(Some(chunk))) => {
                 accumulated.push_str(&String::from_utf8_lossy(&chunk));
-                if accumulated.contains("event: snapshot") {
+                if accumulated.contains("event: connected") {
                     break;
                 }
             }
@@ -88,14 +71,13 @@ async fn events_endpoint_sends_snapshot_on_first_connect() -> anyhow::Result<()>
     }
 
     assert!(
-        accumulated.contains("event: snapshot"),
-        "expected snapshot event in SSE stream, got: {accumulated}"
+        accumulated.contains("event: connected"),
+        "expected connected event in SSE stream, got: {accumulated}"
     );
-    // The snapshot should include the issue we created.
+    // The connected event should include a current_seq field.
     assert!(
-        accumulated.contains(&created.issue_id.to_string()),
-        "snapshot should contain the created issue ID {}, got: {accumulated}",
-        created.issue_id
+        accumulated.contains("current_seq"),
+        "connected event should contain current_seq, got: {accumulated}",
     );
 
     Ok(())

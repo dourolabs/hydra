@@ -33,7 +33,6 @@ uuid = { version = "1.10", features = ["v4"] }
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 bollard = "0.18"
-tar = "0.4"
 dashmap = "6.1"
 metis-common = { path = "../metis-common" }
 tracing = "0.1"
