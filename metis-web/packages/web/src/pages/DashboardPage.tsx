@@ -116,38 +116,23 @@ export function DashboardPage() {
   const isLoading = usePaginated ? paginatedLoading : legacyLoading;
 
   // Badge count queries (count-only, no issue data fetched).
-  // The backend status filter accepts a single status, so we issue separate
-  // queries for "open" and "in-progress" to exclude terminal statuses
-  // (closed, failed, dropped, rejected) which should not inflate badge counts.
-  const inboxOpenFilters = useMemo<IssueFilters>(() => {
+  // Uses multi-status filter to get open + in-progress counts in a single call
+  // per category, excluding terminal statuses (closed, failed, dropped, rejected).
+  const inboxCountFilters = useMemo<IssueFilters>(() => {
     if (!inboxLabelId || !username) return {};
-    return { labels: inboxLabelId, creator: username, status: "open" };
+    return { labels: inboxLabelId, creator: username, status: "open,in-progress" };
   }, [inboxLabelId, username]);
 
-  const inboxInProgressFilters = useMemo<IssueFilters>(() => {
-    if (!inboxLabelId || !username) return {};
-    return { labels: inboxLabelId, creator: username, status: "in-progress" };
-  }, [inboxLabelId, username]);
-
-  const myIssuesOpenFilters = useMemo<IssueFilters>(() => {
+  const myIssuesCountFilters = useMemo<IssueFilters>(() => {
     if (!username) return {};
-    return { creator: username, status: "open" };
-  }, [username]);
-
-  const myIssuesInProgressFilters = useMemo<IssueFilters>(() => {
-    if (!username) return {};
-    return { creator: username, status: "in-progress" };
+    return { creator: username, status: "open,in-progress" };
   }, [username]);
 
   const inboxEnabled = !!inboxLabelId && !!username;
-  const { data: inboxOpenCount = 0 } = useIssueCount(inboxOpenFilters, inboxEnabled);
-  const { data: inboxInProgressCount = 0 } = useIssueCount(inboxInProgressFilters, inboxEnabled);
-  const inboxCount = inboxOpenCount + inboxInProgressCount;
+  const { data: inboxCount = 0 } = useIssueCount(inboxCountFilters, inboxEnabled);
 
   const myIssuesEnabled = !!username;
-  const { data: myIssuesOpenCount = 0 } = useIssueCount(myIssuesOpenFilters, myIssuesEnabled);
-  const { data: myIssuesInProgressCount = 0 } = useIssueCount(myIssuesInProgressFilters, myIssuesEnabled);
-  const myIssuesCount = myIssuesOpenCount + myIssuesInProgressCount;
+  const { data: myIssuesCount = 0 } = useIssueCount(myIssuesCountFilters, myIssuesEnabled);
 
   const assignees = useMemo(() => {
     const set = new Set<string>();
