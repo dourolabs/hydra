@@ -1167,7 +1167,7 @@ pub fn render_relations(
                 let source_w = response
                     .relations
                     .iter()
-                    .map(|r| r.source_id.len())
+                    .map(|r| r.source_id.to_string().len())
                     .max()
                     .unwrap_or(6)
                     .max(6);

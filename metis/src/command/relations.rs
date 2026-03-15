@@ -5,6 +5,7 @@ use crate::{
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use metis_common::api::v1::relations::ListRelationsRequest;
+use metis_common::MetisId;
 use std::io;
 
 #[derive(Debug, Subcommand)]
@@ -13,15 +14,15 @@ pub enum RelationsCommand {
     List {
         /// Filter by source object ID.
         #[arg(long, value_name = "ID")]
-        source: Option<String>,
+        source: Option<MetisId>,
 
         /// Filter by target object ID.
         #[arg(long, value_name = "ID")]
-        target: Option<String>,
+        target: Option<MetisId>,
 
         /// Show all relations where this object is source or target.
         #[arg(long, value_name = "ID")]
-        object: Option<String>,
+        object: Option<MetisId>,
 
         /// Filter by relation type (e.g. child-of, blocked-on, has-patch).
         #[arg(long, value_name = "TYPE")]
