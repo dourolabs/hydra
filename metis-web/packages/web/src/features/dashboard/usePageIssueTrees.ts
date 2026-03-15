@@ -92,15 +92,31 @@ function useDescendantSessions(descendantIds: string[]) {
 // Step 5: Fetch artifact relations (patches, documents)
 // ---------------------------------------------------------------------------
 
-function useArtifactRelations(pageIssueIds: string[], allDescendantIds: string[]) {
+function usePatchRelations(pageIssueIds: string[], allDescendantIds: string[]) {
   const allIds = [...new Set([...pageIssueIds, ...allDescendantIds])];
   const objectIds = allIds.join(",");
   return useQuery({
-    queryKey: ["relations", "artifacts", objectIds],
+    queryKey: ["relations", "has-patch", objectIds],
     queryFn: () =>
       apiClient.listRelations({
         target_ids: objectIds,
-        rel_type: "patch-for",
+        rel_type: "has-patch",
+      }),
+    enabled: allIds.length > 0,
+    staleTime: 30_000,
+    select: (data) => data.relations,
+  });
+}
+
+function useDocumentRelations(pageIssueIds: string[], allDescendantIds: string[]) {
+  const allIds = [...new Set([...pageIssueIds, ...allDescendantIds])];
+  const objectIds = allIds.join(",");
+  return useQuery({
+    queryKey: ["relations", "has-document", objectIds],
+    queryFn: () =>
+      apiClient.listRelations({
+        target_ids: objectIds,
+        rel_type: "has-document",
       }),
     enabled: allIds.length > 0,
     staleTime: 30_000,
@@ -238,8 +254,10 @@ export function usePageIssueTrees(
     useDescendantSessions(allIssueIds);
 
   // Step 5: Fetch artifact relations
-  const { data: artifactRelations, isLoading: artifactsLoading } =
-    useArtifactRelations(pageIssueIds, allDescendantIds);
+  const { data: patchRelations, isLoading: patchRelLoading } =
+    usePatchRelations(pageIssueIds, allDescendantIds);
+  const { data: documentRelations, isLoading: docRelLoading } =
+    useDocumentRelations(pageIssueIds, allDescendantIds);
 
   // Group sessions
   const sessionsByIssue = useMemo(
@@ -289,24 +307,35 @@ export function usePageIssueTrees(
         activeCache,
       );
 
-      // Patch IDs from artifact relations
-      const patchIds: string[] = [];
-      if (artifactRelations) {
-        // Get all descendant IDs for this page issue
-        const descendants = new Set<string>([pageIssueId]);
-        const queue = [pageIssueId];
-        while (queue.length > 0) {
-          const current = queue.shift()!;
-          for (const cid of childrenMap.get(current) ?? []) {
-            if (!descendants.has(cid)) {
-              descendants.add(cid);
-              queue.push(cid);
-            }
+      // Collect descendants for this page issue
+      const descendants = new Set<string>([pageIssueId]);
+      const queue = [pageIssueId];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        for (const cid of childrenMap.get(current) ?? []) {
+          if (!descendants.has(cid)) {
+            descendants.add(cid);
+            queue.push(cid);
           }
         }
-        for (const rel of artifactRelations) {
-          if (rel.rel_type === "patch-for" && descendants.has(rel.target_id)) {
+      }
+
+      // Patch IDs from has-patch relations
+      const patchIds: string[] = [];
+      if (patchRelations) {
+        for (const rel of patchRelations) {
+          if (descendants.has(rel.target_id)) {
             patchIds.push(rel.source_id);
+          }
+        }
+      }
+
+      // Document IDs from has-document relations
+      const documentIds: string[] = [];
+      if (documentRelations) {
+        for (const rel of documentRelations) {
+          if (descendants.has(rel.target_id)) {
+            documentIds.push(rel.source_id);
           }
         }
       }
@@ -315,7 +344,7 @@ export function usePageIssueTrees(
         childStatuses,
         isActive,
         patchIds,
-        documentIds: [], // documents loaded separately
+        documentIds,
       });
     }
 
@@ -326,7 +355,8 @@ export function usePageIssueTrees(
     childrenMap,
     childIssues,
     sessionsByIssue,
-    artifactRelations,
+    patchRelations,
+    documentRelations,
     username,
   ]);
 
@@ -351,7 +381,7 @@ export function usePageIssueTrees(
   }, [treeDataMap]);
 
   const isLoading =
-    childRelLoading || transitiveLoading || childIssuesLoading || sessionsLoading || artifactsLoading;
+    childRelLoading || transitiveLoading || childIssuesLoading || sessionsLoading || patchRelLoading || docRelLoading;
 
   return {
     treeDataMap,

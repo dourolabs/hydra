@@ -33,7 +33,7 @@ function buildRelationsFromIssues(store: Store): RelationResponse[] {
       relations.push({
         source_id: patchId,
         target_id: id,
-        rel_type: "patch-for",
+        rel_type: "has-patch",
       });
     }
   }
