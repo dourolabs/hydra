@@ -1147,6 +1147,64 @@ pub fn render_mark_all_read(
     Ok(())
 }
 
+pub fn render_relations(
+    format: ResolvedOutputFormat,
+    response: &metis_common::api::v1::relations::ListRelationsResponse,
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            for relation in &response.relations {
+                serde_json::to_writer(&mut *writer, relation)?;
+                writer.write_all(b"\n")?;
+            }
+            writer.flush()?;
+        }
+        ResolvedOutputFormat::Pretty => {
+            if response.relations.is_empty() {
+                writeln!(writer, "No relations found.")?;
+            } else {
+                let source_w = response
+                    .relations
+                    .iter()
+                    .map(|r| r.source_id.to_string().len())
+                    .max()
+                    .unwrap_or(6)
+                    .max(6);
+                let rel_w = response
+                    .relations
+                    .iter()
+                    .map(|r| r.rel_type.len())
+                    .max()
+                    .unwrap_or(8)
+                    .max(8);
+
+                writeln!(
+                    writer,
+                    "{:<source_w$}  {:<rel_w$}  TARGET",
+                    "SOURCE", "REL TYPE"
+                )?;
+                writeln!(
+                    writer,
+                    "{:<source_w$}  {:<rel_w$}  {}",
+                    "-".repeat(source_w),
+                    "-".repeat(rel_w),
+                    "-".repeat(6)
+                )?;
+                for relation in &response.relations {
+                    writeln!(
+                        writer,
+                        "{:<source_w$}  {:<rel_w$}  {}",
+                        relation.source_id, relation.rel_type, relation.target_id
+                    )?;
+                }
+            }
+            writer.flush()?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
