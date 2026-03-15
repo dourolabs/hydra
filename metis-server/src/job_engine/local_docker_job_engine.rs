@@ -22,8 +22,18 @@ use tracing::{error, info, warn};
 use super::{JobEngine, JobEngineError, JobStatus, MetisJob, SessionId};
 use crate::domain::actors::Actor;
 
-/// The path where the metis binary is installed inside containers.
-const CONTAINER_BINARY_PATH: &str = "/usr/local/bin/metis";
+/// Lightweight bootstrap script that verifies the copied metis binary is present
+/// and ensures its directory is on PATH so other processes can invoke it by name.
+const BOOTSTRAP_SCRIPT: &str = r#"
+if [ ! -x /usr/local/bin/metis ]; then
+  echo "ERROR: metis binary not found at /usr/local/bin/metis" >&2
+  exit 1
+fi
+case ":${PATH}:" in
+  *":/usr/local/bin:"*) ;;
+  *) export PATH="/usr/local/bin:${PATH}" ;;
+esac
+"#;
 
 /// Creates a tar archive containing the given binary data at the specified path.
 ///
@@ -297,12 +307,13 @@ impl JobEngine for LocalDockerJobEngine {
             image: Some(image.to_string()),
             env: Some(env),
             cmd: Some(vec![
-                CONTAINER_BINARY_PATH.to_string(),
-                "sessions".to_string(),
-                "worker-run".to_string(),
-                metis_id.to_string(),
-                ".".to_string(),
-                "--tempdir".to_string(),
+                "sh".to_string(),
+                "-c".to_string(),
+                format!(
+                    "{} && metis sessions worker-run {} . --tempdir",
+                    BOOTSTRAP_SCRIPT.trim(),
+                    metis_id
+                ),
             ]),
             host_config: Some(host_config),
             labels: Some(HashMap::from([(
