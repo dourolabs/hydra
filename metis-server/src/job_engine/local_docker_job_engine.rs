@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use async_trait::async_trait;
@@ -6,7 +7,7 @@ use bollard::{
     Docker,
     container::{
         Config, CreateContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
-        StartContainerOptions, WaitContainerOptions,
+        StartContainerOptions, UploadToContainerOptions, WaitContainerOptions,
     },
     image::CreateImageOptions,
     models::HostConfig,
@@ -21,40 +22,22 @@ use tracing::{error, info, warn};
 use super::{JobEngine, JobEngineError, JobStatus, MetisJob, SessionId};
 use crate::domain::actors::Actor;
 
-/// Shell script that bootstraps the metis CLI inside a container.
+/// The path where the metis binary is installed inside containers.
+const CONTAINER_BINARY_PATH: &str = "/usr/local/bin/metis";
+
+/// Creates a tar archive containing the given binary data at the specified path.
 ///
-/// - Skips download if `metis` is already on PATH.
-/// - Downloads the correct version from GitHub releases using curl (fallback to wget).
-/// - Installs to `/usr/local/bin/metis` if writable, otherwise `/tmp/metis`.
-/// - Adds the install directory to PATH if needed.
-const BOOTSTRAP_SCRIPT: &str = r#"
-if command -v metis >/dev/null 2>&1; then
-  echo "metis CLI already available, skipping download"
-else
-  METIS_URL="https://github.com/dourolabs/metis-releases/releases/download/v${METIS_CLI_VERSION}/metis-x86_64-unknown-linux-gnu"
-  if [ -w /usr/local/bin ]; then
-    INSTALL_DIR=/usr/local/bin
-  else
-    INSTALL_DIR=/tmp
-  fi
-  INSTALL_PATH="${INSTALL_DIR}/metis"
-  echo "Downloading metis CLI v${METIS_CLI_VERSION} to ${INSTALL_PATH}..."
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -o "${INSTALL_PATH}" "${METIS_URL}"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q -O "${INSTALL_PATH}" "${METIS_URL}"
-  else
-    echo "ERROR: neither curl nor wget found; cannot download metis CLI" >&2
-    exit 1
-  fi
-  chmod +x "${INSTALL_PATH}"
-  case ":${PATH}:" in
-    *":${INSTALL_DIR}:"*) ;;
-    *) export PATH="${INSTALL_DIR}:${PATH}" ;;
-  esac
-  echo "metis CLI installed successfully"
-fi
-"#;
+/// The Docker `upload_to_container` API expects a tar archive; this function
+/// produces one with a single executable file entry.
+fn create_tar_archive(binary_data: &[u8], file_name: &str) -> Result<Vec<u8>, std::io::Error> {
+    let mut archive = tar::Builder::new(Vec::new());
+    let mut header = tar::Header::new_gnu();
+    header.set_size(binary_data.len() as u64);
+    header.set_mode(0o755);
+    header.set_cksum();
+    archive.append_data(&mut header, file_name, binary_data)?;
+    archive.into_inner()
+}
 
 /// Metadata tracked in-memory for each container managed by this engine.
 struct ContainerInfo {
@@ -66,6 +49,8 @@ struct ContainerInfo {
 pub struct LocalDockerJobEngine {
     docker: Docker,
     server_url: String,
+    /// Path to the running metis binary, copied into containers at startup.
+    metis_exe_path: PathBuf,
     /// Maps metis_id → container info for tracking.
     containers: DashMap<SessionId, ContainerInfo>,
 }
@@ -75,9 +60,13 @@ impl LocalDockerJobEngine {
         let docker = Docker::connect_with_local_defaults().map_err(|e| {
             JobEngineError::Internal(format!("Failed to connect to Docker daemon: {e}"))
         })?;
+        let metis_exe_path = std::env::current_exe().map_err(|e| {
+            JobEngineError::Internal(format!("Failed to locate running metis binary: {e}"))
+        })?;
         let engine = Self {
             docker,
             server_url,
+            metis_exe_path,
             containers: DashMap::new(),
         };
         engine.recover_containers().await?;
@@ -159,11 +148,6 @@ impl LocalDockerJobEngine {
         let mut env: HashMap<String, String> = extra_env.clone();
         env.insert(ENV_METIS_ID.to_string(), metis_id.to_string());
         env.insert(ENV_METIS_TOKEN.to_string(), auth_token.to_string());
-
-        env.insert(
-            "METIS_CLI_VERSION".to_string(),
-            env!("CARGO_PKG_VERSION").to_string(),
-        );
 
         let server_url = self.server_url.trim();
         if !server_url.is_empty() {
@@ -313,12 +297,12 @@ impl JobEngine for LocalDockerJobEngine {
             image: Some(image.to_string()),
             env: Some(env),
             cmd: Some(vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                format!(
-                    "{} && metis sessions worker-run {} . --tempdir",
-                    BOOTSTRAP_SCRIPT.trim(), metis_id
-                ),
+                CONTAINER_BINARY_PATH.to_string(),
+                "sessions".to_string(),
+                "worker-run".to_string(),
+                metis_id.to_string(),
+                ".".to_string(),
+                "--tempdir".to_string(),
             ]),
             host_config: Some(host_config),
             labels: Some(HashMap::from([(
@@ -342,6 +326,29 @@ impl JobEngine for LocalDockerJobEngine {
                     status_code: 409, ..
                 } => JobEngineError::AlreadyExists(metis_id.clone()),
                 _ => JobEngineError::Internal(format!("Docker create container error: {e}")),
+            })?;
+
+        // Copy the metis binary into the container before starting it.
+        let binary_data = tokio::fs::read(&self.metis_exe_path).await.map_err(|e| {
+            JobEngineError::Internal(format!(
+                "Failed to read metis binary at {}: {e}",
+                self.metis_exe_path.display()
+            ))
+        })?;
+        let tar_archive = create_tar_archive(&binary_data, "metis")
+            .map_err(|e| JobEngineError::Internal(format!("Failed to create tar archive: {e}")))?;
+        self.docker
+            .upload_to_container(
+                &response.id,
+                Some(UploadToContainerOptions {
+                    path: "/usr/local/bin",
+                    ..Default::default()
+                }),
+                tar_archive.into(),
+            )
+            .await
+            .map_err(|e| {
+                JobEngineError::Internal(format!("Failed to upload metis binary to container: {e}"))
             })?;
 
         let creation_time = Utc::now();
@@ -661,5 +668,38 @@ mod tests {
     fn extract_session_id_from_names_none() {
         let result = extract_session_id_from_names(None);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn create_tar_archive_contains_executable_file() {
+        let binary_data = b"fake binary content";
+        let archive_bytes = create_tar_archive(binary_data, "metis").unwrap();
+
+        let mut archive = tar::Archive::new(archive_bytes.as_slice());
+        let entries: Vec<_> = archive
+            .entries()
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(entry.header().size().unwrap(), binary_data.len() as u64);
+        assert_eq!(entry.header().mode().unwrap(), 0o755);
+        assert_eq!(entry.path().unwrap().to_str().unwrap(), "metis");
+    }
+
+    #[test]
+    fn create_tar_archive_preserves_content() {
+        let binary_data = vec![0u8, 1, 2, 3, 255, 254, 253];
+        let archive_bytes = create_tar_archive(&binary_data, "metis").unwrap();
+
+        let mut archive = tar::Archive::new(archive_bytes.as_slice());
+        let mut entries = archive.entries().unwrap();
+        let mut entry = entries.next().unwrap().unwrap();
+
+        let mut content = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut content).unwrap();
+        assert_eq!(content, binary_data);
     }
 }
