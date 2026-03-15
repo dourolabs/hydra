@@ -2,21 +2,46 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
 import { useIssues } from "../features/issues/useIssues";
+import { usePaginatedIssues, useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
 import { useAllSessions } from "../features/sessions/useAllSessions";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/IssueFilterSidebar";
 import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
-import {
-  useTransitiveWorkItems,
-  buildChildrenMap,
-  findTransitiveChildren,
-} from "../features/dashboard/useTransitiveWorkItems";
-import { computeIsActiveMap, countNeedsAttentionBadge, type ChildStatus } from "../features/dashboard/computeIssueProgress";
+import { useTransitiveWorkItems, type WorkItem } from "../features/dashboard/useTransitiveWorkItems";
+import { TERMINAL_STATUSES } from "../utils/statusMapping";
+import { computeIsActiveMap, type ChildStatus } from "../features/dashboard/computeIssueProgress";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import { useInboxLabel } from "../features/labels/useLabels";
 import styles from "./DashboardPage.module.css";
+
+/** Build server-side IssueFilters from the current filter selection. */
+function buildServerFilters(
+  filterRootId: string | null,
+  username: string,
+  inboxLabelId: string | undefined,
+  searchQuery: string,
+): IssueFilters {
+  const filters: IssueFilters = {};
+
+  if (searchQuery) {
+    filters.q = searchQuery;
+  }
+
+  if (filterRootId === "inbox") {
+    if (inboxLabelId) filters.labels = inboxLabelId;
+    if (username) filters.creator = username;
+  } else if (filterRootId === "my-issues") {
+    if (username) filters.creator = username;
+  } else if (filterRootId?.startsWith(LABEL_FILTER_PREFIX)) {
+    const labelId = filterRootId.slice(LABEL_FILTER_PREFIX.length);
+    filters.labels = labelId;
+  }
+  // For "everything" (null) or specific issue root IDs, no extra server filters
+
+  return filters;
+}
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -36,8 +61,6 @@ export function DashboardPage() {
     return () => clearTimeout(debounceRef.current);
   }, []);
 
-  const { data: issues, isLoading } = useIssues(searchQuery || undefined);
-  const { data: sessionsByIssue } = useAllSessions();
   const [searchParams, setSearchParams] = useSearchParams();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const selectedParam = searchParams.get("selected");
@@ -49,9 +72,72 @@ export function DashboardPage() {
 
   const username = user ? actorDisplayName(user.actor) : "";
   const { data: inboxLabel } = useInboxLabel();
+  const inboxLabelId = inboxLabel?.label_id;
+
+  // Determine if the current filter is a "special" filter (inbox, my-issues, label)
+  // vs. a specific issue root or "everything"
+  const isLabelFilter = filterRootId?.startsWith(LABEL_FILTER_PREFIX) ?? false;
+  const isMyIssuesFilter = filterRootId === "my-issues";
+  const isInboxFilter = filterRootId === "inbox";
+  const isSpecialFilter = isInboxFilter || isMyIssuesFilter || isLabelFilter;
+
+  // Build server-side filters for the paginated query
+  const serverFilters = useMemo(
+    () => buildServerFilters(filterRootId, username, inboxLabelId, searchQuery),
+    [filterRootId, username, inboxLabelId, searchQuery],
+  );
+
+  // For special filters (inbox, my-issues, label) and "everything", use paginated query
+  // For specific issue roots, fall back to the old useIssues hook
+  const hookRootId = isSpecialFilter ? null : filterRootId;
+  const usePaginated = isSpecialFilter || filterRootId === null;
+
+  const {
+    data: paginatedData,
+    isLoading: paginatedLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = usePaginatedIssues(usePaginated ? serverFilters : { q: "__disabled__" });
+
+  // Fall back to old hook for specific issue root selections
+  const { data: legacyIssues, isLoading: legacyLoading } = useIssues(
+    !usePaginated ? (searchQuery || undefined) : "__disabled__",
+  );
+
+  // Flatten paginated pages into a single array
+  const issues = useMemo(() => {
+    if (usePaginated) {
+      return paginatedData?.pages.flatMap((page) => page.issues) ?? [];
+    }
+    return legacyIssues ?? [];
+  }, [usePaginated, paginatedData, legacyIssues]);
+
+  const isLoading = usePaginated ? paginatedLoading : legacyLoading;
+
+  const { data: sessionsByIssue } = useAllSessions();
+
+  // Badge count queries (count-only, no issue data fetched)
+  const inboxCountFilters = useMemo<IssueFilters>(() => {
+    if (!inboxLabelId || !username) return {};
+    return { labels: inboxLabelId, creator: username };
+  }, [inboxLabelId, username]);
+
+  const myIssuesCountFilters = useMemo<IssueFilters>(() => {
+    if (!username) return {};
+    return { creator: username };
+  }, [username]);
+
+  const { data: inboxCount = 0 } = useIssueCount(
+    inboxCountFilters,
+    !!inboxLabelId && !!username,
+  );
+  const { data: myIssuesCount = 0 } = useIssueCount(
+    myIssuesCountFilters,
+    !!username,
+  );
 
   const assignees = useMemo(() => {
-    if (!issues) return [];
     const set = new Set<string>();
     for (const record of issues) {
       if (record.issue.assignee) set.add(record.issue.assignee);
@@ -59,36 +145,34 @@ export function DashboardPage() {
     return Array.from(set).sort();
   }, [issues]);
 
-  const isLabelFilter = filterRootId?.startsWith(LABEL_FILTER_PREFIX) ?? false;
-  const isMyIssuesFilter = filterRootId === "my-issues";
-  const hookRootId = filterRootId === "inbox" || isLabelFilter || isMyIssuesFilter ? null : filterRootId;
-  const { items: allWorkItems, isLoading: workItemsLoading } =
-    useTransitiveWorkItems(hookRootId, issues ?? []);
+  // For server-filtered results (special filters), create work items directly
+  // without tree traversal since the server already filtered for us.
+  // For specific issue roots ("everything" or a specific issue), use tree traversal.
+  const { items: treeWorkItems, isLoading: treeLoading } =
+    useTransitiveWorkItems(isSpecialFilter ? "__skip__" : hookRootId, isSpecialFilter ? [] : issues);
+
+  const flatWorkItems = useMemo((): WorkItem[] => {
+    if (!isSpecialFilter) return [];
+    return issues.map((issue) => ({
+      kind: "issue" as const,
+      id: issue.issue_id,
+      data: issue,
+      lastUpdated: issue.timestamp,
+      isTerminal: TERMINAL_STATUSES.has(issue.issue.status),
+    }));
+  }, [isSpecialFilter, issues]);
+
+  const allWorkItems = isSpecialFilter ? flatWorkItems : treeWorkItems;
+  const workItemsLoading = isSpecialFilter ? false : treeLoading;
 
   const isActiveMap = useMemo(() => {
-    if (!issues || !sessionsByIssue) return new Map<string, boolean>();
+    if (!issues.length || !sessionsByIssue) return new Map<string, boolean>();
     return computeIsActiveMap(issues, sessionsByIssue);
   }, [issues, sessionsByIssue]);
 
-  const inboxCount = useMemo(() => {
-    if (!issues || !inboxLabel) return 0;
-    return countNeedsAttentionBadge(
-      issues,
-      (issue) =>
-        (issue.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) ?? false) &&
-        issue.issue.assignee === username,
-      isActiveMap,
-    );
-  }, [issues, username, inboxLabel, isActiveMap]);
-
-  const myIssuesCount = useMemo(() => {
-    if (!issues || !username) return 0;
-    return countNeedsAttentionBadge(issues, (issue) => issue.issue.assignee === username, isActiveMap);
-  }, [issues, username, isActiveMap]);
-
   const childStatusMap = useMemo(() => {
     const map = new Map<string, ChildStatus[]>();
-    if (!issues) return map;
+    if (!issues.length) return map;
     const childrenByParent = new Map<string, string[]>();
     for (const issue of issues) {
       for (const dep of issue.issue.dependencies) {
@@ -118,63 +202,6 @@ export function DashboardPage() {
     }
     return map;
   }, [issues, isActiveMap, username]);
-
-  const workItems = useMemo(() => {
-    // Helper: given matching issue IDs, collect all their transitive descendants
-    // and return items that are either matching issues or artifacts from those descendants.
-    const filterWithDescendantArtifacts = (
-      matchingIssueIds: string[],
-    ) => {
-      const childrenMap = buildChildrenMap(issues ?? []);
-      const descendantIds = new Set<string>();
-      for (const id of matchingIssueIds) {
-        for (const descId of findTransitiveChildren(id, childrenMap)) {
-          descendantIds.add(descId);
-        }
-      }
-      const matchingSet = new Set(matchingIssueIds);
-      return allWorkItems.filter((item) => {
-        if (item.kind === "issue") {
-          return matchingSet.has(item.id);
-        }
-        // For artifacts, include if their source issue is a descendant
-        return item.sourceIssueId !== undefined && descendantIds.has(item.sourceIssueId);
-      });
-    };
-
-    if (isLabelFilter) {
-      const labelId = filterRootId!.slice(LABEL_FILTER_PREFIX.length);
-      const matchingIds = allWorkItems
-        .filter(
-          (item) =>
-            item.kind === "issue" &&
-            item.data.issue.labels?.some((l: { label_id: string }) => l.label_id === labelId),
-        )
-        .map((item) => item.id);
-      return filterWithDescendantArtifacts(matchingIds);
-    }
-    if (isMyIssuesFilter) {
-      const matchingIds = allWorkItems
-        .filter(
-          (item) =>
-            item.kind === "issue" &&
-            item.data.issue.creator === username,
-        )
-        .map((item) => item.id);
-      return filterWithDescendantArtifacts(matchingIds);
-    }
-    if (filterRootId !== "inbox") return allWorkItems;
-    if (!inboxLabel) return [];
-    const matchingIds = allWorkItems
-      .filter(
-        (item) =>
-          item.kind === "issue" &&
-          item.data.issue.labels?.some((l: { label_id: string }) => l.label_id === inboxLabel.label_id) &&
-          (item.data.issue.creator === username || item.data.issue.assignee === username),
-      )
-      .map((item) => item.id);
-    return filterWithDescendantArtifacts(matchingIds);
-  }, [filterRootId, isLabelFilter, isMyIssuesFilter, allWorkItems, username, inboxLabel, issues]);
 
   useEffect(() => {
     if (!searchParams.has("selected")) {
@@ -210,7 +237,13 @@ export function DashboardPage() {
     setDrawerOpen(false);
   }, []);
 
-  if (isLoading && !issues) {
+  const handleLoadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  if (isLoading && !issues.length) {
     return (
       <div className={styles.center}>
         <Spinner size="lg" />
@@ -222,7 +255,7 @@ export function DashboardPage() {
     <div className={styles.page}>
       <div className={styles.dashboardRow}>
         <IssueFilterSidebar
-          allIssues={issues ?? []}
+          allIssues={issues}
           activeFilter={filterRootId}
           onFilterChange={handleFilterChange}
           collapsed={sidebarCollapsed}
@@ -234,7 +267,7 @@ export function DashboardPage() {
           myIssuesCount={myIssuesCount}
         />
         <HeterogeneousItemList
-          items={workItems}
+          items={allWorkItems}
           sessionsByIssue={sessionsByIssue ?? new Map()}
           childStatusMap={childStatusMap}
           isActiveMap={isActiveMap}
@@ -245,7 +278,10 @@ export function DashboardPage() {
           filterRootId={filterRootId}
           searchValue={searchValue}
           onSearchChange={handleSearchChange}
-          inboxLabelId={filterRootId === "inbox" && inboxLabel ? inboxLabel.label_id : undefined}
+          inboxLabelId={isInboxFilter && inboxLabel ? inboxLabel.label_id : undefined}
+          hasNextPage={usePaginated && (hasNextPage ?? false)}
+          isFetchingNextPage={isFetchingNextPage}
+          onLoadMore={handleLoadMore}
         />
       </div>
       <button

@@ -2,19 +2,27 @@
 import type { IssueStatus } from "./IssueStatus";
 import type { IssueType } from "./IssueType";
 
-export type SearchIssuesQuery = { issue_type: IssueType | null, status: IssueStatus | null, assignee: string | null, q: string | null, graph: string, include_deleted: boolean | null, 
+export type SearchIssuesQuery = {
+/**
+ * Batch-fetch specific issues by ID (comma-separated, max 100).
+ */
+ids: string, issue_type: IssueType | null, status: IssueStatus | null, assignee: string | null,
+/**
+ * Filter issues by creator username.
+ */
+creator: string | null, q: string | null, graph: string, include_deleted: boolean | null,
 /**
  * Filter issues by label IDs (comma-separated in query string).
  */
-labels: string, 
+labels: string,
 /**
  * Maximum number of results to return. When omitted, all results are returned.
  */
-limit: number | null, 
+limit: number | null,
 /**
  * Opaque cursor from a previous response's `next_cursor` field.
  */
-cursor: string | null, 
+cursor: string | null,
 /**
  * When true, include `total_count` in the response.
  */

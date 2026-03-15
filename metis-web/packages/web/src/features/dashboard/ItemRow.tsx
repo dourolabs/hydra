@@ -85,7 +85,10 @@ export const ItemRow = React.memo(function ItemRow({ item, sessions, childStatus
       apiClient.removeLabelFromObject(inboxLabelId!, issueId),
     onMutate: async (issueId) => {
       await queryClient.cancelQueries({ queryKey: ["issues"] });
+      await queryClient.cancelQueries({ queryKey: ["paginatedIssues"] });
       const previousQueries = queryClient.getQueriesData({ queryKey: ["issues"] });
+      const previousPaginatedQueries = queryClient.getQueriesData({ queryKey: ["paginatedIssues"] });
+      // Optimistically update legacy issues queries
       queryClient.setQueriesData<{ issues: Array<{ issue_id: string; issue: { labels?: Array<{ label_id: string }> } }> }>(
         { queryKey: ["issues"] },
         (old) => {
@@ -108,7 +111,21 @@ export const ItemRow = React.memo(function ItemRow({ item, sessions, childStatus
           };
         },
       );
-      return { previousQueries };
+      // Optimistically remove from paginated inbox queries
+      queryClient.setQueriesData<{ pages: Array<{ issues: Array<{ issue_id: string }> }>; pageParams: unknown[] }>(
+        { queryKey: ["paginatedIssues"] },
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            pages: old.pages.map((page) => ({
+              ...page,
+              issues: page.issues.filter((issue) => issue.issue_id !== issueId),
+            })),
+          };
+        },
+      );
+      return { previousQueries, previousPaginatedQueries };
     },
     onError: (_err, _issueId, context) => {
       if (context?.previousQueries) {
@@ -116,9 +133,16 @@ export const ItemRow = React.memo(function ItemRow({ item, sessions, childStatus
           queryClient.setQueryData(key, data);
         }
       }
+      if (context?.previousPaginatedQueries) {
+        for (const [key, data] of context.previousPaginatedQueries) {
+          queryClient.setQueryData(key, data);
+        }
+      }
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["issues"] });
+      queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
+      queryClient.invalidateQueries({ queryKey: ["issueCount"] });
     },
   });
   const Icon = TYPE_ICONS[item.kind];

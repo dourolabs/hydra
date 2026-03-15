@@ -20,6 +20,9 @@ interface HeterogeneousItemListProps {
   searchValue: string;
   onSearchChange: (value: string) => void;
   inboxLabelId?: string;
+  hasNextPage?: boolean;
+  isFetchingNextPage?: boolean;
+  onLoadMore?: () => void;
 }
 
 /** Artifacts are patches and documents regardless of terminal status. */
@@ -49,6 +52,9 @@ export function HeterogeneousItemList({
   searchValue,
   onSearchChange,
   inboxLabelId,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
 }: HeterogeneousItemListProps) {
   const activeItems = useMemo(
     () => topologicalSortWorkItems(items.filter(isActiveItem)),
@@ -203,6 +209,19 @@ export function HeterogeneousItemList({
 
             </ul>
           </>
+        )}
+
+        {hasNextPage && (
+          <div className={styles.loadMore}>
+            <button
+              type="button"
+              className={styles.loadMoreButton}
+              onClick={onLoadMore}
+              disabled={isFetchingNextPage}
+            >
+              {isFetchingNextPage ? "Loading..." : "Load more"}
+            </button>
+          </div>
         )}
       </div>
     </div>
