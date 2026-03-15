@@ -1,31 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import type { IssueSummaryRecord } from "@metis/api";
 import { apiClient } from "../../api/client";
 
 /**
  * Lightweight hook that returns a Set of issue IDs that have active
  * (running or pending) sessions.  Used for badge counting where we need
- * session status for ALL issues, not just the current page.
+ * to know which issues have active sessions across the entire issue set,
+ * not just the current page.
  */
-export function useActiveSessionIssueIds(
-  issues: IssueSummaryRecord[],
-): { activeIssueIds: Set<string>; isLoading: boolean } {
-  const issueIds = useMemo(
-    () => issues.map((i) => i.issue_id),
-    [issues],
-  );
-
-  const spawned_from_ids = issueIds.join(",");
-
+export function useActiveSessionIssueIds(): {
+  activeIssueIds: Set<string>;
+  isLoading: boolean;
+} {
   const { data: sessions, isLoading } = useQuery({
-    queryKey: ["sessions", "active-badge", spawned_from_ids],
+    queryKey: ["sessions", "active-badge"],
     queryFn: () =>
       apiClient.listSessions({
-        spawned_from_ids,
         status: "running,pending",
       }),
-    enabled: issueIds.length > 0,
     staleTime: 30_000,
     select: (data) => data.sessions,
   });
