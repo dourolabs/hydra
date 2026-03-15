@@ -303,6 +303,187 @@ async fn session_actor_forbidden_even_when_creator_matches() -> anyhow::Result<(
     Ok(())
 }
 
+// ---- Internal secret filtering tests ----
+
+#[tokio::test]
+async fn list_secrets_excludes_internal_secrets() -> anyhow::Result<()> {
+    let handles = test_state_with_secrets();
+    let secret_manager = test_secret_manager();
+    let username = Username::from(TEST_USERNAME);
+
+    // Store an internal secret (e.g. GITHUB_TOKEN)
+    let encrypted = secret_manager.encrypt("gh-token-value").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted, true)
+        .await
+        .unwrap();
+
+    // Store another internal secret
+    let encrypted2 = secret_manager.encrypt("gh-refresh-value").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GITHUB_REFRESH_TOKEN", &encrypted2, true)
+        .await
+        .unwrap();
+
+    // Store a normal user secret
+    let encrypted3 = secret_manager.encrypt("user-key").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "OPENAI_API_KEY", &encrypted3, false)
+        .await
+        .unwrap();
+
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_user_client();
+
+    let response = client
+        .get(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: ListSecretsResponse = response.json().await?;
+
+    // Only the non-internal secret should appear
+    assert_eq!(body.secrets, vec!["OPENAI_API_KEY"]);
+    assert!(!body.secrets.contains(&"GITHUB_TOKEN".to_string()));
+    assert!(!body.secrets.contains(&"GITHUB_REFRESH_TOKEN".to_string()));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_secret_rejects_internal_secret() -> anyhow::Result<()> {
+    let handles = test_state_with_secrets();
+    let secret_manager = test_secret_manager();
+    let username = Username::from(TEST_USERNAME);
+
+    // Pre-store GITHUB_TOKEN as internal
+    let encrypted = secret_manager.encrypt("gh-token-value").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted, true)
+        .await
+        .unwrap();
+
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_user_client();
+
+    // Attempt to overwrite the internal secret via API
+    let response = client
+        .put(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets/GITHUB_TOKEN",
+            server.base_url()
+        ))
+        .json(&json!({ "value": "new-value" }))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_secret_rejects_internal_secret() -> anyhow::Result<()> {
+    let handles = test_state_with_secrets();
+    let secret_manager = test_secret_manager();
+    let username = Username::from(TEST_USERNAME);
+
+    // Pre-store GITHUB_TOKEN as internal
+    let encrypted = secret_manager.encrypt("gh-token-value").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted, true)
+        .await
+        .unwrap();
+
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_user_client();
+
+    // Attempt to delete the internal secret via API
+    let response = client
+        .delete(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets/GITHUB_TOKEN",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn user_secrets_still_manageable_with_internal_secrets_present() -> anyhow::Result<()> {
+    let handles = test_state_with_secrets();
+    let secret_manager = test_secret_manager();
+    let username = Username::from(TEST_USERNAME);
+
+    // Pre-store an internal secret
+    let encrypted = secret_manager.encrypt("gh-token-value").unwrap();
+    handles
+        .store
+        .set_user_secret(&username, "GITHUB_TOKEN", &encrypted, true)
+        .await
+        .unwrap();
+
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_user_client();
+
+    // Set a user secret — should succeed
+    let response = client
+        .put(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets/MY_SECRET",
+            server.base_url()
+        ))
+        .json(&json!({ "value": "my-value" }))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // List — should only show user secret, not internal
+    let response = client
+        .get(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: ListSecretsResponse = response.json().await?;
+    assert_eq!(body.secrets, vec!["MY_SECRET"]);
+
+    // Delete user secret — should succeed
+    let response = client
+        .delete(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets/MY_SECRET",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Verify deleted
+    let response = client
+        .get(format!(
+            "{}/v1/users/{TEST_USERNAME}/secrets",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    let body: ListSecretsResponse = response.json().await?;
+    assert!(body.secrets.is_empty());
+
+    Ok(())
+}
+
 // ---- resolve_secrets_into_env_vars tests ----
 
 fn test_state_with_secrets_and_config() -> TestStateHandles {
