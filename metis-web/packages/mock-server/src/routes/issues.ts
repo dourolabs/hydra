@@ -146,6 +146,10 @@ export function createIssueRoutes(store: Store): Hono {
     const assignee = c.req.query("assignee");
     const creator = c.req.query("creator");
     const q = c.req.query("q");
+    const labelsParam = c.req.query("labels");
+    const limitParam = c.req.query("limit");
+    const cursorParam = c.req.query("cursor");
+    const countParam = c.req.query("count");
 
     const items = store.list<Issue>(COLLECTION, includeDeleted);
 
@@ -173,12 +177,52 @@ export function createIssueRoutes(store: Store): Hono {
         entry.data.description.toLowerCase().includes(lower),
       );
     }
+    if (labelsParam) {
+      const labelIds = labelsParam.split(",").map((s) => s.trim());
+      filtered = filtered.filter(({ id }) => {
+        const issueLabels = getLabelsForObject(id);
+        if (!issueLabels) return false;
+        return labelIds.some((labelId) =>
+          issueLabels.some((l: { label_id: string }) => l.label_id === labelId),
+        );
+      });
+    }
+
+    // Sort by creation time descending (newest first) for stable pagination
+    filtered.sort((a, b) => {
+      const aTime = store.getCreationTime(COLLECTION, a.id)!;
+      const bTime = store.getCreationTime(COLLECTION, b.id)!;
+      return bTime.localeCompare(aTime);
+    });
+
+    const totalCount = filtered.length;
+
+    // Apply cursor-based pagination
+    if (cursorParam) {
+      const cursorIndex = filtered.findIndex(({ id }) => id === cursorParam);
+      if (cursorIndex !== -1) {
+        filtered = filtered.slice(cursorIndex + 1);
+      }
+    }
+
+    let nextCursor: string | null = null;
+    if (limitParam !== undefined && limitParam !== null) {
+      const limit = Number(limitParam);
+      if (limit >= 0 && filtered.length > limit) {
+        nextCursor = filtered[limit - 1]?.id ?? null;
+        filtered = filtered.slice(0, limit);
+      }
+    }
 
     const issues: IssueSummaryRecord[] = filtered.map(({ id, entry }) => {
       const creationTime = store.getCreationTime(COLLECTION, id)!;
       return toSummaryRecord(id, entry.version, entry.timestamp, entry.data, creationTime);
     });
-    const resp: ListIssuesResponse = { issues };
+    const resp: ListIssuesResponse = {
+      issues,
+      next_cursor: nextCursor,
+      total_count: countParam === "true" ? BigInt(totalCount) : undefined,
+    };
     return c.json(resp);
   });
 

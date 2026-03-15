@@ -168,7 +168,7 @@
       "type": "chore",
       "title": "Update deployment documentation",
       "description": "Update deployment documentation\n\nThe deployment docs are outdated after the Kubernetes migration. Need to update with new kubectl commands and Helm chart references.",
-      "creator": "bob",
+      "creator": "dev-user",
       "progress": "",
       "status": "dropped",
       "assignee": "dev-user",
