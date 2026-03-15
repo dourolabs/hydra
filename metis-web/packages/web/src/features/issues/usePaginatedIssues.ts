@@ -2,7 +2,7 @@ import { useInfiniteQuery, useQuery, keepPreviousData } from "@tanstack/react-qu
 import type { SearchIssuesQuery, ListIssuesResponse } from "@metis/api";
 import { apiClient } from "../../api/client";
 
-type IssueFilters = Partial<Omit<SearchIssuesQuery, "limit" | "cursor" | "count">>;
+export type IssueFilters = Partial<Omit<SearchIssuesQuery, "limit" | "cursor" | "count">>;
 
 export function usePaginatedIssues(
   filters: IssueFilters = {},
