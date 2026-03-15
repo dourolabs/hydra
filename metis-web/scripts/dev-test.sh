@@ -1,6 +1,6 @@
 #!/bin/bash
 # metis-web/scripts/dev-test.sh
-# Start mock server + Vite dev server, then optionally run E2E tests.
+# Start mock server + BFF + Vite dev server, then optionally run E2E tests.
 #
 # Usage:
 #   ./scripts/dev-test.sh          # Start dev stack and keep running
@@ -60,6 +60,11 @@ echo "Starting mock server..."
 pnpm --filter @metis/mock-server dev &
 wait_for_url "http://localhost:8080/health" "Mock server" 30
 
+# Start BFF (port 4000), pointing at mock server
+echo "Starting BFF server..."
+METIS_SERVER_URL=http://localhost:8080 COOKIE_SECURE=false pnpm --filter @metis/web dev:server &
+wait_for_url "http://localhost:4000/health" "BFF server" 30
+
 # Build API and UI packages, then start Vite dev server (port 3000)
 echo "Building API and UI packages..."
 pnpm --filter @metis/api build && pnpm --filter @metis/ui build
@@ -72,6 +77,7 @@ echo "========================================="
 echo "  Dev stack ready!"
 echo "========================================="
 echo "  Mock server: http://localhost:8080"
+echo "  BFF:         http://localhost:4000"
 echo "  Frontend:    http://localhost:3000"
 echo "========================================="
 echo ""

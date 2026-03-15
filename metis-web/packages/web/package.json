@@ -6,6 +6,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
+    "dev:server": "tsx --watch server/index.ts",
+    "build:server": "tsc --project tsconfig.server.json",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "e2e": "playwright test",
@@ -13,9 +15,11 @@
     "visual-audit": "playwright test --config=playwright-visual-audit.config.ts"
   },
   "dependencies": {
+    "@hono/node-server": "^1.19.9",
     "@metis/api": "workspace:*",
     "@metis/ui": "workspace:*",
     "@tanstack/react-query": "^5.90.21",
+    "hono": "^4.11.10",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.13.0"
