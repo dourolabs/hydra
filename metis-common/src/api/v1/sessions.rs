@@ -443,6 +443,11 @@ impl SessionVersionRecord {
     }
 }
 
+use super::serde_helpers::{
+    deserialize_comma_separated, deserialize_comma_separated_json, serialize_comma_separated,
+    serialize_comma_separated_json,
+};
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -456,8 +461,8 @@ pub struct SearchSessionsQuery {
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
-        serialize_with = "super::serde_helpers::serialize_comma_separated",
-        deserialize_with = "super::serde_helpers::deserialize_comma_separated"
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub spawned_from_ids: Vec<IssueId>,
@@ -468,8 +473,8 @@ pub struct SearchSessionsQuery {
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
-        serialize_with = "super::serde_helpers::serialize_statuses",
-        deserialize_with = "super::serde_helpers::deserialize_statuses"
+        serialize_with = "serialize_comma_separated_json",
+        deserialize_with = "deserialize_comma_separated_json"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub status: Vec<Status>,

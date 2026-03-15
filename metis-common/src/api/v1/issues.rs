@@ -638,6 +638,8 @@ impl UpsertIssueResponse {
     }
 }
 
+use super::serde_helpers::{deserialize_comma_separated, serialize_comma_separated};
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -648,8 +650,8 @@ pub struct SearchIssuesQuery {
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
-        serialize_with = "super::serde_helpers::serialize_comma_separated",
-        deserialize_with = "super::serde_helpers::deserialize_comma_separated"
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub ids: Vec<IssueId>,
@@ -667,8 +669,8 @@ pub struct SearchIssuesQuery {
     #[serde(
         default,
         rename = "graph",
-        serialize_with = "super::serde_helpers::serialize_comma_separated",
-        deserialize_with = "super::serde_helpers::deserialize_comma_separated"
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub graph_filters: Vec<IssueGraphFilter>,
@@ -678,8 +680,8 @@ pub struct SearchIssuesQuery {
     #[serde(
         default,
         rename = "labels",
-        serialize_with = "super::serde_helpers::serialize_comma_separated",
-        deserialize_with = "super::serde_helpers::deserialize_comma_separated"
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub label_ids: Vec<LabelId>,
