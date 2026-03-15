@@ -1454,7 +1454,7 @@ fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Ve
     let mut predicates = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
 
-    // When `ids` is provided, filter by ID and skip other content filters.
+    // When `ids` is provided, filter by ID (intersected with other filters).
     if !query.ids.is_empty() {
         let placeholders: Vec<String> = query
             .ids
@@ -1466,10 +1466,6 @@ fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Ve
         for id in &query.ids {
             bindings.push(id.as_ref().to_string());
         }
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = 0".to_string());
-        }
-        return (predicates, bindings);
     }
 
     if let Some(issue_type) = query.issue_type.as_ref() {

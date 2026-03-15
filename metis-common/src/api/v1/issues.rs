@@ -722,7 +722,7 @@ where
 #[non_exhaustive]
 pub struct SearchIssuesQuery {
     /// Batch-fetch specific issues by ID (comma-separated, max 100).
-    /// When provided, other filters (except pagination) are ignored.
+    /// Intersected with other filters when provided.
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",

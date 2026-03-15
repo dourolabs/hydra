@@ -98,7 +98,7 @@ mod tests {
 
         let mock = server.mock(|when, then| {
             when.method(GET)
-                .path("/v1/relations/")
+                .path("/v1/relations")
                 .query_param("source_id", "i-aaaaaa")
                 .query_param("rel_type", "child-of");
             then.status(200).json_body_obj(&api_response);
@@ -128,7 +128,7 @@ mod tests {
         let api_response = ListRelationsResponse { relations: vec![] };
 
         let mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/relations/");
+            when.method(GET).path("/v1/relations");
             then.status(200).json_body_obj(&api_response);
         });
 

@@ -207,12 +207,9 @@ impl MemoryStore {
             }
             let issue_id = entry.key();
 
-            // When `ids` is provided, filter by ID only (skip other content filters).
-            if !ids_filter.is_empty() {
-                if !ids_filter.contains(issue_id) {
-                    return None;
-                }
-                return Some((issue_id.clone(), latest));
+            // When `ids` is provided, filter by ID (intersected with other filters).
+            if !ids_filter.is_empty() && !ids_filter.contains(issue_id) {
+                return None;
             }
 
             if let Some(expected_creator) = creator_filter {
