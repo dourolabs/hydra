@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { Badge, Spinner } from "@metis/ui";
 import { normalizePatchStatus } from "../../utils/statusMapping";
-import { usePatchesByIssue } from "./usePatchesByIssue";
+import { usePatchesByIds } from "./usePatchesByIds";
 import styles from "./PatchList.module.css";
 
 interface PatchListProps {
@@ -10,7 +10,7 @@ interface PatchListProps {
 }
 
 export function PatchList({ patchIds, issueId }: PatchListProps) {
-  const { data: patches, isLoading, error } = usePatchesByIssue(patchIds);
+  const { data: patches, isLoading, error } = usePatchesByIds(patchIds);
 
   if (patchIds.length === 0) {
     return <p className={styles.empty}>No patches.</p>;

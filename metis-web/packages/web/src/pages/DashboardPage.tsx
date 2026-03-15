@@ -1,13 +1,13 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Spinner } from "@metis/ui";
-import { useIssues } from "../features/issues/useIssues";
 import { usePaginatedIssues, useIssueCount, type IssueFilters } from "../features/issues/usePaginatedIssues";
+import { useSubtreeIssues } from "../features/issues/useSubtreeIssues";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/IssueFilterSidebar";
 import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
-import { useTransitiveWorkItems, type WorkItem } from "../features/dashboard/useTransitiveWorkItems";
+import type { WorkItem } from "../features/dashboard/workItemTypes";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
@@ -87,9 +87,9 @@ export function DashboardPage() {
   );
 
   // For special filters (inbox, my-issues, label) and "everything", use paginated query
-  // For specific issue roots, fall back to the old useIssues hook
-  const hookRootId = isSpecialFilter ? null : filterRootId;
+  // For specific issue roots, use the subtree hook via relationships API
   const usePaginated = isSpecialFilter || filterRootId === null;
+  const isSpecificRoot = !isSpecialFilter && filterRootId !== null;
 
   const {
     data: paginatedData,
@@ -99,10 +99,9 @@ export function DashboardPage() {
     isFetchingNextPage,
   } = usePaginatedIssues(serverFilters, usePaginated);
 
-  // Fall back to old hook for specific issue root selections
-  const { data: legacyIssues, isLoading: legacyLoading } = useIssues(
-    !usePaginated ? (searchQuery || undefined) : undefined,
-    !usePaginated,
+  // For specific issue root, fetch subtree via relationships API
+  const { data: subtreeIssues, isLoading: subtreeLoading } = useSubtreeIssues(
+    isSpecificRoot ? filterRootId : null,
   );
 
   // Flatten paginated pages into a single array
@@ -110,10 +109,10 @@ export function DashboardPage() {
     if (usePaginated) {
       return paginatedData?.pages.flatMap((page) => page.issues) ?? [];
     }
-    return legacyIssues ?? [];
-  }, [usePaginated, paginatedData, legacyIssues]);
+    return subtreeIssues ?? [];
+  }, [usePaginated, paginatedData, subtreeIssues]);
 
-  const isLoading = usePaginated ? paginatedLoading : legacyLoading;
+  const isLoading = usePaginated ? paginatedLoading : subtreeLoading;
 
   // Badge count queries (count-only, no issue data fetched).
   // The backend status filter accepts a single status, so we issue separate
@@ -157,14 +156,9 @@ export function DashboardPage() {
     return Array.from(set).sort();
   }, [issues]);
 
-  // For server-filtered results (special filters), create work items directly
-  // without tree traversal since the server already filtered for us.
-  // For specific issue roots ("everything" or a specific issue), use tree traversal.
-  const { items: treeWorkItems, isLoading: treeLoading } =
-    useTransitiveWorkItems(isSpecialFilter ? null : hookRootId, isSpecialFilter ? [] : issues);
-
-  const flatWorkItems = useMemo((): WorkItem[] => {
-    if (!isSpecialFilter) return [];
+  // Build flat work items from issues (no tree traversal needed;
+  // usePageIssueTrees provides supplementary tree data)
+  const allWorkItems = useMemo((): WorkItem[] => {
     return issues.map((issue) => ({
       kind: "issue" as const,
       id: issue.issue_id,
@@ -172,10 +166,7 @@ export function DashboardPage() {
       lastUpdated: issue.timestamp,
       isTerminal: TERMINAL_STATUSES.has(issue.issue.status),
     }));
-  }, [isSpecialFilter, issues]);
-
-  const allWorkItems = isSpecialFilter ? flatWorkItems : treeWorkItems;
-  const workItemsLoading = isSpecialFilter ? false : treeLoading;
+  }, [issues]);
 
   // Per-issue tree construction via relationships API
   const {
@@ -253,7 +244,7 @@ export function DashboardPage() {
           sessionsByIssue={sessionsByIssue}
           childStatusMap={childStatusMap}
           isActiveMap={isActiveMap}
-          isLoading={workItemsLoading}
+          isLoading={isLoading}
           treeLoading={pageTreeLoading}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={handleToggleSidebar}
