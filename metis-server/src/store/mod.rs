@@ -620,6 +620,16 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         username: &Username,
     ) -> Result<Vec<SecretRef>, StoreError>;
+
+    /// Checks whether a specific secret is marked as internal.
+    ///
+    /// Returns `Ok(true)` if the secret exists and is internal,
+    /// `Ok(false)` if the secret does not exist or is not internal.
+    async fn is_secret_internal(
+        &self,
+        username: &Username,
+        secret_name: &str,
+    ) -> Result<bool, StoreError>;
 }
 
 /// Trait for storing issues, patches, and sessions along with their statuses.

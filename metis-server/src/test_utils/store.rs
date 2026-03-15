@@ -333,6 +333,14 @@ impl ReadOnlyStore for FailingStore {
     ) -> Result<Vec<SecretRef>, StoreError> {
         fail()
     }
+
+    async fn is_secret_internal(
+        &self,
+        _username: &Username,
+        _secret_name: &str,
+    ) -> Result<bool, StoreError> {
+        fail()
+    }
 }
 
 #[async_trait]
