@@ -26,11 +26,10 @@ export function createEventRoutes(store: Store): Hono {
     }
 
     return streamSSE(c, async (stream) => {
-      // Send snapshot on connect
-      const snapshot = store.getSnapshot();
+      // Send connected event on connect
       await stream.writeSSE({
-        event: "snapshot",
-        data: JSON.stringify({ versions: snapshot }),
+        event: "connected",
+        data: JSON.stringify({ current_seq: store.getCurrentSeq() }),
         id: String(store.getCurrentSeq()),
       });
 
