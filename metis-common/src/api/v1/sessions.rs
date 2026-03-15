@@ -456,8 +456,8 @@ pub struct SearchSessionsQuery {
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
-        serialize_with = "super::serde_helpers::serialize_issue_ids",
-        deserialize_with = "super::serde_helpers::deserialize_issue_ids"
+        serialize_with = "super::serde_helpers::serialize_comma_separated",
+        deserialize_with = "super::serde_helpers::deserialize_comma_separated"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub spawned_from_ids: Vec<IssueId>,
