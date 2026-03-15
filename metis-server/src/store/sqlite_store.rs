@@ -109,6 +109,33 @@ struct ObjectRelationshipRow {
     rel_type: String,
 }
 
+fn parse_relationship_row(
+    r: ObjectRelationshipRow,
+) -> Result<super::ObjectRelationship, StoreError> {
+    let source_id: MetisId = r.source_id.parse().map_err(|_| {
+        StoreError::Internal("invalid source_id in object_relationships".to_string())
+    })?;
+    let target_id: MetisId = r.target_id.parse().map_err(|_| {
+        StoreError::Internal("invalid target_id in object_relationships".to_string())
+    })?;
+    let source_kind = super::ObjectKind::from_str(&r.source_kind).map_err(|e| {
+        StoreError::Internal(format!("invalid source_kind in object_relationships: {e}"))
+    })?;
+    let target_kind = super::ObjectKind::from_str(&r.target_kind).map_err(|e| {
+        StoreError::Internal(format!("invalid target_kind in object_relationships: {e}"))
+    })?;
+    let rel_type = super::RelationshipType::from_str(&r.rel_type).map_err(|e| {
+        StoreError::Internal(format!("invalid rel_type in object_relationships: {e}"))
+    })?;
+    Ok(super::ObjectRelationship {
+        source_id,
+        source_kind,
+        target_id,
+        target_kind,
+        rel_type,
+    })
+}
+
 #[derive(sqlx::FromRow)]
 struct IssueRow {
     id: String,
@@ -3325,32 +3352,121 @@ impl ReadOnlyStore for SqliteStore {
         }
 
         let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
-        let mut result = Vec::with_capacity(rows.len());
-        for r in rows {
-            let source_id: MetisId = r.source_id.parse().map_err(|_| {
-                StoreError::Internal("invalid source_id in object_relationships".to_string())
-            })?;
-            let target_id: MetisId = r.target_id.parse().map_err(|_| {
-                StoreError::Internal("invalid target_id in object_relationships".to_string())
-            })?;
-            let source_kind = super::ObjectKind::from_str(&r.source_kind).map_err(|e| {
-                StoreError::Internal(format!("invalid source_kind in object_relationships: {e}"))
-            })?;
-            let target_kind = super::ObjectKind::from_str(&r.target_kind).map_err(|e| {
-                StoreError::Internal(format!("invalid target_kind in object_relationships: {e}"))
-            })?;
-            let rel_type = super::RelationshipType::from_str(&r.rel_type).map_err(|e| {
-                StoreError::Internal(format!("invalid rel_type in object_relationships: {e}"))
-            })?;
-            result.push(super::ObjectRelationship {
-                source_id,
-                source_kind,
-                target_id,
-                target_kind,
-                rel_type,
-            });
+        rows.into_iter().map(parse_relationship_row).collect()
+    }
+
+    async fn get_relationships_batch(
+        &self,
+        source_ids: Option<&[MetisId]>,
+        target_ids: Option<&[MetisId]>,
+        rel_type: Option<super::RelationshipType>,
+    ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
+        let mut conditions = Vec::new();
+        let mut binds: Vec<String> = Vec::new();
+
+        if let Some(sids) = source_ids {
+            if sids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let placeholders: Vec<String> = sids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", binds.len() + i + 1))
+                .collect();
+            conditions.push(format!("source_id IN ({})", placeholders.join(", ")));
+            for sid in sids {
+                binds.push(sid.as_ref().to_string());
+            }
         }
-        Ok(result)
+        if let Some(tids) = target_ids {
+            if tids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let placeholders: Vec<String> = tids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", binds.len() + i + 1))
+                .collect();
+            conditions.push(format!("target_id IN ({})", placeholders.join(", ")));
+            for tid in tids {
+                binds.push(tid.as_ref().to_string());
+            }
+        }
+        if let Some(rt) = rel_type {
+            binds.push(rt.as_str().to_string());
+            conditions.push(format!("rel_type = ?{}", binds.len()));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let sql = format!(
+            "SELECT source_id, source_kind, target_id, target_kind, rel_type \
+             FROM {TABLE_OBJECT_RELATIONSHIPS}{where_clause} \
+             ORDER BY created_at"
+        );
+
+        let mut query = sqlx::query_as::<_, ObjectRelationshipRow>(&sql);
+        for b in &binds {
+            query = query.bind(b);
+        }
+
+        let rows = query.fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+        rows.into_iter().map(parse_relationship_row).collect()
+    }
+
+    async fn get_relationships_transitive(
+        &self,
+        source_id: Option<&MetisId>,
+        target_id: Option<&MetisId>,
+        rel_type: super::RelationshipType,
+    ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
+        let (sql, start_id) = if let Some(sid) = source_id {
+            let sql = format!(
+                "WITH RECURSIVE transitive_rels AS ( \
+                     SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                     FROM {TABLE_OBJECT_RELATIONSHIPS} \
+                     WHERE source_id = ?1 AND rel_type = ?2 \
+                   UNION \
+                     SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type \
+                     FROM {TABLE_OBJECT_RELATIONSHIPS} r \
+                     INNER JOIN transitive_rels tr ON r.source_id = tr.target_id \
+                     WHERE r.rel_type = ?2 \
+                 ) \
+                 SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                 FROM transitive_rels"
+            );
+            (sql, sid.as_ref())
+        } else if let Some(tid) = target_id {
+            let sql = format!(
+                "WITH RECURSIVE transitive_rels AS ( \
+                     SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                     FROM {TABLE_OBJECT_RELATIONSHIPS} \
+                     WHERE target_id = ?1 AND rel_type = ?2 \
+                   UNION \
+                     SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type \
+                     FROM {TABLE_OBJECT_RELATIONSHIPS} r \
+                     INNER JOIN transitive_rels tr ON r.target_id = tr.source_id \
+                     WHERE r.rel_type = ?2 \
+                 ) \
+                 SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                 FROM transitive_rels"
+            );
+            (sql, tid.as_ref())
+        } else {
+            return Ok(Vec::new());
+        };
+
+        let rows = sqlx::query_as::<_, ObjectRelationshipRow>(&sql)
+            .bind(start_id)
+            .bind(rel_type.as_str())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        rows.into_iter().map(parse_relationship_row).collect()
     }
 
     async fn get_user_secret(

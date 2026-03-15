@@ -300,6 +300,24 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn get_relationships_batch(
+        &self,
+        _source_ids: Option<&[MetisId]>,
+        _target_ids: Option<&[MetisId]>,
+        _rel_type: Option<crate::store::RelationshipType>,
+    ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
+        fail()
+    }
+
+    async fn get_relationships_transitive(
+        &self,
+        _source_id: Option<&MetisId>,
+        _target_id: Option<&MetisId>,
+        _rel_type: crate::store::RelationshipType,
+    ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
+        fail()
+    }
+
     async fn get_user_secret(
         &self,
         _username: &Username,

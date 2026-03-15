@@ -1329,6 +1329,87 @@ impl ReadOnlyStore for MemoryStore {
         Ok(results)
     }
 
+    async fn get_relationships_batch(
+        &self,
+        source_ids: Option<&[MetisId]>,
+        target_ids: Option<&[MetisId]>,
+        rel_type: Option<super::RelationshipType>,
+    ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
+        let results: Vec<super::ObjectRelationship> = self
+            .object_relationships
+            .iter()
+            .filter(|entry| {
+                let rel = entry.value();
+                if let Some(sids) = source_ids {
+                    if !sids.contains(&rel.source_id) {
+                        return false;
+                    }
+                }
+                if let Some(tids) = target_ids {
+                    if !tids.contains(&rel.target_id) {
+                        return false;
+                    }
+                }
+                if let Some(rt) = rel_type {
+                    if rel.rel_type != rt {
+                        return false;
+                    }
+                }
+                true
+            })
+            .map(|entry| entry.value().clone())
+            .collect();
+        Ok(results)
+    }
+
+    async fn get_relationships_transitive(
+        &self,
+        source_id: Option<&MetisId>,
+        target_id: Option<&MetisId>,
+        rel_type: super::RelationshipType,
+    ) -> Result<Vec<super::ObjectRelationship>, StoreError> {
+        let mut result = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+
+        if let Some(start) = source_id {
+            // Forward traversal: follow source -> target edges
+            let mut queue = std::collections::VecDeque::new();
+            queue.push_back(start.clone());
+            visited.insert(start.clone());
+
+            while let Some(current) = queue.pop_front() {
+                for entry in self.object_relationships.iter() {
+                    let rel = entry.value();
+                    if rel.rel_type == rel_type && rel.source_id == current {
+                        result.push(rel.clone());
+                        if visited.insert(rel.target_id.clone()) {
+                            queue.push_back(rel.target_id.clone());
+                        }
+                    }
+                }
+            }
+        } else if let Some(start) = target_id {
+            // Backward traversal: follow target -> source edges
+            let mut queue = std::collections::VecDeque::new();
+            queue.push_back(start.clone());
+            visited.insert(start.clone());
+
+            while let Some(current) = queue.pop_front() {
+                for entry in self.object_relationships.iter() {
+                    let rel = entry.value();
+                    if rel.rel_type == rel_type && rel.target_id == current {
+                        result.push(rel.clone());
+                        if visited.insert(rel.source_id.clone()) {
+                            queue.push_back(rel.source_id.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
     // ---- User secrets (read-only) ----
 
     async fn get_user_secret(
@@ -6755,5 +6836,158 @@ mod tests {
         );
         query.limit = Some(2);
         assert_eq!(store.count_issues(&query).await.unwrap(), 5);
+    }
+
+    #[tokio::test]
+    async fn has_document_relationship_type_round_trips() {
+        use crate::store::RelationshipType;
+        use std::str::FromStr;
+
+        let rt = RelationshipType::HasDocument;
+        assert_eq!(rt.as_str(), "has-document");
+        assert_eq!(rt.to_string(), "has-document");
+
+        assert_eq!(
+            RelationshipType::from_str("has-document").unwrap(),
+            RelationshipType::HasDocument
+        );
+        assert_eq!(
+            RelationshipType::from_str("has_document").unwrap(),
+            RelationshipType::HasDocument
+        );
+        assert_eq!(
+            RelationshipType::from_str("hasDocument").unwrap(),
+            RelationshipType::HasDocument
+        );
+    }
+
+    #[tokio::test]
+    async fn get_relationships_batch_filters_by_multiple_sources() {
+        use crate::store::RelationshipType;
+
+        let store = MemoryStore::new();
+        let actor_ref = ActorRef::test();
+
+        let (id1, _) = store
+            .add_issue(sample_issue(vec![]), &actor_ref)
+            .await
+            .unwrap();
+        let (id2, _) = store
+            .add_issue(sample_issue(vec![]), &actor_ref)
+            .await
+            .unwrap();
+        let (id3, _) = store
+            .add_issue(sample_issue(vec![]), &actor_ref)
+            .await
+            .unwrap();
+        let (pid, _) = store.add_patch(sample_patch(), &actor_ref).await.unwrap();
+
+        let sid1 = MetisId::from(id1.clone());
+        let sid2 = MetisId::from(id2.clone());
+        let sid3 = MetisId::from(id3.clone());
+        let tpid = MetisId::from(pid.clone());
+
+        store
+            .add_relationship(&sid1, &tpid, RelationshipType::HasPatch)
+            .await
+            .unwrap();
+        store
+            .add_relationship(&sid2, &tpid, RelationshipType::HasPatch)
+            .await
+            .unwrap();
+        store
+            .add_relationship(&sid3, &tpid, RelationshipType::HasPatch)
+            .await
+            .unwrap();
+
+        // Batch query for id1 and id2 only
+        let results = store
+            .get_relationships_batch(
+                Some(&[sid1.clone(), sid2.clone()]),
+                None,
+                Some(RelationshipType::HasPatch),
+            )
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Empty source_ids returns empty
+        let results = store
+            .get_relationships_batch(Some(&[]), None, None)
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_relationships_transitive_follows_same_type_only() {
+        use crate::store::RelationshipType;
+
+        let store = MemoryStore::new();
+        let actor_ref = ActorRef::test();
+
+        // Create 3 issues: A -> B -> C (child-of chain)
+        // Also B -> patch (has-patch, should NOT be followed)
+        let (id_a, _) = store
+            .add_issue(sample_issue(vec![]), &actor_ref)
+            .await
+            .unwrap();
+        let (id_b, _) = store
+            .add_issue(sample_issue(vec![]), &actor_ref)
+            .await
+            .unwrap();
+        let (id_c, _) = store
+            .add_issue(sample_issue(vec![]), &actor_ref)
+            .await
+            .unwrap();
+        let (pid, _) = store.add_patch(sample_patch(), &actor_ref).await.unwrap();
+
+        let a = MetisId::from(id_a.clone());
+        let b = MetisId::from(id_b.clone());
+        let c = MetisId::from(id_c.clone());
+        let p = MetisId::from(pid.clone());
+
+        // A is child-of B, B is child-of C
+        store
+            .add_relationship(&a, &b, RelationshipType::ChildOf)
+            .await
+            .unwrap();
+        store
+            .add_relationship(&b, &c, RelationshipType::ChildOf)
+            .await
+            .unwrap();
+        // B has-patch P (different rel_type)
+        store
+            .add_relationship(&b, &p, RelationshipType::HasPatch)
+            .await
+            .unwrap();
+
+        // Forward transitive from A following child-of
+        let results = store
+            .get_relationships_transitive(Some(&a), None, RelationshipType::ChildOf)
+            .await
+            .unwrap();
+        // Should find A->B and B->C, but NOT B->P
+        assert_eq!(results.len(), 2);
+        assert!(
+            results
+                .iter()
+                .all(|r| r.rel_type == RelationshipType::ChildOf)
+        );
+
+        // Backward transitive from C following child-of
+        let results = store
+            .get_relationships_transitive(None, Some(&c), RelationshipType::ChildOf)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Transitive has-patch from B should only find B->P
+        let results = store
+            .get_relationships_transitive(Some(&b), None, RelationshipType::HasPatch)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].target_id, p);
     }
 }

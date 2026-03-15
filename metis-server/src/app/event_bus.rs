@@ -1547,6 +1547,28 @@ impl ReadOnlyStore for StoreWithEvents {
             .await
     }
 
+    async fn get_relationships_batch(
+        &self,
+        source_ids: Option<&[MetisId]>,
+        target_ids: Option<&[MetisId]>,
+        rel_type: Option<crate::store::RelationshipType>,
+    ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
+        self.inner
+            .get_relationships_batch(source_ids, target_ids, rel_type)
+            .await
+    }
+
+    async fn get_relationships_transitive(
+        &self,
+        source_id: Option<&MetisId>,
+        target_id: Option<&MetisId>,
+        rel_type: crate::store::RelationshipType,
+    ) -> Result<Vec<crate::store::ObjectRelationship>, StoreError> {
+        self.inner
+            .get_relationships_transitive(source_id, target_id, rel_type)
+            .await
+    }
+
     // ---- User secrets (read-only) ----
 
     async fn get_user_secret(
