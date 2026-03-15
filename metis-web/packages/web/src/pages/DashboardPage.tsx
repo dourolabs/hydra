@@ -30,7 +30,7 @@ function buildServerFilters(
 
   if (filterRootId === "inbox") {
     if (inboxLabelId) filters.labels = inboxLabelId;
-    if (username) filters.creator = username;
+    if (username) filters.assignee = username;
   } else if (filterRootId === "my-issues") {
     if (username) filters.creator = username;
   } else if (filterRootId?.startsWith(LABEL_FILTER_PREFIX)) {
@@ -121,12 +121,12 @@ export function DashboardPage() {
   // (closed, failed, dropped, rejected) which should not inflate badge counts.
   const inboxOpenFilters = useMemo<IssueFilters>(() => {
     if (!inboxLabelId || !username) return {};
-    return { labels: inboxLabelId, creator: username, status: "open" };
+    return { labels: inboxLabelId, assignee: username, status: "open" };
   }, [inboxLabelId, username]);
 
   const inboxInProgressFilters = useMemo<IssueFilters>(() => {
     if (!inboxLabelId || !username) return {};
-    return { labels: inboxLabelId, creator: username, status: "in-progress" };
+    return { labels: inboxLabelId, assignee: username, status: "in-progress" };
   }, [inboxLabelId, username]);
 
   const myIssuesOpenFilters = useMemo<IssueFilters>(() => {
@@ -157,14 +157,14 @@ export function DashboardPage() {
     return Array.from(set).sort();
   }, [issues]);
 
-  // For server-filtered results (special filters), create work items directly
-  // without tree traversal since the server already filtered for us.
-  // For specific issue roots ("everything" or a specific issue), use tree traversal.
+  // For paginated views (special filters + "everything"), create work items
+  // directly without tree traversal since the server already filtered/paginated.
+  // For specific issue roots, use tree traversal on the full issue set.
   const { items: treeWorkItems, isLoading: treeLoading } =
-    useTransitiveWorkItems(isSpecialFilter ? null : hookRootId, isSpecialFilter ? [] : issues);
+    useTransitiveWorkItems(usePaginated ? null : hookRootId, usePaginated ? [] : issues);
 
   const flatWorkItems = useMemo((): WorkItem[] => {
-    if (!isSpecialFilter) return [];
+    if (!usePaginated) return [];
     return issues.map((issue) => ({
       kind: "issue" as const,
       id: issue.issue_id,
@@ -172,10 +172,10 @@ export function DashboardPage() {
       lastUpdated: issue.timestamp,
       isTerminal: TERMINAL_STATUSES.has(issue.issue.status),
     }));
-  }, [isSpecialFilter, issues]);
+  }, [usePaginated, issues]);
 
-  const allWorkItems = isSpecialFilter ? flatWorkItems : treeWorkItems;
-  const workItemsLoading = isSpecialFilter ? false : treeLoading;
+  const allWorkItems = usePaginated ? flatWorkItems : treeWorkItems;
+  const workItemsLoading = usePaginated ? false : treeLoading;
 
   // Per-issue tree construction via relationships API
   const {
