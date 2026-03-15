@@ -67,6 +67,7 @@ pub async fn list_sessions(
     info!(
         query = ?query.q,
         spawned_from = ?query.spawned_from,
+        spawned_from_ids_count = query.spawned_from_ids.len(),
         include_deleted = ?query.include_deleted,
         "list_sessions invoked"
     );

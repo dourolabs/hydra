@@ -1454,6 +1454,20 @@ fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Ve
     let mut predicates = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
 
+    // When `ids` is provided, filter by ID (intersected with other filters).
+    if !query.ids.is_empty() {
+        let placeholders: Vec<String> = query
+            .ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("id IN ({})", placeholders.join(", ")));
+        for id in &query.ids {
+            bindings.push(id.as_ref().to_string());
+        }
+    }
+
     if let Some(issue_type) = query.issue_type.as_ref() {
         bindings.push(issue_type.as_str().to_string());
         predicates.push(format!("issue_type = ?{}", bindings.len()));
@@ -1472,6 +1486,16 @@ fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Ve
     {
         bindings.push(assignee.to_lowercase());
         predicates.push(format!("LOWER(assignee) = ?{}", bindings.len()));
+    }
+
+    if let Some(creator) = query
+        .creator
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
+        bindings.push(creator.to_lowercase());
+        predicates.push(format!("LOWER(creator) = ?{}", bindings.len()));
     }
 
     if let Some(term) = query
@@ -1662,6 +1686,19 @@ fn build_tasks_predicates_sqlite(query: &SearchSessionsQuery) -> (Vec<String>, V
     if let Some(spawned_from) = query.spawned_from.as_ref() {
         bindings.push(spawned_from.as_ref().to_string());
         predicates.push(format!("t.spawned_from = ?{}", bindings.len()));
+    }
+
+    if !query.spawned_from_ids.is_empty() {
+        let placeholders: Vec<String> = query
+            .spawned_from_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("t.spawned_from IN ({})", placeholders.join(", ")));
+        for id in &query.spawned_from_ids {
+            bindings.push(id.as_ref().to_string());
+        }
     }
 
     if let Some(term) = query

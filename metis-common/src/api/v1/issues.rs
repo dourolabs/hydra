@@ -638,6 +638,31 @@ impl UpsertIssueResponse {
     }
 }
 
+fn serialize_issue_ids<S>(ids: &[IssueId], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let s = ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    serializer.serialize_str(&s)
+}
+
+fn deserialize_issue_ids<'de, D>(deserializer: D) -> Result<Vec<IssueId>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    s.split(',')
+        .map(|part| part.trim().parse().map_err(de::Error::custom))
+        .collect()
+}
+
 fn serialize_label_ids<S>(ids: &[LabelId], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -696,12 +721,25 @@ where
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct SearchIssuesQuery {
+    /// Batch-fetch specific issues by ID (comma-separated, max 100).
+    /// Intersected with other filters when provided.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_issue_ids",
+        deserialize_with = "deserialize_issue_ids"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub ids: Vec<IssueId>,
     #[serde(default)]
     pub issue_type: Option<IssueType>,
     #[serde(default)]
     pub status: Option<IssueStatus>,
     #[serde(default)]
     pub assignee: Option<String>,
+    /// Filter issues by creator username.
+    #[serde(default)]
+    pub creator: Option<String>,
     #[serde(default)]
     pub q: Option<String>,
     #[serde(
@@ -744,9 +782,11 @@ impl SearchIssuesQuery {
         include_deleted: Option<bool>,
     ) -> Self {
         Self {
+            ids: Vec::new(),
             issue_type,
             status,
             assignee,
+            creator: None,
             q,
             graph_filters,
             include_deleted,
@@ -964,9 +1004,11 @@ mod tests {
     #[test]
     fn search_issues_query_serializes_with_reqwest() {
         let query = SearchIssuesQuery {
+            ids: vec![],
             issue_type: Some(IssueType::Bug),
             status: Some(IssueStatus::Open),
             assignee: Some("alice".to_string()),
+            creator: None,
             q: Some("test query".to_string()),
             graph_filters: vec![],
             include_deleted: None,
@@ -990,9 +1032,11 @@ mod tests {
         let filter1: IssueGraphFilter = "*:child-of:i-abcd".parse().unwrap();
         let filter2: IssueGraphFilter = "i-efgh:blocked-on:**".parse().unwrap();
         let query = SearchIssuesQuery {
+            ids: vec![],
             issue_type: None,
             status: None,
             assignee: None,
+            creator: None,
             q: None,
             graph_filters: vec![filter1, filter2],
             include_deleted: None,
@@ -1025,6 +1069,40 @@ mod tests {
             2,
             "only the graph and labels keys should exist when no filters are provided"
         );
+    }
+
+    #[test]
+    fn search_issues_query_serializes_ids() {
+        let query = SearchIssuesQuery {
+            ids: vec![issue_id("i-abcd"), issue_id("i-efgh")],
+            ..SearchIssuesQuery::default()
+        };
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("ids").map(String::as_str), Some("i-abcd,i-efgh"));
+    }
+
+    #[test]
+    fn search_issues_query_deserializes_ids() {
+        let query: SearchIssuesQuery = serde_urlencoded::from_str("ids=i-abcd%2Ci-efgh").unwrap();
+        assert_eq!(query.ids.len(), 2);
+        assert_eq!(query.ids[0].as_ref(), "i-abcd");
+        assert_eq!(query.ids[1].as_ref(), "i-efgh");
+    }
+
+    #[test]
+    fn search_issues_query_serializes_creator() {
+        let query = SearchIssuesQuery {
+            creator: Some("alice".to_string()),
+            ..SearchIssuesQuery::default()
+        };
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("creator").map(String::as_str), Some("alice"));
     }
 
     #[test]
