@@ -102,6 +102,25 @@ const docList = (r: ListDocumentsResponse) => r.documents;
 const wrapDocs = (items: DocumentSummaryRecord[]): ListDocumentsResponse => ({ documents: items });
 const docRecordId = (r: DocumentSummaryRecord) => r.document_id;
 
+// ---------------------------------------------------------------------------
+// Targeted cache invalidation — used on resync and visibility change to
+// refresh only the page-level and tree-level caches instead of all caches.
+// ---------------------------------------------------------------------------
+
+function invalidatePageAndTreeCaches(qc: QueryClient) {
+  // Issue list caches (paginated dashboard)
+  qc.invalidateQueries({ queryKey: ["issues"] });
+  // Tree relationship caches
+  qc.invalidateQueries({ queryKey: ["relations"] });
+  // Session batch caches used by usePageIssueTrees
+  qc.invalidateQueries({ queryKey: ["sessions", "batch"] });
+  qc.invalidateQueries({ queryKey: ["sessions"] });
+  qc.invalidateQueries({ queryKey: ["allSessions"] });
+  // Patch and document list caches
+  qc.invalidateQueries({ queryKey: ["patches"] });
+  qc.invalidateQueries({ queryKey: ["documents"] });
+}
+
 /**
  * SSE hook that connects to the BFF /api/v1/events endpoint, listens for
  * entity mutation events, and updates React Query caches. When entity data
@@ -124,6 +143,8 @@ export function useSSE(): SSEConnectionState {
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         queryClient.invalidateQueries({ queryKey: ["issues"] });
         queryClient.invalidateQueries({ queryKey: ["issue", entity_id] });
+        // Invalidate tree-related caches
+        queryClient.invalidateQueries({ queryKey: ["relations", "child-of"] });
       } else if (entity_type === "session" || eventType.startsWith("session_")) {
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["allSessions"] });
@@ -132,9 +153,11 @@ export function useSSE(): SSEConnectionState {
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         queryClient.invalidateQueries({ queryKey: ["patches"] });
         queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
+        queryClient.invalidateQueries({ queryKey: ["relations", "has-patch"] });
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
         queryClient.invalidateQueries({ queryKey: ["documents"] });
         queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
+        queryClient.invalidateQueries({ queryKey: ["relations", "has-document"] });
       } else if (entity_type === "label" || eventType.startsWith("label_")) {
         queryClient.invalidateQueries({ queryKey: ["labels"] });
       }
@@ -163,6 +186,9 @@ export function useSSE(): SSEConnectionState {
           upsertInList(queryClient, ["issues"], issueList, wrapIssues, issueRecordId, entity_id, record);
           queryClient.invalidateQueries({ queryKey: ["issue", entity_id, "versions"] });
         }
+        // Invalidate tree-related caches so child statuses and tree structure update
+        queryClient.invalidateQueries({ queryKey: ["relations", "child-of"] });
+        queryClient.invalidateQueries({ queryKey: ["issues", "batch"] });
       } else if (entity_type === "session" || eventType.startsWith("session_")) {
         const record = entity as unknown as SessionSummaryRecord;
         const spawnedFrom = record.session?.spawned_from;
@@ -189,6 +215,8 @@ export function useSSE(): SSEConnectionState {
           upsertInList(queryClient, ["patches"], patchList, wrapPatches, patchRecordId, entity_id, record);
           queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
         }
+        // Invalidate has-patch relations so artifact lists update in tree caches
+        queryClient.invalidateQueries({ queryKey: ["relations", "has-patch"] });
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
         if (eventType === "document_deleted") {
           queryClient.removeQueries({ queryKey: ["document", entity_id] });
@@ -198,6 +226,8 @@ export function useSSE(): SSEConnectionState {
           queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
           upsertInList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id, record);
         }
+        // Invalidate has-document relations so artifact lists update in tree caches
+        queryClient.invalidateQueries({ queryKey: ["relations", "has-document"] });
       } else if (entity_type === "label" || eventType.startsWith("label_")) {
         queryClient.invalidateQueries({ queryKey: ["labels"] });
       }
@@ -239,9 +269,10 @@ export function useSSE(): SSEConnectionState {
       // Server confirmed connection with current seq. No action needed.
     });
 
-    // Resync event — client has fallen behind, invalidate loaded caches
+    // Resync event — client has fallen behind, invalidate page and tree caches
+    // only (not all caches globally) to trigger targeted refetches.
     es.addEventListener("resync", () => {
-      queryClient.invalidateQueries();
+      invalidatePageAndTreeCaches(queryClient);
     });
 
     // Heartbeat — keep-alive, no action needed
@@ -286,7 +317,7 @@ export function useSSE(): SSEConnectionState {
           clearTimeout(timerRef.current);
           timerRef.current = null;
         }
-        queryClient.invalidateQueries();
+        invalidatePageAndTreeCaches(queryClient);
         connect();
       }
     };
