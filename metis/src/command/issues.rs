@@ -733,7 +733,7 @@ async fn fetch_child_issues(
     let response = client
         .list_issues(&SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             None,
             None,
             vec![filter],
@@ -1076,7 +1076,7 @@ async fn fetch_issues(
     let include_deleted_opt = if include_deleted { Some(true) } else { None };
     let mut search_query = SearchIssuesQuery::new(
         issue_type,
-        status,
+        status.into_iter().collect(),
         trimmed_assignee.clone(),
         trimmed_query,
         graph_filters,

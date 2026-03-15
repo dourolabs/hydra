@@ -657,8 +657,14 @@ pub struct SearchIssuesQuery {
     pub ids: Vec<IssueId>,
     #[serde(default)]
     pub issue_type: Option<IssueType>,
-    #[serde(default)]
-    pub status: Option<IssueStatus>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub status: Vec<IssueStatus>,
     #[serde(default)]
     pub assignee: Option<String>,
     /// Filter issues by creator username.
@@ -699,7 +705,7 @@ pub struct SearchIssuesQuery {
 impl SearchIssuesQuery {
     pub fn new(
         issue_type: Option<IssueType>,
-        status: Option<IssueStatus>,
+        status: Vec<IssueStatus>,
         assignee: Option<String>,
         q: Option<String>,
         graph_filters: Vec<IssueGraphFilter>,
@@ -930,7 +936,7 @@ mod tests {
         let query = SearchIssuesQuery {
             ids: vec![],
             issue_type: Some(IssueType::Bug),
-            status: Some(IssueStatus::Open),
+            status: vec![IssueStatus::Open],
             assignee: Some("alice".to_string()),
             creator: None,
             q: Some("test query".to_string()),
@@ -958,7 +964,7 @@ mod tests {
         let query = SearchIssuesQuery {
             ids: vec![],
             issue_type: None,
-            status: None,
+            status: vec![],
             assignee: None,
             creator: None,
             q: None,
@@ -1006,6 +1012,34 @@ mod tests {
             .into_iter()
             .collect::<HashMap<_, _>>();
         assert_eq!(params.get("ids").map(String::as_str), Some("i-abcd,i-efgh"));
+    }
+
+    #[test]
+    fn search_issues_query_serializes_multi_status() {
+        let query = SearchIssuesQuery {
+            status: vec![IssueStatus::Open, IssueStatus::InProgress],
+            ..SearchIssuesQuery::default()
+        };
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            params.get("status").map(String::as_str),
+            Some("open,in-progress")
+        );
+    }
+
+    #[test]
+    fn search_issues_query_omits_empty_status() {
+        let query = SearchIssuesQuery::default();
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert!(
+            params.get("status").is_none(),
+            "empty status vec should be omitted from serialization"
+        );
     }
 
     #[test]

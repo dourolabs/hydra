@@ -1473,9 +1473,17 @@ fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Ve
         predicates.push(format!("issue_type = ?{}", bindings.len()));
     }
 
-    if let Some(status) = query.status.as_ref() {
-        bindings.push(status.as_str().to_string());
-        predicates.push(format!("status = ?{}", bindings.len()));
+    if !query.status.is_empty() {
+        let placeholders: Vec<String> = query
+            .status
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("status IN ({})", placeholders.join(", ")));
+        for s in &query.status {
+            bindings.push(s.as_str().to_string());
+        }
     }
 
     if let Some(assignee) = query
@@ -5208,10 +5216,56 @@ mod tests {
             .unwrap();
 
         let mut query = SearchIssuesQuery::default();
-        query.status = Some(IssueStatus::Open.into());
+        query.status = vec![IssueStatus::Open.into()];
         let results = store.list_issues(&query).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, id);
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_multiple_statuses() {
+        let store = create_test_store().await;
+
+        // Create one issue per status: Open (default), InProgress, Closed
+        let (open_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut in_progress_issue = sample_issue(vec![]);
+        in_progress_issue.status = IssueStatus::InProgress;
+        let (ip_id, _) = store
+            .add_issue(in_progress_issue, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut closed_issue = sample_issue(vec![]);
+        closed_issue.status = IssueStatus::Closed;
+        store
+            .add_issue(closed_issue, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Filter by open + in-progress should return 2 issues
+        let mut query = SearchIssuesQuery::default();
+        query.status = vec![IssueStatus::Open.into(), IssueStatus::InProgress.into()];
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 2);
+        let result_ids: HashSet<_> = results.iter().map(|(id, _)| id.clone()).collect();
+        assert!(result_ids.contains(&open_id));
+        assert!(result_ids.contains(&ip_id));
+
+        // Empty status filter should return all 3
+        let mut query = SearchIssuesQuery::default();
+        query.status = vec![];
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 3);
+
+        // Single status filter should still work
+        let mut query = SearchIssuesQuery::default();
+        query.status = vec![IssueStatus::Closed.into()];
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
     }
 
     #[tokio::test]
@@ -7206,7 +7260,7 @@ mod tests {
         // Count all issues
         let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             None,
             None,
             Vec::new(),
@@ -7217,7 +7271,7 @@ mod tests {
         // Count only bugs
         let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
             Some(metis_common::api::v1::issues::IssueType::Bug),
-            None,
+            vec![],
             None,
             None,
             Vec::new(),
@@ -7228,7 +7282,7 @@ mod tests {
         // Count only closed
         let query = metis_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            vec![metis_common::api::v1::issues::IssueStatus::Closed],
             None,
             None,
             Vec::new(),
@@ -7343,7 +7397,7 @@ mod tests {
         // Count should return 5 even when limit is set
         let mut query = metis_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             None,
             None,
             Vec::new(),

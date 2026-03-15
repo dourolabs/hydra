@@ -615,7 +615,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         .get(format!("{}/v1/issues", server.base_url()))
         .query(&SearchIssuesQuery::new(
             Some(metis_common::api::v1::issues::IssueType::Bug),
-            None,
+            vec![],
             None,
             None,
             Vec::new(),
@@ -638,7 +638,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         .get(format!("{}/v1/issues", server.base_url()))
         .query(&SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             Some("OWNER-1".to_string()),
             None,
             Vec::new(),
@@ -661,7 +661,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         .get(format!("{}/v1/issues", server.base_url()))
         .query(&SearchIssuesQuery::new(
             None,
-            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            vec![metis_common::api::v1::issues::IssueStatus::Closed],
             None,
             None,
             Vec::new(),
@@ -928,7 +928,7 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
         .get(format!("{}/v1/issues", server.base_url()))
         .query(&SearchIssuesQuery::new(
             None,
-            None,
+            vec![],
             None,
             None,
             Vec::new(),
