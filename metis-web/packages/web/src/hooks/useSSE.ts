@@ -201,15 +201,6 @@ export function useSSE(): SSEConnectionState {
     [queryClient, invalidateForEvent],
   );
 
-  const invalidateAll = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["issues"] });
-    queryClient.invalidateQueries({ queryKey: ["sessions"] });
-    queryClient.invalidateQueries({ queryKey: ["allSessions"] });
-    queryClient.invalidateQueries({ queryKey: ["patches"] });
-    queryClient.invalidateQueries({ queryKey: ["documents"] });
-    queryClient.invalidateQueries({ queryKey: ["labels"] });
-  }, [queryClient]);
-
   const connect = useCallback(() => {
     // Clean up previous connection
     if (esRef.current) {
@@ -239,14 +230,14 @@ export function useSSE(): SSEConnectionState {
       });
     }
 
-    // Snapshot event on initial connection — nothing to do, data is current
-    es.addEventListener("snapshot", () => {
-      // Data is current as of connection. No action needed.
+    // Connected event on initial connection — no action needed
+    es.addEventListener("connected", () => {
+      // Server confirmed connection with current seq. No action needed.
     });
 
-    // Resync event — client has fallen behind, refetch everything
+    // Resync event — client has fallen behind, invalidate loaded caches
     es.addEventListener("resync", () => {
-      invalidateAll();
+      queryClient.invalidateQueries();
     });
 
     // Heartbeat — keep-alive, no action needed
@@ -264,7 +255,7 @@ export function useSSE(): SSEConnectionState {
       retriesRef.current += 1;
       timerRef.current = setTimeout(connect, delay);
     };
-  }, [handleEntityEvent, invalidateAll]);
+  }, [handleEntityEvent, queryClient]);
 
   useEffect(() => {
     connect();
@@ -291,7 +282,7 @@ export function useSSE(): SSEConnectionState {
           clearTimeout(timerRef.current);
           timerRef.current = null;
         }
-        invalidateAll();
+        queryClient.invalidateQueries();
         connect();
       }
     };
@@ -300,7 +291,7 @@ export function useSSE(): SSEConnectionState {
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [connect, invalidateAll]);
+  }, [connect, queryClient]);
 
   return state;
 }

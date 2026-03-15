@@ -691,7 +691,7 @@ describe("SSE Events", () => {
     await resetServer();
   });
 
-  it("connect → receive snapshot → create entity → receive entity event", async () => {
+  it("connect → receive connected → create entity → receive entity event", async () => {
     // Use raw fetch to test SSE since EventSource may not be available in test env
     const controller = new AbortController();
     const resp = await originalFetch(`${baseUrl}/v1/events`, {
@@ -704,7 +704,7 @@ describe("SSE Events", () => {
     const reader = resp.body!.getReader();
     const decoder = new TextDecoder();
 
-    // Read chunks until we get the snapshot event
+    // Read chunks until we get the connected event
     let buffer = "";
     const events: Array<{ event: string; data: string; id?: string }> = [];
 
@@ -733,7 +733,7 @@ describe("SSE Events", () => {
       return { parsed, remaining };
     }
 
-    // Read until we have the snapshot event
+    // Read until we have the connected event
     async function readUntil(
       predicate: (evts: typeof events) => boolean,
       maxBytes = 65536,
@@ -750,12 +750,12 @@ describe("SSE Events", () => {
       }
     }
 
-    // Wait for snapshot
-    await readUntil((evts) => evts.some((e) => e.event === "snapshot"));
-    const snapshot = events.find((e) => e.event === "snapshot");
-    expect(snapshot).toBeDefined();
-    const snapshotData = JSON.parse(snapshot!.data);
-    expect(snapshotData.versions).toBeDefined();
+    // Wait for connected event
+    await readUntil((evts) => evts.some((e) => e.event === "connected"));
+    const connected = events.find((e) => e.event === "connected");
+    expect(connected).toBeDefined();
+    const connectedData = JSON.parse(connected!.data);
+    expect(connectedData.current_seq).toBeDefined();
 
     // Now create an issue to trigger an entity event
     const eventsBeforeCreate = events.length;

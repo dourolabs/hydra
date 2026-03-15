@@ -112,7 +112,7 @@ export type { SessionVersionRecord } from "./generated/SessionVersionRecord";
 export type { SetSessionStatusResponse } from "./generated/SetSessionStatusResponse";
 export type { SetSecretRequest } from "./generated/SetSecretRequest";
 export type { SetTodoItemStatusRequest } from "./generated/SetTodoItemStatusRequest";
-export type { SnapshotEventData } from "./generated/SnapshotEventData";
+export type { ConnectedEventData } from "./generated/ConnectedEventData";
 export type { SseEventType } from "./generated/SseEventType";
 export type { Status } from "./generated/Status";
 export type { TaskError } from "./generated/TaskError";

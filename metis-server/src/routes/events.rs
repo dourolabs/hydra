@@ -16,8 +16,8 @@ use metis_common::{
         documents::{DocumentSummaryRecord, DocumentVersionRecord},
         error::ApiError,
         events::{
-            EntityEventData, EventsQuery, HeartbeatEventData, LAST_EVENT_ID_HEADER,
-            ResyncEventData, SnapshotEventData, SseEventType,
+            ConnectedEventData, EntityEventData, EventsQuery, HeartbeatEventData,
+            LAST_EVENT_ID_HEADER, ResyncEventData, SseEventType,
         },
         issues::{IssueSummary, IssueSummaryRecord},
         messages::VersionedMessage,
@@ -26,7 +26,7 @@ use metis_common::{
     },
     ids::{DocumentId, IssueId, MessageId, PatchId, SessionId},
 };
-use std::{collections::HashMap, convert::Infallible, sync::Arc};
+use std::{convert::Infallible, sync::Arc};
 use tokio::sync::broadcast::error::RecvError;
 use tracing::{info, warn};
 
@@ -63,15 +63,16 @@ pub async fn get_events(
         // Send initial event based on whether this is a first connect or reconnect.
         match last_event_id {
             None => {
-                // First connection: send snapshot of current entity versions.
-                let snapshot = build_snapshot(&state).await;
-                let snapshot_event = Event::default()
-                    .event(SseEventType::Snapshot.as_str())
+                // First connection: send a lightweight connected event with
+                // the current sequence number for reconnection support.
+                let connected = ConnectedEventData { current_seq };
+                let connected_event = Event::default()
+                    .event(SseEventType::Connected.as_str())
                     .id(current_seq.to_string())
-                    .json_data(&snapshot)
+                    .json_data(&connected)
                     .unwrap_or_else(|_| Event::default().data("{}"));
 
-                if tx.unbounded_send(Ok(snapshot_event)).is_err() {
+                if tx.unbounded_send(Ok(connected_event)).is_err() {
                     return;
                 }
             }
@@ -833,48 +834,6 @@ async fn build_sse_event(event: &ServerEvent, state: &AppState) -> Event {
         .unwrap_or_else(|_| Event::default().data("{}"))
 }
 
-/// Builds a snapshot of current entity version numbers.
-async fn build_snapshot(state: &AppState) -> SnapshotEventData {
-    use metis_common::api::v1::{documents, patches, sessions};
-
-    let mut versions = HashMap::new();
-
-    if let Ok(issues) = state.list_issues().await {
-        for (id, versioned) in issues {
-            versions.insert(id.to_string(), versioned.version);
-        }
-    }
-
-    if let Ok(patches) = state
-        .list_patches_with_query(&patches::SearchPatchesQuery::default())
-        .await
-    {
-        for (id, versioned) in patches {
-            versions.insert(id.to_string(), versioned.version);
-        }
-    }
-
-    if let Ok(tasks) = state
-        .list_sessions_with_query(&sessions::SearchSessionsQuery::default())
-        .await
-    {
-        for (id, versioned) in tasks {
-            versions.insert(id.to_string(), versioned.version);
-        }
-    }
-
-    if let Ok(documents) = state
-        .list_documents(&documents::SearchDocumentsQuery::default())
-        .await
-    {
-        for (id, versioned) in documents {
-            versions.insert(id.to_string(), versioned.version);
-        }
-    }
-
-    SnapshotEventData { versions }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -888,6 +847,7 @@ mod tests {
     use crate::test_utils::test_state_with_store;
     use chrono::Utc;
     use metis_common::issues::IssueId;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     fn dummy_issue() -> Issue {

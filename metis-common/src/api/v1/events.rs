@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Standard HTTP header name for SSE reconnection support.
 pub const LAST_EVENT_ID_HEADER: &str = "last-event-id";
@@ -98,7 +97,7 @@ pub enum SseEventType {
     MessageCreated,
     MessageUpdated,
     NotificationCreated,
-    Snapshot,
+    Connected,
     Resync,
     Heartbeat,
 }
@@ -123,7 +122,7 @@ impl SseEventType {
             Self::MessageCreated => "message_created",
             Self::MessageUpdated => "message_updated",
             Self::NotificationCreated => "notification_created",
-            Self::Snapshot => "snapshot",
+            Self::Connected => "connected",
             Self::Resync => "resync",
             Self::Heartbeat => "heartbeat",
         }
@@ -152,7 +151,8 @@ impl std::str::FromStr for SseEventType {
             "message_created" => Ok(Self::MessageCreated),
             "message_updated" => Ok(Self::MessageUpdated),
             "notification_created" => Ok(Self::NotificationCreated),
-            "snapshot" => Ok(Self::Snapshot),
+            "connected" => Ok(Self::Connected),
+            "snapshot" => Ok(Self::Connected),
             "resync" => Ok(Self::Resync),
             "heartbeat" => Ok(Self::Heartbeat),
             other => Err(format!("unknown SSE event type: {other}")),
@@ -175,13 +175,13 @@ pub struct EntityEventData {
     pub entity: Option<serde_json::Value>,
 }
 
-/// Data payload for the snapshot event sent on initial connection.
+/// Data payload for the connected event sent on initial SSE connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
-pub struct SnapshotEventData {
-    /// Map from entity ID to its current version number.
-    pub versions: HashMap<String, u64>,
+pub struct ConnectedEventData {
+    /// The current event sequence number for reconnection support.
+    pub current_seq: u64,
 }
 
 /// Data payload for the resync event sent when the client has fallen behind.

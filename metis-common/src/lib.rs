@@ -121,7 +121,7 @@ mod ts_export {
         crate::events::EventsQuery::export_all(&cfg).expect("EventsQuery");
         crate::events::SseEventType::export_all(&cfg).expect("SseEventType");
         crate::events::EntityEventData::export_all(&cfg).expect("EntityEventData");
-        crate::events::SnapshotEventData::export_all(&cfg).expect("SnapshotEventData");
+        crate::events::ConnectedEventData::export_all(&cfg).expect("ConnectedEventData");
         crate::events::ResyncEventData::export_all(&cfg).expect("ResyncEventData");
         crate::events::HeartbeatEventData::export_all(&cfg).expect("HeartbeatEventData");
 

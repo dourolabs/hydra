@@ -7,7 +7,7 @@ use tracing::{debug, error, info, warn};
 
 use metis::client::MetisClient;
 use metis_common::api::v1::events::{
-    EntityEventData, EventsQuery, HeartbeatEventData, ResyncEventData, SnapshotEventData,
+    ConnectedEventData, EntityEventData, EventsQuery, HeartbeatEventData, ResyncEventData,
     SseEventType,
 };
 use metis_common::api::v1::messages::VersionedMessage;
@@ -52,7 +52,7 @@ impl EntityCache {
         }
     }
 
-    /// Whether the cache has completed initial snapshot hydration.
+    /// Whether the cache has received the initial connected event.
     pub fn is_ready(&self) -> bool {
         self.ready.load(Ordering::Acquire)
     }
@@ -82,17 +82,13 @@ impl EntityCache {
         data: &str,
     ) -> Result<(), CacheError> {
         match event_type {
-            SseEventType::Snapshot => {
-                let snapshot: SnapshotEventData = serde_json::from_str(data)
-                    .map_err(|e| CacheError::Parse(format!("snapshot: {e}")))?;
+            SseEventType::Connected => {
+                let connected: ConnectedEventData = serde_json::from_str(data)
+                    .map_err(|e| CacheError::Parse(format!("connected: {e}")))?;
                 debug!(
-                    entity_count = snapshot.versions.len(),
-                    "received snapshot event"
+                    current_seq = connected.current_seq,
+                    "received connected event"
                 );
-                // Snapshot just tells us which entities exist and their versions.
-                // The actual backfill fetches full entities via batch API calls.
-                // For now, mark as ready after snapshot (backfill is handled by the
-                // population task).
             }
             SseEventType::Resync => {
                 let resync: ResyncEventData = serde_json::from_str(data)
@@ -280,7 +276,7 @@ impl std::error::Error for CacheError {}
 ///
 /// The task will:
 /// 1. Connect to the SSE stream using MetisClient::subscribe_events
-/// 2. Process the initial snapshot event
+/// 2. Process the initial connected event
 /// 3. Apply incremental updates from the stream
 /// 4. Reconnect with Last-Event-ID on disconnect
 pub fn spawn_cache_population_task(
@@ -318,7 +314,7 @@ async fn run_sse_loop(cache: &EntityCache, client: &MetisClient) -> Result<(), C
         .await
         .map_err(|e| CacheError::Upstream(format!("SSE connection failed: {e}")))?;
 
-    let mut received_snapshot = false;
+    let mut received_connected = false;
 
     while let Some(event_result) = stream.next().await {
         let event =
@@ -328,9 +324,9 @@ async fn run_sse_loop(cache: &EntityCache, client: &MetisClient) -> Result<(), C
             warn!(event_type = ?event.event_type, error = %e, "failed to apply SSE event to cache");
         }
 
-        // Mark ready after first snapshot
-        if event.event_type == SseEventType::Snapshot && !received_snapshot {
-            received_snapshot = true;
+        // Mark ready after first connected event
+        if event.event_type == SseEventType::Connected && !received_connected {
+            received_connected = true;
             cache.set_ready();
         }
     }
@@ -548,18 +544,15 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_snapshot_does_not_set_ready() {
+    fn test_apply_connected_does_not_set_ready() {
         let cache = EntityCache::new();
         let data = serde_json::json!({
-            "versions": {
-                "i-abcdef": 1,
-                "p-ghijkl": 2
-            }
+            "current_seq": 42
         })
         .to_string();
 
         cache
-            .apply_event(&SseEventType::Snapshot, Some(0), &data)
+            .apply_event(&SseEventType::Connected, Some(0), &data)
             .unwrap();
 
         // apply_event doesn't set ready -- that's done by the population task
