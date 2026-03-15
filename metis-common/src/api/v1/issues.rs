@@ -638,56 +638,6 @@ impl UpsertIssueResponse {
     }
 }
 
-fn serialize_issue_ids<S>(ids: &[IssueId], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let s = ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    serializer.serialize_str(&s)
-}
-
-fn deserialize_issue_ids<'de, D>(deserializer: D) -> Result<Vec<IssueId>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s.is_empty() {
-        return Ok(Vec::new());
-    }
-    s.split(',')
-        .map(|part| part.trim().parse().map_err(de::Error::custom))
-        .collect()
-}
-
-fn serialize_label_ids<S>(ids: &[LabelId], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let s = ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    serializer.serialize_str(&s)
-}
-
-fn deserialize_label_ids<'de, D>(deserializer: D) -> Result<Vec<LabelId>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s.is_empty() {
-        return Ok(Vec::new());
-    }
-    s.split(',')
-        .map(|part| part.trim().parse().map_err(de::Error::custom))
-        .collect()
-}
-
 fn serialize_graph_filters<S>(
     filters: &[IssueGraphFilter],
     serializer: S,
@@ -726,8 +676,8 @@ pub struct SearchIssuesQuery {
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
-        serialize_with = "serialize_issue_ids",
-        deserialize_with = "deserialize_issue_ids"
+        serialize_with = "super::serde_helpers::serialize_issue_ids",
+        deserialize_with = "super::serde_helpers::deserialize_issue_ids"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub ids: Vec<IssueId>,
@@ -756,8 +706,8 @@ pub struct SearchIssuesQuery {
     #[serde(
         default,
         rename = "labels",
-        serialize_with = "serialize_label_ids",
-        deserialize_with = "deserialize_label_ids"
+        serialize_with = "super::serde_helpers::serialize_label_ids",
+        deserialize_with = "super::serde_helpers::deserialize_label_ids"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub label_ids: Vec<LabelId>,
