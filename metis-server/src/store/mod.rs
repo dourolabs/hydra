@@ -589,7 +589,10 @@ pub trait ReadOnlyStore: Send + Sync {
     ) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Lists the secrets configured for a user (not the values).
-    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<SecretRef>, StoreError>;
+    async fn list_user_secret_names(
+        &self,
+        username: &Username,
+    ) -> Result<Vec<SecretRef>, StoreError>;
 }
 
 /// Trait for storing issues, patches, and sessions along with their statuses.

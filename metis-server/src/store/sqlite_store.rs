@@ -3371,7 +3371,10 @@ impl ReadOnlyStore for SqliteStore {
         Ok(row)
     }
 
-    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<SecretRef>, StoreError> {
+    async fn list_user_secret_names(
+        &self,
+        username: &Username,
+    ) -> Result<Vec<SecretRef>, StoreError> {
         let sql = format!(
             "SELECT secret_name, internal FROM {TABLE_USER_SECRETS} WHERE username = ?1 ORDER BY secret_name"
         );
@@ -6922,8 +6925,14 @@ mod tests {
         let alice = Username::from("alice".to_string());
         let bob = Username::from("bob".to_string());
 
-        store.set_user_secret(&alice, "key_a", b"a", false).await.unwrap();
-        store.set_user_secret(&bob, "key_b", b"b", false).await.unwrap();
+        store
+            .set_user_secret(&alice, "key_a", b"a", false)
+            .await
+            .unwrap();
+        store
+            .set_user_secret(&bob, "key_b", b"b", false)
+            .await
+            .unwrap();
 
         let alice_refs = store.list_user_secret_names(&alice).await.unwrap();
         let alice_names: Vec<&str> = alice_refs.iter().map(|r| r.name.as_str()).collect();

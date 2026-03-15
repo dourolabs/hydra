@@ -3430,7 +3430,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(row)
     }
 
-    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<SecretRef>, StoreError> {
+    async fn list_user_secret_names(
+        &self,
+        username: &Username,
+    ) -> Result<Vec<SecretRef>, StoreError> {
         let sql = format!(
             "SELECT secret_name, internal FROM {TABLE_USER_SECRETS} WHERE username = $1 ORDER BY secret_name"
         );

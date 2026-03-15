@@ -1338,13 +1338,13 @@ impl ReadOnlyStore for MemoryStore {
         secret_name: &str,
     ) -> Result<Option<Vec<u8>>, StoreError> {
         let key = (username.clone(), secret_name.to_string());
-        Ok(self
-            .user_secrets
-            .get(&key)
-            .map(|v| v.value().0.clone()))
+        Ok(self.user_secrets.get(&key).map(|v| v.value().0.clone()))
     }
 
-    async fn list_user_secret_names(&self, username: &Username) -> Result<Vec<SecretRef>, StoreError> {
+    async fn list_user_secret_names(
+        &self,
+        username: &Username,
+    ) -> Result<Vec<SecretRef>, StoreError> {
         let mut refs: Vec<SecretRef> = self
             .user_secrets
             .iter()
