@@ -30,18 +30,7 @@ pub enum RelationsCommand {
         /// Follow transitive edges (requires --source or --target plus --rel-type).
         #[arg(long)]
         transitive: bool,
-
-        /// Output format: table (default), json, or ids.
-        #[arg(long, value_name = "FORMAT", default_value = "table")]
-        output: RelationsOutputFormat,
     },
-}
-
-#[derive(Debug, Clone, clap::ValueEnum)]
-pub enum RelationsOutputFormat {
-    Table,
-    Json,
-    Ids,
 }
 
 pub async fn run(
@@ -57,7 +46,6 @@ pub async fn run(
             object,
             rel_type,
             transitive,
-            output,
         } => {
             let query = ListRelationsRequest {
                 source_id: source,
@@ -72,7 +60,7 @@ pub async fn run(
                 .list_relations(&query)
                 .await
                 .context("failed to list relations")?;
-            render_relations(context.output_format, &output, &response, &mut stdout)?;
+            render_relations(context.output_format, &response, &mut stdout)?;
         }
     }
     Ok(())
