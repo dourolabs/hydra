@@ -7243,4 +7243,152 @@ mod tests {
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, ids[0]);
     }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn has_document_relationship_round_trip(pool: PgStorePool) {
+        use crate::store::RelationshipType;
+
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        let (issue_id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        let (doc_id, _) = store
+            .add_document(sample_document("test/doc.md", None), &actor)
+            .await
+            .unwrap();
+
+        let sid = MetisId::from(issue_id.clone());
+        let did = MetisId::from(doc_id.clone());
+
+        let created = store
+            .add_relationship(&sid, &did, RelationshipType::HasDocument)
+            .await
+            .unwrap();
+        assert!(created);
+
+        // Retrieve filtered by HasDocument type
+        let rels = store
+            .get_relationships(Some(&sid), None, Some(RelationshipType::HasDocument))
+            .await
+            .unwrap();
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].source_id, sid);
+        assert_eq!(rels[0].target_id, did);
+        assert_eq!(rels[0].rel_type, RelationshipType::HasDocument);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_relationships_batch_filters_by_multiple_sources(pool: PgStorePool) {
+        use crate::store::RelationshipType;
+
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        let (id1, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        let (id2, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        let (id3, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        let (pid, _) = store.add_patch(sample_patch(), &actor).await.unwrap();
+
+        let sid1 = MetisId::from(id1.clone());
+        let sid2 = MetisId::from(id2.clone());
+        let sid3 = MetisId::from(id3.clone());
+        let tpid = MetisId::from(pid.clone());
+
+        store
+            .add_relationship(&sid1, &tpid, RelationshipType::HasPatch)
+            .await
+            .unwrap();
+        store
+            .add_relationship(&sid2, &tpid, RelationshipType::HasPatch)
+            .await
+            .unwrap();
+        store
+            .add_relationship(&sid3, &tpid, RelationshipType::HasPatch)
+            .await
+            .unwrap();
+
+        // Batch query for id1 and id2 only
+        let results = store
+            .get_relationships_batch(
+                Some(&[sid1.clone(), sid2.clone()]),
+                None,
+                Some(RelationshipType::HasPatch),
+            )
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Empty source_ids returns empty
+        let results = store
+            .get_relationships_batch(Some(&[]), None, None)
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_relationships_transitive_follows_same_type_only(pool: PgStorePool) {
+        use crate::store::RelationshipType;
+
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        // Create 3 issues: A -> B -> C (child-of chain)
+        // Also B -> patch (has-patch, should NOT be followed)
+        let (id_a, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        let (id_b, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        let (id_c, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        let (pid, _) = store.add_patch(sample_patch(), &actor).await.unwrap();
+
+        let a = MetisId::from(id_a.clone());
+        let b = MetisId::from(id_b.clone());
+        let c = MetisId::from(id_c.clone());
+        let p = MetisId::from(pid.clone());
+
+        // A is child-of B, B is child-of C
+        store
+            .add_relationship(&a, &b, RelationshipType::ChildOf)
+            .await
+            .unwrap();
+        store
+            .add_relationship(&b, &c, RelationshipType::ChildOf)
+            .await
+            .unwrap();
+        // B has-patch P (different rel_type)
+        store
+            .add_relationship(&b, &p, RelationshipType::HasPatch)
+            .await
+            .unwrap();
+
+        // Forward transitive from A following child-of
+        let results = store
+            .get_relationships_transitive(Some(&a), None, RelationshipType::ChildOf)
+            .await
+            .unwrap();
+        // Should find A->B and B->C, but NOT B->P
+        assert_eq!(results.len(), 2);
+        assert!(
+            results
+                .iter()
+                .all(|r| r.rel_type == RelationshipType::ChildOf)
+        );
+
+        // Backward transitive from C following child-of
+        let results = store
+            .get_relationships_transitive(None, Some(&c), RelationshipType::ChildOf)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Transitive has-patch from B should only find B->P
+        let results = store
+            .get_relationships_transitive(Some(&b), None, RelationshipType::HasPatch)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].target_id, p);
+    }
 }
