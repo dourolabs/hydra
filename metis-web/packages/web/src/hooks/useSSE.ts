@@ -4,12 +4,8 @@ import type {
   EntityEventData,
   IssueSummaryRecord,
   SessionSummaryRecord,
-  PatchSummaryRecord,
-  DocumentSummaryRecord,
   ListIssuesResponse,
   ListSessionsResponse,
-  ListPatchesResponse,
-  ListDocumentsResponse,
   ListRelationsResponse,
 } from "@metis/api";
 
@@ -95,14 +91,6 @@ const sessionList = (r: ListSessionsResponse) => r.sessions;
 const wrapSessions = (items: SessionSummaryRecord[]): ListSessionsResponse => ({ sessions: items });
 const sessionRecordId = (r: SessionSummaryRecord) => r.session_id;
 
-const patchList = (r: ListPatchesResponse) => r.patches;
-const wrapPatches = (items: PatchSummaryRecord[]): ListPatchesResponse => ({ patches: items });
-const patchRecordId = (r: PatchSummaryRecord) => r.patch_id;
-
-const docList = (r: ListDocumentsResponse) => r.documents;
-const wrapDocs = (items: DocumentSummaryRecord[]): ListDocumentsResponse => ({ documents: items });
-const docRecordId = (r: DocumentSummaryRecord) => r.document_id;
-
 // ---------------------------------------------------------------------------
 // Tree cache mutation helpers — update usePageIssueTrees caches directly
 // so that tree-derived UI (status boxes, active indicators, artifact lists)
@@ -179,10 +167,8 @@ function invalidatePageAndTreeCaches(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ["issues", "batch"] });
   qc.invalidateQueries({ queryKey: ["sessions", "batch"] });
   qc.invalidateQueries({ queryKey: ["sessions"] });
-  qc.invalidateQueries({ queryKey: ["allSessions"] });
-  // Patch and document list caches
-  qc.invalidateQueries({ queryKey: ["patches"] });
-  qc.invalidateQueries({ queryKey: ["documents"] });
+  // Paginated document caches
+  qc.invalidateQueries({ queryKey: ["paginatedDocuments"] });
   // Labels
   qc.invalidateQueries({ queryKey: ["labels"] });
 }
@@ -213,16 +199,14 @@ export function useSSE(): SSEConnectionState {
         queryClient.invalidateQueries({ queryKey: ["issues", "batch"] });
       } else if (entity_type === "session" || eventType.startsWith("session_")) {
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
-        queryClient.invalidateQueries({ queryKey: ["allSessions"] });
+        // Invalidate batch session queries used by usePageIssueTrees
         queryClient.invalidateQueries({ queryKey: ["sessions", "batch"] });
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
-        queryClient.invalidateQueries({ queryKey: ["patches"] });
         queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
         queryClient.invalidateQueries({ queryKey: ["relations", "has-patch"] });
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
-        queryClient.invalidateQueries({ queryKey: ["documents"] });
         queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
-        queryClient.invalidateQueries({ queryKey: ["relations", "has-document"] });
+        queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
       } else if (entity_type === "label" || eventType.startsWith("label_")) {
         queryClient.invalidateQueries({ queryKey: ["labels"] });
       }
@@ -269,11 +253,7 @@ export function useSSE(): SSEConnectionState {
         const record = entity as unknown as SessionSummaryRecord;
         const spawnedFrom = record.session?.spawned_from;
 
-        // SSE now sends summary records; invalidate the detail cache instead of direct-setting.
         queryClient.invalidateQueries({ queryKey: ["session", entity_id] });
-
-        // Always upsert into allSessions regardless of status.
-        upsertInList(queryClient, ["allSessions"], sessionList, wrapSessions, sessionRecordId, entity_id, record);
 
         if (spawnedFrom) {
           upsertInList(queryClient, ["sessions", spawnedFrom], sessionList, wrapSessions, sessionRecordId, entity_id, record);
@@ -285,27 +265,14 @@ export function useSSE(): SSEConnectionState {
       } else if (entity_type === "patch" || eventType.startsWith("patch_")) {
         if (eventType === "patch_deleted") {
           queryClient.removeQueries({ queryKey: ["patch", entity_id] });
-          removeFromList(queryClient, ["patches"], patchList, wrapPatches, patchRecordId, entity_id);
-        } else {
-          const record = entity as unknown as PatchSummaryRecord;
-          upsertInList(queryClient, ["patches"], patchList, wrapPatches, patchRecordId, entity_id, record);
-          queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
         }
-        // Invalidate has-patch relations — patch entities don't carry the
-        // issue association, so we can't construct the relation directly.
-        queryClient.invalidateQueries({ queryKey: ["relations", "has-patch"] });
+        queryClient.invalidateQueries({ queryKey: ["patch", entity_id] });
       } else if (entity_type === "document" || eventType.startsWith("document_")) {
         if (eventType === "document_deleted") {
           queryClient.removeQueries({ queryKey: ["document", entity_id] });
-          removeFromList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id);
-        } else {
-          const record = entity as unknown as DocumentSummaryRecord;
-          queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
-          upsertInList(queryClient, ["documents"], docList, wrapDocs, docRecordId, entity_id, record);
         }
-        // Invalidate has-document relations — document entities don't carry
-        // the issue association, so we can't construct the relation directly.
-        queryClient.invalidateQueries({ queryKey: ["relations", "has-document"] });
+        queryClient.invalidateQueries({ queryKey: ["document", entity_id] });
+        queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
       } else if (entity_type === "label" || eventType.startsWith("label_")) {
         queryClient.invalidateQueries({ queryKey: ["labels"] });
       }
