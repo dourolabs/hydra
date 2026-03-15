@@ -1177,7 +1177,6 @@ mod tests {
                     body_file: Some(file.path().to_path_buf()),
                     body_stdin: false,
                 },
-                issue_id: None,
             },
         )
         .await
@@ -1223,7 +1222,6 @@ mod tests {
                     body_file: None,
                     body_stdin: false,
                 },
-                issue_id: None,
             },
         )
         .await
@@ -1258,7 +1256,6 @@ mod tests {
                 clear_path: false,
                 issue_id: None,
                 body: DocumentBodyInput::default(),
-                issue_id: None,
             },
         )
         .await
