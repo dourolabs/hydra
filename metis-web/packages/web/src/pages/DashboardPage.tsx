@@ -9,6 +9,7 @@ import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/I
 import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
 import { useTransitiveWorkItems, type WorkItem } from "../features/dashboard/useTransitiveWorkItems";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
+import { useActiveSessionIssueIds } from "../features/dashboard/useActiveSessionIssueIds";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
@@ -142,12 +143,50 @@ export function DashboardPage() {
   const inboxEnabled = !!inboxLabelId && !!username;
   const { data: inboxOpenCount = 0 } = useIssueCount(inboxOpenFilters, inboxEnabled);
   const { data: inboxInProgressCount = 0 } = useIssueCount(inboxInProgressFilters, inboxEnabled);
-  const inboxCount = inboxOpenCount + inboxInProgressCount;
 
   const myIssuesEnabled = !!username;
   const { data: myIssuesOpenCount = 0 } = useIssueCount(myIssuesOpenFilters, myIssuesEnabled);
   const { data: myIssuesInProgressCount = 0 } = useIssueCount(myIssuesInProgressFilters, myIssuesEnabled);
-  const myIssuesCount = myIssuesOpenCount + myIssuesInProgressCount;
+
+  // Fetch active session IDs to exclude from badge counts.
+  // Issues with running/pending sessions should not count toward badges.
+  const { activeIssueIds } = useActiveSessionIssueIds();
+  const activeIdsParam = useMemo(
+    () => (activeIssueIds.size > 0 ? Array.from(activeIssueIds).join(",") : null),
+    [activeIssueIds],
+  );
+
+  // Count how many active-session issues match each badge filter so we can subtract them.
+  // We must scope to non-terminal statuses (open + in-progress) to match the total queries,
+  // otherwise terminal issues with stale active sessions would be subtracted incorrectly.
+  const inboxActiveOpenFilters = useMemo<IssueFilters>(() => {
+    if (!activeIdsParam || !inboxLabelId || !username) return {};
+    return { labels: inboxLabelId, creator: username, ids: activeIdsParam, status: "open" };
+  }, [activeIdsParam, inboxLabelId, username]);
+
+  const inboxActiveInProgressFilters = useMemo<IssueFilters>(() => {
+    if (!activeIdsParam || !inboxLabelId || !username) return {};
+    return { labels: inboxLabelId, creator: username, ids: activeIdsParam, status: "in-progress" };
+  }, [activeIdsParam, inboxLabelId, username]);
+
+  const myIssuesActiveOpenFilters = useMemo<IssueFilters>(() => {
+    if (!activeIdsParam || !username) return {};
+    return { creator: username, ids: activeIdsParam, status: "open" };
+  }, [activeIdsParam, username]);
+
+  const myIssuesActiveInProgressFilters = useMemo<IssueFilters>(() => {
+    if (!activeIdsParam || !username) return {};
+    return { creator: username, ids: activeIdsParam, status: "in-progress" };
+  }, [activeIdsParam, username]);
+
+  const activeCountEnabled = !!activeIdsParam;
+  const { data: inboxActiveOpenCount = 0 } = useIssueCount(inboxActiveOpenFilters, activeCountEnabled && inboxEnabled);
+  const { data: inboxActiveInProgressCount = 0 } = useIssueCount(inboxActiveInProgressFilters, activeCountEnabled && inboxEnabled);
+  const { data: myIssuesActiveOpenCount = 0 } = useIssueCount(myIssuesActiveOpenFilters, activeCountEnabled && myIssuesEnabled);
+  const { data: myIssuesActiveInProgressCount = 0 } = useIssueCount(myIssuesActiveInProgressFilters, activeCountEnabled && myIssuesEnabled);
+
+  const inboxCount = Math.max(0, inboxOpenCount + inboxInProgressCount - inboxActiveOpenCount - inboxActiveInProgressCount);
+  const myIssuesCount = Math.max(0, myIssuesOpenCount + myIssuesInProgressCount - myIssuesActiveOpenCount - myIssuesActiveInProgressCount);
 
   const assignees = useMemo(() => {
     const set = new Set<string>();

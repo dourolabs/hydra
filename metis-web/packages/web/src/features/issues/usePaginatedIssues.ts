@@ -9,6 +9,7 @@ export interface IssueFilters {
   creator?: string | null;
   labels?: string | null;
   q?: string | null;
+  ids?: string | null;
 }
 
 function buildQuery(
@@ -58,6 +59,7 @@ export function useIssueCount(filters: IssueFilters, enabled = true) {
       if (filters.creator) query.creator = filters.creator;
       if (filters.labels) query.labels = filters.labels;
       if (filters.q) query.q = filters.q;
+      if (filters.ids) query.ids = filters.ids;
       const resp = await apiClient.listIssues(query);
       return Number(resp.total_count ?? 0);
     },
