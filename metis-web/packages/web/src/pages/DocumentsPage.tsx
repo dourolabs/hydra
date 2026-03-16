@@ -155,7 +155,6 @@ function DocumentRow({ doc }: DocumentRowProps) {
     mutationFn: () => apiClient.deleteDocument(doc.document_id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
-      queryClient.invalidateQueries({ queryKey: ["documents"] });
       addToast("Document deleted", "success");
       setDeleteOpen(false);
     },
@@ -268,7 +267,6 @@ function DocumentCreateModal({ open, onClose }: DocumentCreateModalProps) {
     onSuccess: (data) => {
       resetForm();
       queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
-      queryClient.invalidateQueries({ queryKey: ["documents"] });
       addToast(`Document ${data.document_id} created`, "success");
       onClose();
     },
