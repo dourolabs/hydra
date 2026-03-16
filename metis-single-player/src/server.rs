@@ -129,6 +129,12 @@ fn cmd_init() -> Result<()> {
 
     println!("Server config written to {}", config_path.display());
 
+    // If the user chose Docker, build the worker image before starting the server
+    // so all interactive prompts and long-running builds complete first.
+    if job_engine == "docker" {
+        build_worker_image();
+    }
+
     // Start the server in-process so it creates the local user and auth token.
     println!("Starting server...");
     start_server_in_process()?;
@@ -152,12 +158,6 @@ fn cmd_init() -> Result<()> {
 
     // Upload default playbooks to the document store.
     upload_default_playbooks(&auth_token)?;
-
-    // If the user chose Docker, build the worker image now (after all prompts
-    // and server setup are complete so the user isn't interrupted mid-build).
-    if job_engine == "docker" {
-        build_worker_image();
-    }
 
     let engine_label = if job_engine == "docker" {
         "Docker"
