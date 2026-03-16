@@ -9,6 +9,7 @@ import { IssueFilterSidebar, LABEL_FILTER_PREFIX } from "../features/dashboard/I
 import { HeterogeneousItemList } from "../features/dashboard/HeterogeneousItemList";
 import { useTransitiveWorkItems, type WorkItem } from "../features/dashboard/useTransitiveWorkItems";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
+import { useActiveSessionIssueIds } from "../features/dashboard/useActiveSessionIssueIds";
 import { TERMINAL_STATUSES } from "../utils/statusMapping";
 import { readCollapsed, writeCollapsed } from "../features/dashboard/sidebarStorage";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
@@ -129,10 +130,37 @@ export function DashboardPage() {
   }, [username]);
 
   const inboxEnabled = !!inboxLabelId && !!username;
-  const { data: inboxCount = 0 } = useIssueCount(inboxCountFilters, inboxEnabled);
+  const { data: inboxTotalCount = 0 } = useIssueCount(inboxCountFilters, inboxEnabled);
 
   const myIssuesEnabled = !!username;
-  const { data: myIssuesCount = 0 } = useIssueCount(myIssuesCountFilters, myIssuesEnabled);
+  const { data: myIssuesTotalCount = 0 } = useIssueCount(myIssuesCountFilters, myIssuesEnabled);
+
+  // Fetch active session IDs to exclude from badge counts.
+  // Issues with running/pending sessions should not count toward badges.
+  const { activeIssueIds } = useActiveSessionIssueIds();
+  const activeIdsParam = useMemo(
+    () => (activeIssueIds.size > 0 ? Array.from(activeIssueIds).join(",") : null),
+    [activeIssueIds],
+  );
+
+  // Count how many active-session issues match each badge filter so we can subtract them.
+  // Uses multi-status filter to match the total queries above.
+  const inboxActiveFilters = useMemo<IssueFilters>(() => {
+    if (!activeIdsParam || !inboxLabelId || !username) return {};
+    return { labels: inboxLabelId, assignee: username, ids: activeIdsParam, status: "open,in-progress" };
+  }, [activeIdsParam, inboxLabelId, username]);
+
+  const myIssuesActiveFilters = useMemo<IssueFilters>(() => {
+    if (!activeIdsParam || !username) return {};
+    return { creator: username, ids: activeIdsParam, status: "open,in-progress" };
+  }, [activeIdsParam, username]);
+
+  const activeCountEnabled = !!activeIdsParam;
+  const { data: inboxActiveCount = 0 } = useIssueCount(inboxActiveFilters, activeCountEnabled && inboxEnabled);
+  const { data: myIssuesActiveCount = 0 } = useIssueCount(myIssuesActiveFilters, activeCountEnabled && myIssuesEnabled);
+
+  const inboxCount = Math.max(0, inboxTotalCount - inboxActiveCount);
+  const myIssuesCount = Math.max(0, myIssuesTotalCount - myIssuesActiveCount);
 
   const assignees = useMemo(() => {
     const set = new Set<string>();
