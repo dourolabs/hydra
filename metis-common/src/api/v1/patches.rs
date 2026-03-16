@@ -1,4 +1,8 @@
-use super::{labels::LabelSummary, users::Username};
+use super::{
+    labels::LabelSummary,
+    serde_helpers::{deserialize_comma_separated, serialize_comma_separated},
+    users::Username,
+};
 use crate::{PatchId, RepoName, SessionId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use git2::Oid;
@@ -382,6 +386,16 @@ impl CreatePatchAssetResponse {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct SearchPatchesQuery {
+    /// Batch-fetch specific patches by ID (comma-separated, max 100).
+    /// Intersected with other filters when provided.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub ids: Vec<PatchId>,
     #[serde(default)]
     pub q: Option<String>,
     #[serde(default)]
@@ -412,6 +426,7 @@ impl SearchPatchesQuery {
         branch_name: Option<String>,
     ) -> Self {
         Self {
+            ids: Vec::new(),
             q,
             include_deleted,
             status,
@@ -640,6 +655,7 @@ mod tests {
     #[test]
     fn search_patches_query_serializes_with_reqwest() {
         let query = SearchPatchesQuery {
+            ids: Vec::new(),
             q: Some("test query".to_string()),
             include_deleted: None,
             status: Vec::new(),
