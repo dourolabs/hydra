@@ -88,7 +88,7 @@ function DocumentDetail({ record }: DocumentDetailProps) {
       queryClient.invalidateQueries({
         queryKey: ["document", record.document_id],
       });
-      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
       addToast("Document saved", "success");
       setEditing(false);
     },
