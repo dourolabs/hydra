@@ -1,5 +1,5 @@
 import type { IssueSummaryRecord } from "@metis/api";
-import type { WorkItem } from "../dashboard/useTransitiveWorkItems";
+import type { WorkItem } from "../dashboard/workItemTypes";
 
 /**
  * Topologically sort sibling issues by blocked-on dependencies using Kahn's algorithm.

@@ -12,7 +12,7 @@ import { SessionList } from "../sessions/SessionList";
 import { PatchList } from "../patches/PatchList";
 import { PatchPreview } from "./PatchPreview";
 import { DocumentPreview } from "./DocumentPreview";
-import { extractDocumentPaths } from "../dashboard/useTransitiveWorkItems";
+import { extractDocumentPaths } from "../../utils/documentPaths";
 import { IssueSettings } from "./IssueSettings";
 import { IssueLabelEditor } from "./IssueLabelEditor";
 import styles from "./IssueDetail.module.css";

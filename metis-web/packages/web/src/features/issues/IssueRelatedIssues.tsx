@@ -1,11 +1,13 @@
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Spinner } from "@metis/ui";
 import type { IssueSummaryRecord } from "@metis/api";
 import { ItemRow } from "../dashboard/ItemRow";
-import type { WorkItem } from "../dashboard/useTransitiveWorkItems";
+import type { WorkItem } from "../dashboard/workItemTypes";
 import { TERMINAL_STATUSES } from "../../utils/statusMapping";
-import { useIssues } from "./useIssues";
-import { useAllSessions } from "../sessions/useAllSessions";
+import { useIssue } from "./useIssue";
 import { topologicalSort } from "./topologicalSort";
+import { apiClient } from "../../api/client";
 import styles from "./IssueRelatedIssues.module.css";
 
 function toWorkItem(record: IssueSummaryRecord): WorkItem {
@@ -23,32 +25,84 @@ interface IssueRelatedIssuesProps {
 }
 
 export function IssueRelatedIssues({ issueId }: IssueRelatedIssuesProps) {
-  const { data: allIssues, isLoading } = useIssues();
-  const { data: sessionsByIssue } = useAllSessions();
+  // Fetch the current issue to get its parent dependencies
+  const { data: currentIssue } = useIssue(issueId);
 
-  if (isLoading) {
+  // Get parent IDs from the current issue's child-of dependencies
+  const parentIds = useMemo(
+    () =>
+      currentIssue?.issue.dependencies
+        .filter((dep) => dep.type === "child-of")
+        .map((dep) => dep.issue_id) ?? [],
+    [currentIssue],
+  );
+
+  // Fetch direct children via relationships API
+  const { data: childRelations } = useQuery({
+    queryKey: ["relations", "child-of", issueId],
+    queryFn: () =>
+      apiClient.listRelations({
+        target_ids: issueId,
+        rel_type: "child-of",
+      }),
+    staleTime: 30_000,
+    select: (data) => data.relations,
+  });
+
+  const childIds = useMemo(
+    () => childRelations?.map((rel) => rel.source_id) ?? [],
+    [childRelations],
+  );
+
+  // Batch fetch all related issue details (parents + children)
+  const allRelatedIds = useMemo(() => {
+    const ids = new Set([...parentIds, ...childIds]);
+    return Array.from(ids);
+  }, [parentIds, childIds]);
+
+  const idsParam = allRelatedIds.join(",");
+  const { data: relatedIssues, isLoading } = useQuery({
+    queryKey: ["issues", "batch", idsParam],
+    queryFn: () => apiClient.listIssues({ ids: idsParam }),
+    enabled: allRelatedIds.length > 0,
+    staleTime: 30_000,
+    select: (data) => data.issues,
+  });
+
+  // Fetch sessions for all related issues
+  const spawned_from_ids = allRelatedIds.join(",");
+  const { data: sessionsData } = useQuery({
+    queryKey: ["sessions", "batch", spawned_from_ids],
+    queryFn: () => apiClient.listSessions({ spawned_from_ids }),
+    enabled: allRelatedIds.length > 0,
+    staleTime: 30_000,
+    select: (data) => data.sessions,
+  });
+
+  // Group sessions by issue ID
+  const sessionsByIssue = useMemo(() => {
+    const map = new Map<string, typeof sessionsData>();
+    if (!sessionsData) return map;
+    for (const session of sessionsData) {
+      const sid = session.session.spawned_from;
+      if (!sid) continue;
+      const list = map.get(sid) ?? [];
+      list.push(session);
+      map.set(sid, list);
+    }
+    return map;
+  }, [sessionsData]);
+
+  if (isLoading && allRelatedIds.length > 0) {
     return <Spinner size="sm" />;
   }
 
-  // Find current issue to read its parent dependencies
-  const currentIssue = allIssues?.find((r) => r.issue_id === issueId);
-  const parentIds =
-    currentIssue?.issue.dependencies
-      .filter((dep) => dep.type === "child-of")
-      .map((dep) => dep.issue_id) ?? [];
-  const parents = allIssues
-    ? allIssues.filter((r) => parentIds.includes(r.issue_id))
-    : [];
-
-  // Find children: issues that have a "child-of" dependency on this issueId
-  const children = allIssues
-    ? topologicalSort(
-        allIssues.filter((record) =>
-          record.issue.dependencies.some(
-            (dep) => dep.type === "child-of" && dep.issue_id === issueId,
-          ),
-        ),
-      )
+  // Separate parents and children for display order
+  const parentIdSet = new Set(parentIds);
+  const childIdSet = new Set(childIds);
+  const parents = relatedIssues?.filter((r) => parentIdSet.has(r.issue_id)) ?? [];
+  const children = relatedIssues
+    ? topologicalSort(relatedIssues.filter((r) => childIdSet.has(r.issue_id)))
     : [];
 
   const allRelated = [...parents, ...children];
