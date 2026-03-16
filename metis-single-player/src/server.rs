@@ -153,6 +153,12 @@ fn cmd_init() -> Result<()> {
     // Upload default playbooks to the document store.
     upload_default_playbooks(&auth_token)?;
 
+    // If the user chose Docker, build the worker image now (after all prompts
+    // and server setup are complete so the user isn't interrupted mid-build).
+    if job_engine == "docker" {
+        build_worker_image();
+    }
+
     let engine_label = if job_engine == "docker" {
         "Docker"
     } else {
@@ -245,6 +251,103 @@ fn upload_default_playbooks(auth_token: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+const METIS_WORKER_IMAGE: &str = "metis-worker:latest";
+
+/// Check whether the `metis-worker:latest` Docker image already exists locally.
+fn docker_image_exists(image: &str) -> bool {
+    Command::new("docker")
+        .args(["image", "inspect", image])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Attempt to find the repository root by looking for the Dockerfile relative
+/// to `CARGO_MANIFEST_DIR` (set at compile time). Returns `None` if the
+/// expected layout is not found.
+fn find_repo_root() -> Option<std::path::PathBuf> {
+    // CARGO_MANIFEST_DIR points to metis-single-player/ at compile time.
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.parent()?;
+    let dockerfile = repo_root.join("images/metis-worker.Dockerfile");
+    if dockerfile.exists() {
+        Some(repo_root.to_path_buf())
+    } else {
+        None
+    }
+}
+
+/// Build the `metis-worker:latest` Docker image.
+///
+/// If the image already exists locally the build is skipped. On build failure
+/// the function prints a warning with manual build instructions. The config
+/// always references `metis-worker:latest` regardless of build outcome.
+fn build_worker_image() -> bool {
+    // Skip if already present.
+    if docker_image_exists(METIS_WORKER_IMAGE) {
+        eprintln!("Docker image '{METIS_WORKER_IMAGE}' already exists, skipping build.");
+        return true;
+    }
+
+    let repo_root = match find_repo_root() {
+        Some(root) => root,
+        None => {
+            eprintln!(
+                "Warning: could not locate the repository root to build {METIS_WORKER_IMAGE}."
+            );
+            eprintln!(
+                "You can build it manually with: \
+                 docker build -t {METIS_WORKER_IMAGE} -f images/metis-worker.Dockerfile ."
+            );
+            return false;
+        }
+    };
+
+    eprintln!();
+    eprintln!("Building Docker image '{METIS_WORKER_IMAGE}' (this may take several minutes)...");
+
+    let status = Command::new("docker")
+        .args([
+            "build",
+            "-t",
+            METIS_WORKER_IMAGE,
+            "-f",
+            "images/metis-worker.Dockerfile",
+            ".",
+        ])
+        .current_dir(&repo_root)
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            eprintln!("Successfully built '{METIS_WORKER_IMAGE}'.");
+            true
+        }
+        Ok(_) => {
+            eprintln!();
+            eprintln!("Warning: Docker build for '{METIS_WORKER_IMAGE}' failed.");
+            eprintln!(
+                "You can retry manually with: \
+                 cd {} && docker build -t {METIS_WORKER_IMAGE} -f images/metis-worker.Dockerfile .",
+                repo_root.display()
+            );
+            false
+        }
+        Err(e) => {
+            eprintln!();
+            eprintln!("Warning: failed to run docker build: {e}");
+            eprintln!(
+                "You can retry manually with: \
+                 cd {} && docker build -t {METIS_WORKER_IMAGE} -f images/metis-worker.Dockerfile .",
+                repo_root.display()
+            );
+            false
+        }
+    }
 }
 
 /// Check whether Docker is available by running `docker info`.
@@ -487,7 +590,7 @@ fn render_server_config(
             claude_code_oauth_token: api_keys.claude_code_oauth_token.clone(),
         },
         job: JobSection {
-            default_image: "ubuntu:24.04".to_string(),
+            default_image: METIS_WORKER_IMAGE.to_string(),
             default_model: default_model.map(str::to_string),
             cpu_limit: "500m".to_string(),
             memory_limit: "1Gi".to_string(),
@@ -940,7 +1043,7 @@ mod tests {
             app_config.auth.auth_token_file(),
             Some(Path::new("/tmp/auth-token"))
         );
-        assert_eq!(app_config.job.default_image, "ubuntu:24.04");
+        assert_eq!(app_config.job.default_image, METIS_WORKER_IMAGE);
         assert!(app_config.job.default_model.is_none());
         assert!(app_config.metis.openai_api_key.is_none());
         assert!(app_config.metis.anthropic_api_key.is_none());
