@@ -32,6 +32,18 @@ metis server init
 
 This walks you through an interactive setup: choosing a username, job engine (Docker or local), AI model (Claude or Codex), API keys, and a GitHub PAT. When it finishes, the server is running and the CLI is configured to talk to it.
 
+When Docker is selected as the job engine, the init command automatically builds the `metis-worker:latest` image. This image is used to run agent sessions and includes Node.js, the GitHub CLI, ripgrep, Claude Code, Codex, Playwright, and the Metis CLI itself.
+
+### Worker Docker image
+
+To rebuild the worker image manually (e.g., after updating dependencies or the Metis CLI):
+
+```bash
+docker build -f images/metis-worker.Dockerfile -t metis-worker:latest .
+```
+
+To use a custom image, set `default_image` in your server's `config.yaml` under the `job` section, or configure it per-repo.
+
 ### 3. Add a git repository
 
 Register a repository so agents can work on it:
