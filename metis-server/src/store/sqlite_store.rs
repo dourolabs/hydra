@@ -1564,6 +1564,20 @@ fn build_patches_predicates_sqlite(query: &SearchPatchesQuery) -> (Vec<String>, 
     let mut predicates = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
 
+    // When `ids` is provided, filter by ID (intersected with other filters).
+    if !query.ids.is_empty() {
+        let placeholders: Vec<String> = query
+            .ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", bindings.len() + i + 1))
+            .collect();
+        predicates.push(format!("id IN ({})", placeholders.join(", ")));
+        for id in &query.ids {
+            bindings.push(id.as_ref().to_string());
+        }
+    }
+
     if !query.include_deleted.unwrap_or(false) {
         predicates.push("deleted = 0".to_string());
     }
