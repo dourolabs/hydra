@@ -92,13 +92,6 @@ fn cmd_init() -> Result<()> {
     // Prompt for GitHub PAT.
     let github_pat = prompt_github_pat()?;
 
-    // If the user chose Docker, build the worker image (or fall back).
-    let worker_image_available = if job_engine == "docker" {
-        build_worker_image()
-    } else {
-        false
-    };
-
     // Generate a random 32-byte encryption key (base64-encoded).
     let encryption_key = generate_encryption_key();
 
@@ -120,14 +113,6 @@ fn cmd_init() -> Result<()> {
     } else {
         None
     };
-    let default_image = if worker_image_available {
-        METIS_WORKER_IMAGE
-    } else {
-        if job_engine == "docker" {
-            eprintln!("Falling back to '{FALLBACK_IMAGE}' as the default worker image.");
-        }
-        FALLBACK_IMAGE
-    };
     let config_content = render_server_config(
         &encryption_key,
         &github_pat,
@@ -138,7 +123,6 @@ fn cmd_init() -> Result<()> {
         &api_keys,
         username.as_deref(),
         job_log_dir_str.as_deref(),
-        default_image,
     );
     fs::write(&config_path, &config_content)
         .with_context(|| format!("failed to write config to {}", config_path.display()))?;
@@ -168,6 +152,12 @@ fn cmd_init() -> Result<()> {
 
     // Upload default playbooks to the document store.
     upload_default_playbooks(&auth_token)?;
+
+    // If the user chose Docker, build the worker image now (after all prompts
+    // and server setup are complete so the user isn't interrupted mid-build).
+    if job_engine == "docker" {
+        build_worker_image();
+    }
 
     let engine_label = if job_engine == "docker" {
         "Docker"
@@ -264,7 +254,6 @@ fn upload_default_playbooks(auth_token: &str) -> Result<()> {
 }
 
 const METIS_WORKER_IMAGE: &str = "metis-worker:latest";
-const FALLBACK_IMAGE: &str = "ubuntu:24.04";
 
 /// Check whether the `metis-worker:latest` Docker image already exists locally.
 fn docker_image_exists(image: &str) -> bool {
@@ -292,11 +281,11 @@ fn find_repo_root() -> Option<std::path::PathBuf> {
     }
 }
 
-/// Build the `metis-worker:latest` Docker image. Returns `true` on success.
+/// Build the `metis-worker:latest` Docker image.
 ///
-/// If the image already exists locally the build is skipped and `true` is
-/// returned immediately. On build failure the function prints a warning and
-/// returns `false` so the caller can fall back to a generic base image.
+/// If the image already exists locally the build is skipped. On build failure
+/// the function prints a warning with manual build instructions. The config
+/// always references `metis-worker:latest` regardless of build outcome.
 fn build_worker_image() -> bool {
     // Skip if already present.
     if docker_image_exists(METIS_WORKER_IMAGE) {
@@ -577,7 +566,6 @@ fn render_server_config(
     api_keys: &ApiKeys,
     username: Option<&str>,
     job_log_dir: Option<&str>,
-    default_image: &str,
 ) -> String {
     use metis_server::config::{
         AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, JobEngineConfig, JobSection,
@@ -602,7 +590,7 @@ fn render_server_config(
             claude_code_oauth_token: api_keys.claude_code_oauth_token.clone(),
         },
         job: JobSection {
-            default_image: default_image.to_string(),
+            default_image: METIS_WORKER_IMAGE.to_string(),
             default_model: default_model.map(str::to_string),
             cpu_limit: "500m".to_string(),
             memory_limit: "1Gi".to_string(),
@@ -1027,7 +1015,6 @@ mod tests {
             &ApiKeys::default(),
             None,
             None,
-            METIS_WORKER_IMAGE,
         );
 
         // Verify the generated YAML contains all expected fields.
@@ -1086,7 +1073,6 @@ mod tests {
             &ApiKeys::default(),
             None,
             Some("/custom/log/dir"),
-            FALLBACK_IMAGE,
         );
 
         assert!(config.contains("job_engine: local"));
@@ -1126,7 +1112,6 @@ mod tests {
             &keys,
             None,
             None,
-            METIS_WORKER_IMAGE,
         );
 
         assert!(config.contains("default_model: gpt-4o"));
@@ -1168,7 +1153,6 @@ mod tests {
             &keys,
             None,
             None,
-            METIS_WORKER_IMAGE,
         );
 
         assert!(config.contains("default_model: opus"));
@@ -1209,7 +1193,6 @@ mod tests {
             &keys,
             None,
             None,
-            METIS_WORKER_IMAGE,
         );
 
         assert!(config.contains("default_model: opus"));
@@ -1245,7 +1228,6 @@ mod tests {
             &ApiKeys::default(),
             Some("alice"),
             None,
-            METIS_WORKER_IMAGE,
         );
 
         assert!(config.contains("username: alice"));
@@ -1255,31 +1237,6 @@ mod tests {
             .expect("generated config should deserialize into AppConfig");
 
         assert_eq!(app_config.auth.local_username(), Some("alice"));
-    }
-
-    #[test]
-    fn render_server_config_with_fallback_image() {
-        use base64::Engine;
-        let encryption_key = base64::engine::general_purpose::STANDARD.encode([42u8; 32]);
-
-        let config = render_server_config(
-            &encryption_key,
-            "ghp_test123",
-            Path::new("/tmp/test.db"),
-            Path::new("/tmp/auth-token"),
-            "docker",
-            None,
-            &ApiKeys::default(),
-            None,
-            None,
-            FALLBACK_IMAGE,
-        );
-
-        use metis_server::config::AppConfig;
-        let app_config: AppConfig = serde_yaml_ng::from_str(&config)
-            .expect("generated config should deserialize into AppConfig");
-
-        assert_eq!(app_config.job.default_image, FALLBACK_IMAGE);
     }
 
     #[test]
