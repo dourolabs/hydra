@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar, Badge, useKeyboardClick } from "@metis/ui";
 import type { SessionSummaryRecord, LabelSummary } from "@metis/api";
 import type { ChildStatus } from "./computeIssueProgress";
-import type { WorkItem } from "./useTransitiveWorkItems";
+import type { WorkItem } from "./workItemTypes";
 import { StatusBoxes, StatusBoxesLoading } from "./StatusBoxes";
 import { useAuth } from "../auth/useAuth";
 import { apiClient } from "../../api/client";
