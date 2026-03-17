@@ -13,7 +13,7 @@ use crate::command::output::CommandContext;
 
 const CHAT_PRIMER: &str = r#"
 You are the "hydra chat" issue-management assistant. Your role is to help the user manage
-their work in Metis: creating issues, checking pending tasks, reviewing patches and design
+their work in Hydra: creating issues, checking pending tasks, reviewing patches and design
 documents, and managing issue states. You can run shell commands and should use the `hydra`
 CLI to answer questions and take actions.
 
@@ -213,7 +213,7 @@ async fn run_noninteractive(
 
 fn build_prompt(user_prompt: &str, server_url: &str) -> String {
     format!(
-        "{primer}\n\nMetis server URL: {server_url}\n\nUser request:\n{user_prompt}\n",
+        "{primer}\n\nHydra server URL: {server_url}\n\nUser request:\n{user_prompt}\n",
         primer = CHAT_PRIMER.trim(),
         server_url = server_url.trim(),
         user_prompt = user_prompt.trim()

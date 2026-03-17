@@ -61,7 +61,7 @@ pub enum SessionsCommand {
         )]
         prompt: Vec<String>,
     },
-    /// List all Metis sessions in the configured namespace. Returns summary records with a truncated prompt; use `get` for full details.
+    /// List all Hydra sessions in the configured namespace. Returns summary records with a truncated prompt; use `get` for full details.
     List {
         /// Number of sessions to display (most recent first).
         #[arg(
@@ -85,7 +85,7 @@ pub enum SessionsCommand {
         #[arg(long)]
         version: Option<i64>,
     },
-    /// Show logs for an existing Metis session.
+    /// Show logs for an existing Hydra session.
     Logs {
         /// Session identifier returned by `hydra sessions create` or `hydra sessions list`, or an IssueId to stream the most recent session spawned from that issue.
         #[arg(value_name = "ID")]
@@ -95,7 +95,7 @@ pub enum SessionsCommand {
         #[arg(short = 'w', long = "watch")]
         watch: bool,
     },
-    /// Terminate a running Metis session.
+    /// Terminate a running Hydra session.
     Kill {
         /// Session identifier returned by `hydra sessions create` or `hydra sessions list`.
         #[arg(value_name = "SESSION_ID")]

@@ -75,7 +75,7 @@ pub enum PatchesCommand {
         #[arg(long = "description", value_name = "DESCRIPTION", required = true)]
         description: String,
 
-        /// Associate the patch with a Metis job.
+        /// Associate the patch with a Hydra job.
         #[arg(long = "job", value_name = "HYDRA_ID", env = ENV_HYDRA_ID)]
         job: Option<SessionId>,
 

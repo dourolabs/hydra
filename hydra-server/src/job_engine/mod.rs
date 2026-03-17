@@ -13,7 +13,7 @@ pub use hydra_common::SessionId;
 pub use local_docker_job_engine::LocalDockerJobEngine;
 pub use local_job_engine::LocalJobEngine;
 
-/// Represents the lifecycle state of a Metis job.
+/// Represents the lifecycle state of a Hydra job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobStatus {
     Pending,
@@ -39,12 +39,12 @@ impl std::fmt::Display for JobStatus {
     }
 }
 
-/// Represents a job in the Metis system, abstracting away Kubernetes-specific details.
+/// Represents a job in the Hydra system, abstracting away Kubernetes-specific details.
 #[derive(Debug, Clone)]
 pub struct HydraJob {
     /// The unique Hydra job ID (hydra-id label)
     pub id: SessionId,
-    /// Job status in the Metis lifecycle.
+    /// Job status in the Hydra lifecycle.
     pub status: JobStatus,
     /// When the job was created
     pub creation_time: Option<DateTime<Utc>>,
@@ -89,7 +89,7 @@ pub trait JobEngine: Send + Sync {
     /// Creates a new job with the given parameters.
     ///
     /// # Arguments
-    /// * `hydra_id` - The Metis ID to use for the job
+    /// * `hydra_id` - The Hydra ID to use for the job
     /// * `actor` - The actor assigned to the job
     /// * `auth_token` - The raw auth token for the actor
     /// * `image` - The container image the job should run
@@ -132,7 +132,7 @@ pub trait JobEngine: Send + Sync {
     /// Gets logs for a job as a single string (batch mode).
     ///
     /// # Arguments
-    /// * `job_id` - The Metis job ID
+    /// * `job_id` - The Hydra job ID
     /// * `tail_lines` - When set, return only the last N lines from the log
     ///
     /// # Returns
@@ -149,7 +149,7 @@ pub trait JobEngine: Send + Sync {
     /// and sends them as strings through the returned receiver.
     ///
     /// # Arguments
-    /// * `job_id` - The Metis job ID
+    /// * `job_id` - The Hydra job ID
     /// * `follow` - Whether to follow the log stream (true for running jobs)
     ///
     /// # Returns

@@ -266,7 +266,7 @@ async fn login_with_github_token(
     let (auth_token, _client) = client
         .login(&request)
         .await
-        .context("failed to exchange GitHub token for Metis login token")?;
+        .context("failed to exchange GitHub token for Hydra login token")?;
     Ok(auth_token)
 }
 

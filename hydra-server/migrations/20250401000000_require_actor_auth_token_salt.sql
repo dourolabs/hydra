@@ -1,10 +1,10 @@
 -- Bump actor payload schema version for required auth token salt.
-UPDATE hydra.payload_schema_versions
+UPDATE metis.payload_schema_versions
 SET current_version = 3
 WHERE object_type = 'actor';
 
 -- Backfill auth_token_salt when migrating older actor payloads.
-CREATE OR REPLACE FUNCTION hydra.migrate_payload(
+CREATE OR REPLACE FUNCTION metis.migrate_payload(
     object_type TEXT,
     from_version INTEGER,
     to_version INTEGER,
