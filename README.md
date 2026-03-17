@@ -32,81 +32,39 @@ export PATH="$PATH:$(realpath ./target/debug/)"
 metis server init
 ```
 
-This walks you through an interactive setup: choosing a username, job engine (Docker or local), AI model (Claude or Codex), API keys, and a GitHub PAT. When it finishes, the server is running and the CLI is configured to talk to it.
+This walks you through an interactive setup: choosing a username, job engine (Docker or local), AI model (Claude or Codex), API keys, and a GitHub PAT.
+When Docker is selected as the job engine, the init command automatically builds a Docker image for agents to run in.
+When it finishes, the server is running and the CLI is configured to talk to it.
+You can use the `metis server` command to start/stop/check the status of the server.
 
-**Note** Metis runs with agents with `--dangerously-skip-permissions`, so I strongly recommend choosing the Docker engine. No warranties or rebates are provided if you choose Local and Claude `rm -rf`s your machine. The Docker engine is a little more painful to set up, but it's worth it for the isolation.
-
-When Docker is selected as the job engine, the init command automatically builds the `metis-worker:latest` image. This image is used to run agent sessions and includes Node.js, the GitHub CLI, ripgrep, Claude Code, Codex, Playwright, and the Metis CLI itself.
-
-### Worker Docker image
-
-To rebuild the worker image manually (e.g., after updating dependencies or the Metis CLI):
-
-```bash
-docker build -f images/metis-worker.Dockerfile -t metis-worker:latest .
-```
-
-To use a custom image, set `default_image` in your server's `config.yaml` under the `job` section, or configure it per-repo.
+⚠ **Warning:** Metis runs with agents with `--dangerously-skip-permissions`, so I strongly recommend choosing the Docker engine. Don't blame me if you choose local and Claude `rm -rf`s your machine.
 
 ### 3. Add a git repository
 
-Register a repository so agents can work on it:
+Open the frontend at http://localhost:8080/ and click "Create Issue".
+Tell the agent "add the git repo <git url>  " (e.g https://github.com/dourolabs/metis.git).
+The agent will register the repo in the system and additionally work on a Dockerfile with the dependencies your repo needs.
+You can register as many git repositories as you'd like.
 
-```bash
-metis repos create your-org/your-repo https://github.com/your-org/your-repo.git
-```
+### 4. Start Working
 
-### 4. Create your first issue
-
-```bash
-metis issues create --assignee swe --repo-name your-org/your-repo "Fix the bug in ..."
-```
-
-This assigns the issue to `swe`, a software engineering agent. You can watch progress in the dashboard at http://127.0.0.1:8080, or from the CLI:
-
-```bash
-metis issues list
-metis issues describe <issue-id>
-```
-
-Once the agent finishes, it submits a patch and creates a review issue assigned to you. The patch is also pushed to GitHub as a PR.
-
-### 5. Try a more complex task
-
-Metis also has a `pm` (product manager) agent that can break down larger features into subtasks:
-
-```bash
-metis issues create --assignee pm --repo-name your-org/your-repo "Build feature XYZ"
-```
-
-### Managing the server
-
-```bash
-metis server status        # check if the server is running
-metis server logs --follow  # tail server logs
-metis server stop           # stop the server
-metis server start          # start the server again
-```
+Simply click "Create Issue" and describe what you want done.
+The agents will automatically break down your issue into subtasks, identify the right repositories for each one, make changes and submit PRs.
+When agents have work for you to review, they'll make issues assigned to you.
 
 ## Core Concepts
 
+A core design principle of Metis is that *agents and humans have equal access*.
+All of the functionality described below is available to your agents -- you can access any of this by simply making an issue for them.
+
 ### Issues
 
-All work in Metis is represented by issues. Issues are the fundamental unit of work, assigned to either agents or users. Agents have full access to the issue tracker, so they can create subtasks, request reviews, and coordinate with other agents autonomously.
-
-Issues have four statuses: `Open`, `InProgress`, `Closed`, and `Dropped`. They form a graph with two types of relationships: `blocked-on` (issue X cannot start until Y is closed) and `child-of` (issue X is a subtask of Y). The system uses this graph to determine which issues are ready to work on, and automatically spawns agents for ready issues.
+All work in Metis is represented by issues. Issues are the fundamental unit of work, assigned to either agents or users. 
+Issues have a statuses, which is typically: `Open`, `InProgress`, `Closed`.
+They form a graph with two types of relationships: `blocked-on` (issue X cannot start until Y is closed) and `child-of` (issue X is a subtask of Y).
+The system uses this graph to determine which issues are ready to work on, and automatically spawns agents for ready issues.
 
 When an agent starts working on an issue, it sets the status to `InProgress`. When done, it sets it to `Closed`. If the agent's session ends while the issue is still `InProgress` (e.g., waiting for a code review), another agent can pick it up later with the full git state preserved.
-
-### Document Store
-
-The document store is a shared space for markdown artifacts -- design docs, runbooks, playbooks, and other reference material. Agents and users can read and write documents using the CLI:
-
-```bash
-metis documents list
-metis documents get <path>
-metis documents put <path> --file <file>
-```
 
 ### Agents
 
@@ -116,7 +74,13 @@ Metis comes with three default agents, created automatically during `metis serve
 - **`pm`** -- Product manager agent. Breaks down complex features into smaller subtasks and assigns them.
 - **`reviewer`** -- Code review agent. Reviews patches and provides feedback.
 
-Agents are configured on the server and can be customized via the API. Each agent has a system prompt, a concurrency limit, and a max-retries setting.
+Agents are configured on the server settings page, and their prompts and memory are stored in the document store.
+(You can also ask your agents to make more agents.)
+
+### Document Store
+
+The document store is a shared space for markdown artifacts -- design docs, runbooks, agent prompts / memory, and other reference material.
+Check out the documents tab of the frontend to see what's in the store and edit any documents.
 
 ### Git Repositories and Branch Management
 
